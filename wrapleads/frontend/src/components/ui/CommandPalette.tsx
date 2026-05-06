@@ -48,6 +48,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const ACTIONS: CmdItem[] = [
     { id: 'a:add',       group: 'action', label: 'Add Lead',          sub: 'Create a new lead manually',              icon: '+',  action: () => { store.setAddLeadOpen(true); onClose(); } },
     { id: 'a:import',    group: 'action', label: 'Import CSV',        sub: 'Bulk import leads from a spreadsheet',     icon: '↑',  action: () => { store.setCsvImportOpen(true); onClose(); } },
+    { id: 'a:ai-import', group: 'action', label: 'AI Import',         sub: 'Paste any contact list — AI parses it',    icon: '✨', action: () => { store.setPasteImportOpen(true); onClose(); } },
     { id: 'a:blueprint', group: 'action', label: 'Scan Blueprint',    sub: 'Extract wrap opportunities from a PDF',    icon: '📄', action: () => { store.setBlueprintOpen(true); onClose(); } },
     { id: 'a:bulk',      group: 'action', label: 'Bulk AI Email',     sub: 'AI-draft outreach for selected leads',     icon: '⚡', action: () => { store.setBulkOutreachOpen(true); onClose(); } },
     { id: 'a:settings',  group: 'action', label: 'Settings',          sub: 'Company profile & API integrations',       icon: '⚙', action: () => { store.setSettingsOpen(true); onClose(); } },

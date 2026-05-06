@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CarrierSearchParams } from '../api/types';
 import { useAppStore } from '../store/useAppStore';
@@ -37,10 +37,15 @@ export function useCarrierSearch() {
 
 export function useImportCarrier() {
   const showToast = useAppStore((s) => s.showToast);
+  const qc = useQueryClient();
 
   return useMutation({
     mutationFn: (companyId: number) => api.importCarrier(companyId),
-    onSuccess: () => showToast('Carrier added to leads'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['carriersImported'] });
+      showToast('Lead added to My Leads');
+    },
     onError: (e: Error) => showToast(e.message, 'error'),
   });
 }
