@@ -902,6 +902,17 @@ app.listen(PORT, async () => {
   if (db.ok) {
     await migrateDb();
     email.startTrialCron(pool);
+    const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
+    if (count === 0) {
+      console.log('· Companies table empty — starting FMCSA ingest in background...');
+      const { spawn } = require('child_process');
+      const child = spawn('node', ['ingest-fmcsa.js'], {
+        cwd: __dirname,
+        stdio: 'inherit',
+        env: process.env,
+      });
+      child.on('exit', code => console.log(`· FMCSA ingest finished (exit ${code})`));
+    }
   }
   console.log(`· Open http://localhost:${PORT} in your browser.\n`);
 });
