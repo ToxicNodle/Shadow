@@ -1,0 +1,130 @@
+export type LeadStatus = 'cold' | 'contacted' | 'replied' | 'meeting' | 'proposal' | 'won' | 'lost';
+export type LeadCategory = 'fleet' | 'design' | 'construction';
+export type SubStatus = 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled';
+
+export interface Lead {
+  id: string;
+  serverId?: number;
+  clientId?: string;
+  company: string;
+  category: LeadCategory;
+  state: string;
+  city: string;
+  address: string;
+  contactName: string;
+  contactTitle: string;
+  email: string;
+  phone: string;
+  website: string;
+  fleetSize: string;
+  pitchAngle: string;
+  status: LeadStatus;
+  notes: string;
+  lastContacted: string;
+  sourceCompanyId?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Carrier {
+  id: number;
+  name: string;
+  dba_name?: string;
+  dot_number?: string;
+  fleet_size?: number;
+  state?: string;
+  city?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  source: string;
+  wrap_score: number;
+  years_since_report?: number;
+  already_imported?: boolean;
+}
+
+export interface User {
+  id: number;
+  email: string;
+  name?: string;
+  companyName?: string;
+  subStatus: SubStatus;
+  trialEndsAt?: string;
+  subPeriodEnd?: string;
+}
+
+export interface SavedSearch {
+  id: number;
+  name: string;
+  filters: {
+    states?: string[];
+    minFleet?: number | null;
+    maxFleet?: number | null;
+    query?: string;
+    sources?: string[];
+  };
+  new_count: number;
+  last_checked?: string;
+}
+
+export interface Settings {
+  companyName: string;
+  senderName: string;
+  senderTitle: string;
+  senderEmail: string;
+  senderPhone: string;
+  companyTagline: string;
+  companyServices: string;
+  apolloApiKey: string;
+}
+
+export interface CarrierSearchParams {
+  states?: string[] | null;
+  minFleet?: number | null;
+  maxFleet?: number | null;
+  query?: string;
+  sources?: string[] | null;
+  limit?: number;
+  offset?: number;
+  sort?: string;
+}
+
+export interface CarrierSearchResult {
+  results: Carrier[];
+  total: number;
+}
+
+export interface CarrierStats {
+  total: number;
+  sweet_spot: number;
+  states: number;
+  total_units: number;
+  sources?: { source: string; count: number }[];
+}
+
+export const CATEGORIES: Record<LeadCategory, string> = {
+  fleet: 'Fleet / Logistics',
+  design: 'Interior Design',
+  construction: 'Construction',
+};
+
+export const STATUSES: Record<LeadStatus, string> = {
+  cold: 'Cold',
+  contacted: 'Contacted',
+  replied: 'Replied',
+  meeting: 'Meeting Set',
+  proposal: 'Proposal Sent',
+  won: 'Won',
+  lost: 'Lost',
+};
+
+export const DEFAULT_SETTINGS: Settings = {
+  companyName: '',
+  senderName: '',
+  senderTitle: 'Installer / Sales',
+  senderEmail: '',
+  senderPhone: '',
+  companyTagline: 'vehicle wraps, fleet graphics, DI-NOC, Rea Tec & color change',
+  companyServices: 'fleet wraps and vehicle graphics, 3M DI-NOC architectural finishes, Rea Tec architectural films, custom color-change wraps',
+  apolloApiKey: '',
+};

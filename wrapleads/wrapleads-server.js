@@ -90,17 +90,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ----------------------------------------------------------------------------
-// Static — serve CRM and auth pages
-// ----------------------------------------------------------------------------
-app.use(express.static(path.join(__dirname), {
-  extensions: ['html'],
-  index: 'wrapleads-crm.html',
-}));
-
-// Explicit route for auth page
-app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'wrapleads-auth.html')));
-app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'wrapleads-auth.html')));
+// Static serving is handled AFTER all API routes (see bottom of file)
 
 // ----------------------------------------------------------------------------
 // Auth middleware
@@ -740,6 +730,77 @@ const banner = `
 ║   WrapLeads.io — Local Server  (v0.4)             ║
 ║   http://localhost:${String(PORT).padEnd(5)}                          ║
 ╚═══════════════════════════════════════════════════╝`;
+
+// ----------------------------------------------------------------------------
+// AI email generation (proxied — users don't need their own API key)
+// ----------------------------------------------------------------------------
+app.post('/ai/email', authMiddleware, subMiddleware, async (req, res) => {
+  const { lead, emailType, tone, settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI email not configured (missing ANTHROPIC_API_KEY)' });
+
+  const systemPrompt = `You are an expert sales copywriter for a vehicle wrap shop. Write concise, personalized outreach emails.
+Company: ${settings.companyName || 'our wrap shop'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Email: ${settings.senderEmail || ''}
+Phone: ${settings.senderPhone || ''}
+Services: ${settings.companyServices || 'fleet wraps, color-change wraps, vehicle graphics'}
+Tagline: ${settings.companyTagline || 'premium vehicle wraps'}`;
+
+  const userPrompt = `Write a ${tone.toLowerCase()} ${emailType.toLowerCase()} email to ${lead.contactName || 'the fleet manager'} at ${lead.company}.
+Company location: ${lead.city ? lead.city + ', ' : ''}${lead.state || 'unknown state'}
+Fleet size: ${lead.fleetSize || 'unknown'}
+Pitch angle: ${lead.pitchAngle || 'general wrap inquiry'}
+Keep the email under 200 words. Use a compelling subject line. Return JSON: {"subject": "...", "body": "..."}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text ?? '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI returned invalid response' });
+    const parsed = JSON.parse(match[0]);
+    res.json(parsed);
+  } catch (e) {
+    console.error('[ai/email]', e);
+    res.status(500).json({ error: 'AI email generation failed' });
+  }
+});
+
+// Apollo test route
+app.get('/apollo/test', authMiddleware, async (req, res) => {
+  const key = req.query.key || req.headers['x-apollo-key'];
+  if (!key) return res.json({ ok: false });
+  try {
+    const r = await fetch(`${APOLLO_BASE}/auth/health_check`, {
+      headers: { 'Cache-Control': 'no-cache', 'Content-Type': 'application/json', 'x-api-key': key },
+    });
+    res.json({ ok: r.ok });
+  } catch {
+    res.json({ ok: false });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Static — serve React SPA (must be LAST, after all API routes)
+// ----------------------------------------------------------------------------
+app.use(express.static(path.join(__dirname, 'dist')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
 
 app.listen(PORT, async () => {
   console.log(banner);

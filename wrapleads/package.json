@@ -5,7 +5,10 @@
   "description": "B2B lead-gen platform for vehicle wrap and graphics shops.",
   "scripts": {
     "start": "node wrapleads-server.js",
-    "dev": "node --watch wrapleads-server.js",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev:server": "node --watch wrapleads-server.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
     "ingest:fmcsa": "node ingest-fmcsa.js",
     "ingest:sos": "node ingest-sos.js",
     "ingest:places": "node ingest-google-places.js",
@@ -13,6 +16,9 @@
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d",
     "db:psql": "docker compose exec db psql -U wrapleads -d wrapleads"
+  },
+  "devDependencies": {
+    "concurrently": "^8"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
