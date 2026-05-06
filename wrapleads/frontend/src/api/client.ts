@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics } from './types';
 
 export const api = {
   // Auth
@@ -144,6 +144,9 @@ export const api = {
       return data as { ok: boolean; result: BlueprintResult; pages: number };
     });
   },
+
+  // Analytics
+  analytics: () => authFetch<PipelineAnalytics>('/leads/analytics'),
 
   // Stripe
   checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),

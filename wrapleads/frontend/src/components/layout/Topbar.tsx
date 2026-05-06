@@ -7,9 +7,17 @@ import { api } from '../../api/client';
 export default function Topbar() {
   const { user, logout } = useAuth();
   const { leads } = useLeads();
-  const { mode, setMode, setAddLeadOpen, setSettingsOpen, setBlueprintOpen, showToast } = useAppStore((s) => ({
+  const {
+    mode, setMode,
+    leadView, setLeadView,
+    setCommandPaletteOpen,
+    setAddLeadOpen, setSettingsOpen, setBlueprintOpen, showToast,
+  } = useAppStore((s) => ({
     mode: s.mode,
     setMode: s.setMode,
+    leadView: s.leadView,
+    setLeadView: s.setLeadView,
+    setCommandPaletteOpen: s.setCommandPaletteOpen,
     setAddLeadOpen: s.setAddLeadOpen,
     setSettingsOpen: s.setSettingsOpen,
     setBlueprintOpen: s.setBlueprintOpen,
@@ -54,18 +62,47 @@ export default function Topbar() {
       <div className="topbar-spacer" />
 
       {mode === 'leads' && (
-        <>
-          <div className="topbar-stat">
-            <strong>{leads.length}</strong> leads
-          </div>
-          <div className="topbar-stat">
-            <strong>{activeCount}</strong> active
-          </div>
-          <div className="topbar-stat">
-            <strong>{wonCount}</strong> won
-          </div>
-        </>
+        <div className="view-toggle" title="Switch between list and kanban view">
+          <button
+            className={`view-btn${leadView === 'list' ? ' active' : ''}`}
+            onClick={() => setLeadView('list')}
+            title="List view"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" />
+              <line x1="3" y1="12" x2="3.01" y2="12" />
+              <line x1="3" y1="18" x2="3.01" y2="18" />
+            </svg>
+          </button>
+          <button
+            className={`view-btn${leadView === 'kanban' ? ' active' : ''}`}
+            onClick={() => setLeadView('kanban')}
+            title="Pipeline kanban"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="5" height="18" rx="1" />
+              <rect x="10" y="3" width="5" height="13" rx="1" />
+              <rect x="17" y="3" width="5" height="8" rx="1" />
+            </svg>
+          </button>
+        </div>
       )}
+
+      <button
+        className="cmd-k-btn"
+        onClick={() => setCommandPaletteOpen(true)}
+        title="Command palette (⌘K)"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <span>Search</span>
+        <kbd>⌘K</kbd>
+      </button>
 
       <div className="topbar-actions">
         <button className="btn" onClick={() => setBlueprintOpen(true)} title="Scan blueprint PDF for wrap opportunities">

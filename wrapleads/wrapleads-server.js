@@ -825,6 +825,27 @@ app.post('/leads/sync', authMiddleware, async (req, res) => {
   res.json({ ok: true, inserted, failed });
 });
 
+app.get('/leads/analytics', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [statusR, overdueR] = await Promise.all([
+      pool.query(`SELECT status, COUNT(*) AS count FROM leads WHERE user_id=$1 GROUP BY status`, [uid]),
+      pool.query(`
+        SELECT COUNT(*) AS count FROM leads
+        WHERE user_id=$1
+          AND status IN ('contacted','replied')
+          AND (last_contacted IS NULL OR last_contacted < CURRENT_DATE - INTERVAL '14 days')
+      `, [uid]),
+    ]);
+    const byStatus = {};
+    const total = statusR.rows.reduce((acc, r) => {
+      byStatus[r.status] = parseInt(r.count, 10);
+      return acc + parseInt(r.count, 10);
+    }, 0);
+    res.json({ total, byStatus, overdue: parseInt(overdueR.rows[0]?.count ?? 0, 10) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Boot
 // ----------------------------------------------------------------------------

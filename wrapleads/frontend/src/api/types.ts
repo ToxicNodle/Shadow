@@ -147,6 +147,12 @@ export interface BlueprintResult {
   confidence: 'high' | 'medium' | 'low';
 }
 
+export interface PipelineAnalytics {
+  total: number;
+  byStatus: Partial<Record<LeadStatus, number>>;
+  overdue: number;
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   companyName: '',
   senderName: '',

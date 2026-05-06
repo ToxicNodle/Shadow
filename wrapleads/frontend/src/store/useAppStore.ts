@@ -27,11 +27,20 @@ export interface ToastMessage {
 }
 
 export type LeadSort = 'score' | 'company' | 'status' | 'lastContacted';
+export type LeadView = 'list' | 'kanban';
 
 interface AppStore {
   // Mode
   mode: AppMode;
   setMode: (mode: AppMode) => void;
+
+  // Lead view (list vs kanban pipeline)
+  leadView: LeadView;
+  setLeadView: (v: LeadView) => void;
+
+  // Command palette
+  commandPaletteOpen: boolean;
+  setCommandPaletteOpen: (open: boolean) => void;
 
   // Current lead detail panel
   currentLeadId: string | null;
@@ -122,6 +131,14 @@ export const useAppStore = create<AppStore>()(
       mode: 'leads',
       setMode: (mode) => set({ mode }),
 
+      // Lead view
+      leadView: 'list',
+      setLeadView: (v) => set({ leadView: v }),
+
+      // Command palette
+      commandPaletteOpen: false,
+      setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+
       // Current lead
       currentLeadId: null,
       setCurrentLeadId: (id) => set({ currentLeadId: id }),
@@ -208,8 +225,7 @@ export const useAppStore = create<AppStore>()(
     }),
     {
       name: 'wl-app-store',
-      // Only persist settings; all other state resets on page load
-      partialize: (s) => ({ settings: s.settings }),
+      partialize: (s) => ({ settings: s.settings, leadView: s.leadView }),
     },
   ),
 );

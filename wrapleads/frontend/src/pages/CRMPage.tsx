@@ -4,9 +4,12 @@ import { useAppStore } from '../store/useAppStore';
 import Topbar from '../components/layout/Topbar';
 import Sidebar from '../components/layout/Sidebar';
 import TrialBanner from '../components/layout/TrialBanner';
+import PipelineStats from '../components/layout/PipelineStats';
 import LeadList from '../components/leads/LeadList';
+import KanbanBoard from '../components/leads/KanbanBoard';
 import LeadDetail from '../components/leads/detail/LeadDetail';
 import DiscoverPage from '../components/discover/DiscoverPage';
+import CommandPalette from '../components/ui/CommandPalette';
 import AddLeadModal from '../components/modals/AddLeadModal';
 import SettingsModal from '../components/modals/SettingsModal';
 import ApolloModal from '../components/modals/ApolloModal';
@@ -24,6 +27,8 @@ export default function CRMPage() {
     mode, setPaywallOpen,
     blueprintOpen, setBlueprintOpen,
     bulkOutreachOpen, csvImportOpen, proposalOpen,
+    leadView,
+    commandPaletteOpen, setCommandPaletteOpen,
   } = useAppStore((s) => ({
     mode: s.mode,
     setPaywallOpen: s.setPaywallOpen,
@@ -32,6 +37,9 @@ export default function CRMPage() {
     bulkOutreachOpen: s.bulkOutreachOpen,
     csvImportOpen: s.csvImportOpen,
     proposalOpen: s.proposalOpen,
+    leadView: s.leadView,
+    commandPaletteOpen: s.commandPaletteOpen,
+    setCommandPaletteOpen: s.setCommandPaletteOpen,
   }));
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -46,6 +54,17 @@ export default function CRMPage() {
       setShowOnboarding(true);
     }
   }, [user, setPaywallOpen]);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen(true);
+      }
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [setCommandPaletteOpen]);
 
   if (isLoading) {
     return (
@@ -65,10 +84,13 @@ export default function CRMPage() {
     <div className="crm-layout">
       {isTrial && user && <TrialBanner user={user} />}
       <Topbar />
+      {mode === 'leads' && <PipelineStats />}
       <div className="crm-body">
-        {mode === 'leads' && <Sidebar />}
-        <main className="crm-main">
-          {mode === 'leads' ? <LeadList /> : <DiscoverPage />}
+        {mode === 'leads' && leadView === 'list' && <Sidebar />}
+        <main className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}`}>
+          {mode === 'leads'
+            ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
+            : <DiscoverPage />}
         </main>
         {mode === 'leads' && <LeadDetail />}
       </div>
@@ -83,6 +105,7 @@ export default function CRMPage() {
       {bulkOutreachOpen && <BulkOutreachModal />}
       {csvImportOpen && <CSVImportModal />}
       {proposalOpen && <ProposalModal />}
+      {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
       <Toast />
     </div>
   );
