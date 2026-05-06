@@ -11,6 +11,7 @@ import KanbanBoard from '../components/leads/KanbanBoard';
 import LeadDetail from '../components/leads/detail/LeadDetail';
 import DiscoverPage from '../components/discover/DiscoverPage';
 import CommandPalette from '../components/ui/CommandPalette';
+import PasteImportModal from '../components/modals/PasteImportModal';
 import AddLeadModal from '../components/modals/AddLeadModal';
 import SettingsModal from '../components/modals/SettingsModal';
 import ApolloModal from '../components/modals/ApolloModal';
@@ -115,6 +116,7 @@ export default function CRMPage() {
       {csvImportOpen && <CSVImportModal />}
       {proposalOpen && <ProposalModal />}
       {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
+      <PasteImportModal />
       <Toast />
     </div>
   );

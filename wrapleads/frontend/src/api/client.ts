@@ -145,6 +145,12 @@ export const api = {
     });
   },
 
+  // AI contact parser
+  parseContacts: (text: string) =>
+    authFetch<{ leads: import('./types').ParsedContact[]; count: number }>('/ai/parse-contacts', {
+      method: 'POST', body: JSON.stringify({ text }),
+    }),
+
   // Analytics
   analytics: () => authFetch<PipelineAnalytics>('/leads/analytics'),
 

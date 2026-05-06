@@ -1185,6 +1185,61 @@ Body should be plain text with line breaks, professional but warm, under 450 wor
   }
 });
 
+app.post('/ai/parse-contacts', authMiddleware, async (req, res) => {
+  const { text } = req.body || {};
+  if (!text?.trim()) return res.status(400).json({ error: 'text is required' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+
+  const prompt = `You are a lead extraction assistant for a vehicle wrap and graphics company.
+
+Extract every distinct business / contact from the text below. For each one return a JSON object:
+- company (string, required) — the business name
+- contactName (string|null) — primary decision-maker's full name
+- contactTitle (string|null) — their title (e.g. "President/CEO", "Fleet Manager")
+- phone (string|null) — best phone number
+- email (string|null)
+- city (string|null)
+- state (string|null) — 2-letter abbreviation when known
+- category (one of): "fleet"|"dinoc"|"construction"|"design"|"reatec"|"colorchange"|"wallgraphics"|"gc_referral"
+  fleet=trucking/logistics/delivery, dinoc=property mgmt/facilities/hospitality,
+  construction=GC/builders, design=interior design/architecture, reatec=luxury retail/auto dealers,
+  colorchange=auto groups/rental fleets, wallgraphics=restaurants/retail/universities,
+  gc_referral=GC referral partners for architectural film specs
+- pitchAngle (string) — one tight sentence on the wrap opportunity (be specific to the company type)
+
+If multiple contacts share one company, create one lead using the most senior contact.
+Return ONLY a valid JSON array — no markdown, no explanation, no code fences.
+
+TEXT:
+${text.slice(0, 6000)}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2048,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text ?? '';
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return res.status(500).json({ error: 'Could not parse AI response', raw });
+    const leads = JSON.parse(match[0]);
+    res.json({ leads, count: leads.length });
+  } catch (e) {
+    console.error('[ai/parse-contacts]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/blueprint/scan', authMiddleware, upload.single('pdf'), async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });

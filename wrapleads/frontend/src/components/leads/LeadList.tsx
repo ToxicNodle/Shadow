@@ -23,7 +23,7 @@ export default function LeadList() {
     activeFilter, currentLeadId, setFilter,
     leadSort, setLeadSort,
     selectedLeadIds, selectAllLeads, clearLeadSelection,
-    setBulkOutreachOpen, setCsvImportOpen,
+    setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen,
   } = useAppStore((s) => ({
     activeFilter: s.activeFilter,
     currentLeadId: s.currentLeadId,
@@ -35,6 +35,7 @@ export default function LeadList() {
     clearLeadSelection: s.clearLeadSelection,
     setBulkOutreachOpen: s.setBulkOutreachOpen,
     setCsvImportOpen: s.setCsvImportOpen,
+    setPasteImportOpen: s.setPasteImportOpen,
   }));
 
   const filtered = useMemo(() => {
@@ -109,6 +110,19 @@ export default function LeadList() {
           <option value="status">Sort: Status</option>
           <option value="lastContacted">Sort: Last Contacted</option>
         </select>
+
+        <button
+          className="btn btn-ai-import"
+          style={{ fontSize: 12, padding: '4px 10px' }}
+          onClick={() => setPasteImportOpen(true)}
+          title="Paste any contact info — AI extracts leads instantly"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z" opacity=".4" />
+            <path d="M12 6v6l4 2" />
+          </svg>
+          AI Import
+        </button>
 
         <button
           className="btn"

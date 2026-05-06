@@ -42,6 +42,10 @@ interface AppStore {
   commandPaletteOpen: boolean;
   setCommandPaletteOpen: (open: boolean) => void;
 
+  // AI paste import
+  pasteImportOpen: boolean;
+  setPasteImportOpen: (open: boolean) => void;
+
   // Current lead detail panel
   currentLeadId: string | null;
   setCurrentLeadId: (id: string | null) => void;
@@ -138,6 +142,10 @@ export const useAppStore = create<AppStore>()(
       // Command palette
       commandPaletteOpen: false,
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+
+      // AI paste import
+      pasteImportOpen: false,
+      setPasteImportOpen: (open) => set({ pasteImportOpen: open }),
 
       // Current lead
       currentLeadId: null,

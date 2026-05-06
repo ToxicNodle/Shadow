@@ -778,3 +778,93 @@
   padding: 24px 16px; color: var(--text-faint);
   font-size: 13px; text-align: center;
 }
+
+/* =========================================================
+   AI PASTE IMPORT MODAL
+   ========================================================= */
+.paste-help {
+  font-size: 13px; color: var(--text-dim); margin-bottom: 12px; line-height: 1.5;
+}
+.paste-textarea {
+  width: 100%; min-height: 160px; max-height: 300px;
+  background: var(--bg-elev-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; color: var(--text);
+  font-family: var(--body); font-size: 13px; line-height: 1.5;
+  resize: vertical; outline: none; transition: border-color 0.15s;
+  margin-bottom: 10px;
+}
+.paste-textarea:focus { border-color: var(--accent); }
+.paste-textarea:disabled { opacity: 0.5; }
+.paste-error {
+  background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.3);
+  border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--red);
+  margin-bottom: 10px;
+}
+.paste-footer-note {
+  text-align: center; font-size: 11px; color: var(--text-faint); margin-top: 8px;
+}
+.paste-preview-bar {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px; font-size: 13px; color: var(--text-dim);
+}
+.paste-cards {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 420px; overflow-y: auto; margin-bottom: 16px;
+}
+.paste-card {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--bg-elev-2); border: 1px solid var(--border-soft);
+  border-radius: 8px; padding: 10px 12px;
+  transition: border-color 0.12s, opacity 0.12s;
+  animation: fadeIn 0.15s ease-out;
+}
+.paste-card.excluded { opacity: 0.4; }
+.paste-card-check { padding-top: 2px; flex-shrink: 0; }
+.paste-card-body { flex: 1; min-width: 0; }
+.paste-card-top {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  margin-bottom: 3px;
+}
+.paste-company { font-size: 13px; font-weight: 600; color: var(--text); }
+.paste-cat {
+  font-size: 10px; font-weight: 600; border-radius: 4px; border-width: 1px;
+  border-style: solid; padding: 2px 7px; white-space: nowrap; flex-shrink: 0;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.paste-contact { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.paste-meta {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  font-size: 11px; color: var(--text-faint); margin-bottom: 4px;
+}
+.paste-pitch {
+  font-size: 11px; color: var(--text-dim); font-style: italic;
+  border-left: 2px solid var(--accent); padding-left: 7px; margin-top: 4px;
+  line-height: 1.4;
+}
+.paste-edit-btn {
+  background: none; border: none; cursor: pointer; color: var(--text-faint);
+  padding: 4px; border-radius: 4px; flex-shrink: 0; transition: color 0.1s;
+}
+.paste-edit-btn:hover { color: var(--text); background: var(--bg-elev); }
+.paste-edit-form { display: flex; flex-direction: column; gap: 6px; }
+.paste-importing {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 32px 0;
+}
+.paste-importing-text { font-size: 14px; color: var(--text-dim); }
+.paste-progress-bar {
+  width: 100%; height: 4px; background: var(--bg-elev-2); border-radius: 2px; overflow: hidden;
+}
+.paste-progress-fill {
+  height: 100%; background: var(--accent); border-radius: 2px;
+  transition: width 0.15s ease-out;
+}
+/* AI Import button accent */
+.btn-ai-import {
+  background: linear-gradient(135deg, rgba(255,107,53,0.15), rgba(192,132,252,0.15));
+  border-color: rgba(255,107,53,0.4); color: var(--accent);
+}
+.btn-ai-import:hover {
+  background: linear-gradient(135deg, rgba(255,107,53,0.25), rgba(192,132,252,0.25));
+  border-color: var(--accent);
+}

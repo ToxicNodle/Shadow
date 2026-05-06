@@ -147,6 +147,18 @@ export interface BlueprintResult {
   confidence: 'high' | 'medium' | 'low';
 }
 
+export interface ParsedContact {
+  company: string;
+  contactName: string | null;
+  contactTitle: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  state: string | null;
+  category: LeadCategory;
+  pitchAngle: string;
+}
+
 export interface PipelineAnalytics {
   total: number;
   byStatus: Partial<Record<LeadStatus, number>>;

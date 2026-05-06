@@ -1,0 +1,677 @@
+/**
+ * WrapLeads — Vetted Lead Seeder
+ * Seeds 58 hand-researched B2B leads for Shadow Graphix across Fleet/Logistics,
+ * Interior Design/Architecture (DI-NOC), and Construction categories.
+ * Covers IN, OH, KY, MI, IL.
+ *
+ * Usage:
+ *   node seed-leads.js                  # seeds for all users
+ *   node seed-leads.js --user-id=1      # seeds for specific user only
+ */
+
+require('dotenv').config();
+const { Pool } = require('pg');
+
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
+
+const LEADS = [
+  // ── FLEET / LOGISTICS (14) ──────────────────────────────────────────────────
+  {
+    id: 'vetted-001',
+    company: 'Liquid Transport Corp (LTC)',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 841-4200',
+    email: 'ltcrecruiting@liquidtransport.com',
+    website: 'liquidtransport.com',
+    contactName: 'Tom Parish',
+    contactTitle: 'Company Contact',
+    fleetSize: '100',
+    pitchAngle: 'Massive trailer fleet rotating through 50 terminals — perfect for fleet-wide brand-refresh wraps and DOT-compliant tank-trailer livery; also bulk decals/numbering.',
+  },
+  {
+    id: 'vetted-002',
+    company: 'Hoosier Freight & Warehousing',
+    category: 'fleet',
+    city: 'McCordsville', state: 'IN',
+    phone: '(317) 497-0814',
+    website: 'hoosierfw.com',
+    contactName: 'Roger Crowder',
+    contactTitle: 'Member / Principal',
+    fleetSize: '40',
+    pitchAngle: 'Brand-forward food-grade warehousing — wraps reinforce AIB certifications and "Hoosier" identity on their dry vans.',
+  },
+  {
+    id: 'vetted-003',
+    company: 'Buchanan Hauling & Rigging',
+    category: 'fleet',
+    city: 'Fort Wayne', state: 'IN',
+    phone: '(260) 471-1877',
+    email: 'sales@buchananhauling.com',
+    website: 'buchananhauling.com',
+    contactName: 'Geary M. Buchanan',
+    contactTitle: 'Owner / CEO',
+    fleetSize: '150',
+    pitchAngle: 'Heavy-haul rigs are rolling billboards — premium tractor wraps + flatbed-trailer signage to support recruiting in a tight driver market.',
+  },
+  {
+    id: 'vetted-004',
+    company: 'Star Fleet Trucking',
+    category: 'fleet',
+    city: 'Goshen', state: 'IN',
+    website: 'starfleettrucking.com',
+    contactTitle: 'Owner/President',
+    fleetSize: '80',
+    pitchAngle: 'Owner-operator network — color-change wraps and consistent fleet-graphics packages for newly leased tractors; recruiting-themed wraps.',
+  },
+  {
+    id: 'vetted-005',
+    company: 'Bestway Express',
+    category: 'fleet',
+    city: 'Vincennes', state: 'IN',
+    website: 'bestwayexpress.com',
+    contactTitle: 'Owner/President',
+    fleetSize: '60',
+    pitchAngle: 'Mid-size dry-van fleet ideal for systematic re-wrap program when tractors cycle.',
+  },
+  {
+    id: 'vetted-006',
+    company: 'Monarch Distributing (Reyes Beverage Group)',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    website: 'monarchdistributingllc.com',
+    contactTitle: 'General Manager',
+    fleetSize: '120',
+    pitchAngle: 'Beverage trucks are premium wrap real estate — brand-specific side-panel graphics, seasonal promotions, and full-trailer wraps for craft brand allocations.',
+  },
+  {
+    id: 'vetted-007',
+    company: 'American Bottling Company (Keurig Dr Pepper)',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    website: 'keurigdrpepper.com',
+    contactTitle: 'Local Branch Manager',
+    fleetSize: '80',
+    pitchAngle: 'Brand-refresh wrap-program candidate for Snapple, 7UP, Dr Pepper, Bai delivery box trucks.',
+  },
+  {
+    id: 'vetted-008',
+    company: 'Indiana Beverage',
+    category: 'fleet',
+    city: 'Valparaiso', state: 'IN',
+    website: 'indianabev.com',
+    contactTitle: 'Owner/President',
+    fleetSize: '60',
+    pitchAngle: 'Multi-brand portfolio means frequent panel-graphic refreshes and supplier-funded wrap programs (most major breweries co-fund distributor wraps).',
+  },
+  {
+    id: 'vetted-009',
+    company: 'Williams Comfort Air / Mr. Plumber (WCA Group)',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 210-1753',
+    email: 'service@williamscomfortair.com',
+    website: 'williamscomfortair.com',
+    contactTitle: 'Marketing Director / Brand Manager',
+    fleetSize: '100',
+    pitchAngle: 'Their existing "Max" mascot branding shows they invest in fleet identity — pitch a re-wrap refresh, color-change for new EV vans, and DI-NOC for their training-center interior.',
+  },
+  {
+    id: 'vetted-010',
+    company: 'Peterman Brothers Heating Cooling Plumbing',
+    category: 'fleet',
+    city: 'Greenwood', state: 'IN',
+    website: 'petermanhvac.com',
+    contactName: 'Chad Peterman',
+    contactTitle: 'CEO / President',
+    fleetSize: '100',
+    pitchAngle: 'Aggressive multi-state expansion = ongoing demand for consistent fleet-wide wraps as new branches launch; perfect target for a master service agreement.',
+  },
+  {
+    id: 'vetted-011',
+    company: 'Chapman Heating Air Conditioning Plumbing',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    website: 'chapmanheating.com',
+    contactTitle: 'Owner/President',
+    fleetSize: '50',
+    pitchAngle: 'Distinctive Chapman-blue brand — wraps reinforce visual market presence in Indianapolis suburbs.',
+  },
+  {
+    id: 'vetted-012',
+    company: 'Masters Heating Cooling Plumbing & Electrical',
+    category: 'fleet',
+    city: 'Fort Wayne', state: 'IN',
+    phone: '(866) 824-4328',
+    website: 'mastersheatcool.com',
+    contactTitle: 'Marketing Director / Fleet Manager',
+    fleetSize: '65',
+    pitchAngle: 'Multi-state branded fleet — single supplier for wrap consistency across IN/MI service area.',
+  },
+  {
+    id: 'vetted-013',
+    company: 'Flow-Tech Plumbing & Heating',
+    category: 'fleet',
+    city: 'Columbia City', state: 'IN',
+    website: 'flowtechpandh.com',
+    contactTitle: 'Owner/President',
+    fleetSize: '40',
+    pitchAngle: 'Family-owned, growing — re-wrap for every new tech onboarded; consistent identity across 13-county service area.',
+  },
+  {
+    id: 'vetted-014',
+    company: 'Mercer Transportation Co.',
+    category: 'fleet',
+    city: 'Louisville', state: 'KY',
+    website: 'mercer-trans.com',
+    contactTitle: 'Marketing Director',
+    fleetSize: '200',
+    pitchAngle: 'Owner-operator recruiting market is fierce — Mercer-branded tractor wraps as part of sign-on packages or a co-branded program drives retention.',
+  },
+
+  // ── INTERIOR DESIGN / ARCHITECTURE — DI-NOC (17) ────────────────────────────
+  {
+    id: 'vetted-015',
+    company: 'RATIO Architects',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 633-4040',
+    email: 'tsteinhardt@ratioarchitects.com',
+    website: 'ratiodesign.com',
+    contactName: 'Anthony Steinhardt',
+    contactTitle: 'Principal, Business Development (CPSM)',
+    pitchAngle: 'Constant adaptive-reuse and historic-preservation work where DI-NOC wood/stone films enable code-compliant refinishing of existing surfaces. Large hospitality and corporate-interiors practice.',
+  },
+  {
+    id: 'vetted-016',
+    company: 'Schmidt Associates',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 263-6226',
+    email: 'marketing@schmidt-arch.com',
+    website: 'schmidt-arch.com',
+    contactTitle: 'Director of Interior Design / Principal-in-Charge',
+    pitchAngle: 'Strong tenant-improvement practice (fast-track 2-week-permit-set TI workflow) — DI-NOC fits their process perfectly.',
+  },
+  {
+    id: 'vetted-017',
+    company: 'CSO Architects',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    website: 'csoinc.net',
+    contactTitle: 'Director of Interior Design',
+    pitchAngle: 'Corporate, healthcare, and senior-living interiors all routinely use DI-NOC for wood-grain finishes on doors and millwork.',
+  },
+  {
+    id: 'vetted-018',
+    company: 'Rowland Design',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    website: 'rowlanddesign.com',
+    contactName: 'Eric Rowland',
+    contactTitle: 'Principal',
+    pitchAngle: 'Hospitality and commercial interior portfolio + environmental graphics practice — Shadow Graphix as wide-format/install partner for brand-environment projects.',
+  },
+  {
+    id: 'vetted-019',
+    company: 'Axis Architecture + Interiors',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    website: 'axisarchitecture.com',
+    contactName: 'Drew White',
+    contactTitle: 'Partner',
+    pitchAngle: 'AIA-award-winning corporate interiors — DI-NOC + Rea Tec offer specifiable, sustainable surface refinishing alternatives.',
+  },
+  {
+    id: 'vetted-020',
+    company: 'Progress Studio',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    website: 'theprogressstudio.com',
+    contactTitle: 'Principal / Project Manager',
+    pitchAngle: 'Heavy in dental/medical clinics where DI-NOC dramatically reduces millwork costs — pitch as the "fast-renovation finish library" supplier.',
+  },
+  {
+    id: 'vetted-021',
+    company: 'Parallel Design Group',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    website: 'paralleldg.com',
+    pitchAngle: 'Multifamily lobbies and amenity spaces are heavy DI-NOC users (durability + design flexibility).',
+  },
+  {
+    id: 'vetted-022',
+    company: 'BHDP Architecture',
+    category: 'dinoc',
+    city: 'Cincinnati', state: 'OH',
+    website: 'bhdp.com',
+    contactTitle: 'Director of Interior Design / Workplace Practice Leader',
+    pitchAngle: 'Major Fortune-500 corporate-interiors practice — DI-NOC and Rea Tec are standard finishes specs in their workplace projects.',
+  },
+  {
+    id: 'vetted-023',
+    company: 'Vocon',
+    category: 'dinoc',
+    city: 'Cleveland', state: 'OH',
+    phone: '(216) 588-0800',
+    website: 'vocon.com',
+    contactTitle: 'Director of Interior Design',
+    pitchAngle: 'National corporate-tenant practice — perfect DI-NOC volume specifier for repositioning/amenity projects. Top-30 Interior Design Giants.',
+  },
+  {
+    id: 'vetted-024',
+    company: 'NELSON Worldwide',
+    category: 'dinoc',
+    city: 'Cincinnati', state: 'OH',
+    website: 'nelsonworldwide.com',
+    contactTitle: 'Studio Director / Director of Retail/Hospitality Interiors',
+    pitchAngle: 'Heavy retail and hospitality portfolio — DI-NOC is standard for retail fixturing and hotel-room casework refinishing.',
+  },
+  {
+    id: 'vetted-025',
+    company: 'KZF Design',
+    category: 'dinoc',
+    city: 'Cincinnati', state: 'OH',
+    website: 'kzf.com',
+    contactTitle: 'Interiors Practice Leader',
+    pitchAngle: 'Interior Design Giant 30+ years; strong office, cultural, and educational portfolio. Large enough to standardize DI-NOC vendor.',
+  },
+  {
+    id: 'vetted-026',
+    company: 'MA Design',
+    category: 'dinoc',
+    city: 'Columbus', state: 'OH',
+    website: 'madesigninc.com',
+    contactTitle: 'Principal in Charge of Interiors',
+    pitchAngle: 'Corporate, healthcare, hospitality, education — large enough to standardize DI-NOC vendor.',
+  },
+  {
+    id: 'vetted-027',
+    company: 'Hubbuch & Co.',
+    category: 'dinoc',
+    city: 'Louisville', state: 'KY',
+    website: 'hubbuch.com',
+    contactTitle: 'Owner / Principal Designer',
+    pitchAngle: 'Long-term Churchill Downs Inc. and GE Monogram client — premium hospitality/retail interiors that demand high-grade architectural film.',
+  },
+  {
+    id: 'vetted-028',
+    company: 'Joseph & Joseph Architects',
+    category: 'dinoc',
+    city: 'Louisville', state: 'KY',
+    website: 'josephandjoseph.net',
+    contactTitle: 'Principal-in-Charge of Hospitality',
+    pitchAngle: 'Major bourbon-distillery and hospitality work (Old Forester, Angel\'s Envy, Green River) — DI-NOC wood-grain and metal-finish films integrate seamlessly with their industrial/heritage aesthetics.',
+  },
+  {
+    id: 'vetted-029',
+    company: 'Patrick Thompson Design',
+    category: 'dinoc',
+    city: 'Detroit', state: 'MI',
+    website: 'patrickthompsondesign.com',
+    contactName: 'Patrick Thompson',
+    contactTitle: 'Founder / Principal',
+    pitchAngle: 'Award-winning Detroit hospitality and bespoke commercial projects — Rea Tec and metallic DI-NOC suit their material-driven aesthetic.',
+  },
+  {
+    id: 'vetted-030',
+    company: 'INFORM Studio',
+    category: 'dinoc',
+    city: 'Northville', state: 'MI',
+    phone: '(248) 449-3564',
+    website: 'in-formstudio.com',
+    pitchAngle: 'Mixed-use, retail, hospitality, learning environments — multidisciplinary firm specifies finishes across many large public-realm projects.',
+  },
+  {
+    id: 'vetted-031',
+    company: 'Kuchar Studio',
+    category: 'dinoc',
+    city: 'Chicago', state: 'IL',
+    website: 'kucharstudio.com',
+    contactName: 'Sarah Kuchar-Parkinson',
+    contactTitle: 'Principal / Founder',
+    pitchAngle: 'Strong showroom and office work in the Merchandise Mart ecosystem — DI-NOC perfect for showroom build-outs that turn over annually.',
+  },
+
+  // ── CONSTRUCTION / GC / MEP (13) ─────────────────────────────────────────────
+  {
+    id: 'vetted-032',
+    company: 'F.A. Wilhelm Construction',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    website: 'fawilhelm.com',
+    contactTitle: 'Marketing Director / Director of Business Development',
+    pitchAngle: 'One of Indianapolis\'s largest GCs — color-change wraps for the project-manager truck fleet plus full wraps for jobsite trailers and equipment trucks.',
+  },
+  {
+    id: 'vetted-033',
+    company: 'Bowen Engineering Corporation',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 842-2616',
+    website: 'bowenengineering.com',
+    contactName: 'A. Douglas Bowen III',
+    contactTitle: 'President / CEO',
+    pitchAngle: 'National jobsite footprint with site/civil/mechanical work trucks and equipment trailers — strong candidate for fleet-graphic standardization across operation centers.',
+  },
+  {
+    id: 'vetted-034',
+    company: 'The Hagerman Group',
+    category: 'construction',
+    city: 'Fishers', state: 'IN',
+    phone: '(317) 577-6836',
+    email: 'ccombs@hagermangc.com',
+    website: 'thehagermangroup.com',
+    contactName: 'Chris Combs',
+    contactTitle: 'Estimating Project Coordinator',
+    pitchAngle: 'Family-owned multi-generational firm — pickup-truck color-change wraps and trailer graphics reinforce employer brand for talent recruiting (a publicly stated company priority).',
+  },
+  {
+    id: 'vetted-035',
+    company: 'BAF Corporation',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 253-0531',
+    website: 'bafcorp.com',
+    contactName: 'Barbara Fleming',
+    contactTitle: 'Owner',
+    pitchAngle: 'Tenant-improvement specialist — should be a Shadow Graphix referral partner (TI projects often need DI-NOC) AND a fleet-wrap customer for their work trucks.',
+  },
+  {
+    id: 'vetted-036',
+    company: 'Kort Builders',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    website: 'kortbuilders.com',
+    pitchAngle: 'Restaurant/retail GC = constant TI and exterior signage opportunities; pitch dual track (their fleet + their projects).',
+  },
+  {
+    id: 'vetted-037',
+    company: 'Ferrer Mechanical & Electrical',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 757-2020',
+    website: 'ferrermechanical.com',
+    contactTitle: 'Owner / Marketing Director',
+    pitchAngle: 'Rapidly growing mechanical contractor with branded service fleet and crew trucks — wraps support recruiting (ABC Diamond Award winner for safety).',
+  },
+  {
+    id: 'vetted-038',
+    company: 'DEEM LLC',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    website: 'deemfirst.com',
+    contactTitle: 'Marketing Director / Fleet Manager',
+    pitchAngle: 'Multi-state mechanical contractor with a substantial service-and-construction fleet — single-vendor wrap program saves substantial time.',
+  },
+  {
+    id: 'vetted-039',
+    company: 'Edwards Electrical & Mechanical',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    website: 'edwards-elec.com',
+    pitchAngle: 'Self-described "fleet maintenance" team in their org — they already think about fleet, so wrap upsell is a natural conversation.',
+  },
+  {
+    id: 'vetted-040',
+    company: 'Engledow Group',
+    category: 'construction',
+    city: 'Carmel', state: 'IN',
+    website: 'engledow.com',
+    contactTitle: 'Business Development Manager',
+    pitchAngle: 'Iconic "lime-green trucks" already wrapped — but their substantial fleet rotates and grows; perfect long-term wrap-renewal account.',
+  },
+  {
+    id: 'vetted-041',
+    company: 'Messer Construction Co.',
+    category: 'construction',
+    city: 'Cincinnati', state: 'OH',
+    phone: '(513) 672-5000',
+    website: 'messer.com',
+    contactTitle: 'Business Development / Marketing Director',
+    pitchAngle: 'Major regional GC with branded pickup and equipment fleet across 10 regions — opportunity for system-wide fleet-graphic standards.',
+  },
+  {
+    id: 'vetted-042',
+    company: 'Holland Roofing',
+    category: 'construction',
+    city: 'Cincinnati', state: 'OH',
+    website: 'hollandroofing.com',
+    pitchAngle: '30+ year roofing contractor with substantial branded service-truck fleet — wraps for rooftop service trucks are highly visible at every commercial property they touch.',
+  },
+  {
+    id: 'vetted-043',
+    company: 'The Geiler Company',
+    category: 'construction',
+    city: 'Cincinnati', state: 'OH',
+    phone: '(513) 744-4448',
+    website: 'geiler.com',
+    pitchAngle: 'One of Cincinnati\'s oldest mechanical contractors — heritage brand that benefits from professional truck-wrap consistency.',
+  },
+  {
+    id: 'vetted-044',
+    company: 'Kelley Construction',
+    category: 'construction',
+    city: 'Louisville', state: 'KY',
+    website: 'kelleyconstruction.com',
+    contactName: 'Joe Kelley',
+    contactTitle: 'CEO',
+    pitchAngle: 'Large family-led commercial/industrial GC — equipment, trailers, and work-truck fleet graphics opportunity.',
+  },
+  {
+    id: 'vetted-045',
+    company: 'Commercial Contracting Corporation (CCC)',
+    category: 'construction',
+    city: 'Auburn Hills', state: 'MI',
+    website: 'cccnetwork.com',
+    pitchAngle: 'Detroit-based, employee-owned, automotive-heavy — substantial cross-border equipment fleet and project trailers; interiors group could refer DI-NOC work.',
+  },
+  {
+    id: 'vetted-046',
+    company: 'Skender',
+    category: 'construction',
+    city: 'Chicago', state: 'IL',
+    website: 'skender.com',
+    pitchAngle: 'Major Chicago commercial GC that handles repeat-client tenant build-outs — Shadow Graphix should pitch BOTH their fleet AND become a DI-NOC supply/install partner for their interiors projects.',
+  },
+
+  // ── ADDITIONAL VETTED LEADS FROM RANKED WORKBOOK ────────────────────────────
+  {
+    id: 'vetted-047',
+    company: 'Cunningham Restaurant Group',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 378-7274',
+    email: 'marketing@crgdining.com',
+    website: 'crgdining.com',
+    contactTitle: 'Marketing Director / Operations Manager',
+    pitchAngle: 'Multi-location restaurant group with in-house delivery fleet — fleet wraps for brand visibility + DI-NOC for interior refreshes across 3-state portfolio.',
+  },
+  {
+    id: 'vetted-048',
+    company: 'Indianapolis Couriers',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 676-4779',
+    email: 'support@indianapoliscouriers.com',
+    website: 'indianapoliscouriers.com',
+    contactTitle: 'Operations Manager / Fleet Manager',
+    fleetSize: '50',
+    pitchAngle: '24/7 courier and delivery fleet across Indiana — sedans, cargo vans, box trucks, and freight trucks, all prime for fleet-wrap brand visibility.',
+  },
+  {
+    id: 'vetted-049',
+    company: 'Paul Henderson Plumbing',
+    category: 'fleet',
+    city: 'Carmel', state: 'IN',
+    phone: '(317) 872-3535',
+    email: 'office@paulhendersonplumbing.com',
+    website: 'paulhendersonplumbing.com',
+    contactTitle: 'Owner / Operations Manager',
+    pitchAngle: 'Fast-response mobile workforce serving Carmel and Hamilton County since 1989 — fleet wraps elevate brand presence for every service call.',
+  },
+  {
+    id: 'vetted-050',
+    company: 'Prologis Indianapolis',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 228-6200',
+    website: 'prologis.com',
+    contactTitle: 'Market Officer / Facilities Manager',
+    pitchAngle: 'Largest industrial property owner in Indianapolis (57 properties, 21M sq ft, 136 customers) — DI-NOC for property renovations, branding, and upgrades across their portfolio.',
+  },
+  {
+    id: 'vetted-051',
+    company: 'Bradley Company',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 663-6000',
+    email: 'info@bradleyco.com',
+    website: 'bradleyco.com',
+    contactTitle: 'Property Manager / Facilities Manager',
+    pitchAngle: 'Large commercial real estate firm — DI-NOC architectural films provide cost-effective surface finishes for their clients\' renovation and interior design needs.',
+  },
+  {
+    id: 'vetted-052',
+    company: 'Mr. Plumber by Metzler & Hallam',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 660-4919',
+    email: 'service@mrplumberindy.com',
+    website: 'mrplumberindy.com',
+    contactTitle: 'Marketing Manager / Operations Manager',
+    pitchAngle: 'Well-established plumbing company serving Central Indiana since 1946 with multiple offices — visible fleet of branded vans prime for wrap refresh.',
+  },
+  {
+    id: 'vetted-053',
+    company: 'Sullivan Hardware & Garden',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 255-9230',
+    email: 'events@sullivanhardware.com',
+    website: 'sullivanhardware.com',
+    contactTitle: 'Store Manager / Marketing Manager',
+    pitchAngle: 'Multi-location retail/garden center with delivery fleet AND hospitality spaces (Sully\'s Grill) — fleet wraps + DI-NOC for interior design.',
+  },
+  {
+    id: 'vetted-054',
+    company: 'Calvin Landscape',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 247-6316',
+    website: 'calvinlandscape.com',
+    contactTitle: 'Owner / Operations Manager',
+    pitchAngle: 'Well-established commercial landscaping company in Indianapolis since 1986 — fleet of vehicles and equipment prime for brand-visibility wraps.',
+  },
+  {
+    id: 'vetted-055',
+    company: 'Grounded Solutions',
+    category: 'construction',
+    city: 'Speedway', state: 'IN',
+    phone: '(317) 834-1922',
+    email: 'service@groundedin.com',
+    website: 'groundedin.com',
+    contactTitle: 'Owner / Operations Manager',
+    pitchAngle: 'Commercial and industrial electrical contractor since 2001 — fleet wraps for service vehicles + potential DI-NOC referrals from commercial building clients.',
+  },
+  {
+    id: 'vetted-056',
+    company: 'Indianapolis Healthplex',
+    category: 'dinoc',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 920-7400',
+    email: 'info@indianapolishealthplex.com',
+    website: 'indianapolishealthplex.com',
+    contactTitle: 'Facilities Manager / Operations Director',
+    pitchAngle: 'Large fitness and wellness facility — high-traffic interior spaces ideal for DI-NOC aesthetic upgrades and durable surface protection.',
+  },
+  {
+    id: 'vetted-057',
+    company: 'Indy Rooftops',
+    category: 'construction',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 617-3928',
+    email: 'mdotson@indyrooftops.com',
+    website: 'indyrooftops.com',
+    contactTitle: 'Owner / Operations Manager',
+    pitchAngle: 'Central Indiana roofing and exterior-services contractor with trucks, vans, and trailers — branded fleet graphics for visibility, trust-building, and neighborhood lead generation.',
+  },
+  {
+    id: 'vetted-058',
+    company: 'Choice Mechanical Services',
+    category: 'fleet',
+    city: 'Indianapolis', state: 'IN',
+    phone: '(317) 885-0200',
+    website: 'choicemechanical.net',
+    contactTitle: 'Operations Manager / Fleet Manager',
+    pitchAngle: 'Commercial HVAC, refrigeration, boiler, and chiller services across Central Indiana — service vehicles on the road daily represent prime fleet-wrap opportunity.',
+  },
+];
+
+async function main() {
+  const userIdArg = process.argv.find(a => a.startsWith('--user-id='));
+  const targetUserId = userIdArg ? parseInt(userIdArg.split('=')[1]) : null;
+
+  const pool = new Pool({ connectionString: DATABASE_URL });
+
+  try {
+    let users;
+    if (targetUserId) {
+      const r = await pool.query('SELECT id, email FROM users WHERE id = $1', [targetUserId]);
+      users = r.rows;
+    } else {
+      const r = await pool.query('SELECT id, email FROM users ORDER BY id');
+      users = r.rows;
+    }
+
+    if (!users.length) {
+      console.error('No users found. Create an account first.');
+      process.exit(1);
+    }
+
+    console.log(`\nSeeding ${LEADS.length} vetted leads for ${users.length} user(s)...\n`);
+
+    const now = new Date().toISOString();
+    let total = 0, inserted = 0, skipped = 0;
+
+    for (const user of users) {
+      for (const lead of LEADS) {
+        total++;
+        const r = await pool.query(
+          `INSERT INTO leads
+            (user_id, client_id, company, category, state, city, phone, email,
+             website, fleet_size, contact_name, contact_title, pitch_angle,
+             status, notes, address, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'cold','','',NOW(),NOW())
+           ON CONFLICT (user_id, client_id) DO NOTHING
+           RETURNING id`,
+          [
+            user.id,
+            `${lead.id}-u${user.id}`,
+            lead.company,
+            lead.category,
+            lead.state || '',
+            lead.city || '',
+            lead.phone || '',
+            lead.email || '',
+            lead.website || '',
+            lead.fleetSize || '',
+            lead.contactName || '',
+            lead.contactTitle || '',
+            lead.pitchAngle || '',
+          ]
+        );
+        if (r.rowCount > 0) inserted++;
+        else skipped++;
+      }
+      console.log(`  ✓ User ${user.id} (${user.email}): ${LEADS.length} leads processed`);
+    }
+
+    console.log(`\nDone!`);
+    console.log(`  ${inserted} leads inserted, ${skipped} already existed\n`);
+  } finally {
+    await pool.end();
+  }
+}
+
+main().catch(e => { console.error(e); process.exit(1); });
