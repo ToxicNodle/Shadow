@@ -42,7 +42,7 @@ export default function DiscoverPage() {
         </div>
         <div className="discover-stat-card">
           <div className="discover-stat-value">{stats?.sweet_spot?.toLocaleString() ?? '—'}</div>
-          <div className="discover-stat-label">Sweet Spot (5–50 units)</div>
+          <div className="discover-stat-label">Sweet Spot (25–500 units)</div>
         </div>
         <div className="discover-stat-card">
           <div className="discover-stat-value">{stats?.states ?? '—'}</div>

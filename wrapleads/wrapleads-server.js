@@ -70,7 +70,7 @@ pool.on('error', (err) => console.error('Postgres pool error:', err.message));
 
 async function checkDb() {
   try {
-    const r = await pool.query('SELECT NOW() AS now, COUNT(*)::INT AS carriers FROM companies WHERE source = $1', ['fmcsa']);
+    const r = await pool.query('SELECT NOW() AS now, COUNT(*)::INT AS carriers FROM companies');
     return { ok: true, time: r.rows[0].now, carriers: r.rows[0].carriers };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -744,7 +744,9 @@ app.post('/searches/saved/:id/run', authMiddleware, async (req, res) => {
 // ----------------------------------------------------------------------------
 function leadRow(row) {
   return {
-    id: row.id, clientId: row.client_id, company: row.company, category: row.category,
+    id: String(row.client_id || row.id),
+    serverId: row.id,
+    clientId: row.client_id, company: row.company, category: row.category,
     state: row.state, city: row.city, address: row.address,
     contactName: row.contact_name, contactTitle: row.contact_title,
     email: row.email, phone: row.phone, website: row.website,
@@ -1346,7 +1348,7 @@ app.listen(PORT, async () => {
   console.log(banner);
   const db = await checkDb();
   console.log(db.ok
-    ? `· Postgres connected. ${db.carriers.toLocaleString()} FMCSA carriers loaded.`
+    ? `· Postgres connected. ${db.carriers.toLocaleString()} carriers loaded.`
     : `· Postgres NOT connected: ${db.error}\n  Run: docker compose up -d`);
   console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
