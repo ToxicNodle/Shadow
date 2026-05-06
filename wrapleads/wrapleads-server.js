@@ -46,6 +46,7 @@ const jwt      = require('jsonwebtoken');
 const Stripe   = require('stripe');
 const crypto   = require('crypto');
 const email    = require('./lib/email');
+const rateLimit = require('express-rate-limit');
 
 const PORT              = parseInt(process.env.PORT || '3001', 10);
 const DATABASE_URL      = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
@@ -96,6 +97,12 @@ const app = express();
 // Stripe webhooks need the raw body — must be before express.json()
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '4mb' }));
+
+// Rate limiting
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
+const apiLimiter  = rateLimit({ windowMs: 60 * 1000,       max: 120, standardHeaders: true, legacyHeaders: false });
+app.use('/auth', authLimiter);
+app.use('/api',  apiLimiter);
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
