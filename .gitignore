@@ -1,0 +1,8 @@
+wrapleads/dist/
+wrapleads/node_modules/
+wrapleads/frontend/node_modules/
+wrapleads/.env
+node_modules/
+.env
+*.log
+.DS_Store
