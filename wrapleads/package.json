@@ -1,6 +1,6 @@
 {
   "name": "wrapleads",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "B2B lead-gen platform for vehicle wrap and graphics shops.",
   "scripts": {
@@ -15,10 +15,13 @@
     "db:psql": "docker compose exec db psql -U wrapleads -d wrapleads"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "csv-parse": "^5.5.6",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
-    "pg": "^8.13.0"
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.0",
+    "stripe": "^16.0.0"
   },
   "engines": {
     "node": ">=18"

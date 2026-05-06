@@ -4,6 +4,31 @@
 -- per source so re-ingesting is idempotent.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ---------------------------------------------------------------------------
+-- Users + Stripe subscriptions
+-- sub_status mirrors Stripe: 'trialing' | 'active' | 'past_due' |
+--   'canceled' | 'incomplete' | 'inactive' (pre-checkout)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+  id                  BIGSERIAL PRIMARY KEY,
+  email               TEXT NOT NULL UNIQUE,
+  password_hash       TEXT NOT NULL,
+  name                TEXT,
+  company_name        TEXT,
+  stripe_customer_id  TEXT UNIQUE,
+  stripe_sub_id       TEXT UNIQUE,
+  sub_status          TEXT NOT NULL DEFAULT 'inactive',
+  sub_period_end      TIMESTAMPTZ,
+  trial_ends_at       TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email            ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_stripe_customer  ON users (stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_users_stripe_sub       ON users (stripe_sub_id);
 
 CREATE TABLE IF NOT EXISTS companies (
   id              BIGSERIAL PRIMARY KEY,
