@@ -148,6 +148,11 @@ export const api = {
   // Analytics
   analytics: () => authFetch<PipelineAnalytics>('/leads/analytics'),
 
+  // Settings (server-persisted)
+  getSettings: () => authFetch<{ settings: Partial<import('./types').Settings> }>('/settings'),
+  saveSettings: (settings: Partial<import('./types').Settings>) =>
+    authFetch<{ ok: boolean }>('/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+
   // Stripe
   checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),
   portal: () => authFetch<{ url: string }>('/stripe/portal', { method: 'POST', body: '{}' }),

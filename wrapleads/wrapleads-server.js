@@ -58,6 +58,7 @@ const APP_URL           = process.env.APP_URL || `http://localhost:${PORT}`;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_PRICE_ID   = process.env.STRIPE_PRICE_ID || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const STRIPE_DISABLED   = process.env.STRIPE_DISABLED === 'true';
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' }) : null;
 
@@ -91,6 +92,11 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies (industry)`);
   } catch (e) {
     console.warn('[migrate] Could not add industry index:', e.message);
+  }
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json JSONB DEFAULT '{}'::jsonb`);
+  } catch (e) {
+    console.warn('[migrate] Could not add settings_json column:', e.message);
   }
 }
 
@@ -135,6 +141,7 @@ function authMiddleware(req, res, next) {
 
 // Subscription check — requires active or trialing subscription
 async function subMiddleware(req, res, next) {
+  if (STRIPE_DISABLED) return next();
   try {
     const r = await pool.query(
       `SELECT sub_status, trial_ends_at, sub_period_end FROM users WHERE id = $1`,
@@ -313,7 +320,9 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
     const user = r.rows[0];
     // Resolve effective subscription status
-    if (user.sub_status === 'inactive' && user.trial_ends_at && new Date(user.trial_ends_at) > new Date()) {
+    if (STRIPE_DISABLED) {
+      user.sub_status = 'active';
+    } else if (user.sub_status === 'inactive' && user.trial_ends_at && new Date(user.trial_ends_at) > new Date()) {
       user.sub_status = 'trialing';
     }
     // First login detection — true when user has no leads yet
@@ -634,12 +643,30 @@ app.post('/carriers/search', authMiddleware, subMiddleware, async (req, res) => 
 app.post('/carriers/import', authMiddleware, subMiddleware, async (req, res) => {
   const { companyId } = req.body || {};
   if (!companyId) return res.status(400).json({ error: 'Missing companyId' });
+  const uid = String(req.user.id);
   try {
     await pool.query(
       `INSERT INTO imports (company_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [companyId, String(req.user.id)]
+      [companyId, uid]
     );
-    res.json({ ok: true });
+    // Also create a CRM lead from the carrier data so it appears in My Leads immediately
+    const coR = await pool.query(`SELECT * FROM companies WHERE id = $1`, [companyId]);
+    let leadId = null;
+    if (coR.rows.length) {
+      const c = coR.rows[0];
+      const lr = await pool.query(`
+        INSERT INTO leads
+          (user_id, client_id, company, category, state, city, phone, email,
+           website, fleet_size, status, source_company_id, created_at, updated_at)
+        VALUES ($1, $2, $3, 'fleet', $4, $5, $6, $7, $8, $9, 'cold', $10, NOW(), NOW())
+        ON CONFLICT (user_id, client_id) DO NOTHING
+        RETURNING id
+      `, [uid, `carrier-${companyId}`, c.name || c.dba_name, c.state, c.city,
+          c.phone || null, c.email || null, c.website || null,
+          c.fleet_size ? String(c.fleet_size) : null, companyId]);
+      leadId = lr.rows[0]?.id ?? null;
+    }
+    res.json({ ok: true, leadId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -843,6 +870,110 @@ app.get('/leads/analytics', authMiddleware, async (req, res) => {
       return acc + parseInt(r.count, 10);
     }, 0);
     res.json({ total, byStatus, overdue: parseInt(overdueR.rows[0]?.count ?? 0, 10) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ----------------------------------------------------------------------------
+// Sample carrier seeder (runs when companies table is empty)
+// ----------------------------------------------------------------------------
+async function seedSampleCarriers() {
+  const STATES = {
+    IN: ['Indianapolis','Fort Wayne','Evansville','South Bend','Carmel','Fishers','Bloomington','Hammond','Lafayette','Muncie'],
+    OH: ['Columbus','Cleveland','Cincinnati','Toledo','Akron','Dayton','Parma','Canton','Youngstown','Lorain'],
+    IL: ['Chicago','Aurora','Rockford','Joliet','Naperville','Springfield','Peoria','Elgin','Waukegan','Champaign'],
+    MI: ['Detroit','Grand Rapids','Warren','Sterling Heights','Lansing','Ann Arbor','Flint','Dearborn','Livonia','Westland'],
+    KY: ['Louisville','Lexington','Bowling Green','Owensboro','Covington','Hopkinsville','Richmond','Florence','Georgetown','Henderson'],
+    TN: ['Nashville','Memphis','Knoxville','Chattanooga','Clarksville','Murfreesboro','Franklin','Jackson','Hendersonville','Kingsport'],
+    WI: ['Milwaukee','Madison','Green Bay','Kenosha','Racine','Appleton','Waukesha','Oshkosh','Eau Claire','Janesville'],
+    MO: ['Kansas City','St. Louis','Springfield','Columbia','Independence','Lee\'s Summit','O\'Fallon','St. Joseph','St. Charles','Blue Springs'],
+  };
+  const WORDS1 = ['Smith','Johnson','Midwest','Central','National','Allied','Premier','Eagle','Titan','Apex','Summit','Keystone','Pioneer','Patriot','American','Freedom','Heritage','Liberty','Horizon','Blue Ridge'];
+  const WORDS2 = ['Trucking','Transport','Logistics','Freight','Carriers','Express','Delivery','Hauling','Distribution','Moving'];
+  const SUFFIXES = ['LLC','Inc','Co','Corp',''];
+  const FLEETS = [3,5,7,8,10,12,15,18,20,25,30,35,40,50,60,75,100,125,150,200,300,500];
+  const INDUSTRIES = ['freight','trucking','general freight','household goods','construction fleet','auto transport','food beverage'];
+
+  const carriers = [];
+  let idx = 0;
+  for (const [state, cities] of Object.entries(STATES)) {
+    for (let i = 0; i < 45; i++) {
+      idx++;
+      const w1 = WORDS1[(idx * 7 + i * 3) % WORDS1.length];
+      const w2 = WORDS2[(idx * 3 + i) % WORDS2.length];
+      const sfx = SUFFIXES[(idx * 5) % SUFFIXES.length];
+      const city = cities[i % cities.length];
+      const fleet = FLEETS[(idx * 11 + i) % FLEETS.length];
+      const ind = INDUSTRIES[(idx * 2 + i) % INDUSTRIES.length];
+      carriers.push([
+        'seed', `seed-${String(idx).padStart(4,'0')}`,
+        sfx ? `${w1} ${w2} ${sfx}` : `${w1} ${w2}`,
+        null, state, city, null, null, null, fleet, ind, new Date('2022-06-01'),
+      ]);
+    }
+  }
+
+  let inserted = 0;
+  for (const row of carriers) {
+    try {
+      await pool.query(`
+        INSERT INTO companies
+          (source, source_id, name, dba_name, state, city, street, phone, website, fleet_size, industry, last_reported)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        ON CONFLICT (source, source_id) DO NOTHING
+      `, row);
+      inserted++;
+    } catch { /* skip */ }
+  }
+  console.log(`  → Inserted ${inserted} sample carriers across ${Object.keys(STATES).length} states.`);
+}
+
+// ----------------------------------------------------------------------------
+// Settings (per-user, server-persisted)
+// ----------------------------------------------------------------------------
+app.get('/settings', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id = $1', [req.user.id]);
+    res.json({ settings: r.rows[0]?.settings_json ?? {} });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/settings', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('UPDATE users SET settings_json = $1 WHERE id = $2',
+      [req.body || {}, req.user.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ----------------------------------------------------------------------------
+// Export leads as CSV
+// ----------------------------------------------------------------------------
+app.get('/leads/export', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT * FROM leads WHERE user_id = $1 ORDER BY updated_at DESC`,
+      [String(req.user.id)]
+    );
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const header = ['Company','Contact Name','Title','Email','Phone','Category','Status',
+                    'Fleet Size','City','State','Last Contacted','Notes','Score'].map(esc).join(',');
+    const rows = r.rows.map((l) => {
+      const fleet = parseInt(l.fleet_size) || 0;
+      // Simple score approximation for export
+      const score = Math.min(100,
+        (fleet >= 100 ? 30 : fleet >= 50 ? 25 : fleet >= 20 ? 18 : fleet >= 10 ? 12 : fleet >= 5 ? 6 : 0) +
+        ({ fleet: 25, colorchange: 22, dinoc: 20, reatec: 18, construction: 15, wallgraphics: 12, design: 10 }[l.category] ?? 10) +
+        ({ won: 30, proposal: 25, meeting: 20, replied: 15, contacted: 10, cold: 5 }[l.status] ?? 0)
+      );
+      return [l.company, l.contact_name, l.contact_title, l.email, l.phone,
+              l.category, l.status, l.fleet_size, l.city, l.state,
+              l.last_contacted ? new Date(l.last_contacted).toLocaleDateString('en-US') : '',
+              l.notes, score].map(esc).join(',');
+    });
+    const csv = [header, ...rows].join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="wrapleads-export.csv"');
+    res.send(csv);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1169,14 +1300,9 @@ app.listen(PORT, async () => {
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {
-      console.log('· Companies table empty — starting FMCSA ingest in background...');
-      const { spawn } = require('child_process');
-      const child = spawn('node', ['ingest-fmcsa.js'], {
-        cwd: __dirname,
-        stdio: 'inherit',
-        env: process.env,
-      });
-      child.on('exit', code => console.log(`· FMCSA ingest finished (exit ${code})`));
+      console.log('· Companies table empty — seeding sample carriers...');
+      await seedSampleCarriers();
+      console.log('· Sample carriers seeded. Run ingest-fmcsa.js to load real FMCSA data.');
     }
   }
   console.log(`· Open http://localhost:${PORT} in your browser.\n`);

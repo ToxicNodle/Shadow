@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useAppStore } from '../store/useAppStore';
+import { api } from '../api/client';
 import Topbar from '../components/layout/Topbar';
 import Sidebar from '../components/layout/Sidebar';
 import TrialBanner from '../components/layout/TrialBanner';
@@ -65,6 +66,14 @@ export default function CRMPage() {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [setCommandPaletteOpen]);
+
+  // Load server-persisted settings on first mount
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  useEffect(() => {
+    api.getSettings().then(({ settings }) => {
+      if (Object.keys(settings).length > 0) updateSettings(settings);
+    }).catch(() => {});
+  }, [updateSettings]);
 
   if (isLoading) {
     return (

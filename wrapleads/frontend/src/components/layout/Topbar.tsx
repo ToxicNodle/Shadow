@@ -1,17 +1,14 @@
 import { useAuth } from '../../hooks/useAuth';
-import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import type { AppMode } from '../../store/useAppStore';
-import { api } from '../../api/client';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
-  const { leads } = useLeads();
   const {
     mode, setMode,
     leadView, setLeadView,
     setCommandPaletteOpen,
-    setAddLeadOpen, setSettingsOpen, setBlueprintOpen, showToast,
+    setAddLeadOpen, setSettingsOpen, setBlueprintOpen,
   } = useAppStore((s) => ({
     mode: s.mode,
     setMode: s.setMode,
@@ -21,20 +18,7 @@ export default function Topbar() {
     setAddLeadOpen: s.setAddLeadOpen,
     setSettingsOpen: s.setSettingsOpen,
     setBlueprintOpen: s.setBlueprintOpen,
-    showToast: s.showToast,
   }));
-
-  const wonCount = leads.filter((l) => l.status === 'won').length;
-  const activeCount = leads.filter((l) => l.status !== 'won' && l.status !== 'lost').length;
-
-  async function handlePortal() {
-    try {
-      const { url } = await api.portal();
-      window.location.href = url;
-    } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
-    }
-  }
 
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
@@ -132,18 +116,6 @@ export default function Topbar() {
         <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>
           <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0]}</span>
-          {user?.subStatus === 'active' && (
-            <button
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2 }}
-              title="Billing"
-              onClick={handlePortal}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-                <line x1="1" y1="10" x2="23" y2="10" />
-              </svg>
-            </button>
-          )}
           <button
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2 }}
             title="Sign out"

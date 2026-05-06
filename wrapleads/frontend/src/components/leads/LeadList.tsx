@@ -4,6 +4,18 @@ import { useAppStore } from '../../store/useAppStore';
 import type { LeadSort } from '../../store/useAppStore';
 import LeadRow from './LeadRow';
 import { scoreLead } from '../../utils/scoring';
+import { getToken } from '../../api/client';
+
+function downloadCSV() {
+  fetch('/leads/export', { headers: { Authorization: `Bearer ${getToken()}` } })
+    .then((r) => r.blob())
+    .then((blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'wrapleads-export.csv'; a.click();
+      URL.revokeObjectURL(url);
+    });
+}
 
 export default function LeadList() {
   const { leads, isLoading } = useLeads();
@@ -110,6 +122,20 @@ export default function LeadList() {
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
           Import CSV
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px' }}
+          onClick={downloadCSV}
+          title="Export all leads as CSV"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Export CSV
         </button>
 
         <span className="lead-count-badge">{filtered.length} / {leads.length}</span>

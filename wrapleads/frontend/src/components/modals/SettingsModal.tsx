@@ -24,6 +24,7 @@ export default function SettingsModal() {
 
   function handleSave() {
     updateSettings(local);
+    api.saveSettings(local).catch(() => {});
     showToast('Settings saved');
     handleClose();
   }
