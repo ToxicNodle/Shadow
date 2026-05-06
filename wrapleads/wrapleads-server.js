@@ -121,6 +121,30 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create lead_activities table:', e.message);
   }
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_queue (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        lead_id      BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        sequence_day INT NOT NULL DEFAULT 1,
+        subject      TEXT NOT NULL,
+        body         TEXT NOT NULL,
+        to_email     TEXT NOT NULL,
+        to_name      TEXT,
+        send_at      TIMESTAMPTZ NOT NULL,
+        sent_at      TIMESTAMPTZ,
+        status       TEXT NOT NULL DEFAULT 'pending',
+        resend_id    TEXT,
+        error_msg    TEXT,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eq_pending ON email_queue(send_at) WHERE status = 'pending'`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eq_lead ON email_queue(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create email_queue table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1155,6 +1179,170 @@ app.get('/leads/export', authMiddleware, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Drip engine — activate a 3-email sequence for a lead
+// ----------------------------------------------------------------------------
+app.post('/leads/:id/activate-sequence', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const uid = String(req.user.id);
+  const { tone = 'Professional' } = req.body || {};
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+  // Verify lead ownership + get email
+  const leadR = await pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [id, uid]);
+  if (!leadR.rows.length) return res.status(404).json({ error: 'Not found' });
+  const lead = leadRow(leadR.rows[0]);
+  if (!lead.email) return res.status(400).json({ error: 'Lead has no email address — find one first' });
+
+  // Cancel any existing pending queue for this lead
+  await pool.query(`UPDATE email_queue SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='pending'`, [id, uid]);
+
+  // Get sender settings
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const settings = userR.rows[0]?.settings_json || {};
+
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film installation company.
+Company: ${settings.companyName || 'our wrap shop'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a 3-email ${tone} drip sequence for this prospect:
+Company: ${lead.company}
+Contact: ${lead.contactName || 'Fleet/Facilities Manager'}, ${lead.contactTitle || ''}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+Pitch angle: ${lead.pitchAngle || 'general wrap inquiry'}
+
+Email 1 (Day 1): Warm introduction — establish credibility, reference their specific opportunity
+Email 2 (Day 5): Follow-up — add value (relevant case study, stat, or insight)
+Email 3 (Day 12): Last touch — brief, direct, genuine, leaves door open
+
+Each under 180 words. Return raw JSON only:
+{"emails":[{"day":1,"label":"Introduction","subject":"...","body":"..."},{"day":5,"label":"Follow-up","subject":"...","body":"..."},{"day":12,"label":"Last Touch","subject":"...","body":"..."}]}`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 2000);
+    const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    const now = new Date();
+
+    // Insert 3 queue rows
+    for (const email of result.emails) {
+      const sendAt = new Date(now);
+      sendAt.setDate(sendAt.getDate() + (email.day - 1));
+      await pool.query(
+        `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [uid, id, email.day, email.subject, email.body, lead.email, lead.contactName || null, sendAt]
+      );
+    }
+
+    // Log activity
+    await logActivity(pool, { leadId: id, userId: uid, type: 'sequence_activated',
+      metadata: { emails: result.emails.length, tone } });
+
+    res.json({ ok: true, queued: result.emails.length, emails: result.emails });
+  } catch (e) {
+    console.error('[activate-sequence]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/leads/:id/queue', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = await pool.query(
+      `SELECT id, sequence_day, subject, body, to_email, to_name, send_at, sent_at, status, error_msg
+       FROM email_queue WHERE lead_id=$1 ORDER BY sequence_day ASC`, [id]
+    );
+    res.json({ queue: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/email-queue/:id', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    await pool.query(
+      `UPDATE email_queue SET status='cancelled' WHERE id=$1 AND user_id=$2 AND status='pending'`,
+      [id, String(req.user.id)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Background worker — processes pending queue emails
+async function processEmailQueue() {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  try {
+    const { rows } = await pool.query(`
+      SELECT q.*, l.contact_name, l.company
+      FROM email_queue q
+      JOIN leads l ON l.id = q.lead_id
+      WHERE q.status = 'pending' AND q.send_at <= NOW()
+      LIMIT 10
+      FOR UPDATE SKIP LOCKED
+    `);
+    for (const item of rows) {
+      try {
+        const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [item.user_id]);
+        const s = userR.rows[0]?.settings_json || {};
+        const fromName = s.senderName || 'WrapLeads';
+        const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+
+        const resp = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `${fromName} <${fromEmail}>`,
+            to: item.to_name ? `${item.to_name} <${item.to_email}>` : item.to_email,
+            subject: item.subject,
+            text: item.body,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.message || 'Resend error');
+
+        await pool.query(
+          `UPDATE email_queue SET status='sent', sent_at=NOW(), resend_id=$1 WHERE id=$2`,
+          [data.id, item.id]
+        );
+        await logActivity(pool, {
+          leadId: item.lead_id, userId: item.user_id, type: 'email_sent',
+          subject: item.subject, body: item.body,
+          metadata: { to: item.to_email, resend_id: data.id, sequence_day: item.sequence_day, auto: true },
+        });
+        await pool.query(
+          `UPDATE leads SET last_contacted=CURRENT_DATE,
+            followup_due_at=CURRENT_DATE + INTERVAL '3 days',
+            status=CASE WHEN status='cold' THEN 'contacted' ELSE status END,
+            updated_at=NOW() WHERE id=$1`, [item.lead_id]
+        );
+        console.log(`[drip] Sent Day ${item.sequence_day} to ${item.to_email} (lead ${item.lead_id})`);
+      } catch (err) {
+        await pool.query(
+          `UPDATE email_queue SET status='failed', error_msg=$1 WHERE id=$2`,
+          [err.message, item.id]
+        );
+        console.error(`[drip] Failed queue item ${item.id}:`, err.message);
+      }
+    }
+  } catch (e) {
+    console.error('[drip worker]', e.message);
+  }
+}
+
+function startDripWorker() {
+  processEmailQueue(); // run immediately on start
+  setInterval(processEmailQueue, 60_000); // then every minute
+  console.log('· Drip worker: running (checks queue every 60s)');
+}
+
+// ----------------------------------------------------------------------------
 // Boot
 // ----------------------------------------------------------------------------
 const banner = `
@@ -1529,6 +1717,7 @@ app.listen(PORT, async () => {
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
   if (db.ok) {
     await migrateDb();
+    startDripWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {

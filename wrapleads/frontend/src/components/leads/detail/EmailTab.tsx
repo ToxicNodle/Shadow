@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
@@ -38,8 +38,25 @@ export default function EmailTab({ lead }: Props) {
   const [result, setResult] = useState<{ subject: string; body: string } | null>(null);
   const [sequence, setSequence] = useState<SequenceEmail[] | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [activating, setActivating] = useState(false);
 
   const settingsIncomplete = !settings.senderName.trim() || !settings.companyName.trim();
+
+  const { data: queueData, refetch: refetchQueue } = useQuery({
+    queryKey: ['email-queue', lead.serverId],
+    queryFn: () => api.getQueue(lead.serverId!),
+    enabled: !!lead.serverId,
+    staleTime: 15_000,
+  });
+  const queue = queueData?.queue ?? [];
+  const pendingQueue = queue.filter((q) => q.status === 'pending');
+  const hasActiveSequence = pendingQueue.length > 0;
+
+  const cancelMutation = useMutation({
+    mutationFn: (queueId: number) => api.cancelQueueItem(queueId),
+    onSuccess: () => { refetchQueue(); showToast('Email cancelled'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
 
   async function generate() {
     if (settingsIncomplete) return;
@@ -104,6 +121,22 @@ export default function EmailTab({ lead }: Props) {
   function openApollo() {
     setApolloLeadId(lead.id);
     setApolloOpen(true);
+  }
+
+  async function activateSequence() {
+    if (!lead.serverId || !lead.email) return;
+    setActivating(true);
+    try {
+      const res = await api.activateSequence(lead.serverId, tone);
+      qc.invalidateQueries({ queryKey: ['email-queue', lead.serverId] });
+      qc.invalidateQueries({ queryKey: ['activities', lead.serverId] });
+      showToast(`🚀 Drip activated — ${res.queued} emails queued`);
+      refetchQueue();
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setActivating(false);
+    }
   }
 
   return (
@@ -185,6 +218,53 @@ export default function EmailTab({ lead }: Props) {
           ? <><span className="spinner" /> {tabMode === 'sequence' ? 'Building sequence…' : 'Generating…'}</>
           : tabMode === 'sequence' ? '📅 Generate 3-Email Sequence' : '⚡ Generate Email'}
       </button>
+
+      {tabMode === 'sequence' && lead.email && (
+        <button
+          className="generate-btn"
+          style={{
+            marginTop: 8, background: hasActiveSequence
+              ? 'linear-gradient(135deg,rgba(74,222,128,0.15),rgba(74,222,128,0.08))'
+              : 'linear-gradient(135deg,rgba(255,107,53,0.2),rgba(192,132,252,0.15))',
+            border: hasActiveSequence ? '1px solid rgba(74,222,128,0.4)' : '1px solid rgba(255,107,53,0.4)',
+            color: hasActiveSequence ? 'var(--green)' : 'var(--accent)',
+          }}
+          onClick={activateSequence}
+          disabled={activating || settingsIncomplete}
+        >
+          {activating
+            ? <><span className="spinner" /> Queueing sequence…</>
+            : hasActiveSequence
+              ? `✓ Sequence active — ${pendingQueue.length} emails queued`
+              : '🚀 Activate Auto-Send Sequence'}
+        </button>
+      )}
+
+      {queue.length > 0 && (
+        <div style={{ marginTop: 12, background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Drip Queue
+          </div>
+          {queue.map((item) => {
+            const sendDate = new Date(item.send_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            const statusColor = item.status === 'sent' ? 'var(--green)' : item.status === 'failed' ? 'var(--red)' : item.status === 'cancelled' ? 'var(--text-faint)' : 'var(--accent)';
+            return (
+              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border-soft)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, minWidth: 48 }}>Day {item.sequence_day}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-dim)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.subject}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>{item.status === 'sent' ? '✓ sent' : item.status === 'cancelled' ? 'cancelled' : sendDate}</span>
+                {item.status === 'pending' && (
+                  <button
+                    className="btn"
+                    style={{ fontSize: 10, padding: '2px 7px', color: 'var(--red)', borderColor: 'rgba(248,113,113,0.3)' }}
+                    onClick={() => cancelMutation.mutate(item.id)}
+                  >✕</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Single email result */}
       {result && (

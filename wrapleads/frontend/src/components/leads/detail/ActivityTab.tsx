@@ -6,13 +6,14 @@ import { useAppStore } from '../../../store/useAppStore';
 interface Props { lead: Lead; }
 
 const TYPE_LABELS: Record<ActivityType | string, { icon: string; label: string; color: string }> = {
-  email_sent:       { icon: '✉', label: 'Email sent',        color: '#60a5fa' },
-  email_copied:     { icon: '📋', label: 'Email copied',     color: '#94a3b8' },
-  email_generated:  { icon: '⚡', label: 'Email drafted',    color: '#c084fc' },
-  status_changed:   { icon: '◈',  label: 'Status changed',   color: '#fb923c' },
-  note_added:       { icon: '📝', label: 'Note added',       color: '#4ade80' },
-  called:           { icon: '📞', label: 'Call logged',      color: '#34d399' },
-  meeting_set:      { icon: '📅', label: 'Meeting set',      color: '#facc15' },
+  email_sent:          { icon: '✉',  label: 'Email sent',         color: '#60a5fa' },
+  email_copied:        { icon: '📋', label: 'Email copied',       color: '#94a3b8' },
+  email_generated:     { icon: '⚡', label: 'Email drafted',      color: '#c084fc' },
+  status_changed:      { icon: '◈',  label: 'Status changed',     color: '#fb923c' },
+  note_added:          { icon: '📝', label: 'Note added',         color: '#4ade80' },
+  called:              { icon: '📞', label: 'Call logged',        color: '#34d399' },
+  meeting_set:         { icon: '📅', label: 'Meeting set',        color: '#facc15' },
+  sequence_activated:  { icon: '🚀', label: 'Drip sequence live', color: '#ff6b35' },
 };
 
 function fmtDate(iso: string) {

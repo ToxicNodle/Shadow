@@ -27,7 +27,7 @@ export interface Lead {
   updatedAt: string;
 }
 
-export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'status_changed' | 'note_added' | 'called' | 'meeting_set';
+export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated';
 
 export interface LeadActivity {
   id: string;
@@ -36,6 +36,19 @@ export interface LeadActivity {
   body?: string;
   metadata?: Record<string, unknown>;
   created_at: string;
+}
+
+export interface QueuedEmail {
+  id: number;
+  sequence_day: number;
+  subject: string;
+  body: string;
+  to_email: string;
+  to_name?: string;
+  send_at: string;
+  sent_at?: string;
+  status: 'pending' | 'sent' | 'failed' | 'cancelled';
+  error_msg?: string;
 }
 
 export interface Carrier {

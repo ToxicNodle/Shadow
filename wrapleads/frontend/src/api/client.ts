@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail } from './types';
 
 export const api = {
   // Auth
@@ -95,6 +95,14 @@ export const api = {
     }),
   getFollowupDue: () =>
     authFetch<{ leads: Lead[]; count: number }>('/leads/followup-due'),
+  activateSequence: (serverId: number, tone?: string) =>
+    authFetch<{ ok: boolean; queued: number; emails: { day: number; label: string; subject: string; body: string }[] }>(
+      `/leads/${serverId}/activate-sequence`, { method: 'POST', body: JSON.stringify({ tone }) }
+    ),
+  getQueue: (serverId: number) =>
+    authFetch<{ queue: QueuedEmail[] }>(`/leads/${serverId}/queue`),
+  cancelQueueItem: (queueId: number) =>
+    authFetch<{ ok: boolean }>(`/email-queue/${queueId}`, { method: 'DELETE' }),
 
   // Carriers
   searchCarriers: (params: CarrierSearchParams) =>
