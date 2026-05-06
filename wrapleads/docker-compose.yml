@@ -1,0 +1,33 @@
+# WrapLeads — Local Postgres
+# Usage:
+#   docker compose up -d        # start (schema auto-loads on first run)
+#   docker compose down         # stop (data persists)
+#   docker compose down -v      # stop AND wipe data
+#   docker compose logs -f db   # tail logs
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wrapleads-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wrapleads
+      POSTGRES_PASSWORD: wrapleads
+      POSTGRES_DB: wrapleads
+      # Tuning for bulk ingest of ~600k FMCSA rows
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - wrapleads_data:/var/lib/postgresql/data
+      # Schema runs automatically on FIRST start (when data dir is empty)
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wrapleads -d wrapleads"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  wrapleads_data:
+    name: wrapleads_data
