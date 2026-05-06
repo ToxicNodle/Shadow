@@ -59,10 +59,12 @@ interface AppStore {
   settingsOpen: boolean;
   apolloOpen: boolean;
   paywallOpen: boolean;
+  blueprintOpen: boolean;
   setAddLeadOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setApolloOpen: (open: boolean) => void;
   setPaywallOpen: (open: boolean) => void;
+  setBlueprintOpen: (open: boolean) => void;
 
   // Current lead for Apollo enrichment
   apolloLeadId: string | null;
@@ -142,10 +144,12 @@ export const useAppStore = create<AppStore>()(
       settingsOpen: false,
       apolloOpen: false,
       paywallOpen: false,
+      blueprintOpen: false,
       setAddLeadOpen: (open) => set({ addLeadOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setApolloOpen: (open) => set({ apolloOpen: open }),
       setPaywallOpen: (open) => set({ paywallOpen: open }),
+      setBlueprintOpen: (open) => set({ blueprintOpen: open }),
 
       // Apollo lead context
       apolloLeadId: null,

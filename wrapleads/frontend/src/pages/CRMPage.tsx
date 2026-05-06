@@ -12,13 +12,16 @@ import SettingsModal from '../components/modals/SettingsModal';
 import ApolloModal from '../components/modals/ApolloModal';
 import PaywallModal from '../components/modals/PaywallModal';
 import OnboardingModal from '../components/modals/OnboardingModal';
+import BlueprintScanner from '../components/modals/BlueprintScanner';
 import Toast from '../components/ui/Toast';
 
 export default function CRMPage() {
   const { user, isLoading } = useAuth();
-  const { mode, setPaywallOpen } = useAppStore((s) => ({
+  const { mode, setPaywallOpen, blueprintOpen, setBlueprintOpen } = useAppStore((s) => ({
     mode: s.mode,
     setPaywallOpen: s.setPaywallOpen,
+    blueprintOpen: s.blueprintOpen,
+    setBlueprintOpen: s.setBlueprintOpen,
   }));
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -66,6 +69,7 @@ export default function CRMPage() {
       <ApolloModal />
       <PaywallModal />
       {showOnboarding && <OnboardingModal onClose={() => setShowOnboarding(false)} />}
+      {blueprintOpen && <BlueprintScanner onClose={() => setBlueprintOpen(false)} />}
       <Toast />
     </div>
   );

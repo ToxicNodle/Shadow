@@ -126,6 +126,27 @@ export const STATUSES: Record<LeadStatus, string> = {
   lost: 'Lost',
 };
 
+export interface BlueprintOpportunity {
+  type: LeadCategory;
+  description: string;
+  specs: string[];
+  location: string;
+}
+
+export interface BlueprintResult {
+  hasOpportunity: boolean;
+  opportunities: BlueprintOpportunity[];
+  company: string | null;
+  contactTitle: string | null;
+  projectName: string | null;
+  city: string | null;
+  state: string | null;
+  projectType: string;
+  pitchAngle: string;
+  notes: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   companyName: '',
   senderName: '',

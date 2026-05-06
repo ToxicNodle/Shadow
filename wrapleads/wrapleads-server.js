@@ -898,6 +898,107 @@ app.get('/apollo/test', authMiddleware, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Blueprint Scanner — upload a PDF bid spec, Claude extracts wrap opportunities
+// ----------------------------------------------------------------------------
+const multer  = require('multer');
+const pdfParse = require('pdf-parse');
+const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+app.post('/blueprint/scan', authMiddleware, upload.single('pdf'), async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+  if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' });
+
+  let text = '';
+  try {
+    const parsed = await pdfParse(req.file.buffer);
+    text = parsed.text || '';
+  } catch {
+    return res.status(422).json({ error: 'Could not read PDF — make sure it is text-based (not a scanned image)' });
+  }
+
+  if (text.trim().length < 50) {
+    return res.status(422).json({ error: 'PDF appears to be a scanned image. Text extraction requires a text-based PDF.' });
+  }
+
+  // Truncate to ~12k chars to stay within token limits
+  const excerpt = text.slice(0, 12000);
+
+  const prompt = `You are analyzing a construction bid specification or blueprint document for a vehicle wrap and architectural film installation company.
+
+Extract any opportunities for:
+- 3M DI-NOC architectural film installation
+- Rea Tec architectural film installation
+- Vehicle wraps or fleet graphics
+- Wall graphics or large-format printing
+- Color change wraps
+- Any 3M certified installer requirements
+
+Document text:
+---
+${excerpt}
+---
+
+Return a JSON object with this exact structure (no markdown, raw JSON only):
+{
+  "hasOpportunity": true or false,
+  "opportunities": [
+    {
+      "type": "dinoc" | "reatec" | "wallgraphics" | "fleet" | "colorchange" | "gc_referral",
+      "description": "brief description of what was found",
+      "specs": ["list of specific product specs or quantities mentioned"],
+      "location": "where in the doc (e.g. Section 09 72 00)"
+    }
+  ],
+  "company": "GC or owner name if found, or null",
+  "contactTitle": "most relevant contact title (e.g. General Contractor, Project Manager)",
+  "projectName": "project name if mentioned, or null",
+  "city": "city if mentioned, or null",
+  "state": "2-letter state code if mentioned, or null",
+  "projectType": "office | healthcare | hospitality | retail | education | industrial | residential | other",
+  "pitchAngle": "1-2 sentence pitch for why this is a wrap/film opportunity",
+  "notes": "any other relevant details (cert requirements, quantities, timeline)",
+  "confidence": "high | medium | low"
+}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      return res.status(502).json({ error: `AI error: ${err}` });
+    }
+
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text || '{}';
+
+    let result;
+    try {
+      result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    } catch {
+      return res.status(502).json({ error: 'AI returned unexpected format' });
+    }
+
+    res.json({ ok: true, result, pages: text.length });
+  } catch (e) {
+    console.error('[blueprint/scan]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Static — serve React SPA (must be LAST, after all API routes)
 // ----------------------------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'dist')));
