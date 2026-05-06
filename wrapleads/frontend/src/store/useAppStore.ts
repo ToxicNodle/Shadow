@@ -72,6 +72,7 @@ interface AppStore {
   setCarrierOffset: (offset: number) => void;
   setCarrierLastQuery: (query: CarrierSearchParams) => void;
   resetCarrierState: () => void;
+  markCarrierImported: (id: number) => void;
 
   // Selected carriers (for bulk import)
   selectedCarrierIds: Set<number>;
@@ -183,6 +184,15 @@ export const useAppStore = create<AppStore>()(
       setCarrierLastQuery: (query) =>
         set((s) => ({ carrierState: { ...s.carrierState, lastQuery: query } })),
       resetCarrierState: () => set({ carrierState: DEFAULT_CARRIER_STATE }),
+      markCarrierImported: (id) =>
+        set((s) => ({
+          carrierState: {
+            ...s.carrierState,
+            results: s.carrierState.results.map((c) =>
+              c.id === id ? { ...c, already_imported: true } : c
+            ),
+          },
+        })),
 
       // Selected carriers
       selectedCarrierIds: new Set<number>(),
