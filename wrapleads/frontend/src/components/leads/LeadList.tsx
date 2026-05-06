@@ -39,10 +39,12 @@ export default function LeadList() {
   }));
 
   const filtered = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
     const base = leads.filter((l) => {
       if (activeFilter.category !== 'all' && l.category !== activeFilter.category) return false;
       if (activeFilter.status !== 'all' && l.status !== activeFilter.status) return false;
       if (activeFilter.state && l.state !== activeFilter.state) return false;
+      if (activeFilter.followupDue && !(l.followupDueAt && l.followupDueAt <= today)) return false;
       if (activeFilter.search) {
         const q = activeFilter.search.toLowerCase();
         const haystack = [l.company, l.contactName, l.email, l.city, l.state].join(' ').toLowerCase();

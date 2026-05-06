@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
@@ -20,6 +21,7 @@ interface SequenceEmail {
 }
 
 export default function EmailTab({ lead }: Props) {
+  const qc = useQueryClient();
   const { settings, showToast, setApolloOpen, setApolloLeadId, setSettingsOpen } = useAppStore((s) => ({
     settings: s.settings,
     showToast: s.showToast,
@@ -32,6 +34,7 @@ export default function EmailTab({ lead }: Props) {
   const [emailType, setEmailType] = useState(EMAIL_TYPES[0]);
   const [tone, setTone] = useState(TONES[0]);
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [result, setResult] = useState<{ subject: string; body: string } | null>(null);
   const [sequence, setSequence] = useState<SequenceEmail[] | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -69,6 +72,33 @@ export default function EmailTab({ lead }: Props) {
     if (!result || !lead.email) return;
     const url = `mailto:${lead.email}?subject=${encodeURIComponent(result.subject)}&body=${encodeURIComponent(result.body)}`;
     window.open(url, '_blank');
+  }
+
+  async function sendEmail() {
+    if (!result || !lead.email || !lead.serverId) return;
+    setSending(true);
+    try {
+      await api.sendEmail(lead.serverId, {
+        subject: result.subject,
+        body: result.body,
+        toEmail: lead.email,
+        toName: lead.contactName || undefined,
+      });
+      qc.invalidateQueries({ queryKey: ['activities', lead.serverId] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast('Email sent!');
+    } catch (e: unknown) {
+      const msg = (e as Error).message;
+      if (msg.includes('RESEND_API_KEY')) {
+        // Fall back to copying — log it anyway
+        copy(`Subject: ${result.subject}\n\n${result.body}`);
+        showToast('Resend not configured — copied to clipboard instead');
+      } else {
+        showToast(msg, 'error');
+      }
+    } finally {
+      setSending(false);
+    }
   }
 
   function openApollo() {
@@ -167,7 +197,18 @@ export default function EmailTab({ lead }: Props) {
           <div className="email-actions">
             <button className="btn" onClick={() => copy(`Subject: ${result.subject}\n\n${result.body}`)}>Copy</button>
             {lead.email && (
-              <button className="btn btn-primary" onClick={openMailTo}>Open in Mail</button>
+              <>
+                <button className="btn btn-primary" onClick={sendEmail} disabled={sending}>
+                  {sending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 5 }} />Sending…</> : '⚡ Send Email'}
+                </button>
+                <button className="btn" onClick={openMailTo} title="Open in your email client">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                  Open in Mail
+                </button>
+              </>
             )}
           </div>
         </div>

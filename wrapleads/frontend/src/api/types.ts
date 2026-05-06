@@ -21,9 +21,21 @@ export interface Lead {
   status: LeadStatus;
   notes: string;
   lastContacted: string;
+  followupDueAt?: string | null;
   sourceCompanyId?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'status_changed' | 'note_added' | 'called' | 'meeting_set';
+
+export interface LeadActivity {
+  id: string;
+  type: ActivityType;
+  subject?: string;
+  body?: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface Carrier {

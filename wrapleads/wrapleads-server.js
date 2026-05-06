@@ -98,6 +98,29 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not add settings_json column:', e.message);
   }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS followup_due_at DATE`);
+  } catch (e) {
+    console.warn('[migrate] Could not add followup_due_at column:', e.message);
+  }
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        id         BIGSERIAL PRIMARY KEY,
+        lead_id    BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id    TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        subject    TEXT,
+        body       TEXT,
+        metadata   JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_activities_lead ON lead_activities(lead_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_activities_user ON lead_activities(user_id, created_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create lead_activities table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -753,9 +776,23 @@ function leadRow(row) {
     fleetSize: row.fleet_size, pitchAngle: row.pitch_angle,
     status: row.status, notes: row.notes,
     lastContacted: row.last_contacted ? row.last_contacted.toISOString().slice(0, 10) : '',
+    followupDueAt: row.followup_due_at ? row.followup_due_at.toISOString().slice(0, 10) : null,
     sourceCompanyId: row.source_company_id,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
+}
+
+// Days until follow-up is due per status (null = no auto follow-up)
+const FOLLOWUP_DAYS = { contacted: 3, replied: 2, meeting: 5, proposal: 7 };
+
+async function logActivity(pool, { leadId, userId, type, subject = null, body = null, metadata = {} }) {
+  try {
+    await pool.query(
+      `INSERT INTO lead_activities (lead_id, user_id, type, subject, body, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [leadId, userId, type, subject, body, JSON.stringify(metadata)]
+    );
+  } catch { /* non-critical */ }
 }
 
 app.get('/leads', authMiddleware, async (req, res) => {
@@ -796,6 +833,15 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const d = req.body || {};
+  const uid = String(req.user.id);
+
+  // Fetch current lead to detect status changes
+  let prevStatus = null;
+  try {
+    const prev = await pool.query('SELECT status FROM leads WHERE id=$1 AND user_id=$2', [id, uid]);
+    prevStatus = prev.rows[0]?.status ?? null;
+  } catch { /* ignore */ }
+
   const colMap = { company:'company', category:'category', state:'state', city:'city', address:'address',
     contactName:'contact_name', contactTitle:'contact_title', email:'email', phone:'phone', website:'website',
     fleetSize:'fleet_size', pitchAngle:'pitch_angle', status:'status', notes:'notes', lastContacted:'last_contacted' };
@@ -803,14 +849,32 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
   for (const [key, col] of Object.entries(colMap)) {
     if (d[key] !== undefined) { params.push(d[key]||null); sets.push(`${col}=$${params.length}`); }
   }
+
+  // Auto-set followup_due_at when status changes to a trackable stage
+  if (d.status && d.status !== prevStatus && FOLLOWUP_DAYS[d.status]) {
+    params.push(d.status);
+    sets.push(`followup_due_at = CURRENT_DATE + INTERVAL '1 day' * $${params.length}::int`);
+    // Swap last param with days count
+    params[params.length - 1] = FOLLOWUP_DAYS[d.status];
+  } else if (d.status === 'won' || d.status === 'lost') {
+    sets.push('followup_due_at = NULL');
+  }
+
   if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
-  params.push(id); params.push(String(req.user.id));
+  params.push(id); params.push(uid);
   try {
     const r = await pool.query(
       `UPDATE leads SET ${sets.join(',')}, updated_at=NOW()
        WHERE id=$${params.length-1} AND user_id=$${params.length} RETURNING *`, params
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+
+    // Log status change activity
+    if (d.status && d.status !== prevStatus) {
+      await logActivity(pool, { leadId: id, userId: uid, type: 'status_changed',
+        metadata: { from: prevStatus, to: d.status } });
+    }
+
     res.json(leadRow(r.rows[0]));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -852,6 +916,117 @@ app.post('/leads/sync', authMiddleware, async (req, res) => {
     } catch { failed++; }
   }
   res.json({ ok: true, inserted, failed });
+});
+
+// ----------------------------------------------------------------------------
+// Lead activities (timeline)
+// ----------------------------------------------------------------------------
+app.get('/leads/:id/activities', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    // Verify ownership
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = await pool.query(
+      `SELECT id, type, subject, body, metadata, created_at
+       FROM lead_activities WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 100`, [id]
+    );
+    res.json({ activities: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/activities', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const { type, subject, body, metadata } = req.body || {};
+  if (!type) return res.status(400).json({ error: 'type required' });
+  const uid = String(req.user.id);
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = await pool.query(
+      `INSERT INTO lead_activities (lead_id, user_id, type, subject, body, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [id, uid, type, subject || null, body || null, JSON.stringify(metadata || {})]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const { subject, body, toEmail, toName } = req.body || {};
+  if (!subject || !body || !toEmail) return res.status(400).json({ error: 'subject, body, toEmail required' });
+
+  const uid = String(req.user.id);
+  const resendKey = process.env.RESEND_API_KEY;
+
+  // Verify lead ownership
+  const own = await pool.query(
+    'SELECT id, company FROM leads WHERE id=$1 AND user_id=$2', [id, uid]
+  );
+  if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+
+  // Get sender settings
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const settings = userR.rows[0]?.settings_json || {};
+  const fromName = settings.senderName || 'WrapLeads';
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+
+  if (!resendKey) {
+    // Log as a draft/copy action even without sending
+    await logActivity(pool, { leadId: id, userId: uid, type: 'email_copied',
+      subject, body, metadata: { to: toEmail, toName } });
+    return res.status(503).json({
+      error: 'RESEND_API_KEY not configured — email copied but not sent',
+      logged: true,
+    });
+  }
+
+  try {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: `${fromName} <${fromEmail}>`,
+        to: toName ? `${toName} <${toEmail}>` : toEmail,
+        subject,
+        text: body,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Resend error');
+
+    // Log sent email + update last_contacted + set followup
+    await logActivity(pool, { leadId: id, userId: uid, type: 'email_sent',
+      subject, body, metadata: { to: toEmail, toName, resend_id: data.id } });
+    await pool.query(
+      `UPDATE leads SET last_contacted = CURRENT_DATE,
+        followup_due_at = CURRENT_DATE + INTERVAL '3 days',
+        status = CASE WHEN status = 'cold' THEN 'contacted' ELSE status END,
+        updated_at = NOW()
+       WHERE id=$1`, [id]
+    );
+    res.json({ ok: true, resend_id: data.id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Follow-up queue: leads where followup_due_at <= today
+app.get('/leads/followup-due', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT * FROM leads
+       WHERE user_id=$1 AND followup_due_at <= CURRENT_DATE
+         AND status NOT IN ('won','lost')
+       ORDER BY followup_due_at ASC LIMIT 50`,
+      [String(req.user.id)]
+    );
+    res.json({ leads: r.rows.map(leadRow), count: r.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/leads/analytics', authMiddleware, async (req, res) => {

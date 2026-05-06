@@ -5,8 +5,9 @@ import { CATEGORIES, STATUSES } from '../../../api/types';
 import InfoTab from './InfoTab';
 import EmailTab from './EmailTab';
 import NotesTab from './NotesTab';
+import ActivityTab from './ActivityTab';
 
-type Tab = 'info' | 'email' | 'notes';
+type Tab = 'info' | 'email' | 'activity' | 'notes';
 
 export default function LeadDetail() {
   const { leads } = useLeads();
@@ -43,7 +44,7 @@ export default function LeadDetail() {
       </div>
 
       <div className="lead-detail-tabs">
-        {(['info', 'email', 'notes'] as Tab[]).map((t) => (
+        {(['info', 'email', 'activity', 'notes'] as Tab[]).map((t) => (
           <button
             key={t}
             className={`detail-tab ${activeTab === t ? 'active' : ''}`}
@@ -55,9 +56,10 @@ export default function LeadDetail() {
       </div>
 
       <div className="lead-detail-content">
-        {activeTab === 'info' && <InfoTab lead={lead} />}
-        {activeTab === 'email' && <EmailTab lead={lead} />}
-        {activeTab === 'notes' && <NotesTab lead={lead} />}
+        {activeTab === 'info'     && <InfoTab lead={lead} />}
+        {activeTab === 'email'    && <EmailTab lead={lead} />}
+        {activeTab === 'activity' && <ActivityTab lead={lead} />}
+        {activeTab === 'notes'    && <NotesTab lead={lead} />}
       </div>
     </aside>
   );

@@ -74,13 +74,27 @@ export const api = {
   createLead: (lead: Partial<Lead>) =>
     authFetch<{ id: number }>('/leads', { method: 'POST', body: JSON.stringify(lead) }),
   updateLead: (serverId: number, patch: Partial<Lead>) =>
-    authFetch<void>(`/leads/${serverId}`, { method: 'PUT', body: JSON.stringify(patch) }),
+    authFetch<Lead>(`/leads/${serverId}`, { method: 'PUT', body: JSON.stringify(patch) }),
   deleteLead: (serverId: number) =>
     authFetch<void>(`/leads/${serverId}`, { method: 'DELETE' }),
   syncLeads: (leads: Partial<Lead>[]) =>
     authFetch<{ inserted: number; failed: number }>('/leads/sync', {
       method: 'POST', body: JSON.stringify({ leads }),
     }),
+
+  // Lead activities
+  getActivities: (serverId: number) =>
+    authFetch<{ activities: import('./types').LeadActivity[] }>(`/leads/${serverId}/activities`),
+  logActivity: (serverId: number, activity: { type: string; subject?: string; body?: string; metadata?: Record<string, unknown> }) =>
+    authFetch<import('./types').LeadActivity>(`/leads/${serverId}/activities`, {
+      method: 'POST', body: JSON.stringify(activity),
+    }),
+  sendEmail: (serverId: number, payload: { subject: string; body: string; toEmail: string; toName?: string }) =>
+    authFetch<{ ok: boolean; resend_id?: string }>(`/leads/${serverId}/send-email`, {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+  getFollowupDue: () =>
+    authFetch<{ leads: Lead[]; count: number }>('/leads/followup-due'),
 
   // Carriers
   searchCarriers: (params: CarrierSearchParams) =>

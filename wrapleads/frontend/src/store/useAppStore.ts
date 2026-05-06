@@ -10,6 +10,7 @@ export interface ActiveFilter {
   status: LeadStatus | 'all';
   state: string;
   search: string;
+  followupDue?: boolean;
 }
 
 export interface CarrierState {
