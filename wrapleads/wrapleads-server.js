@@ -174,11 +174,11 @@ app.get(['/test', '/apollo/test', '/health'], async (req, res) => {
 // AUTH — register / login / me
 // ----------------------------------------------------------------------------
 app.post('/auth/register', async (req, res) => {
-  const { email, password, name, company } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  const { email: userEmail, password, name, company } = req.body || {};
+  if (!userEmail || !password) return res.status(400).json({ error: 'Email and password required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-  const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedEmail = String(userEmail).trim().toLowerCase();
 
   try {
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
