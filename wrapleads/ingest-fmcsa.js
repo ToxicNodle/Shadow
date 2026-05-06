@@ -92,6 +92,20 @@ async function fetchPage(state, offset) {
   return apiGet(url); // returns array of row objects
 }
 
+function classifyIndustry(classdef) {
+  if (!classdef) return 'trucking';
+  const cf = classdef.toUpperCase();
+  if (/PASSENGER|BUS|MOTOR COACH/.test(cf))              return 'passenger';
+  if (/HOUSEHOLD GOODS/.test(cf))                        return 'moving';
+  if (/HAZMAT|CHEMICAL|OIL|PETROLEUM|GAS/.test(cf))      return 'hazmat';
+  if (/REFRIGERATED|REEFER/.test(cf))                    return 'refrigerated';
+  if (/LIVESTOCK|GRAIN|AGRICULTURAL/.test(cf))           return 'agricultural';
+  if (/CONSTRUCTION|BUILDING|LUMBER/.test(cf))           return 'construction_fleet';
+  if (/AUTO PARTS|VEHICLE|CAR CARRIER/.test(cf))         return 'auto_transport';
+  if (/AUTHORIZED FOR HIRE|GENERAL FREIGHT/.test(cf))    return 'freight';
+  return 'trucking';
+}
+
 function mapRow(r) {
   return {
     source:            'fmcsa',
@@ -108,6 +122,7 @@ function mapRow(r) {
     fleet_size:        parseInt(r.power_units || '0', 10) || null,
     drivers:           parseInt(r.total_drivers || '0', 10) || null,
     cargo_types:       r.classdef || null,
+    industry:          classifyIndustry(r.classdef),
     last_reported:     parseDate(r.mcs150_date),
     added_to_registry: parseDate(r.add_date),
     raw_data:          r,
@@ -120,7 +135,7 @@ function mapRow(r) {
 async function flushBatch(pool, batch) {
   const cols = [
     'source','source_id','name','dba_name','street','city','state','zip','country',
-    'phone','email','fleet_size','drivers','cargo_types','last_reported','added_to_registry','raw_data',
+    'phone','email','fleet_size','drivers','cargo_types','industry','last_reported','added_to_registry','raw_data',
   ];
   const values = [];
   const placeholders = batch.map((row, i) => {
@@ -144,6 +159,7 @@ async function flushBatch(pool, batch) {
       fleet_size        = EXCLUDED.fleet_size,
       drivers           = EXCLUDED.drivers,
       cargo_types       = EXCLUDED.cargo_types,
+      industry          = EXCLUDED.industry,
       last_reported     = EXCLUDED.last_reported,
       added_to_registry = EXCLUDED.added_to_registry,
       raw_data          = EXCLUDED.raw_data,

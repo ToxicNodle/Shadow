@@ -11,6 +11,21 @@ const US_STATES = [
   'VA','WA','WV','WI','WY',
 ];
 
+const INDUSTRY_OPTIONS = [
+  { value: 'freight',            label: 'Freight / For-Hire' },
+  { value: 'trucking',           label: 'Trucking (general)' },
+  { value: 'refrigerated',       label: 'Refrigerated' },
+  { value: 'moving',             label: 'Moving / Household' },
+  { value: 'construction_fleet', label: 'Construction Fleet' },
+  { value: 'auto_transport',     label: 'Auto Transport' },
+  { value: 'agricultural',       label: 'Agricultural' },
+  { value: 'passenger',          label: 'Passenger / Bus' },
+  { value: 'construction_general', label: 'GC / Contractors (SOS)' },
+  { value: 'design_general',     label: 'Design / Architects (SOS)' },
+  { value: 'trucking_general',   label: 'Logistics (SOS)' },
+  { value: 'general',            label: 'General Business (SOS)' },
+];
+
 export default function FilterRow() {
   const searchMutation = useCarrierSearch();
   const { createSearch } = useSavedSearches();
@@ -19,6 +34,7 @@ export default function FilterRow() {
   }));
 
   const [states, setStates] = useState<string[]>([]);
+  const [industries, setIndustries] = useState<string[]>([]);
   const [minFleet, setMinFleet] = useState('');
   const [maxFleet, setMaxFleet] = useState('');
   const [query, setQuery] = useState('');
@@ -27,21 +43,23 @@ export default function FilterRow() {
 
   function buildSearchParams(): CarrierSearchParams {
     return {
-      states: states.length ? states : null,
-      minFleet: minFleet ? Number(minFleet) : null,
-      maxFleet: maxFleet ? Number(maxFleet) : null,
-      query: query || undefined,
-      limit: 25,
-      offset: 0,
+      states:     states.length ? states : null,
+      industries: industries.length ? industries : null,
+      minFleet:   minFleet ? Number(minFleet) : null,
+      maxFleet:   maxFleet ? Number(maxFleet) : null,
+      query:      query || undefined,
+      limit:      25,
+      offset:     0,
     };
   }
 
   function buildSaveFilters(): SavedSearch['filters'] {
     return {
-      states: states.length ? states : undefined,
-      minFleet: minFleet ? Number(minFleet) : null,
-      maxFleet: maxFleet ? Number(maxFleet) : null,
-      query: query || undefined,
+      states:     states.length ? states : undefined,
+      industries: industries.length ? industries : undefined,
+      minFleet:   minFleet ? Number(minFleet) : null,
+      maxFleet:   maxFleet ? Number(maxFleet) : null,
+      query:      query || undefined,
     };
   }
 
@@ -61,6 +79,10 @@ export default function FilterRow() {
     setStates((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
   }
 
+  function toggleIndustry(v: string) {
+    setIndustries((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
+  }
+
   return (
     <div>
       <div className="filter-row">
@@ -74,6 +96,19 @@ export default function FilterRow() {
             <option value="">Add state…</option>
             {US_STATES.filter((s) => !states.includes(s)).map((s) => (
               <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Industry</label>
+          <select
+            className="select"
+            value=""
+            onChange={(e) => { if (e.target.value) toggleIndustry(e.target.value); }}
+          >
+            <option value="">Add industry…</option>
+            {INDUSTRY_OPTIONS.filter((o) => !industries.includes(o.value)).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
         </div>
@@ -126,12 +161,18 @@ export default function FilterRow() {
         </div>
       </div>
 
-      {states.length > 0 && (
+      {(states.length > 0 || industries.length > 0) && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {states.map((s) => (
             <span key={s} className="saved-chip">
               {s}
               <button className="chip-del" onClick={() => toggleState(s)}>×</button>
+            </span>
+          ))}
+          {industries.map((v) => (
+            <span key={v} className="saved-chip" style={{ background: 'var(--accent-dim, #1e3a5f)' }}>
+              {INDUSTRY_OPTIONS.find((o) => o.value === v)?.label ?? v}
+              <button className="chip-del" onClick={() => toggleIndustry(v)}>×</button>
             </span>
           ))}
         </div>

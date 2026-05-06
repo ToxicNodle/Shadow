@@ -87,6 +87,11 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not add password reset columns:', e.message);
   }
+  try {
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies (industry)`);
+  } catch (e) {
+    console.warn('[migrate] Could not add industry index:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -551,13 +556,14 @@ app.get('/carriers/stats', authMiddleware, subMiddleware, async (req, res) => {
 app.post('/carriers/search', authMiddleware, subMiddleware, async (req, res) => {
   const {
     states = null, minFleet = null, maxFleet = null, query = '',
-    sources = null, limit = 50, offset = 0, onlyWithPhone = false, sort = 'wrap_score',
+    sources = null, industries = null, limit = 50, offset = 0, onlyWithPhone = false, sort = 'wrap_score',
   } = req.body || {};
 
   const conditions = [];
   const params = [];
 
   if (Array.isArray(sources) && sources.length) { params.push(sources); conditions.push(`source = ANY($${params.length})`); }
+  if (Array.isArray(industries) && industries.length) { params.push(industries); conditions.push(`industry = ANY($${params.length})`); }
   if (Array.isArray(states) && states.length) { params.push(states.map(s => String(s).toUpperCase())); conditions.push(`state = ANY($${params.length})`); }
   if (minFleet !== null && minFleet !== '' && !isNaN(minFleet)) { params.push(parseInt(minFleet)); conditions.push(`fleet_size >= $${params.length}`); }
   if (maxFleet !== null && maxFleet !== '' && !isNaN(maxFleet)) { params.push(parseInt(maxFleet)); conditions.push(`fleet_size <= $${params.length}`); }
@@ -692,6 +698,7 @@ app.post('/searches/saved/:id/run', authMiddleware, async (req, res) => {
     const conditions = [];
     const params = [];
     if (Array.isArray(filters.sources) && filters.sources.length) { params.push(filters.sources); conditions.push(`source = ANY($${params.length})`); }
+    if (Array.isArray(filters.industries) && filters.industries.length) { params.push(filters.industries); conditions.push(`industry = ANY($${params.length})`); }
     if (Array.isArray(filters.states) && filters.states.length) { params.push(filters.states.map(s => String(s).toUpperCase())); conditions.push(`state = ANY($${params.length})`); }
     if (filters.minFleet != null) { params.push(parseInt(filters.minFleet)); conditions.push(`fleet_size >= $${params.length}`); }
     if (filters.maxFleet != null) { params.push(parseInt(filters.maxFleet)); conditions.push(`fleet_size <= $${params.length}`); }

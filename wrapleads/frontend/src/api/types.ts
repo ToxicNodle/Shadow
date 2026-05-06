@@ -1,5 +1,5 @@
 export type LeadStatus = 'cold' | 'contacted' | 'replied' | 'meeting' | 'proposal' | 'won' | 'lost';
-export type LeadCategory = 'fleet' | 'design' | 'construction';
+export type LeadCategory = 'fleet' | 'design' | 'construction' | 'dinoc' | 'reatec' | 'colorchange' | 'wallgraphics' | 'gc_referral';
 export type SubStatus = 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled';
 
 export interface Lead {
@@ -63,6 +63,7 @@ export interface SavedSearch {
     maxFleet?: number | null;
     query?: string;
     sources?: string[];
+    industries?: string[];
   };
   new_count: number;
   last_checked?: string;
@@ -85,6 +86,7 @@ export interface CarrierSearchParams {
   maxFleet?: number | null;
   query?: string;
   sources?: string[] | null;
+  industries?: string[] | null;
   limit?: number;
   offset?: number;
   sort?: string;
@@ -104,9 +106,14 @@ export interface CarrierStats {
 }
 
 export const CATEGORIES: Record<LeadCategory, string> = {
-  fleet: 'Fleet / Logistics',
-  design: 'Interior Design',
+  fleet:        'Fleet / Logistics',
+  design:       'Interior Design',
   construction: 'Construction',
+  dinoc:        'DI-NOC (Architectural Film)',
+  reatec:       'Rea Tec (Architectural Film)',
+  colorchange:  'Color Change Wraps',
+  wallgraphics: 'Wall Graphics / Wallpaper',
+  gc_referral:  'GC Referral Partner',
 };
 
 export const STATUSES: Record<LeadStatus, string> = {
