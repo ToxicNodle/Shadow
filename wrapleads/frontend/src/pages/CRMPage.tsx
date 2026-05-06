@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useAppStore } from '../store/useAppStore';
 import Topbar from '../components/layout/Topbar';
@@ -11,6 +11,7 @@ import AddLeadModal from '../components/modals/AddLeadModal';
 import SettingsModal from '../components/modals/SettingsModal';
 import ApolloModal from '../components/modals/ApolloModal';
 import PaywallModal from '../components/modals/PaywallModal';
+import OnboardingModal from '../components/modals/OnboardingModal';
 import Toast from '../components/ui/Toast';
 
 export default function CRMPage() {
@@ -19,11 +20,18 @@ export default function CRMPage() {
     mode: s.mode,
     setPaywallOpen: s.setPaywallOpen,
   }));
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     const blocked = user.subStatus === 'inactive' || user.subStatus === 'canceled';
-    if (blocked) setPaywallOpen(true);
+    if (blocked) {
+      setPaywallOpen(true);
+      return;
+    }
+    if (user.isFirstLogin) {
+      setShowOnboarding(true);
+    }
   }, [user, setPaywallOpen]);
 
   if (isLoading) {
@@ -57,6 +65,7 @@ export default function CRMPage() {
       <SettingsModal />
       <ApolloModal />
       <PaywallModal />
+      {showOnboarding && <OnboardingModal onClose={() => setShowOnboarding(false)} />}
       <Toast />
     </div>
   );

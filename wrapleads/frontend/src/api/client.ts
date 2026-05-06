@@ -60,6 +60,14 @@ export const api = {
     authFetch<{ token: string; user: User }>('/auth/register', {
       method: 'POST', body: JSON.stringify({ name, company, email, password }),
     }),
+  forgotPassword: (email: string) =>
+    authFetch<{ ok: boolean }>('/auth/forgot-password', {
+      method: 'POST', body: JSON.stringify({ email }),
+    }),
+  resetPassword: (token: string, password: string) =>
+    authFetch<{ ok: boolean }>('/auth/reset-password', {
+      method: 'POST', body: JSON.stringify({ token, password }),
+    }),
 
   // Leads
   getLeads: () => authFetch<{ leads: Lead[] }>('/leads'),

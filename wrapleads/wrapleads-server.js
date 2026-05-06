@@ -44,6 +44,8 @@ const { Pool } = require('pg');
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const Stripe   = require('stripe');
+const crypto   = require('crypto');
+const email    = require('./lib/email');
 
 const PORT              = parseInt(process.env.PORT || '3001', 10);
 const DATABASE_URL      = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
@@ -70,6 +72,19 @@ async function checkDb() {
     return { ok: true, time: r.rows[0].now, carriers: r.rows[0].carriers };
   } catch (e) {
     return { ok: false, error: e.message };
+  }
+}
+
+async function migrateDb() {
+  // Idempotent schema additions — safe to run on every startup
+  try {
+    await pool.query(`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS password_reset_token TEXT,
+        ADD COLUMN IF NOT EXISTS password_reset_expires TIMESTAMPTZ
+    `);
+  } catch (e) {
+    console.warn('[migrate] Could not add password reset columns:', e.message);
   }
 }
 
@@ -190,6 +205,10 @@ app.post('/auth/register', async (req, res) => {
     );
 
     console.log(`[auth/register] ${user.email} — trial until ${trialEnd.toISOString().slice(0,10)}`);
+
+    // Send welcome email (non-blocking)
+    email.sendWelcome({ to: user.email, name: user.name, trialEndsAt: trialEnd }).catch(() => {});
+
     res.status(201).json({ token, user: safeUser(user) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -217,6 +236,61 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
+app.post('/auth/forgot-password', async (req, res) => {
+  const { email: rawEmail } = req.body || {};
+  if (!rawEmail) return res.status(400).json({ error: 'Email required' });
+
+  const normalizedEmail = String(rawEmail).trim().toLowerCase();
+  try {
+    const r = await pool.query('SELECT id, name FROM users WHERE email = $1', [normalizedEmail]);
+    // Always return 200 to avoid leaking account existence
+    if (!r.rows.length) return res.json({ ok: true });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await pool.query(
+      `UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3`,
+      [token, expires, r.rows[0].id]
+    );
+
+    const resetUrl = `${APP_URL}/?reset=${token}`;
+    await email.sendPasswordReset({ to: normalizedEmail, name: r.rows[0].name, resetUrl });
+
+    console.log(`[auth/forgot-password] Reset token sent to ${normalizedEmail}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/auth/reset-password', async (req, res) => {
+  const { token, password: newPassword } = req.body || {};
+  if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password required' });
+  if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  try {
+    const r = await pool.query(
+      `SELECT id, email FROM users
+       WHERE password_reset_token = $1 AND password_reset_expires > NOW()`,
+      [token]
+    );
+    if (!r.rows.length) return res.status(400).json({ error: 'Reset link is invalid or has expired' });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await pool.query(
+      `UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL
+       WHERE id = $2`,
+      [hash, r.rows[0].id]
+    );
+
+    console.log(`[auth/reset-password] Password reset for ${r.rows[0].email}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/auth/me', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(
@@ -230,6 +304,10 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     if (user.sub_status === 'inactive' && user.trial_ends_at && new Date(user.trial_ends_at) > new Date()) {
       user.sub_status = 'trialing';
     }
+    // First login detection — true when user has no leads yet
+    const leadCount = await pool.query('SELECT COUNT(*) FROM leads WHERE user_id = $1', [String(req.user.id)]);
+    user.is_first_login = parseInt(leadCount.rows[0].count, 10) === 0;
+
     res.json({ user: safeUser(user) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -238,13 +316,14 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
 
 function safeUser(u) {
   return {
-    id:          u.id,
-    email:       u.email,
-    name:        u.name,
-    companyName: u.company_name,
-    subStatus:   u.sub_status,
-    trialEndsAt: u.trial_ends_at,
+    id:           u.id,
+    email:        u.email,
+    name:         u.name,
+    companyName:  u.company_name,
+    subStatus:    u.sub_status,
+    trialEndsAt:  u.trial_ends_at,
     subPeriodEnd: u.sub_period_end,
+    isFirstLogin: u.is_first_login ?? false,
   };
 }
 
@@ -337,6 +416,12 @@ app.post('/stripe/webhook', async (req, res) => {
           [sub.id, sub.status, sub.current_period_end, userId]
         );
         console.log(`[stripe/webhook] ${event.type}: user ${userId} → ${sub.status}`);
+        if (event.type === 'customer.subscription.created' && sub.status === 'active') {
+          const ur = await pool.query('SELECT email, name FROM users WHERE id = $1', [userId]);
+          if (ur.rows[0]) {
+            email.sendSubscriptionActivated({ to: ur.rows[0].email, name: ur.rows[0].name }).catch(() => {});
+          }
+        }
       }
       break;
     }
@@ -360,6 +445,10 @@ app.post('/stripe/webhook', async (req, res) => {
          WHERE stripe_customer_id = $1`,
         [customerId]
       );
+      const ur = await pool.query('SELECT email, name FROM users WHERE stripe_customer_id = $1', [customerId]);
+      if (ur.rows[0]) {
+        email.sendPaymentFailed({ to: ur.rows[0].email, name: ur.rows[0].name }).catch(() => {});
+      }
       break;
     }
   }
@@ -809,6 +898,11 @@ app.listen(PORT, async () => {
     ? `· Postgres connected. ${db.carriers.toLocaleString()} FMCSA carriers loaded.`
     : `· Postgres NOT connected: ${db.error}\n  Run: docker compose up -d`);
   console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
+  console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
+  if (db.ok) {
+    await migrateDb();
+    email.startTrialCron(pool);
+  }
   console.log(`· Open http://localhost:${PORT} in your browser.\n`);
 });
 

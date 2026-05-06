@@ -51,6 +51,7 @@ export interface User {
   subStatus: SubStatus;
   trialEndsAt?: string;
   subPeriodEnd?: string;
+  isFirstLogin?: boolean;
 }
 
 export interface SavedSearch {

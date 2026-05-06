@@ -11,17 +11,23 @@ const EMAIL_TYPES = ['Introduction', 'Follow-up', 'Fleet Proposal', 'Re-engage']
 const TONES = ['Professional', 'Friendly', 'Direct', 'Consultative'];
 
 export default function EmailTab({ lead }: Props) {
-  const settings = useAppStore((s) => s.settings);
-  const showToast = useAppStore((s) => s.showToast);
-  const setApolloOpen = useAppStore((s) => s.setApolloOpen);
-  const setApolloLeadId = useAppStore((s) => s.setApolloLeadId);
+  const { settings, showToast, setApolloOpen, setApolloLeadId, setSettingsOpen } = useAppStore((s) => ({
+    settings: s.settings,
+    showToast: s.showToast,
+    setApolloOpen: s.setApolloOpen,
+    setApolloLeadId: s.setApolloLeadId,
+    setSettingsOpen: s.setSettingsOpen,
+  }));
 
   const [emailType, setEmailType] = useState(EMAIL_TYPES[0]);
   const [tone, setTone] = useState(TONES[0]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ subject: string; body: string } | null>(null);
 
+  const settingsIncomplete = !settings.senderName.trim() || !settings.companyName.trim();
+
   async function generate() {
+    if (settingsIncomplete) return;
     setLoading(true);
     setResult(null);
     try {
@@ -82,6 +88,25 @@ export default function EmailTab({ lead }: Props) {
           </svg>
           Find contact email with Apollo
         </button>
+      )}
+
+      {settingsIncomplete && (
+        <div style={{
+          background: 'rgba(250,204,21,0.08)', border: '1px solid rgba(250,204,21,0.3)',
+          borderRadius: 8, padding: '12px 14px', marginBottom: 12,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--yellow)', lineHeight: 1.4 }}>
+            Add your name &amp; company in Settings for better emails.
+          </span>
+          <button
+            className="btn"
+            style={{ fontSize: 12, padding: '5px 10px', flexShrink: 0 }}
+            onClick={() => setSettingsOpen(true)}
+          >
+            Open Settings
+          </button>
+        </div>
       )}
 
       <button className="generate-btn" onClick={generate} disabled={loading}>
