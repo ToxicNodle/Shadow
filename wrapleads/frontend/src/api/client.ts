@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult } from './types';
 
 export const api = {
   // Auth
@@ -128,6 +128,22 @@ export const api = {
     authFetch<{ subject: string; body: string }>('/ai/proposal', {
       method: 'POST', body: JSON.stringify(params),
     }),
+
+  // Blueprint scanner
+  scanBlueprint: (file: File) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('pdf', file);
+    return fetch('/blueprint/scan', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Scan failed');
+      return data as { ok: boolean; result: BlueprintResult; pages: number };
+    });
+  },
 
   // Stripe
   checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),

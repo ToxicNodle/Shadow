@@ -3,7 +3,9 @@ import { useAppStore } from '../../store/useAppStore';
 import type { LeadCategory, LeadStatus } from '../../api/types';
 import { CATEGORIES, STATUSES } from '../../api/types';
 
-const CATEGORY_ORDER: LeadCategory[] = ['fleet', 'design', 'construction'];
+const CATEGORY_ORDER: LeadCategory[] = [
+  'fleet', 'colorchange', 'dinoc', 'reatec', 'wallgraphics', 'design', 'construction', 'gc_referral',
+];
 const STATUS_ORDER: LeadStatus[] = ['cold', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'];
 
 export default function Sidebar() {
