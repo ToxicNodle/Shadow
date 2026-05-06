@@ -884,6 +884,236 @@ app.get('/apollo/test', authMiddleware, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// Blueprint Scanner — upload a PDF bid spec, Claude extracts wrap opportunities
+// ----------------------------------------------------------------------------
+const multer  = require('multer');
+const pdfParse = require('pdf-parse');
+const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// Shared Claude fetch helper
+async function claudeHaiku(apiKey, messages, maxTokens = 1500) {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, messages }),
+  });
+  if (!resp.ok) throw new Error(`Claude error: ${resp.status}`);
+  const d = await resp.json();
+  return d.content?.[0]?.text || '';
+}
+
+// ----------------------------------------------------------------------------
+// AI — 3-email follow-up sequence
+// ----------------------------------------------------------------------------
+app.post('/ai/sequence', authMiddleware, subMiddleware, async (req, res) => {
+  const { lead, settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film installation company.
+Company: ${settings.companyName || 'our wrap shop'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a 3-email follow-up sequence for this prospect:
+Company: ${lead.company}
+Contact: ${lead.contactName || 'Fleet/Facilities Manager'}, ${lead.contactTitle || ''}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+Pitch angle: ${lead.pitchAngle || 'general wrap inquiry'}
+
+Email 1 (Day 1): Warm introduction — establish credibility, mention the specific opportunity
+Email 2 (Day 5): Follow-up — add value (case study, stat, or insight relevant to their industry)
+Email 3 (Day 12): Last touch — brief, direct, open door for future
+
+Each under 180 words. Return raw JSON only:
+{"emails":[{"day":1,"label":"Introduction","subject":"...","body":"..."},{"day":5,"label":"Follow-up","subject":"...","body":"..."},{"day":12,"label":"Last Touch","subject":"...","body":"..."}]}`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 2000);
+    const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('[ai/sequence]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// AI — bulk email generation (multiple leads in one call)
+// ----------------------------------------------------------------------------
+app.post('/ai/bulk-email', authMiddleware, subMiddleware, async (req, res) => {
+  const { leads, emailType = 'Introduction', tone = 'Professional', settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+  if (!Array.isArray(leads) || leads.length === 0) return res.status(400).json({ error: 'No leads provided' });
+  if (leads.length > 30) return res.status(400).json({ error: 'Maximum 30 leads per bulk request' });
+
+  const leadList = leads.map((l, i) =>
+    `${i + 1}. Company: ${l.company} | Contact: ${l.contactName || 'Manager'} | ${l.city || ''} ${l.state || ''} | Category: ${l.category} | Fleet: ${l.fleetSize || 'unknown'} | Pitch: ${l.pitchAngle || ''}`
+  ).join('\n');
+
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film company.
+Sender: ${settings.senderName || 'the team'} at ${settings.companyName || 'our shop'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a ${tone} ${emailType} email for each prospect below. Each under 160 words, personalized to their company/category.
+
+Prospects:
+${leadList}
+
+Return raw JSON only — an array matching the same order:
+[{"subject":"...","body":"..."},...]`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 4000);
+    const emails = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    res.json({ ok: true, emails });
+  } catch (e) {
+    console.error('[ai/bulk-email]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// AI — quote / proposal generator
+// ----------------------------------------------------------------------------
+app.post('/ai/proposal', authMiddleware, subMiddleware, async (req, res) => {
+  const { lead, vehicleCount, wrapType, extraNotes, settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+  const prompt = `You are writing a professional wrap installation proposal for a client.
+Install company: ${settings.companyName || 'WrapPro'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Phone: ${settings.senderPhone || ''} | Email: ${settings.senderEmail || ''}
+
+Client details:
+Company: ${lead.company}
+Contact: ${lead.contactName || 'Facilities Manager'}, ${lead.contactTitle || ''}
+Location: ${lead.city || ''}, ${lead.state || ''}
+
+Project:
+Wrap type: ${wrapType}
+Vehicle / unit count: ${vehicleCount}
+Extra notes: ${extraNotes || 'none'}
+
+Write a professional proposal including:
+1. Brief intro paragraph (who we are, why we're the right fit)
+2. Scope of Work (what we'll do, materials, brands like 3M/Avery if relevant)
+3. Investment (realistic price range based on wrap type and count — fleet full wraps ~$2,500-4,500/vehicle, DI-NOC per sq ft ~$8-18, color change ~$3,000-6,000/vehicle, wall graphics ~$5-12/sq ft)
+4. Timeline estimate
+5. Why act now (availability, pricing, season)
+6. Call to action
+
+Return raw JSON: {"subject":"...","body":"..."}
+Body should be plain text with line breaks, professional but warm, under 450 words.`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 2000);
+    const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('[ai/proposal]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/blueprint/scan', authMiddleware, upload.single('pdf'), async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+  if (!req.file) return res.status(400).json({ error: 'No PDF file uploaded' });
+
+  let text = '';
+  try {
+    const parsed = await pdfParse(req.file.buffer);
+    text = parsed.text || '';
+  } catch {
+    return res.status(422).json({ error: 'Could not read PDF — make sure it is text-based (not a scanned image)' });
+  }
+
+  if (text.trim().length < 50) {
+    return res.status(422).json({ error: 'PDF appears to be a scanned image. Text extraction requires a text-based PDF.' });
+  }
+
+  // Truncate to ~12k chars to stay within token limits
+  const excerpt = text.slice(0, 12000);
+
+  const prompt = `You are analyzing a construction bid specification or blueprint document for a vehicle wrap and architectural film installation company.
+
+Extract any opportunities for:
+- 3M DI-NOC architectural film installation
+- Rea Tec architectural film installation
+- Vehicle wraps or fleet graphics
+- Wall graphics or large-format printing
+- Color change wraps
+- Any 3M certified installer requirements
+
+Document text:
+---
+${excerpt}
+---
+
+Return a JSON object with this exact structure (no markdown, raw JSON only):
+{
+  "hasOpportunity": true or false,
+  "opportunities": [
+    {
+      "type": "dinoc" | "reatec" | "wallgraphics" | "fleet" | "colorchange" | "gc_referral",
+      "description": "brief description of what was found",
+      "specs": ["list of specific product specs or quantities mentioned"],
+      "location": "where in the doc (e.g. Section 09 72 00)"
+    }
+  ],
+  "company": "GC or owner name if found, or null",
+  "contactTitle": "most relevant contact title (e.g. General Contractor, Project Manager)",
+  "projectName": "project name if mentioned, or null",
+  "city": "city if mentioned, or null",
+  "state": "2-letter state code if mentioned, or null",
+  "projectType": "office | healthcare | hospitality | retail | education | industrial | residential | other",
+  "pitchAngle": "1-2 sentence pitch for why this is a wrap/film opportunity",
+  "notes": "any other relevant details (cert requirements, quantities, timeline)",
+  "confidence": "high | medium | low"
+}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      return res.status(502).json({ error: `AI error: ${err}` });
+    }
+
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text || '{}';
+
+    let result;
+    try {
+      result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    } catch {
+      return res.status(502).json({ error: 'AI returned unexpected format' });
+    }
+
+    res.json({ ok: true, result, pages: text.length });
+  } catch (e) {
+    console.error('[blueprint/scan]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Static — serve React SPA (must be LAST, after all API routes)
 // ----------------------------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'dist')));

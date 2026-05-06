@@ -26,6 +26,8 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info';
 }
 
+export type LeadSort = 'score' | 'company' | 'status' | 'lastContacted';
+
 interface AppStore {
   // Mode
   mode: AppMode;
@@ -39,6 +41,16 @@ interface AppStore {
   activeFilter: ActiveFilter;
   setFilter: (patch: Partial<ActiveFilter>) => void;
   resetFilters: () => void;
+
+  // Lead sort
+  leadSort: LeadSort;
+  setLeadSort: (sort: LeadSort) => void;
+
+  // Lead selection (for bulk outreach)
+  selectedLeadIds: Set<string>;
+  toggleLeadSelection: (id: string) => void;
+  selectAllLeads: (ids: string[]) => void;
+  clearLeadSelection: () => void;
 
   // Carrier / discover state
   carrierState: CarrierState;
@@ -59,10 +71,19 @@ interface AppStore {
   settingsOpen: boolean;
   apolloOpen: boolean;
   paywallOpen: boolean;
+  blueprintOpen: boolean;
+  bulkOutreachOpen: boolean;
+  csvImportOpen: boolean;
+  proposalOpen: boolean;
+  proposalLeadId: string | null;
   setAddLeadOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setApolloOpen: (open: boolean) => void;
   setPaywallOpen: (open: boolean) => void;
+  setBlueprintOpen: (open: boolean) => void;
+  setBulkOutreachOpen: (open: boolean) => void;
+  setCsvImportOpen: (open: boolean) => void;
+  setProposalOpen: (open: boolean, leadId?: string) => void;
 
   // Current lead for Apollo enrichment
   apolloLeadId: string | null;
@@ -111,6 +132,21 @@ export const useAppStore = create<AppStore>()(
         set((s) => ({ activeFilter: { ...s.activeFilter, ...patch } })),
       resetFilters: () => set({ activeFilter: DEFAULT_FILTER }),
 
+      // Lead sort
+      leadSort: 'score',
+      setLeadSort: (sort) => set({ leadSort: sort }),
+
+      // Lead selection
+      selectedLeadIds: new Set<string>(),
+      toggleLeadSelection: (id) =>
+        set((s) => {
+          const next = new Set(s.selectedLeadIds);
+          if (next.has(id)) next.delete(id); else next.add(id);
+          return { selectedLeadIds: next };
+        }),
+      selectAllLeads: (ids) => set({ selectedLeadIds: new Set(ids) }),
+      clearLeadSelection: () => set({ selectedLeadIds: new Set<string>() }),
+
       // Carrier state
       carrierState: DEFAULT_CARRIER_STATE,
       setCarrierResults: (results, total) =>
@@ -142,10 +178,19 @@ export const useAppStore = create<AppStore>()(
       settingsOpen: false,
       apolloOpen: false,
       paywallOpen: false,
+      blueprintOpen: false,
+      bulkOutreachOpen: false,
+      csvImportOpen: false,
+      proposalOpen: false,
+      proposalLeadId: null,
       setAddLeadOpen: (open) => set({ addLeadOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setApolloOpen: (open) => set({ apolloOpen: open }),
       setPaywallOpen: (open) => set({ paywallOpen: open }),
+      setBlueprintOpen: (open) => set({ blueprintOpen: open }),
+      setBulkOutreachOpen: (open) => set({ bulkOutreachOpen: open }),
+      setCsvImportOpen: (open) => set({ csvImportOpen: open }),
+      setProposalOpen: (open, leadId) => set({ proposalOpen: open, proposalLeadId: leadId ?? null }),
 
       // Apollo lead context
       apolloLeadId: null,

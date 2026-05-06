@@ -411,7 +411,7 @@
 .lead-list-wrap { flex: 1; overflow-y: auto; }
 .lead-list-header {
   display: grid;
-  grid-template-columns: 2fr 1fr 0.8fr 0.7fr 0.9fr 0.8fr 36px;
+  grid-template-columns: 28px 2fr 1fr 0.8fr 0.7fr 0.9fr 0.8fr 50px 36px;
   padding: 8px 18px; gap: 12px; border-bottom: 1px solid var(--border-soft);
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
   color: var(--text-faint); font-weight: 600; position: sticky; top: 0;
@@ -419,7 +419,7 @@
 }
 .lead-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 0.8fr 0.7fr 0.9fr 0.8fr 36px;
+  grid-template-columns: 28px 2fr 1fr 0.8fr 0.7fr 0.9fr 0.8fr 50px 36px;
   padding: 12px 18px; gap: 12px; border-bottom: 1px solid var(--border-soft);
   cursor: pointer; transition: background 0.1s; align-items: center;
 }

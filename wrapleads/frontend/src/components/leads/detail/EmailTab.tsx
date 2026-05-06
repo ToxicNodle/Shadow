@@ -10,6 +10,15 @@ interface Props {
 const EMAIL_TYPES = ['Introduction', 'Follow-up', 'Fleet Proposal', 'Re-engage'];
 const TONES = ['Professional', 'Friendly', 'Direct', 'Consultative'];
 
+type TabMode = 'single' | 'sequence';
+
+interface SequenceEmail {
+  day: number;
+  label: string;
+  subject: string;
+  body: string;
+}
+
 export default function EmailTab({ lead }: Props) {
   const { settings, showToast, setApolloOpen, setApolloLeadId, setSettingsOpen } = useAppStore((s) => ({
     settings: s.settings,
@@ -19,10 +28,13 @@ export default function EmailTab({ lead }: Props) {
     setSettingsOpen: s.setSettingsOpen,
   }));
 
+  const [tabMode, setTabMode] = useState<TabMode>('single');
   const [emailType, setEmailType] = useState(EMAIL_TYPES[0]);
   const [tone, setTone] = useState(TONES[0]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ subject: string; body: string } | null>(null);
+  const [sequence, setSequence] = useState<SequenceEmail[] | null>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const settingsIncomplete = !settings.senderName.trim() || !settings.companyName.trim();
 
@@ -30,9 +42,15 @@ export default function EmailTab({ lead }: Props) {
     if (settingsIncomplete) return;
     setLoading(true);
     setResult(null);
+    setSequence(null);
     try {
-      const data = await api.generateEmail({ lead, emailType, tone, settings });
-      setResult(data);
+      if (tabMode === 'single') {
+        const data = await api.generateEmail({ lead, emailType, tone, settings });
+        setResult(data);
+      } else {
+        const data = await api.generateSequence({ lead, tone, settings });
+        setSequence(data.emails);
+      }
     } catch (e: unknown) {
       showToast((e as Error).message, 'error');
     } finally {
@@ -40,10 +58,11 @@ export default function EmailTab({ lead }: Props) {
     }
   }
 
-  function copyToClipboard() {
-    if (!result) return;
-    const text = `Subject: ${result.subject}\n\n${result.body}`;
-    navigator.clipboard.writeText(text).then(() => showToast('Copied to clipboard'));
+  function copy(text: string, idx?: number) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('Copied to clipboard');
+      if (idx !== undefined) { setCopiedIdx(idx); setTimeout(() => setCopiedIdx(null), 1800); }
+    });
   }
 
   function openMailTo() {
@@ -59,16 +78,42 @@ export default function EmailTab({ lead }: Props) {
 
   return (
     <div>
-      <div className="field-group">
-        <label className="field-label">Email Type</label>
-        <div className="chip-group">
-          {EMAIL_TYPES.map((t) => (
-            <button key={t} className={`chip ${emailType === t ? 'active' : ''}`} onClick={() => setEmailType(t)}>
-              {t}
-            </button>
-          ))}
-        </div>
+      {/* Mode tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 14, background: 'var(--bg-input)', borderRadius: 8, padding: 4 }}>
+        {(['single', 'sequence'] as TabMode[]).map((m) => (
+          <button
+            key={m}
+            onClick={() => { setTabMode(m); setResult(null); setSequence(null); }}
+            style={{
+              flex: 1, padding: '6px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+              background: tabMode === m ? 'var(--accent)' : 'transparent',
+              color: tabMode === m ? '#fff' : 'var(--text-dim)',
+              transition: 'all 0.15s',
+            }}
+          >
+            {m === 'single' ? '✉ Single Email' : '📅 3-Email Sequence'}
+          </button>
+        ))}
       </div>
+
+      {tabMode === 'single' && (
+        <div className="field-group">
+          <label className="field-label">Email Type</label>
+          <div className="chip-group">
+            {EMAIL_TYPES.map((t) => (
+              <button key={t} className={`chip ${emailType === t ? 'active' : ''}`} onClick={() => setEmailType(t)}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tabMode === 'sequence' && (
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 14, lineHeight: 1.5, padding: '8px 12px', background: 'var(--bg-input)', borderRadius: 6 }}>
+          Generates a 3-email drip: Day 1 intro, Day 4 value follow-up, Day 9 closing nudge — tailored to {lead.company}.
+        </div>
+      )}
 
       <div className="field-group">
         <label className="field-label">Tone</label>
@@ -99,20 +144,19 @@ export default function EmailTab({ lead }: Props) {
           <span style={{ fontSize: 13, color: 'var(--yellow)', lineHeight: 1.4 }}>
             Add your name &amp; company in Settings for better emails.
           </span>
-          <button
-            className="btn"
-            style={{ fontSize: 12, padding: '5px 10px', flexShrink: 0 }}
-            onClick={() => setSettingsOpen(true)}
-          >
+          <button className="btn" style={{ fontSize: 12, padding: '5px 10px', flexShrink: 0 }} onClick={() => setSettingsOpen(true)}>
             Open Settings
           </button>
         </div>
       )}
 
       <button className="generate-btn" onClick={generate} disabled={loading}>
-        {loading ? <><span className="spinner" /> Generating…</> : '⚡ Generate Email'}
+        {loading
+          ? <><span className="spinner" /> {tabMode === 'sequence' ? 'Building sequence…' : 'Generating…'}</>
+          : tabMode === 'sequence' ? '📅 Generate 3-Email Sequence' : '⚡ Generate Email'}
       </button>
 
+      {/* Single email result */}
       {result && (
         <div className="email-preview">
           <div className="email-subject-row">
@@ -121,11 +165,58 @@ export default function EmailTab({ lead }: Props) {
           </div>
           <div className="email-body">{result.body}</div>
           <div className="email-actions">
-            <button className="btn" onClick={copyToClipboard}>Copy</button>
+            <button className="btn" onClick={() => copy(`Subject: ${result.subject}\n\n${result.body}`)}>Copy</button>
             {lead.email && (
               <button className="btn btn-primary" onClick={openMailTo}>Open in Mail</button>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Sequence results */}
+      {sequence && (
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {sequence.map((email, i) => (
+            <div key={i} style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    background: 'var(--accent)', color: '#fff', borderRadius: 4,
+                    fontSize: 11, fontWeight: 700, padding: '2px 7px',
+                  }}>
+                    Day {email.day}
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)' }}>{email.label}</span>
+                </div>
+                <button
+                  className="btn"
+                  style={{ fontSize: 11, padding: '3px 9px' }}
+                  onClick={() => copy(`Subject: ${email.subject}\n\n${email.body}`, i)}
+                >
+                  {copiedIdx === i ? '✓ Copied' : 'Copy'}
+                </button>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 4 }}>
+                <strong style={{ color: 'var(--text)' }}>Subject:</strong> {email.subject}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>
+                {email.body}
+              </div>
+            </div>
+          ))}
+
+          <button
+            className="btn"
+            style={{ fontSize: 12 }}
+            onClick={() => {
+              const text = sequence.map((e) =>
+                `--- Day ${e.day}: ${e.label} ---\nSubject: ${e.subject}\n\n${e.body}`
+              ).join('\n\n');
+              copy(text);
+            }}
+          >
+            Copy All 3 Emails
+          </button>
         </div>
       )}
     </div>

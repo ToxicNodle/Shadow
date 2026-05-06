@@ -116,6 +116,18 @@ export const api = {
     authFetch<{ subject: string; body: string }>('/ai/email', {
       method: 'POST', body: JSON.stringify(params),
     }),
+  generateSequence: (params: { lead: Lead; tone: string; settings: object }) =>
+    authFetch<{ emails: { day: number; label: string; subject: string; body: string }[] }>('/ai/sequence', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  bulkEmail: (params: { leads: Lead[]; tone: string; settings: object }) =>
+    authFetch<{ emails: { leadId: string; company: string; subject: string; body: string }[] }>('/ai/bulk-email', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  generateProposal: (params: { lead: Lead; services: string[]; pricing: Record<string, number>; notes: string; settings: object }) =>
+    authFetch<{ subject: string; body: string }>('/ai/proposal', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
 
   // Stripe
   checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),
