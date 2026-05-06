@@ -1,266 +1,143 @@
 /**
- * WrapLeads — FMCSA Motor Carrier Census Ingest
- * --------------------------------------------
- * The FMCSA's Motor Carrier Census is a public dataset of every interstate
- * trucking company registered in the U.S. — name, address, phone, fleet size
- * (POWER UNITS), driver count, and more. Roughly 600,000 active carriers.
+ * WrapLeads — FMCSA API Carrier Ingest
+ * -------------------------------------
+ * Fetches active carriers state-by-state from the FMCSA QC REST API.
+ * No CSV download needed — runs entirely over HTTP in a few minutes.
  *
- * Where to get the file:
- *   https://ai.fmcsa.dot.gov/SMS/Tools/Downloads.aspx
- *   Look for "Motor Carrier Census" or "SAFER snapshot" — pick the latest
- *   monthly file. Unzip if needed.
- *
- *   Alternative: https://catalog.data.gov/dataset?q=motor+carrier+census
+ * Free API key (instant):
+ *   https://ask.fmcsa.dot.gov/app/answers/detail/a_id/4455
+ *   Add to Railway env as FMCSA_API_KEY=your_key_here
  *
  * Usage:
- *   node ingest-fmcsa.js path/to/census.csv
+ *   node ingest-fmcsa.js
+ *   node ingest-fmcsa.js --states IN,OH,IL,MI,KY,TN
+ *   node ingest-fmcsa.js --states TX --min-fleet 10 --max-fleet 500
  *
- * The script is idempotent — running it again with a newer file UPDATES the
- * existing rows by (source, source_id) where source_id = DOT number.
+ * Defaults to 10 core Midwest states. Idempotent — safe to re-run.
  */
 
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const { parse } = require('csv-parse');
+const https = require('https');
 const { Pool } = require('pg');
 
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const API_KEY      = process.env.FMCSA_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
-const BATCH_SIZE = 500;
+const BASE_URL     = 'https://mobile.fmcsa.dot.gov/qc/services';
+const PAGE_SIZE    = 100;   // FMCSA max
+const BATCH_SIZE   = 200;   // DB upsert batch
+const REQUEST_GAP  = 120;   // ms between API calls (stay polite)
 
-// ----------------------------------------------------------------------------
-// Field mapping
-// FMCSA's column names have changed several times over the years. We accept
-// any of these aliases for each logical field. The first non-empty match wins.
-// ----------------------------------------------------------------------------
-const FIELDS = {
-  source_id:         ['DOT_NUMBER', 'USDOT_NUMBER', 'DOT', 'CARRIER_ID'],
-  name:              ['LEGAL_NAME', 'CARRIER_NAME', 'NAME'],
-  dba_name:          ['DBA_NAME', 'DBA'],
-  street:            ['PHY_STREET', 'PHYSICAL_ADDRESS', 'PHY_ADDR'],
-  city:              ['PHY_CITY', 'PHYSICAL_CITY'],
-  state:             ['PHY_STATE', 'PHYSICAL_STATE', 'OIC_STATE'],
-  zip:               ['PHY_ZIP', 'PHYSICAL_ZIP', 'PHY_ZIPCODE'],
-  country:           ['PHY_COUNTRY', 'PHYSICAL_COUNTRY'],
-  phone:             ['TELEPHONE', 'PHONE', 'TELEPHONE_NUMBER'],
-  email:             ['EMAIL_ADDRESS', 'EMAIL', 'EMAIL_ADDR'],
-  fleet_size:        ['NBR_POWER_UNIT', 'POWER_UNITS', 'POWERUNITS', 'PWRUNITS', 'TOTAL_POWER_UNITS'],
-  drivers:           ['DRIVER_TOTAL', 'TOTAL_DRIVERS', 'DRIVERS', 'NBR_DRIVERS'],
-  cargo_types:       ['CARGO_CARRIED', 'CARGO_CLASSIFICATIONS', 'CARGO'],
-  last_reported:     ['MCS150_DATE', 'MCS_150_DATE', 'MCS150DATE'],
-  added_to_registry: ['ADD_DATE', 'ADDED_DATE', 'DATE_ADDED'],
-};
+const DEFAULT_STATES = ['IN','OH','IL','MI','KY','TN','WI','MO','MN','IA'];
 
-// ----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// CLI args  --states A,B  --min-fleet N  --max-fleet N
+// ---------------------------------------------------------------------------
+const args = process.argv.slice(2);
+function getArg(name, def) {
+  const i = args.indexOf(name);
+  return i !== -1 && args[i + 1] ? args[i + 1] : def;
+}
+const TARGET_STATES = getArg('--states', DEFAULT_STATES.join(',')).split(',').map(s => s.trim().toUpperCase());
+const MIN_FLEET     = parseInt(getArg('--min-fleet', '1'), 10);
+const MAX_FLEET     = parseInt(getArg('--max-fleet', '9999'), 10);
+
+// ---------------------------------------------------------------------------
 // Helpers
-// ----------------------------------------------------------------------------
-function pickField(row, keys) {
-  for (const k of keys) {
-    if (row[k] !== undefined && row[k] !== '') return String(row[k]).trim();
+// ---------------------------------------------------------------------------
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function cleanPhone(s) {
+  if (!s) return null;
+  const d = String(s).replace(/\D/g, '');
+  if (d.length === 10) return `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}`;
+  if (d.length === 11 && d[0] === '1') {
+    const e = d.slice(1);
+    return `${e.slice(0,3)}-${e.slice(3,6)}-${e.slice(6)}`;
   }
-  return null;
+  return d.length >= 7 ? d : null;
 }
 
-function parseFmcsaDate(s) {
+function parseDate(s) {
   if (!s) return null;
   s = String(s).trim();
-  // FMCSA uses YYYYMMDD, MM/DD/YYYY, or YYYY-MM-DD
   if (/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
     const [m, d, y] = s.split('/');
     return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
   }
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
-function parseIntOrNull(s) {
-  if (s === null || s === undefined || s === '') return null;
-  const n = parseInt(String(s).replace(/[^\d-]/g, ''), 10);
-  return isNaN(n) ? null : n;
-}
-
-function cleanPhone(s) {
-  if (!s) return null;
-  const digits = String(s).replace(/\D/g, '');
-  if (digits.length < 7) return null;
-  if (digits.length === 10) return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`;
-  if (digits.length === 11 && digits.startsWith('1')) {
-    const d = digits.slice(1);
-    return `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}`;
-  }
-  return digits;
-}
-
-function pluralize(n, single, plural) {
-  return n === 1 ? `${n} ${single}` : `${n.toLocaleString()} ${plural}`;
-}
-
-function progressBar(label, current, total) {
-  const pct = total ? Math.min(100, Math.floor((current / total) * 100)) : 0;
-  const filled = Math.floor(pct / 2);
-  const bar = '█'.repeat(filled) + '░'.repeat(50 - filled);
-  return `${label} [${bar}] ${pct}%`;
-}
-
-// ----------------------------------------------------------------------------
-// Main
-// ----------------------------------------------------------------------------
-async function main() {
-  const csvPath = process.argv[2];
-  if (!csvPath) {
-    console.error('Usage: node ingest-fmcsa.js <path-to-csv>');
-    console.error('');
-    console.error('Get the file from: https://ai.fmcsa.dot.gov/SMS/Tools/Downloads.aspx');
-    console.error('Look for "Motor Carrier Census" — pick the latest monthly snapshot.');
-    process.exit(1);
-  }
-
-  const absPath = path.resolve(csvPath);
-  if (!fs.existsSync(absPath)) {
-    console.error(`File not found: ${absPath}`);
-    process.exit(1);
-  }
-
-  const fileSize = fs.statSync(absPath).size;
-  console.log(`\n📋 WrapLeads — FMCSA Census Ingest`);
-  console.log(`   File: ${absPath}`);
-  console.log(`   Size: ${(fileSize / 1024 / 1024).toFixed(1)} MB\n`);
-
-  const pool = new Pool({ connectionString: DATABASE_URL });
-
-  // Verify schema is set up
-  try {
-    await pool.query('SELECT 1 FROM companies LIMIT 1');
-  } catch (e) {
-    console.error('❌ Database not ready. Make sure Postgres is running:');
-    console.error('   docker compose up -d');
-    console.error('   (Or apply schema.sql manually if not using Docker.)');
-    process.exit(1);
-  }
-
-  // Start an ingest_runs row so we have a record of this import
-  const runRes = await pool.query(
-    `INSERT INTO ingest_runs (source, file_name, started_at) VALUES ('fmcsa', $1, NOW()) RETURNING id`,
-    [path.basename(absPath)]
-  );
-  const runId = runRes.rows[0].id;
-
-  const start = Date.now();
-  let total = 0, inserted = 0, updated = 0, skipped = 0;
-  let batch = [];
-  let bytesRead = 0;
-  let lastLog = Date.now();
-
-  const stream = fs.createReadStream(absPath);
-  stream.on('data', chunk => { bytesRead += chunk.length; });
-
-  const parser = stream.pipe(parse({
-    columns: header => header.map(h => String(h).trim().toUpperCase()),
-    skip_empty_lines: true,
-    trim: true,
-    relax_column_count: true,
-    relax_quotes: true,
-  }));
-
-  try {
-    for await (const row of parser) {
-      total++;
-
-      const source_id = pickField(row, FIELDS.source_id);
-      const name = pickField(row, FIELDS.name);
-      if (!source_id || !name) { skipped++; continue; }
-
-      batch.push({
-        source: 'fmcsa',
-        source_id,
-        name,
-        dba_name: pickField(row, FIELDS.dba_name),
-        street: pickField(row, FIELDS.street),
-        city: pickField(row, FIELDS.city),
-        state: (pickField(row, FIELDS.state) || '').toUpperCase().slice(0, 2) || null,
-        zip: pickField(row, FIELDS.zip),
-        country: pickField(row, FIELDS.country) || 'US',
-        phone: cleanPhone(pickField(row, FIELDS.phone)),
-        email: pickField(row, FIELDS.email),
-        fleet_size: parseIntOrNull(pickField(row, FIELDS.fleet_size)),
-        drivers: parseIntOrNull(pickField(row, FIELDS.drivers)),
-        cargo_types: pickField(row, FIELDS.cargo_types),
-        last_reported: parseFmcsaDate(pickField(row, FIELDS.last_reported)),
-        added_to_registry: parseFmcsaDate(pickField(row, FIELDS.added_to_registry)),
-        raw_data: row,
+function get(url) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { Accept: 'application/json' } }, res => {
+      let body = '';
+      res.on('data', c => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        }
+        try { resolve(JSON.parse(body)); }
+        catch (e) { reject(new Error(`JSON parse error: ${e.message}`)); }
       });
-
-      if (batch.length >= BATCH_SIZE) {
-        const r = await flushBatch(pool, batch);
-        inserted += r.inserted;
-        updated += r.updated;
-        batch = [];
-      }
-
-      // Throttle progress logs to once per second
-      if (Date.now() - lastLog > 1000) {
-        const elapsed = (Date.now() - start) / 1000;
-        const rate = Math.round(total / elapsed);
-        process.stdout.write(`\r${progressBar('Reading', bytesRead, fileSize)}  ${total.toLocaleString()} rows  ${rate}/s     `);
-        lastLog = Date.now();
-      }
-    }
-
-    if (batch.length) {
-      const r = await flushBatch(pool, batch);
-      inserted += r.inserted;
-      updated += r.updated;
-    }
-
-    const elapsed = (Date.now() - start) / 1000;
-
-    await pool.query(
-      `UPDATE ingest_runs SET finished_at = NOW(), rows_read = $1, rows_inserted = $2, rows_updated = $3, rows_skipped = $4 WHERE id = $5`,
-      [total, inserted, updated, skipped, runId]
-    );
-
-    process.stdout.write('\r' + ' '.repeat(120) + '\r');
-    console.log(`✓ Done in ${elapsed.toFixed(1)}s\n`);
-    console.log(`   ${pluralize(total, 'row', 'rows')} read`);
-    console.log(`   ${pluralize(inserted, 'new carrier', 'new carriers')} inserted`);
-    console.log(`   ${pluralize(updated, 'existing carrier', 'existing carriers')} updated`);
-    console.log(`   ${pluralize(skipped, 'row', 'rows')} skipped (missing DOT or name)\n`);
-
-    // Summary stats
-    const stats = await pool.query(`
-      SELECT
-        COUNT(*)::INT AS total,
-        COUNT(*) FILTER (WHERE fleet_size BETWEEN 25 AND 500)::INT AS sweet_spot,
-        COUNT(DISTINCT state)::INT AS states
-      FROM companies WHERE source = 'fmcsa'
-    `);
-    const s = stats.rows[0];
-    console.log(`📊 Database now contains:`);
-    console.log(`   ${s.total.toLocaleString()} total carriers across ${s.states} states/territories`);
-    console.log(`   ${s.sweet_spot.toLocaleString()} in the 25-500 truck "wrap sweet spot"\n`);
-  } catch (e) {
-    console.error('\n❌ Ingest failed:', e.message);
-    await pool.query(`UPDATE ingest_runs SET finished_at = NOW(), notes = $1 WHERE id = $2`, [e.message, runId]);
-    process.exit(1);
-  } finally {
-    await pool.end();
-  }
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(new Error('Timeout')); });
+  });
 }
 
-// ----------------------------------------------------------------------------
-// Bulk insert with ON CONFLICT upsert. Returns { inserted, updated }.
-// ----------------------------------------------------------------------------
+// Fetch one page of carriers for a state. Returns { carriers[], hasMore }.
+async function fetchPage(state, start) {
+  const url = `${BASE_URL}/carriers?state=${state}&start=${start}&size=${PAGE_SIZE}&webKey=${API_KEY}`;
+  const data = await get(url);
+  const content = data?.content;
+  if (!content) return { carriers: [], hasMore: false };
+
+  // API returns array or single object depending on result count
+  let raw = content.carrier || [];
+  if (!Array.isArray(raw)) raw = [raw];
+
+  return { carriers: raw, hasMore: raw.length === PAGE_SIZE };
+}
+
+function mapCarrier(c) {
+  return {
+    source:            'fmcsa',
+    source_id:         String(c.dotNumber || '').trim(),
+    name:              String(c.legalName || c.name || '').trim(),
+    dba_name:          c.dbaName || null,
+    street:            c.phyStreet || null,
+    city:              c.phyCity || null,
+    state:             c.phyState ? String(c.phyState).toUpperCase().slice(0, 2) : null,
+    zip:               c.phyZipcode || null,
+    country:           c.phyCountry || 'US',
+    phone:             cleanPhone(c.telephone),
+    email:             c.emailAddress || null,
+    fleet_size:        parseInt(c.powerUnits || c.totalPowerUnits || '0', 10) || null,
+    drivers:           parseInt(c.driverTotal || '0', 10) || null,
+    cargo_types:       c.cargoCarried || null,
+    last_reported:     parseDate(c.mcs150Date),
+    added_to_registry: parseDate(c.addDate),
+    raw_data:          c,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DB
+// ---------------------------------------------------------------------------
 async function flushBatch(pool, batch) {
   const cols = [
     'source','source_id','name','dba_name','street','city','state','zip','country',
-    'phone','email','fleet_size','drivers','cargo_types','last_reported','added_to_registry','raw_data'
+    'phone','email','fleet_size','drivers','cargo_types','last_reported','added_to_registry','raw_data',
   ];
   const values = [];
   const placeholders = batch.map((row, i) => {
     const offset = i * cols.length;
-    cols.forEach((c) => values.push(c === 'raw_data' ? JSON.stringify(row[c]) : row[c]));
+    cols.forEach(c => values.push(c === 'raw_data' ? JSON.stringify(row[c]) : row[c]));
     return '(' + cols.map((_, j) => `$${offset + j + 1}`).join(',') + ')';
   });
 
@@ -288,10 +165,121 @@ async function flushBatch(pool, batch) {
 
   const r = await pool.query(sql, values);
   let inserted = 0, updated = 0;
-  for (const row of r.rows) {
-    if (row.was_inserted) inserted++; else updated++;
-  }
+  for (const row of r.rows) { if (row.was_inserted) inserted++; else updated++; }
   return { inserted, updated };
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+async function main() {
+  if (!API_KEY) {
+    console.error('\nFMCSA_API_KEY not set.');
+    console.error('Get a free key in ~2 minutes:');
+    console.error('  https://ask.fmcsa.dot.gov/app/answers/detail/a_id/4455\n');
+    console.error('Then add to Railway: Settings → Variables → FMCSA_API_KEY=your_key\n');
+    process.exit(1);
+  }
+
+  const pool = new Pool({ connectionString: DATABASE_URL });
+
+  try {
+    await pool.query('SELECT 1 FROM companies LIMIT 1');
+  } catch {
+    console.error('\nDatabase not ready — run schema.sql first:\n  psql $DATABASE_URL < schema.sql\n');
+    process.exit(1);
+  }
+
+  console.log(`\nWrapLeads — FMCSA API Ingest`);
+  console.log(`States : ${TARGET_STATES.join(', ')}`);
+  console.log(`Fleet  : ${MIN_FLEET}–${MAX_FLEET} power units`);
+  console.log(`─────────────────────────────────────\n`);
+
+  const runRes = await pool.query(
+    `INSERT INTO ingest_runs (source, file_name, started_at) VALUES ('fmcsa', $1, NOW()) RETURNING id`,
+    [`api:${TARGET_STATES.join(',')}`]
+  );
+  const runId = runRes.rows[0].id;
+
+  const start = Date.now();
+  let totalFetched = 0, totalInserted = 0, totalUpdated = 0, totalSkipped = 0;
+  let dbBatch = [];
+
+  for (const state of TARGET_STATES) {
+    let stateCount = 0;
+    let pageStart = 1;
+    process.stdout.write(`  ${state}  `);
+
+    while (true) {
+      let result;
+      try {
+        result = await fetchPage(state, pageStart);
+      } catch (e) {
+        process.stdout.write(` [error: ${e.message}]`);
+        break;
+      }
+
+      for (const raw of result.carriers) {
+        if (raw.statusCode && raw.statusCode !== 'A') { totalSkipped++; continue; }
+
+        const c = mapCarrier(raw);
+        if (!c.source_id || !c.name) { totalSkipped++; continue; }
+
+        const fleet = c.fleet_size || 0;
+        if (fleet < MIN_FLEET || fleet > MAX_FLEET) { totalSkipped++; continue; }
+
+        dbBatch.push(c);
+        stateCount++;
+        totalFetched++;
+
+        if (dbBatch.length >= BATCH_SIZE) {
+          const r = await flushBatch(pool, dbBatch);
+          totalInserted += r.inserted;
+          totalUpdated  += r.updated;
+          dbBatch = [];
+          process.stdout.write('.');
+        }
+      }
+
+      if (!result.hasMore) break;
+      pageStart += PAGE_SIZE;
+      await sleep(REQUEST_GAP);
+    }
+
+    console.log(` ${stateCount.toLocaleString()} carriers`);
+  }
+
+  if (dbBatch.length) {
+    const r = await flushBatch(pool, dbBatch);
+    totalInserted += r.inserted;
+    totalUpdated  += r.updated;
+  }
+
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+
+  await pool.query(
+    `UPDATE ingest_runs SET finished_at = NOW(), rows_read = $1, rows_inserted = $2, rows_updated = $3, rows_skipped = $4 WHERE id = $5`,
+    [totalFetched, totalInserted, totalUpdated, totalSkipped, runId]
+  );
+
+  console.log(`\n─────────────────────────────────────`);
+  console.log(`Done in ${elapsed}s`);
+  console.log(`  ${totalFetched.toLocaleString()} carriers fetched`);
+  console.log(`  ${totalInserted.toLocaleString()} inserted  ${totalUpdated.toLocaleString()} updated  ${totalSkipped.toLocaleString()} skipped`);
+
+  const stats = await pool.query(`
+    SELECT
+      COUNT(*)::INT AS total,
+      COUNT(*) FILTER (WHERE fleet_size BETWEEN 25 AND 500)::INT AS sweet_spot,
+      COUNT(DISTINCT state)::INT AS states
+    FROM companies WHERE source = 'fmcsa'
+  `);
+  const s = stats.rows[0];
+  console.log(`\nDatabase now contains:`);
+  console.log(`  ${s.total.toLocaleString()} total carriers across ${s.states} states`);
+  console.log(`  ${s.sweet_spot.toLocaleString()} in the 25–500 truck wrap sweet spot\n`);
+
+  await pool.end();
+}
+
+main().catch(e => { console.error('\n', e.message); process.exit(1); });
