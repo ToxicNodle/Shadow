@@ -1,12 +1,10 @@
 /**
- * WrapLeads — FMCSA API Carrier Ingest
- * -------------------------------------
- * Fetches active carriers state-by-state from the FMCSA QC REST API.
- * No CSV download needed — runs entirely over HTTP in a few minutes.
+ * WrapLeads — FMCSA Carrier Ingest (Socrata Open Data API)
+ * ---------------------------------------------------------
+ * Pulls active carriers from data.transportation.gov — no CSV download,
+ * no API key required. Filters by state and fleet size at the source.
  *
- * Free API key (instant):
- *   https://ask.fmcsa.dot.gov/app/answers/detail/a_id/4455
- *   Add to Railway env as FMCSA_API_KEY=your_key_here
+ * Dataset: https://data.transportation.gov/api/v3/views/az4n-8mr2/query.csv
  *
  * Usage:
  *   node ingest-fmcsa.js
@@ -23,12 +21,11 @@ const { Pool } = require('pg');
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const API_KEY      = process.env.FMCSA_API_KEY;
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
-const BASE_URL     = 'https://mobile.fmcsa.dot.gov/qc/services';
-const PAGE_SIZE    = 100;   // FMCSA max
-const BATCH_SIZE   = 200;   // DB upsert batch
-const REQUEST_GAP  = 120;   // ms between API calls (stay polite)
+const DATABASE_URL  = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
+const SOCRATA_BASE  = 'https://data.transportation.gov/resource/az4n-8mr2.json';
+const PAGE_SIZE     = 50000;  // Socrata max per request
+const BATCH_SIZE    = 500;    // DB upsert batch size
+const REQUEST_GAP   = 200;    // ms between API calls
 
 const DEFAULT_STATES = ['IN','OH','IL','MI','KY','TN','WI','MO','MN','IA'];
 
@@ -62,67 +59,58 @@ function cleanPhone(s) {
 
 function parseDate(s) {
   if (!s) return null;
-  s = String(s).trim();
+  s = String(s).trim().slice(0, 8); // handles "20231020 1657" → "20231020"
   if (/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
-    const [m, d, y] = s.split('/');
-    return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
-  }
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
-function get(url) {
+function apiGet(url) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { headers: { Accept: 'application/json' } }, res => {
       let body = '';
       res.on('data', c => { body += c; });
       res.on('end', () => {
         if (res.statusCode !== 200) {
-          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+          return reject(new Error(`HTTP ${res.statusCode}`));
         }
         try { resolve(JSON.parse(body)); }
-        catch (e) { reject(new Error(`JSON parse error: ${e.message}`)); }
+        catch (e) { reject(new Error(`JSON parse: ${e.message}`)); }
       });
     });
     req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(new Error('Timeout')); });
+    req.setTimeout(30000, () => { req.destroy(new Error('Timeout')); });
   });
 }
 
-// Fetch one page of carriers for a state. Returns { carriers[], hasMore }.
-async function fetchPage(state, start) {
-  const url = `${BASE_URL}/carriers?state=${state}&start=${start}&size=${PAGE_SIZE}&webKey=${API_KEY}`;
-  const data = await get(url);
-  const content = data?.content;
-  if (!content) return { carriers: [], hasMore: false };
-
-  // API returns array or single object depending on result count
-  let raw = content.carrier || [];
-  if (!Array.isArray(raw)) raw = [raw];
-
-  return { carriers: raw, hasMore: raw.length === PAGE_SIZE };
+// Fetch one page of carriers for a state.
+async function fetchPage(state, offset) {
+  const where = encodeURIComponent(
+    `phy_state='${state}' AND status_code='A' AND power_units >= ${MIN_FLEET} AND power_units <= ${MAX_FLEET}`
+  );
+  const url = `${SOCRATA_BASE}?$where=${where}&$limit=${PAGE_SIZE}&$offset=${offset}`;
+  return apiGet(url); // returns array of row objects
 }
 
-function mapCarrier(c) {
+function mapRow(r) {
   return {
     source:            'fmcsa',
-    source_id:         String(c.dotNumber || '').trim(),
-    name:              String(c.legalName || c.name || '').trim(),
-    dba_name:          c.dbaName || null,
-    street:            c.phyStreet || null,
-    city:              c.phyCity || null,
-    state:             c.phyState ? String(c.phyState).toUpperCase().slice(0, 2) : null,
-    zip:               c.phyZipcode || null,
-    country:           c.phyCountry || 'US',
-    phone:             cleanPhone(c.telephone),
-    email:             c.emailAddress || null,
-    fleet_size:        parseInt(c.powerUnits || c.totalPowerUnits || '0', 10) || null,
-    drivers:           parseInt(c.driverTotal || '0', 10) || null,
-    cargo_types:       c.cargoCarried || null,
-    last_reported:     parseDate(c.mcs150Date),
-    added_to_registry: parseDate(c.addDate),
-    raw_data:          c,
+    source_id:         String(r.dot_number || '').trim(),
+    name:              String(r.legal_name || '').trim(),
+    dba_name:          r.dba_name || null,
+    street:            r.phy_street || null,
+    city:              r.phy_city || null,
+    state:             r.phy_state ? String(r.phy_state).toUpperCase().slice(0, 2) : null,
+    zip:               r.phy_zip || null,
+    country:           r.phy_country || 'US',
+    phone:             cleanPhone(r.phone),
+    email:             r.email_address || null,
+    fleet_size:        parseInt(r.power_units || '0', 10) || null,
+    drivers:           parseInt(r.total_drivers || '0', 10) || null,
+    cargo_types:       r.classdef || null,
+    last_reported:     parseDate(r.mcs150_date),
+    added_to_registry: parseDate(r.add_date),
+    raw_data:          r,
   };
 }
 
@@ -173,14 +161,6 @@ async function flushBatch(pool, batch) {
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
-  if (!API_KEY) {
-    console.error('\nFMCSA_API_KEY not set.');
-    console.error('Get a free key in ~2 minutes:');
-    console.error('  https://ask.fmcsa.dot.gov/app/answers/detail/a_id/4455\n');
-    console.error('Then add to Railway: Settings → Variables → FMCSA_API_KEY=your_key\n');
-    process.exit(1);
-  }
-
   const pool = new Pool({ connectionString: DATABASE_URL });
 
   try {
@@ -190,59 +170,53 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`\nWrapLeads — FMCSA API Ingest`);
+  console.log(`\nWrapLeads — FMCSA Ingest (data.transportation.gov)`);
   console.log(`States : ${TARGET_STATES.join(', ')}`);
   console.log(`Fleet  : ${MIN_FLEET}–${MAX_FLEET} power units`);
-  console.log(`─────────────────────────────────────\n`);
+  console.log(`─────────────────────────────────────────────────\n`);
 
   const runRes = await pool.query(
     `INSERT INTO ingest_runs (source, file_name, started_at) VALUES ('fmcsa', $1, NOW()) RETURNING id`,
-    [`api:${TARGET_STATES.join(',')}`]
+    [`socrata:${TARGET_STATES.join(',')}`]
   );
   const runId = runRes.rows[0].id;
 
-  const start = Date.now();
-  let totalFetched = 0, totalInserted = 0, totalUpdated = 0, totalSkipped = 0;
+  const start    = Date.now();
+  let totalIn = 0, totalUp = 0, totalSkip = 0, totalFetch = 0;
   let dbBatch = [];
 
   for (const state of TARGET_STATES) {
     let stateCount = 0;
-    let pageStart = 1;
+    let offset     = 0;
     process.stdout.write(`  ${state}  `);
 
     while (true) {
-      let result;
+      let rows;
       try {
-        result = await fetchPage(state, pageStart);
+        rows = await fetchPage(state, offset);
       } catch (e) {
         process.stdout.write(` [error: ${e.message}]`);
         break;
       }
 
-      for (const raw of result.carriers) {
-        if (raw.statusCode && raw.statusCode !== 'A') { totalSkipped++; continue; }
-
-        const c = mapCarrier(raw);
-        if (!c.source_id || !c.name) { totalSkipped++; continue; }
-
-        const fleet = c.fleet_size || 0;
-        if (fleet < MIN_FLEET || fleet > MAX_FLEET) { totalSkipped++; continue; }
-
+      for (const raw of rows) {
+        const c = mapRow(raw);
+        if (!c.source_id || !c.name) { totalSkip++; continue; }
         dbBatch.push(c);
         stateCount++;
-        totalFetched++;
+        totalFetch++;
 
         if (dbBatch.length >= BATCH_SIZE) {
           const r = await flushBatch(pool, dbBatch);
-          totalInserted += r.inserted;
-          totalUpdated  += r.updated;
-          dbBatch = [];
+          totalIn  += r.inserted;
+          totalUp  += r.updated;
+          dbBatch   = [];
           process.stdout.write('.');
         }
       }
 
-      if (!result.hasMore) break;
-      pageStart += PAGE_SIZE;
+      if (rows.length < PAGE_SIZE) break; // last page
+      offset += PAGE_SIZE;
       await sleep(REQUEST_GAP);
     }
 
@@ -251,27 +225,26 @@ async function main() {
 
   if (dbBatch.length) {
     const r = await flushBatch(pool, dbBatch);
-    totalInserted += r.inserted;
-    totalUpdated  += r.updated;
+    totalIn += r.inserted;
+    totalUp += r.updated;
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
   await pool.query(
     `UPDATE ingest_runs SET finished_at = NOW(), rows_read = $1, rows_inserted = $2, rows_updated = $3, rows_skipped = $4 WHERE id = $5`,
-    [totalFetched, totalInserted, totalUpdated, totalSkipped, runId]
+    [totalFetch, totalIn, totalUp, totalSkip, runId]
   );
 
-  console.log(`\n─────────────────────────────────────`);
+  console.log(`\n─────────────────────────────────────────────────`);
   console.log(`Done in ${elapsed}s`);
-  console.log(`  ${totalFetched.toLocaleString()} carriers fetched`);
-  console.log(`  ${totalInserted.toLocaleString()} inserted  ${totalUpdated.toLocaleString()} updated  ${totalSkipped.toLocaleString()} skipped`);
+  console.log(`  ${totalFetch.toLocaleString()} fetched  ·  ${totalIn.toLocaleString()} inserted  ·  ${totalUp.toLocaleString()} updated  ·  ${totalSkip.toLocaleString()} skipped`);
 
   const stats = await pool.query(`
     SELECT
-      COUNT(*)::INT AS total,
+      COUNT(*)::INT                                              AS total,
       COUNT(*) FILTER (WHERE fleet_size BETWEEN 25 AND 500)::INT AS sweet_spot,
-      COUNT(DISTINCT state)::INT AS states
+      COUNT(DISTINCT state)::INT                                 AS states
     FROM companies WHERE source = 'fmcsa'
   `);
   const s = stats.rows[0];
