@@ -1,7 +1,30 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { Bid, BidStatus, BidProjectType, BidPlatform } from '../../api/types';
+
+function requestBidNotifications(bids: Bid[]) {
+  if (!('Notification' in window)) return;
+  Notification.requestPermission().then((perm) => {
+    if (perm !== 'granted') return;
+    const today = new Date();
+    bids.forEach((b) => {
+      if (!b.bid_due || ['won','lost','no_bid'].includes(b.status)) return;
+      const diff = Math.ceil((new Date(b.bid_due).getTime() - today.getTime()) / 86_400_000);
+      if (diff === 1) {
+        new Notification('Bid due TOMORROW', {
+          body: `${b.project_name}${b.gc_name ? ` — ${b.gc_name}` : ''}`,
+          icon: '/favicon.ico',
+        });
+      } else if (diff === 2) {
+        new Notification('Bid due in 2 days', {
+          body: `${b.project_name}${b.gc_name ? ` — ${b.gc_name}` : ''}`,
+          icon: '/favicon.ico',
+        });
+      }
+    });
+  });
+}
 
 const COLUMNS: { status: BidStatus; label: string; color: string }[] = [
   { status: 'tracking',    label: 'Tracking',    color: '#6366f1' },
@@ -390,6 +413,10 @@ export default function BidsView() {
     queryKey: ['bids'],
     queryFn: () => api.getBids(),
   });
+
+  useEffect(() => {
+    if (data?.bids?.length) requestBidNotifications(data.bids);
+  }, [data?.bids?.length]);
 
   const { data: summary } = useQuery({
     queryKey: ['bids-summary'],

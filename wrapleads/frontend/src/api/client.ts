@@ -185,6 +185,24 @@ export const api = {
   checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),
   portal: () => authFetch<{ url: string }>('/stripe/portal', { method: 'POST', body: '{}' }),
 
+  // Mission dashboard
+  getMission: () => authFetch<{
+    date: string;
+    overdue: { id: number; company: string; category: string; email: string; followup_due_at: string; last_contacted: string }[];
+    newWithEmail: { id: number; company: string; category: string; email: string; city: string; state: string; pitch_angle: string }[];
+    replied: { id: number; company: string; category: string; last_contacted: string }[];
+    bidsThisWeek: { id: number; project_name: string; gc_name: string; bid_due: string; status: string; estimated_value: number }[];
+    sequences: { active: number; pendingEmails: number };
+    wonThisMonth: number;
+    priorityScore: number;
+  }>('/mission'),
+
+  // Bulk sequence activation
+  bulkActivateSequences: (leadIds: number[], tone?: string) =>
+    authFetch<{ ok: boolean; queued: number; failed: number; results: { id: number; status: string; company?: string; reason?: string }[] }>(
+      '/leads/bulk-activate-sequences', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, tone }) }
+    ),
+
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
   getBidSummary: () => authFetch<BidSummary>('/bids/summary'),

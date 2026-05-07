@@ -62,6 +62,8 @@ const STRIPE_DISABLED   = process.env.STRIPE_DISABLED === 'true';
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' }) : null;
 
+const { autoSeedUser } = require('./lib/autoSeed');
+
 // ----------------------------------------------------------------------------
 // Postgres
 // ----------------------------------------------------------------------------
@@ -300,6 +302,9 @@ app.post('/auth/register', async (req, res) => {
 
     // Send welcome email (non-blocking)
     email.sendWelcome({ to: user.email, name: user.name, trialEndsAt: trialEnd }).catch(() => {});
+
+    // Auto-seed all curated leads for the new user (fire-and-forget — never blocks registration)
+    autoSeedUser(user.id, pool).catch((e) => console.warn('[autoSeed] Error:', e.message));
 
     res.status(201).json({ token, user: safeUser(user) });
   } catch (e) {
@@ -1451,6 +1456,160 @@ app.get('/bids/summary', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================================
+// Bulk sequence activation — fires drip for multiple leads at once
+// ============================================================================
+
+app.post('/leads/bulk-activate-sequences', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { lead_ids, tone = 'professional' } = req.body || {};
+  if (!Array.isArray(lead_ids) || !lead_ids.length) {
+    return res.status(400).json({ error: 'lead_ids array required' });
+  }
+  if (lead_ids.length > 100) return res.status(400).json({ error: 'Max 100 leads per bulk activation' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  let queued = 0, failed = 0;
+  const results = [];
+
+  for (const rawId of lead_ids) {
+    const id = parseInt(rawId, 10);
+    if (isNaN(id)) continue;
+    try {
+      const leadR = await pool.query(
+        `SELECT l.*, u.company_name AS user_company, u.settings_json
+         FROM leads l JOIN users u ON u.id=l.user_id
+         WHERE l.id=$1 AND l.user_id=$2`, [id, uid]
+      );
+      if (!leadR.rows.length) { failed++; continue; }
+      const lead = leadR.rows[0];
+      if (!lead.email) { failed++; results.push({ id, status: 'skipped', reason: 'no email' }); continue; }
+
+      const s = lead.settings_json || {};
+      const prompt = `You are a B2B sales copywriter for ${s.companyName || 'Shadow Graphix'}, a vehicle wrap and architectural film company in Speedway, Indiana (next to Indianapolis Motor Speedway).
+
+Write a 3-email drip sequence for this lead:
+Company: ${lead.company}
+Category: ${lead.category}
+City: ${lead.city || ''}, ${lead.state || ''}
+Pitch angle: ${lead.pitch_angle || 'fleet wraps and DI-NOC architectural film'}
+Tone: ${tone}
+
+Return ONLY valid JSON array with exactly 3 objects:
+[{"day":1,"subject":"...","body":"..."},{"day":5,"subject":"...","body":"..."},{"day":12,"subject":"...","body":"..."}]
+No markdown, no explanation. Just the JSON array.`;
+
+      const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const aiData = await aiRes.json();
+      const raw = aiData.content?.[0]?.text || '';
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) { failed++; results.push({ id, status: 'failed', reason: 'AI parse error' }); continue; }
+
+      const emails = JSON.parse(match[0]);
+
+      // Cancel existing pending queue for this lead
+      await pool.query(`UPDATE email_queue SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='pending'`, [id, uid]);
+
+      const now = Date.now();
+      for (const em of emails) {
+        const sendAt = new Date(now + ((em.day - 1) * 86400_000));
+        await pool.query(
+          `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [uid, id, em.day, em.subject, em.body, lead.email, lead.contact_name || null, sendAt]
+        );
+      }
+      await logActivity(pool, {
+        leadId: id, userId: uid, type: 'sequence_activated',
+        metadata: { emails_queued: emails.length, tone, bulk: true },
+      });
+      queued++;
+      results.push({ id, status: 'activated', company: lead.company });
+    } catch (e) {
+      failed++;
+      results.push({ id, status: 'error', reason: e.message });
+    }
+  }
+
+  res.json({ ok: true, queued, failed, results });
+});
+
+// ============================================================================
+// Today's Mission — AI-prioritized daily action list
+// ============================================================================
+
+app.get('/mission', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const [overdueR, newR, repliedR, bidsR, seqR, wonR] = await Promise.all([
+      // Overdue follow-ups
+      pool.query(`
+        SELECT id, company, category, email, followup_due_at, last_contacted
+        FROM leads WHERE user_id=$1 AND status IN ('contacted','replied')
+        AND followup_due_at < $2 ORDER BY followup_due_at ASC LIMIT 10
+      `, [uid, today]),
+      // New leads with email, no sequence active
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.email, l.city, l.state, l.pitch_angle
+        FROM leads l
+        WHERE l.user_id=$1 AND l.status='new' AND l.email IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM email_queue q WHERE q.lead_id=l.id AND q.status='pending'
+        )
+        ORDER BY l.created_at DESC LIMIT 20
+      `, [uid]),
+      // Leads that replied — need proposal attention
+      pool.query(`
+        SELECT id, company, category, last_contacted FROM leads
+        WHERE user_id=$1 AND status='replied' ORDER BY last_contacted ASC LIMIT 5
+      `, [uid]),
+      // Bids due soon
+      pool.query(`
+        SELECT id, project_name, gc_name, bid_due, status, estimated_value
+        FROM bids WHERE user_id=$1 AND status='tracking'
+        AND bid_due IS NOT NULL AND bid_due >= $2 AND bid_due <= $2::date + INTERVAL '7 days'
+        ORDER BY bid_due ASC
+      `, [uid, today]),
+      // Active drip sequences
+      pool.query(`
+        SELECT COUNT(DISTINCT lead_id)::INT AS active,
+               COUNT(*) FILTER (WHERE status='pending')::INT AS pending_emails
+        FROM email_queue WHERE user_id=$1 AND status IN ('pending','sent')
+        AND created_at >= NOW() - INTERVAL '30 days'
+      `, [uid]),
+      // Won this month
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads
+        WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month', NOW())
+      `, [uid]),
+    ]);
+
+    const seq = seqR.rows[0];
+
+    res.json({
+      date: today,
+      overdue: overdueR.rows,
+      newWithEmail: newR.rows,
+      replied: repliedR.rows,
+      bidsThisWeek: bidsR.rows,
+      sequences: {
+        active: seq.active,
+        pendingEmails: seq.pending_emails,
+      },
+      wonThisMonth: wonR.rows[0].count,
+      priorityScore: overdueR.rows.length * 3 + repliedR.rows.length * 2 + bidsR.rows.length * 2 + newR.rows.length,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Background worker — processes pending queue emails
 async function processEmailQueue() {
   const resendKey = process.env.RESEND_API_KEY;
@@ -1496,7 +1655,7 @@ async function processEmailQueue() {
         await pool.query(
           `UPDATE leads SET last_contacted=CURRENT_DATE,
             followup_due_at=CURRENT_DATE + INTERVAL '3 days',
-            status=CASE WHEN status='cold' THEN 'contacted' ELSE status END,
+            status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
             updated_at=NOW() WHERE id=$1`, [item.lead_id]
         );
         console.log(`[drip] Sent Day ${item.sequence_day} to ${item.to_email} (lead ${item.lead_id})`);

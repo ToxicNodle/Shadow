@@ -685,4 +685,5 @@ Total CRM leads per user after all seeds:
   await pool.end();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });
+module.exports = { LEADS: GC_LEADS };

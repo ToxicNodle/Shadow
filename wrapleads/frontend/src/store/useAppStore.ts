@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { LeadCategory, LeadStatus, Settings, Carrier, CarrierSearchParams } from '../api/types';
 import { DEFAULT_SETTINGS } from '../api/types';
 
-export type AppMode = 'leads' | 'discover' | 'pipeline' | 'bids';
+export type AppMode = 'leads' | 'discover' | 'pipeline' | 'bids' | 'mission';
 
 export interface ActiveFilter {
   category: LeadCategory | 'all';
@@ -134,7 +134,7 @@ export const useAppStore = create<AppStore>()(
   persist(
     (set) => ({
       // Mode
-      mode: 'leads',
+      mode: 'mission',
       setMode: (mode) => set({ mode }),
 
       // Lead view

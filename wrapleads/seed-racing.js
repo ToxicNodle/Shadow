@@ -709,4 +709,5 @@ async function main() {
   await pool.end();
 }
 
-main().catch(e => { console.error('\n❌ Failed:', e.message); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error(e.message); process.exit(1); });
+module.exports = { LEADS: RACING_LEADS };

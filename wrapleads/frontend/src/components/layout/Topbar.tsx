@@ -32,13 +32,17 @@ export default function Topbar() {
       </div>
 
       <div className="topbar-mode-switch">
-        {(['leads', 'discover', 'pipeline', 'bids'] as AppMode[]).map((m) => (
+        {(['mission', 'leads', 'discover', 'pipeline', 'bids'] as AppMode[]).map((m) => (
           <button
             key={m}
             className={`mode-btn ${mode === m ? 'active' : ''}`}
             onClick={() => setMode(m)}
           >
-            {m === 'leads' ? 'My Leads' : m === 'discover' ? 'Discover' : m === 'pipeline' ? 'Pipeline' : 'Bid Tracker'}
+            {m === 'mission' ? "Today's Mission"
+              : m === 'leads' ? 'My Leads'
+              : m === 'discover' ? 'Discover'
+              : m === 'pipeline' ? 'Pipeline'
+              : 'Bid Tracker'}
           </button>
         ))}
       </div>
