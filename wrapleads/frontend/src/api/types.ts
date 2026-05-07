@@ -51,6 +51,38 @@ export interface QueuedEmail {
   error_msg?: string;
 }
 
+export type BidStatus = 'tracking' | 'submitted' | 'shortlisted' | 'won' | 'lost' | 'no_bid';
+export type BidProjectType = 'fleet_graphics' | 'dinoc' | 'signage' | 'color_change' | 'mixed' | 'general';
+export type BidPlatform = 'building_connected' | 'isqft' | 'planhub' | 'sam_gov' | 'indot' | 'direct' | 'other';
+
+export interface Bid {
+  id: number;
+  user_id: string;
+  lead_id?: number | null;
+  lead_company?: string | null;
+  project_name: string;
+  gc_name?: string | null;
+  architect?: string | null;
+  project_type: BidProjectType;
+  bid_due?: string | null;
+  estimated_value?: number | null;
+  source_platform?: BidPlatform | null;
+  source_url?: string | null;
+  status: BidStatus;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BidSummary {
+  active: number;
+  won: number;
+  submitted: number;
+  won_value: number;
+  pipeline_value: number;
+  overdue_bids: number;
+}
+
 export interface Carrier {
   id: number;
   name: string;

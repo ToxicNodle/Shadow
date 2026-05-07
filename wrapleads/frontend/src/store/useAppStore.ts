@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { LeadCategory, LeadStatus, Settings, Carrier, CarrierSearchParams } from '../api/types';
 import { DEFAULT_SETTINGS } from '../api/types';
 
-export type AppMode = 'leads' | 'discover' | 'pipeline';
+export type AppMode = 'leads' | 'discover' | 'pipeline' | 'bids';
 
 export interface ActiveFilter {
   category: LeadCategory | 'all';

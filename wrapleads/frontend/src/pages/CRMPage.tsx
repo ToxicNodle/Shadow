@@ -20,6 +20,7 @@ import OnboardingModal from '../components/modals/OnboardingModal';
 import BlueprintScanner from '../components/modals/BlueprintScanner';
 import BulkOutreachModal from '../components/modals/BulkOutreachModal';
 import PipelineView from '../components/pipeline/PipelineView';
+import BidsView from '../components/bids/BidsView';
 import CSVImportModal from '../components/modals/CSVImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
@@ -98,11 +99,13 @@ export default function CRMPage() {
       {mode === 'leads' && <PipelineStats />}
       <div className="crm-body">
         {mode === 'leads' && leadView === 'list' && <Sidebar />}
-        <main className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}`}>
+        <main className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}`}>
           {mode === 'leads'
             ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
             : mode === 'pipeline'
             ? <PipelineView />
+            : mode === 'bids'
+            ? <BidsView />
             : <DiscoverPage />}
         </main>
         {mode === 'leads' && <LeadDetail />}

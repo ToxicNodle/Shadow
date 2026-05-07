@@ -145,6 +145,32 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create email_queue table:', e.message);
   }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bids (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        lead_id         BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        project_name    TEXT NOT NULL,
+        gc_name         TEXT,
+        architect       TEXT,
+        project_type    TEXT NOT NULL DEFAULT 'general',
+        bid_due         DATE,
+        estimated_value INTEGER,
+        source_platform TEXT,
+        source_url      TEXT,
+        status          TEXT NOT NULL DEFAULT 'tracking',
+        notes           TEXT,
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_bids_user ON bids(user_id, status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_bids_due ON bids(bid_due) WHERE status NOT IN ('won','lost','no_bid')`);
+  } catch (e) {
+    console.warn('[migrate] Could not create bids table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1313,6 +1339,115 @@ app.delete('/email-queue/:id', authMiddleware, async (req, res) => {
       [id, String(req.user.id)]
     );
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================================
+// Bid Tracker — CRUD
+// ============================================================================
+
+app.get('/bids', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      `SELECT b.*, l.company AS lead_company
+       FROM bids b
+       LEFT JOIN leads l ON l.id = b.lead_id
+       WHERE b.user_id = $1
+       ORDER BY
+         CASE WHEN b.status IN ('won','lost','no_bid') THEN 1 ELSE 0 END,
+         b.bid_due ASC NULLS LAST,
+         b.created_at DESC`,
+      [uid]
+    );
+    res.json({ bids: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/bids', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const {
+      project_name, gc_name, architect, project_type = 'general',
+      bid_due, estimated_value, source_platform, source_url,
+      status = 'tracking', notes, lead_id,
+    } = req.body;
+    if (!project_name?.trim()) return res.status(400).json({ error: 'project_name required' });
+
+    const { rows } = await pool.query(
+      `INSERT INTO bids
+         (user_id, lead_id, project_name, gc_name, architect, project_type,
+          bid_due, estimated_value, source_platform, source_url, status, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [uid, lead_id || null, project_name.trim(), gc_name || null, architect || null,
+       project_type, bid_due || null, estimated_value || null,
+       source_platform || null, source_url || null, status, notes || null]
+    );
+    res.status(201).json({ bid: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/bids/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id, 10);
+    const {
+      project_name, gc_name, architect, project_type,
+      bid_due, estimated_value, source_platform, source_url,
+      status, notes, lead_id,
+    } = req.body;
+
+    const { rows } = await pool.query(
+      `UPDATE bids SET
+         project_name    = COALESCE($3, project_name),
+         gc_name         = COALESCE($4, gc_name),
+         architect       = COALESCE($5, architect),
+         project_type    = COALESCE($6, project_type),
+         bid_due         = COALESCE($7::date, bid_due),
+         estimated_value = COALESCE($8, estimated_value),
+         source_platform = COALESCE($9, source_platform),
+         source_url      = COALESCE($10, source_url),
+         status          = COALESCE($11, status),
+         notes           = COALESCE($12, notes),
+         lead_id         = COALESCE($13, lead_id),
+         updated_at      = NOW()
+       WHERE id=$1 AND user_id=$2
+       RETURNING *`,
+      [id, uid, project_name || null, gc_name || null, architect || null,
+       project_type || null, bid_due || null, estimated_value || null,
+       source_platform || null, source_url || null, status || null,
+       notes || null, lead_id || null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ bid: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/bids/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id, 10);
+    await pool.query(`DELETE FROM bids WHERE id=$1 AND user_id=$2`, [id, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/bids/summary', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status NOT IN ('won','lost','no_bid')) AS active,
+         COUNT(*) FILTER (WHERE status='won') AS won,
+         COUNT(*) FILTER (WHERE status='submitted') AS submitted,
+         COALESCE(SUM(estimated_value) FILTER (WHERE status='won'), 0) AS won_value,
+         COALESCE(SUM(estimated_value) FILTER (WHERE status NOT IN ('lost','no_bid')), 0) AS pipeline_value,
+         COUNT(*) FILTER (WHERE bid_due IS NOT NULL AND bid_due < CURRENT_DATE AND status='tracking') AS overdue_bids
+       FROM bids WHERE user_id=$1`,
+      [uid]
+    );
+    res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

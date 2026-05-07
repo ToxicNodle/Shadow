@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary } from './types';
 
 export const api = {
   // Auth
@@ -184,4 +184,14 @@ export const api = {
   // Stripe
   checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),
   portal: () => authFetch<{ url: string }>('/stripe/portal', { method: 'POST', body: '{}' }),
+
+  // Bid tracker
+  getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
+  getBidSummary: () => authFetch<BidSummary>('/bids/summary'),
+  createBid: (bid: Partial<Bid>) =>
+    authFetch<{ bid: Bid }>('/bids', { method: 'POST', body: JSON.stringify(bid) }),
+  updateBid: (id: number, updates: Partial<Bid>) =>
+    authFetch<{ bid: Bid }>(`/bids/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteBid: (id: number) =>
+    authFetch<{ ok: boolean }>(`/bids/${id}`, { method: 'DELETE' }),
 };
