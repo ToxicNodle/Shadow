@@ -144,8 +144,8 @@ export default function MissionView() {
     );
   }
 
-  const { overdue, newWithEmail, replied, bidsThisWeek, sequences, wonThisMonth } = data;
-  const totalActions = overdue.length + replied.length + bidsThisWeek.length;
+  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth } = data;
+  const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
   return (
@@ -155,8 +155,10 @@ export default function MissionView() {
         <div>
           <div className="mission-date">{today()}</div>
           <h1 className="mission-title">
-            {totalActions === 0 && newWithEmail.length === 0
+            {totalActions === 0 && newWithEmail.length === 0 && !needsEmail?.length
               ? "You're all caught up 🏆"
+              : (callReady?.length ?? 0) > 0
+              ? `${callReady!.length} lead${callReady!.length !== 1 ? 's' : ''} ready for your call`
               : totalActions === 0
               ? `${newWithEmail.length} leads ready to activate`
               : `${totalActions} action${totalActions !== 1 ? 's' : ''} need your attention`}
@@ -169,6 +171,47 @@ export default function MissionView() {
       </div>
 
       <div className="mission-grid">
+
+        {/* ── CALL READY — sequence complete, pick up the phone ── */}
+        {(callReady?.length ?? 0) > 0 && (
+          <section className="mission-card mission-card-call" style={{ gridColumn: '1 / -1' }}>
+            <div className="mission-card-header">
+              <span className="mission-card-icon">📞</span>
+              <span className="mission-card-title">Ready for Your Call — Sequence Complete</span>
+              <span className="mission-badge mission-badge-green">{callReady!.length}</span>
+            </div>
+            <p className="mission-call-desc">
+              These leads received your full 3-email sequence and haven't replied yet.
+              The next step is a phone call — email has done its job.
+            </p>
+            <div className="mission-call-grid">
+              {callReady!.map((l) => {
+                const ago = daysAgo(l.last_contacted);
+                return (
+                  <div key={l.id} className="mission-call-card">
+                    <div className="mission-call-name">{l.company}</div>
+                    <div className="mission-call-meta">
+                      {l.city && l.state ? `${l.city}, ${l.state} · ` : ''}{l.category}
+                    </div>
+                    <div className="mission-call-stats">
+                      <span>{l.emails_sent ?? 3} emails sent</span>
+                      {ago !== null && <span>{ago}d ago</span>}
+                    </div>
+                    {l.phone ? (
+                      <a href={`tel:${l.phone}`} className="mission-call-btn mission-call-btn-primary">
+                        📞 Call Now
+                      </a>
+                    ) : (
+                      <button className="mission-call-btn" onClick={() => goToLead(l.id)}>
+                        Add Phone # →
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* ── Overdue Follow-ups ── */}
         {overdue.length > 0 && (
@@ -294,6 +337,43 @@ export default function MissionView() {
               leads={newWithEmail}
               onDone={() => { setShowBulk(false); refetch(); }}
             />
+          </section>
+        )}
+
+        {/* ── Needs Email Enrichment ── */}
+        {(needsEmail?.length ?? 0) > 0 && !showBulk && (
+          <section className="mission-card mission-card-enrich">
+            <div className="mission-card-header">
+              <span className="mission-card-icon">🔍</span>
+              <span className="mission-card-title">Needs Email — Can't Sequence Yet</span>
+              <span className="mission-badge" style={{ background: '#6b7280' }}>{needsEmail!.length}</span>
+            </div>
+            <p className="mission-card-desc">
+              These leads have no email address on file. Use Apollo Enrich (⌘K → Apollo) or add manually to unlock their drip sequences.
+            </p>
+            <div className="mission-items">
+              {needsEmail!.slice(0, 5).map((l) => (
+                <div key={l.id} className="mission-item">
+                  <div className="mission-item-info">
+                    <span className="mission-item-company">{l.company}</span>
+                    <span className="mission-item-meta">{l.contact_title || l.category} · {l.city}, {l.state}</span>
+                  </div>
+                  <button className="mission-action-btn" onClick={() => goToLead(l.id)}>
+                    Enrich →
+                  </button>
+                </div>
+              ))}
+              {needsEmail!.length > 5 && (
+                <div className="mission-item" style={{ justifyContent: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    +{needsEmail!.length - 5} more — {needsEmail!.length} total need email addresses
+                  </span>
+                </div>
+              )}
+            </div>
+            <button className="mission-card-footer-btn" onClick={() => goToLeadsFiltered('new')}>
+              View all new leads →
+            </button>
           </section>
         )}
 

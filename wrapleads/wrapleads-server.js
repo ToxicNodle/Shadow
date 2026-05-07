@@ -1549,7 +1549,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
     const uid = String(req.user.id);
     const today = new Date().toISOString().slice(0, 10);
 
-    const [overdueR, newR, repliedR, bidsR, seqR, wonR] = await Promise.all([
+    const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR] = await Promise.all([
       // Overdue follow-ups
       pool.query(`
         SELECT id, company, category, email, followup_due_at, last_contacted
@@ -1590,6 +1590,41 @@ app.get('/mission', authMiddleware, async (req, res) => {
         SELECT COUNT(*)::INT AS count FROM leads
         WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month', NOW())
       `, [uid]),
+      // Sequence complete — ready for phone call
+      // These are contacted leads where all queued emails have been sent (no pending left)
+      // and at least one email was sent (sequence actually ran)
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.email, l.city, l.state,
+               l.last_contacted, l.phone,
+               MAX(q.sequence_day) AS last_day_sent,
+               COUNT(q.id) FILTER (WHERE q.status='sent') AS emails_sent
+        FROM leads l
+        JOIN email_queue q ON q.lead_id = l.id
+        WHERE l.user_id=$1
+          AND l.status = 'contacted'
+          AND NOT EXISTS (
+            SELECT 1 FROM email_queue pq WHERE pq.lead_id=l.id AND pq.status='pending'
+          )
+        GROUP BY l.id, l.company, l.category, l.email, l.city, l.state, l.last_contacted, l.phone
+        HAVING COUNT(q.id) FILTER (WHERE q.status='sent') >= 2
+        ORDER BY l.last_contacted ASC
+        LIMIT 15
+      `, [uid]),
+      // Leads with no email — need Apollo enrichment before sequences can fire
+      pool.query(`
+        SELECT id, company, category, city, state, website, contact_title
+        FROM leads
+        WHERE user_id=$1 AND status='new'
+          AND (email IS NULL OR email = '')
+          AND pitch_angle IS NOT NULL
+        ORDER BY
+          CASE category
+            WHEN 'racing' THEN 1 WHEN 'gc_referral' THEN 2 WHEN 'dinoc' THEN 3
+            WHEN 'fleet' THEN 4 ELSE 5
+          END,
+          created_at DESC
+        LIMIT 12
+      `, [uid]),
     ]);
 
     const seq = seqR.rows[0];
@@ -1600,12 +1635,19 @@ app.get('/mission', authMiddleware, async (req, res) => {
       newWithEmail: newR.rows,
       replied: repliedR.rows,
       bidsThisWeek: bidsR.rows,
+      callReady: callReadyR.rows,
+      needsEmail: needsEmailR.rows,
       sequences: {
         active: seq.active,
         pendingEmails: seq.pending_emails,
       },
       wonThisMonth: wonR.rows[0].count,
-      priorityScore: overdueR.rows.length * 3 + repliedR.rows.length * 2 + bidsR.rows.length * 2 + newR.rows.length,
+      priorityScore:
+        callReadyR.rows.length * 5 +
+        overdueR.rows.length * 3 +
+        repliedR.rows.length * 2 +
+        bidsR.rows.length * 2 +
+        newR.rows.length,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1652,12 +1694,37 @@ async function processEmailQueue() {
           subject: item.subject, body: item.body,
           metadata: { to: item.to_email, resend_id: data.id, sequence_day: item.sequence_day, auto: true },
         });
-        await pool.query(
-          `UPDATE leads SET last_contacted=CURRENT_DATE,
-            followup_due_at=CURRENT_DATE + INTERVAL '3 days',
-            status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
-            updated_at=NOW() WHERE id=$1`, [item.lead_id]
+
+        // Check if this was the final email in the sequence
+        const remaining = await pool.query(
+          `SELECT COUNT(*) AS cnt FROM email_queue WHERE lead_id=$1 AND status='pending'`,
+          [item.lead_id]
         );
+        const sequenceDone = parseInt(remaining.rows[0].cnt, 10) === 0;
+
+        if (sequenceDone) {
+          // Sequence complete — set followup due TODAY so it surfaces in Mission as "call now"
+          await pool.query(
+            `UPDATE leads SET last_contacted=CURRENT_DATE,
+              followup_due_at=CURRENT_DATE,
+              status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
+              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+          );
+          await logActivity(pool, {
+            leadId: item.lead_id, userId: item.user_id, type: 'sequence_activated',
+            subject: '3-email sequence complete — time to call',
+            metadata: { sequence_complete: true, sequence_day: item.sequence_day },
+          });
+          console.log(`[drip] Sequence COMPLETE for lead ${item.lead_id} — flagged call-ready`);
+        } else {
+          // Mid-sequence — normal follow-up window
+          await pool.query(
+            `UPDATE leads SET last_contacted=CURRENT_DATE,
+              followup_due_at=CURRENT_DATE + INTERVAL '3 days',
+              status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
+              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+          );
+        }
         console.log(`[drip] Sent Day ${item.sequence_day} to ${item.to_email} (lead ${item.lead_id})`);
       } catch (err) {
         await pool.query(
