@@ -187,7 +187,14 @@ export interface ParsedContact {
 export interface PipelineAnalytics {
   total: number;
   byStatus: Partial<Record<LeadStatus, number>>;
+  byCategory: Partial<Record<string, number>>;
   overdue: number;
+  projectedRevenue: number;
+  sequenceStats: {
+    activeSequences: number;
+    emailsSent30d: number;
+  };
+  recentLeads: Array<{ day: string; count: number }>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

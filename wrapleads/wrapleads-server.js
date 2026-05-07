@@ -1056,7 +1056,7 @@ app.get('/leads/followup-due', authMiddleware, async (req, res) => {
 app.get('/leads/analytics', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
-    const [statusR, overdueR] = await Promise.all([
+    const [statusR, overdueR, categoryR, sequenceR, recentR] = await Promise.all([
       pool.query(`SELECT status, COUNT(*) AS count FROM leads WHERE user_id=$1 GROUP BY status`, [uid]),
       pool.query(`
         SELECT COUNT(*) AS count FROM leads
@@ -1064,13 +1064,55 @@ app.get('/leads/analytics', authMiddleware, async (req, res) => {
           AND status IN ('contacted','replied')
           AND (last_contacted IS NULL OR last_contacted < CURRENT_DATE - INTERVAL '14 days')
       `, [uid]),
+      pool.query(`SELECT category, COUNT(*) AS count FROM leads WHERE user_id=$1 GROUP BY category`, [uid]),
+      pool.query(`
+        SELECT
+          COUNT(DISTINCT lead_id) FILTER (WHERE status='pending') AS active_sequences,
+          COUNT(*) FILTER (WHERE status='sent' AND sent_at >= CURRENT_DATE - INTERVAL '30 days') AS sent_30d
+        FROM email_queue WHERE user_id=$1
+      `, [uid]),
+      pool.query(`
+        SELECT DATE(created_at) AS day, COUNT(*) AS count
+        FROM leads WHERE user_id=$1 AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY DATE(created_at) ORDER BY day
+      `, [uid]),
     ]);
+
     const byStatus = {};
     const total = statusR.rows.reduce((acc, r) => {
       byStatus[r.status] = parseInt(r.count, 10);
       return acc + parseInt(r.count, 10);
     }, 0);
-    res.json({ total, byStatus, overdue: parseInt(overdueR.rows[0]?.count ?? 0, 10) });
+
+    const byCategory = {};
+    categoryR.rows.forEach(r => { byCategory[r.category] = parseInt(r.count, 10); });
+
+    // Projected revenue by category (conservative per-lead averages)
+    const REV_PER_LEAD = {
+      fleet: 2500, dinoc: 4500, gc_referral: 12000,
+      construction: 3500, color_change: 1800, other: 1500,
+    };
+    let projectedRevenue = 0;
+    for (const [cat, count] of Object.entries(byCategory)) {
+      const activeCount = count - (byStatus.won ?? 0) - (byStatus.lost ?? 0);
+      projectedRevenue += Math.max(0, activeCount) * (REV_PER_LEAD[cat] ?? 1500);
+    }
+
+    const sq = sequenceR.rows[0];
+    const recentLeads = recentR.rows.map(r => ({ day: r.day, count: parseInt(r.count, 10) }));
+
+    res.json({
+      total,
+      byStatus,
+      byCategory,
+      overdue: parseInt(overdueR.rows[0]?.count ?? 0, 10),
+      projectedRevenue,
+      sequenceStats: {
+        activeSequences: parseInt(sq.active_sequences ?? 0, 10),
+        emailsSent30d: parseInt(sq.sent_30d ?? 0, 10),
+      },
+      recentLeads,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
