@@ -14,15 +14,16 @@ const STATUS_COLORS: Record<string, string> = {
 
 const CATEGORY_LABELS: Record<string, string> = {
   fleet: 'Fleet Wraps', dinoc: 'DI-NOC / Rea Tec', gc_referral: 'GC Spec',
-  construction: 'Construction Fleet', color_change: 'Color Change', other: 'Other',
+  construction: 'Construction Fleet', color_change: 'Color Change',
+  racing: 'Motorsport / Race Teams', other: 'Other',
 };
 const CATEGORY_COLORS: Record<string, string> = {
   fleet: '#3b82f6', dinoc: '#8b5cf6', gc_referral: '#f59e0b',
-  construction: '#f97316', color_change: '#ec4899', other: '#6b7280',
+  construction: '#f97316', color_change: '#ec4899', racing: '#ef4444', other: '#6b7280',
 };
 const REV_PER_LEAD: Record<string, number> = {
   fleet: 2500, dinoc: 4500, gc_referral: 12000,
-  construction: 3500, color_change: 1800, other: 1500,
+  construction: 3500, color_change: 1800, racing: 35000, other: 1500,
 };
 
 function fmt(n: number) {

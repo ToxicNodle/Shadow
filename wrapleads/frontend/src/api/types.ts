@@ -1,5 +1,5 @@
 export type LeadStatus = 'cold' | 'contacted' | 'replied' | 'meeting' | 'proposal' | 'won' | 'lost';
-export type LeadCategory = 'fleet' | 'design' | 'construction' | 'dinoc' | 'reatec' | 'colorchange' | 'wallgraphics' | 'gc_referral';
+export type LeadCategory = 'fleet' | 'design' | 'construction' | 'dinoc' | 'reatec' | 'colorchange' | 'wallgraphics' | 'gc_referral' | 'racing';
 export type SubStatus = 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled';
 
 export interface Lead {
@@ -171,6 +171,7 @@ export const CATEGORIES: Record<LeadCategory, string> = {
   colorchange:  'Color Change Wraps',
   wallgraphics: 'Wall Graphics / Wallpaper',
   gc_referral:  'GC Referral Partner',
+  racing:       'Motorsport / Race Teams',
 };
 
 export const STATUSES: Record<LeadStatus, string> = {

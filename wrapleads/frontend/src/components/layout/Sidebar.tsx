@@ -6,7 +6,7 @@ import { CATEGORIES, STATUSES } from '../../api/types';
 import { api } from '../../api/client';
 
 const CATEGORY_ORDER: LeadCategory[] = [
-  'fleet', 'colorchange', 'dinoc', 'reatec', 'wallgraphics', 'design', 'construction', 'gc_referral',
+  'racing', 'fleet', 'colorchange', 'dinoc', 'reatec', 'wallgraphics', 'design', 'construction', 'gc_referral',
 ];
 const STATUS_ORDER: LeadStatus[] = ['cold', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'];
 

@@ -1116,7 +1116,7 @@ app.get('/leads/analytics', authMiddleware, async (req, res) => {
     // Projected revenue by category (conservative per-lead averages)
     const REV_PER_LEAD = {
       fleet: 2500, dinoc: 4500, gc_referral: 12000,
-      construction: 3500, color_change: 1800, other: 1500,
+      construction: 3500, color_change: 1800, racing: 35000, other: 1500,
     };
     let projectedRevenue = 0;
     for (const [cat, count] of Object.entries(byCategory)) {
