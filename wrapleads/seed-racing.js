@@ -885,17 +885,19 @@ async function main() {
     for (const lead of RACING_LEADS) {
       const result = await pool.query(`
         INSERT INTO leads (
-          user_id, client_id, company, category, city, state, country,
-          contact_name, contact_title, email, phone, website, pitch_angle, status, source, notes
+          user_id, client_id, company, category, city, state,
+          contact_name, contact_title, email, phone, website, pitch_angle,
+          status, created_at, updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,'US',$7,$8,$9,$10,$11,$12,'new',$13,null)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'cold',NOW(),NOW())
         ON CONFLICT (user_id, client_id) DO UPDATE SET
           contact_name    = COALESCE(EXCLUDED.contact_name, leads.contact_name),
           contact_title   = COALESCE(EXCLUDED.contact_title, leads.contact_title),
           email           = COALESCE(EXCLUDED.email, leads.email),
           phone           = COALESCE(EXCLUDED.phone, leads.phone),
           website         = COALESCE(EXCLUDED.website, leads.website),
-          pitch_angle     = COALESCE(EXCLUDED.pitch_angle, leads.pitch_angle)
+          pitch_angle     = COALESCE(EXCLUDED.pitch_angle, leads.pitch_angle),
+          updated_at      = NOW()
         RETURNING (xmax = 0) AS inserted
       `, [
         uid,
@@ -910,7 +912,6 @@ async function main() {
         lead.phone || null,
         lead.website || null,
         lead.pitchAngle || null,
-        lead.source,
       ]);
       if (result.rows[0]?.inserted) inserted++; else updated++;
     }
@@ -927,7 +928,7 @@ async function main() {
       COUNT(*) FILTER (WHERE category = 'racing' AND phone IS NOT NULL) AS has_phone,
       COUNT(*) FILTER (WHERE category = 'racing' AND city = 'Indianapolis') AS indy,
       COUNT(*) FILTER (WHERE category = 'racing' AND city = 'Brownsburg') AS brownsburg
-    FROM leads WHERE source LIKE 'seed_racing%'
+    FROM leads WHERE client_id LIKE 'race-%'
   `);
   const s = summary[0];
   console.log(`📊 Racing leads in CRM:`);
