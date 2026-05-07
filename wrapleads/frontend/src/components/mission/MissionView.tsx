@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
@@ -107,12 +107,273 @@ function BulkActivatePanel({ leads, onDone }: BulkPanelProps) {
   );
 }
 
+// ── Enrich Panel (Apollo bulk email lookup) ──────────────────────────────────
+
+interface EnrichPanelProps {
+  leads: { id: number; company: string; category: string; city: string; state: string }[];
+  apolloKey: string;
+  onDone: () => void;
+}
+
+function EnrichPanel({ leads, apolloKey, onDone }: EnrichPanelProps) {
+  const [selected, setSelected] = useState<Set<number>>(new Set(leads.map((l) => l.id)));
+  const [autoSeq, setAutoSeq] = useState(true);
+  const [tone, setTone] = useState('professional');
+  const [result, setResult] = useState<{ enriched: number; sequencesActivated: number; failed: number } | null>(null);
+  const qc = useQueryClient();
+
+  const mut = useMutation({
+    mutationFn: () =>
+      api.bulkEnrichLeads({
+        lead_ids: [...selected],
+        auto_sequence: autoSeq,
+        tone,
+        apiKey: apolloKey || undefined,
+      }),
+    onSuccess: (data) => {
+      setResult({ enriched: data.enriched, sequencesActivated: data.sequencesActivated, failed: data.searched - data.enriched });
+      qc.invalidateQueries({ queryKey: ['mission'] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+    },
+  });
+
+  const toggle = (id: number) => setSelected((s) => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+
+  if (result) {
+    return (
+      <div className="mission-bulk-result">
+        <div className="mission-bulk-result-icon">✅</div>
+        <div className="mission-bulk-result-text">
+          <strong>{result.enriched} leads enriched with email.</strong>
+          {result.sequencesActivated > 0 && ` ${result.sequencesActivated} drip sequences auto-activated.`}
+          {result.failed > 0 && ` (${result.failed} not found on Apollo)`}
+        </div>
+        <button className="btn btn-primary" onClick={onDone}>Done</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mission-bulk-panel">
+      <div className="mission-bulk-header">
+        <span className="mission-bulk-title">Auto-Enrich via Apollo.io</span>
+        <div className="mission-bulk-controls">
+          <label className="mission-enrich-toggle">
+            <input type="checkbox" checked={autoSeq} onChange={(e) => setAutoSeq(e.target.checked)} />
+            <span>Auto-activate sequences</span>
+          </label>
+          {autoSeq && (
+            <select className="form-control" style={{ width: 140 }} value={tone} onChange={(e) => setTone(e.target.value)}>
+              <option value="professional">Professional</option>
+              <option value="casual">Casual</option>
+              <option value="direct">Direct</option>
+              <option value="local">Local</option>
+            </select>
+          )}
+          <button className="btn" onClick={() => setSelected(new Set(leads.map((l) => l.id)))}>All</button>
+          <button className="btn" onClick={() => setSelected(new Set())}>None</button>
+        </div>
+      </div>
+      <div className="mission-bulk-list">
+        {leads.map((l) => (
+          <label key={l.id} className="mission-bulk-item">
+            <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggle(l.id)} />
+            <span className="mission-bulk-company">{l.company}</span>
+            <span className="mission-bulk-cat">{l.city}, {l.state} · {l.category}</span>
+          </label>
+        ))}
+      </div>
+      <div className="mission-bulk-footer">
+        <span className="mission-bulk-count">{selected.size} to enrich</span>
+        <button className="btn" onClick={onDone}>Cancel</button>
+        <button
+          className="btn btn-primary"
+          disabled={selected.size === 0 || mut.isPending}
+          onClick={() => mut.mutate()}
+        >
+          {mut.isPending
+            ? `Searching Apollo… (${selected.size} leads)`
+            : `🔍 Enrich ${selected.size} Leads`}
+        </button>
+      </div>
+      {mut.isError && (
+        <div className="mission-enrich-error">
+          Apollo error: {(mut.error as Error).message}. Check your API key in Settings.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Prospector Panel (search Apollo for brand-new leads) ─────────────────────
+
+const PROSPECT_INDUSTRIES = [
+  { label: 'Auto Dealerships', value: 'automotive', category: 'fleet' },
+  { label: 'Construction / GC', value: 'construction', category: 'gc_referral' },
+  { label: 'Hotels / Hospitality', value: 'hospitality', category: 'dinoc' },
+  { label: 'Architecture / Design', value: 'architecture', category: 'dinoc' },
+  { label: 'Logistics / Trucking', value: 'logistics and supply chain', category: 'fleet' },
+  { label: 'Food & Beverage / Restaurant', value: 'food and beverages', category: 'fleet' },
+  { label: 'Healthcare / Medical', value: 'hospital and health care', category: 'fleet' },
+  { label: 'Racing / Motorsport', value: 'sports', category: 'racing' },
+  { label: 'Property Management', value: 'real estate', category: 'fleet' },
+];
+
+interface ProspectorPanelProps {
+  apolloKey: string;
+  onClose: () => void;
+  onImported: () => void;
+}
+
+function ProspectorPanel({ apolloKey, onClose, onImported }: ProspectorPanelProps) {
+  const [industry, setIndustry] = useState(PROSPECT_INDUSTRIES[0]);
+  const [location, setLocation] = useState('Indianapolis, Indiana');
+  const [limit, setLimit] = useState(25);
+  const [prospects, setProspects] = useState<{ name: string; title: string; company: string; city: string; state: string; email?: string; domain?: string }[]>([]);
+  const [imported, setImported] = useState<Set<number>>(new Set());
+  const [importing, setImporting] = useState<Set<number>>(new Set());
+  const qc = useQueryClient();
+
+  const searchMut = useMutation({
+    mutationFn: () =>
+      api.prospect({
+        industry: industry.value,
+        location,
+        limit,
+        category: industry.category,
+        apiKey: apolloKey || undefined,
+      }),
+    onSuccess: (data) => {
+      setProspects(data.prospects);
+      setImported(new Set());
+    },
+  });
+
+  async function importOne(prospect: typeof prospects[0], idx: number) {
+    setImporting((s) => new Set([...s, idx]));
+    try {
+      await api.importProspect(prospect, industry.category);
+      setImported((s) => new Set([...s, idx]));
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['mission'] });
+      onImported();
+    } finally {
+      setImporting((s) => { const n = new Set(s); n.delete(idx); return n; });
+    }
+  }
+
+  async function importAll() {
+    const unimported = prospects.map((p, i) => ({ p, i })).filter(({ i }) => !imported.has(i));
+    for (const { p, i } of unimported) {
+      await importOne(p, i);
+    }
+  }
+
+  return (
+    <div className="mission-prospector">
+      <div className="mission-prospector-header">
+        <span className="mission-prospector-title">🌐 Apollo Prospector — Find New Leads</span>
+        <button className="mission-action-btn" onClick={onClose}>✕ Close</button>
+      </div>
+      <div className="mission-prospector-form">
+        <div className="mission-prospector-field">
+          <label>Industry</label>
+          <select
+            className="form-control"
+            value={industry.value}
+            onChange={(e) => setIndustry(PROSPECT_INDUSTRIES.find((i) => i.value === e.target.value) ?? PROSPECT_INDUSTRIES[0])}
+          >
+            {PROSPECT_INDUSTRIES.map((i) => (
+              <option key={i.value} value={i.value}>{i.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="mission-prospector-field">
+          <label>Location</label>
+          <input
+            className="form-control"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="City, State"
+          />
+        </div>
+        <div className="mission-prospector-field">
+          <label>Limit</label>
+          <select className="form-control" style={{ width: 80 }} value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+          </select>
+        </div>
+        <button
+          className="btn btn-primary"
+          disabled={searchMut.isPending}
+          onClick={() => searchMut.mutate()}
+        >
+          {searchMut.isPending ? 'Searching…' : 'Search Apollo'}
+        </button>
+      </div>
+
+      {searchMut.isError && (
+        <div className="mission-enrich-error">
+          {(searchMut.error as Error).message}
+        </div>
+      )}
+
+      {prospects.length > 0 && (
+        <>
+          <div className="mission-prospector-results-header">
+            <span>{prospects.length} prospects found</span>
+            <button
+              className="btn btn-primary"
+              onClick={importAll}
+              disabled={imported.size === prospects.length}
+            >
+              Import All as Leads
+            </button>
+          </div>
+          <div className="mission-prospector-list">
+            {prospects.map((p, i) => (
+              <div key={i} className={`mission-prospector-row ${imported.has(i) ? 'mission-prospector-imported' : ''}`}>
+                <div className="mission-prospector-info">
+                  <span className="mission-prospector-name">{p.name}</span>
+                  <span className="mission-prospector-co">{p.company}</span>
+                  <span className="mission-prospector-meta">
+                    {p.title}{p.city ? ` · ${p.city}, ${p.state}` : ''}
+                    {p.email ? ` · ${p.email}` : ''}
+                  </span>
+                </div>
+                {imported.has(i) ? (
+                  <span className="mission-prospector-done">✓ Imported</span>
+                ) : (
+                  <button
+                    className="mission-action-btn mission-action-primary"
+                    disabled={importing.has(i)}
+                    onClick={() => importOne(p, i)}
+                  >
+                    {importing.has(i) ? '…' : 'Import'}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main MissionView ──────────────────────────────────────────────────────────
 
 export default function MissionView() {
   const setMode = useAppStore((s) => s.setMode);
   const setFilter = useAppStore((s) => s.setFilter);
+  const settings = useAppStore((s) => s.settings);
   const [showBulk, setShowBulk] = useState(false);
+  const [showEnrich, setShowEnrich] = useState(false);
+  const [showProspector, setShowProspector] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mission'],
@@ -167,7 +428,12 @@ export default function MissionView() {
             {sequences.active} active drip sequences · {sequences.pendingEmails} emails queued · {wonThisMonth} won this month
           </p>
         </div>
-        <button className="btn" onClick={() => refetch()}>↻ Refresh</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={() => setShowProspector((v) => !v)}>
+            🌐 Prospector
+          </button>
+          <button className="btn" onClick={() => refetch()}>↻ Refresh</button>
+        </div>
       </div>
 
       <div className="mission-grid">
@@ -341,7 +607,7 @@ export default function MissionView() {
         )}
 
         {/* ── Needs Email Enrichment ── */}
-        {(needsEmail?.length ?? 0) > 0 && !showBulk && (
+        {(needsEmail?.length ?? 0) > 0 && !showBulk && !showEnrich && (
           <section className="mission-card mission-card-enrich">
             <div className="mission-card-header">
               <span className="mission-card-icon">🔍</span>
@@ -349,7 +615,7 @@ export default function MissionView() {
               <span className="mission-badge" style={{ background: '#6b7280' }}>{needsEmail!.length}</span>
             </div>
             <p className="mission-card-desc">
-              These leads have no email address on file. Use Apollo Enrich (⌘K → Apollo) or add manually to unlock their drip sequences.
+              These leads have no email on file. Auto-enrich all of them via Apollo.io in one click — email found → drip sequence fires automatically.
             </p>
             <div className="mission-items">
               {needsEmail!.slice(0, 5).map((l) => (
@@ -359,7 +625,7 @@ export default function MissionView() {
                     <span className="mission-item-meta">{l.contact_title || l.category} · {l.city}, {l.state}</span>
                   </div>
                   <button className="mission-action-btn" onClick={() => goToLead(l.id)}>
-                    Enrich →
+                    View →
                   </button>
                 </div>
               ))}
@@ -371,9 +637,36 @@ export default function MissionView() {
                 </div>
               )}
             </div>
-            <button className="mission-card-footer-btn" onClick={() => goToLeadsFiltered('new')}>
-              View all new leads →
-            </button>
+            <div className="mission-card-footer-actions">
+              <button className="btn btn-primary" onClick={() => setShowEnrich(true)}>
+                ⚡ Auto-Enrich All via Apollo
+              </button>
+              <button className="mission-card-footer-btn" onClick={() => goToLeadsFiltered('new')}>
+                View all new leads →
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ── Apollo Bulk Enrich Panel ── */}
+        {showEnrich && (needsEmail?.length ?? 0) > 0 && (
+          <section className="mission-card mission-card-enrich" style={{ gridColumn: '1 / -1' }}>
+            <EnrichPanel
+              leads={needsEmail!}
+              apolloKey={settings.apolloApiKey ?? ''}
+              onDone={() => { setShowEnrich(false); refetch(); }}
+            />
+          </section>
+        )}
+
+        {/* ── Apollo Prospector ── */}
+        {showProspector && (
+          <section className="mission-card" style={{ gridColumn: '1 / -1', padding: 0, overflow: 'hidden' }}>
+            <ProspectorPanel
+              apolloKey={settings.apolloApiKey ?? ''}
+              onClose={() => setShowProspector(false)}
+              onImported={() => refetch()}
+            />
           </section>
         )}
 

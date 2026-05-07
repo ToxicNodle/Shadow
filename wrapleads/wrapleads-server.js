@@ -617,6 +617,268 @@ app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================================
+// Apollo — Bulk Enrich + Auto-Sequence + Prospector
+// ============================================================================
+
+// Titles to search per lead category — tuned for each vertical
+const APOLLO_TITLES = {
+  racing:       ['Director of Marketing', 'Marketing Manager', 'Partnerships Director', 'VP of Sponsorship', 'Operations Director', 'Team Principal'],
+  gc_referral:  ['President', 'CEO', 'VP of Operations', 'Director of Operations', 'Business Development Manager', 'Project Executive'],
+  construction: ['Fleet Manager', 'Director of Operations', 'VP of Operations', 'Equipment Manager', 'Director of Fleet'],
+  dinoc:        ['Principal', 'Design Director', 'Managing Principal', 'Director of Interior Design', 'Studio Director', 'Project Architect'],
+  design:       ['Principal', 'Design Director', 'Managing Principal', 'Studio Director', 'Owner'],
+  fleet:        ['Fleet Manager', 'Director of Operations', 'VP of Logistics', 'Director of Transportation', 'General Manager'],
+  reatec:       ['Principal', 'Design Director', 'Project Architect', 'Managing Principal'],
+  colorchange:  ['Owner', 'General Manager', 'Marketing Director', 'VP of Marketing'],
+  wallgraphics: ['Marketing Director', 'Brand Manager', 'Facilities Manager', 'Director of Marketing'],
+  default:      ['Owner', 'CEO', 'President', 'Marketing Director', 'Operations Manager'],
+};
+
+// Shared: generate 3-email drip and insert into queue for a single lead
+async function generateAndQueueSequence(leadId, userId, lead, settings, anthropicKey, tone = 'Professional') {
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film installation company.
+Company: ${settings.companyName || 'Shadow Graphix'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a 3-email ${tone} drip sequence for this prospect:
+Company: ${lead.company}
+Contact: ${lead.contact_name || lead.contactName || 'Decision Maker'}, ${lead.contact_title || lead.contactTitle || ''}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+Pitch angle: ${lead.pitch_angle || lead.pitchAngle || 'general wrap inquiry'}
+
+Email 1 (Day 1): Warm introduction — establish credibility, reference their specific opportunity
+Email 2 (Day 5): Follow-up — add value (relevant case study, stat, or insight)
+Email 3 (Day 12): Last touch — brief, direct, genuine, leaves door open
+
+Each under 180 words. Return raw JSON only:
+{"emails":[{"day":1,"label":"Introduction","subject":"...","body":"..."},{"day":5,"label":"Follow-up","subject":"...","body":"..."},{"day":12,"label":"Last Touch","subject":"...","body":"..."}]}`;
+
+  const raw = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 2000);
+  const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+  await pool.query(`UPDATE email_queue SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='pending'`, [leadId, userId]);
+
+  const now = Date.now();
+  for (const em of result.emails) {
+    const sendAt = new Date(now + ((em.day - 1) * 86_400_000));
+    await pool.query(
+      `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [userId, leadId, em.day, em.subject, em.body, lead.email, lead.contact_name || lead.contactName || null, sendAt]
+    );
+  }
+  await logActivity(pool, {
+    leadId, userId, type: 'sequence_activated',
+    metadata: { emails: result.emails.length, tone, auto: true, source: 'apollo_enrich' },
+  });
+  return result.emails.length;
+}
+
+// POST /apollo/bulk-enrich-leads
+// Enriches all leads without email using Apollo, optionally auto-activates sequences
+app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const apolloKey = resolveApolloKey(req);
+  if (!apolloKey) return res.status(400).json({ error: 'No Apollo API key. Set APOLLO_API_KEY in server env or pass apiKey in request.' });
+
+  const { lead_ids, auto_sequence = false, tone = 'Professional' } = req.body || {};
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  // Get target leads
+  let leadsQuery;
+  if (Array.isArray(lead_ids) && lead_ids.length) {
+    leadsQuery = await pool.query(
+      `SELECT id, company, category, city, state, website, contact_title, contact_name, pitch_angle, email
+       FROM leads WHERE user_id=$1 AND id = ANY($2::bigint[])`,
+      [uid, lead_ids]
+    );
+  } else {
+    // All leads with no email
+    leadsQuery = await pool.query(
+      `SELECT id, company, category, city, state, website, contact_title, contact_name, pitch_angle, email
+       FROM leads WHERE user_id=$1 AND (email IS NULL OR email='')
+       ORDER BY CASE category WHEN 'racing' THEN 1 WHEN 'gc_referral' THEN 2 WHEN 'dinoc' THEN 3 WHEN 'fleet' THEN 4 ELSE 5 END
+       LIMIT 100`,
+      [uid]
+    );
+  }
+
+  const targets = leadsQuery.rows;
+  if (!targets.length) return res.json({ ok: true, enriched: 0, sequences: 0, results: [] });
+
+  const results = [];
+  let enriched = 0, sequencesActivated = 0;
+
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const settings = userR.rows[0]?.settings_json || {};
+
+  for (const lead of targets) {
+    const result = { id: lead.id, company: lead.company, status: 'not_found', email: null };
+    try {
+      // Choose best titles for this category
+      const titles = APOLLO_TITLES[lead.category] || APOLLO_TITLES.default;
+      const payload = {
+        q_organization_name: lead.company,
+        person_titles: titles,
+        page: 1, per_page: 3,
+      };
+      if (lead.website) {
+        const domain = lead.website.replace(/^https?:\/\//, '').split('/')[0];
+        payload.q_organization_domains = domain;
+      }
+
+      const { status: s1, data: searchData } = await callApollo('/mixed_people/search', payload, apolloKey);
+
+      const people = searchData?.people || [];
+      let foundEmail = null;
+      let foundName = null;
+      let foundPhone = null;
+
+      for (const person of people) {
+        // Use email if already revealed
+        if (person.email && person.email_status !== 'invalid') {
+          foundEmail = person.email;
+          foundName = person.name;
+          foundPhone = person.phone_numbers?.[0]?.sanitized_number || null;
+          break;
+        }
+        // Otherwise try /people/match to reveal
+        if (person.name) {
+          const [firstName, ...rest] = person.name.split(' ');
+          const { data: matchData } = await callApollo('/people/match', {
+            first_name: firstName,
+            last_name: rest.join(' '),
+            organization_name: lead.company,
+            domain: lead.website?.replace(/^https?:\/\//, '').split('/')[0],
+            reveal_personal_emails: true,
+          }, apolloKey);
+          if (matchData?.person?.email) {
+            foundEmail = matchData.person.email;
+            foundName = matchData.person.name || person.name;
+            foundPhone = matchData.person.phone_numbers?.[0]?.sanitized_number || null;
+            break;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 150)); // polite rate-limit delay
+      }
+
+      if (foundEmail) {
+        // Save to lead record
+        await pool.query(
+          `UPDATE leads SET email=$1, contact_name=COALESCE(NULLIF(contact_name,''), $2),
+           phone=COALESCE(NULLIF(phone,''), $3), updated_at=NOW() WHERE id=$4`,
+          [foundEmail, foundName, foundPhone, lead.id]
+        );
+        await logActivity(pool, {
+          leadId: lead.id, userId: uid, type: 'note_added',
+          subject: 'Email found via Apollo',
+          metadata: { email: foundEmail, name: foundName, source: 'apollo_bulk_enrich' },
+        });
+
+        result.status = 'enriched';
+        result.email = foundEmail;
+        enriched++;
+
+        // Auto-activate sequence if requested
+        if (auto_sequence && anthropicKey) {
+          try {
+            const enrichedLead = { ...lead, email: foundEmail, contact_name: foundName };
+            const count = await generateAndQueueSequence(lead.id, uid, enrichedLead, settings, anthropicKey, tone);
+            result.sequence = 'activated';
+            sequencesActivated++;
+          } catch (seqErr) {
+            result.sequence = 'error: ' + seqErr.message;
+          }
+        }
+      }
+    } catch (e) {
+      result.status = 'error';
+      result.error = e.message;
+    }
+    results.push(result);
+    await new Promise((r) => setTimeout(r, 200)); // 200ms between leads — Apollo rate limit
+  }
+
+  res.json({ ok: true, searched: targets.length, enriched, sequencesActivated, results });
+});
+
+// POST /apollo/prospect
+// Search Apollo's database for NEW leads by criteria and import them
+app.post('/apollo/prospect', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const apolloKey = resolveApolloKey(req);
+  if (!apolloKey) return res.status(400).json({ error: 'No Apollo API key.' });
+
+  const {
+    industry, location, titles, keywords,
+    company_size_min, company_size_max,
+    limit = 20, category = 'fleet',
+  } = req.body || {};
+
+  const payload = {
+    page: 1,
+    per_page: Math.min(parseInt(limit) || 20, 50),
+  };
+  if (titles?.length)    payload.person_titles = titles;
+  if (keywords?.length)  payload.q_keywords = Array.isArray(keywords) ? keywords.join(' ') : keywords;
+  if (location)          payload.person_locations = Array.isArray(location) ? location : [location];
+  if (industry?.length)  payload.organization_industry_tag_ids = Array.isArray(industry) ? industry : [industry];
+  if (company_size_min || company_size_max) {
+    payload.organization_num_employees_ranges = [`${company_size_min || 1},${company_size_max || 10000}`];
+  }
+
+  try {
+    const { status, data } = await callApollo('/mixed_people/search', payload, apolloKey);
+    if (status !== 200) return res.status(status).json(data);
+
+    const prospects = (data.people || []).map((p) => ({
+      name: p.name,
+      title: p.title,
+      email: p.email || null,
+      emailStatus: p.email_status,
+      phone: p.phone_numbers?.[0]?.sanitized_number || null,
+      company: p.organization?.name || p.employment_history?.[0]?.organization_name,
+      domain: p.organization?.website_url,
+      city: p.city,
+      state: p.state,
+      linkedinUrl: p.linkedin_url,
+      apolloId: p.id,
+      suggested_category: category,
+    }));
+
+    res.json({ ok: true, count: prospects.length, prospects });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /apollo/import-prospect — import a prospected person as a lead
+app.post('/apollo/import-prospect', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { prospect, category = 'fleet' } = req.body || {};
+  if (!prospect?.company) return res.status(400).json({ error: 'prospect.company required' });
+
+  const clientId = `apollo_${(prospect.apolloId || Date.now()).toString().slice(-10)}`;
+
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO leads (user_id, client_id, company, category, city, state, country,
+        email, phone, contact_name, contact_title, website, status, source)
+      VALUES ($1,$2,$3,$4,$5,$6,'US',$7,$8,$9,$10,$11,'new','apollo_prospect')
+      ON CONFLICT (user_id, client_id) DO NOTHING
+      RETURNING id
+    `, [uid, clientId, prospect.company, category,
+        prospect.city || null, prospect.state || null,
+        prospect.email || null, prospect.phone || null,
+        prospect.name || null, prospect.title || null,
+        prospect.domain || null]);
+
+    if (!rows.length) return res.json({ ok: true, id: null, duplicate: true });
+    res.status(201).json({ ok: true, id: rows[0].id, duplicate: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Carriers
 // ----------------------------------------------------------------------------

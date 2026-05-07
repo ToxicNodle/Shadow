@@ -192,6 +192,8 @@ export const api = {
     newWithEmail: { id: number; company: string; category: string; email: string; city: string; state: string; pitch_angle: string }[];
     replied: { id: number; company: string; category: string; last_contacted: string }[];
     bidsThisWeek: { id: number; project_name: string; gc_name: string; bid_due: string; status: string; estimated_value: number }[];
+    callReady: { id: number; company: string; category: string; city: string; state: string; phone: string | null; last_contacted: string; emails_sent: number }[];
+    needsEmail: { id: number; company: string; category: string; city: string; state: string; contact_title: string | null; estimated_value: number }[];
     sequences: { active: number; pendingEmails: number };
     wonThisMonth: number;
     priorityScore: number;
@@ -201,6 +203,34 @@ export const api = {
   bulkActivateSequences: (leadIds: number[], tone?: string) =>
     authFetch<{ ok: boolean; queued: number; failed: number; results: { id: number; status: string; company?: string; reason?: string }[] }>(
       '/leads/bulk-activate-sequences', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, tone }) }
+    ),
+
+  // Apollo bulk enrichment + prospecting
+  bulkEnrichLeads: (params: {
+    lead_ids?: number[];
+    all?: boolean;
+    auto_sequence?: boolean;
+    tone?: string;
+    apiKey?: string;
+  }) =>
+    authFetch<{ ok: boolean; searched: number; enriched: number; sequencesActivated: number; results: { id: number; company: string; status: 'enriched' | 'skipped' | 'error'; email?: string; reason?: string }[] }>(
+      '/apollo/bulk-enrich-leads', { method: 'POST', body: JSON.stringify(params) }
+    ),
+  prospect: (params: {
+    industry?: string;
+    location?: string | string[];
+    titles?: string[];
+    keywords?: string;
+    limit?: number;
+    category?: string;
+    apiKey?: string;
+  }) =>
+    authFetch<{ ok: boolean; count: number; prospects: { name: string; title: string; company: string; city: string; state: string; email?: string; phone?: string; linkedin?: string; domain?: string }[] }>(
+      '/apollo/prospect', { method: 'POST', body: JSON.stringify(params) }
+    ),
+  importProspect: (prospect: object, category: string) =>
+    authFetch<{ ok: boolean; id: number; duplicate: boolean }>(
+      '/apollo/import-prospect', { method: 'POST', body: JSON.stringify({ prospect, category }) }
     ),
 
   // Bid tracker
