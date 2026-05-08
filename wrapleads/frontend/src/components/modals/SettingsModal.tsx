@@ -131,6 +131,20 @@ export default function SettingsModal() {
           <input className="input" {...f('vapiCallerName')} placeholder="Shadow Graphix" />
         </div>
         <div className="field-group">
+          <label className="field-label">Call Humor Level</label>
+          <select
+            className="input"
+            value={local.callHumorLevel ?? 'light'}
+            onChange={(e) => setLocal((s) => ({ ...s, callHumorLevel: e.target.value as Settings['callHumorLevel'] }))}
+          >
+            <option value="none">None — strictly professional</option>
+            <option value="light">Light — friendly wit, occasional warmth</option>
+            <option value="medium">Medium — casual, self-deprecating, disarming</option>
+            <option value="high">High — full comedian, bold personality</option>
+          </select>
+          <p className="settings-help" style={{ marginTop: 4 }}>Controls how much personality and humor the AI injects during calls.</p>
+        </div>
+        <div className="field-group">
           <label className="field-label">Warm Handoff — Transfer Phone Number</label>
           <input className="input" {...f('transferPhoneNumber')} placeholder="+13175551234" />
           <p className="settings-help" style={{ marginTop: 4 }}>When the AI detects strong buying intent it will transfer the live call to this number.</p>

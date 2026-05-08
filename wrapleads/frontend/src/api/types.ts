@@ -143,6 +143,7 @@ export interface Settings {
   twilioAuthToken: string;
   twilioFromNumber: string;
   portfolioUrl: string;
+  callHumorLevel: 'none' | 'light' | 'medium' | 'high';
 }
 
 export interface CarrierSearchParams {
@@ -255,4 +256,5 @@ export const DEFAULT_SETTINGS: Settings = {
   twilioAuthToken: '',
   twilioFromNumber: '',
   portfolioUrl: '',
+  callHumorLevel: 'light',
 };

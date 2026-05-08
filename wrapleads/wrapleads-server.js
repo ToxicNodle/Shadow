@@ -2414,6 +2414,14 @@ function buildVapiAssistant({ lead, settings, researchHook = null, campaignUrgen
     ? `\nEvent urgency — weave this in early: "${campaignUrgency}"`
     : '';
 
+  const humorLevel = settings.callHumorLevel || 'light';
+  const humorSection = {
+    none: '',
+    light: `\nPersonality: Be warm and genuine. A brief laugh or light observation is fine if it fits naturally, but keep it professional overall.`,
+    medium: `\nPersonality: Be casual and disarming. Self-deprecating humor is welcome — e.g. "I know cold calls are everyone's favorite part of the day..." Laugh with them, not at them. Keep energy up without going off-script.`,
+    high: `\nPersonality: Full comedian mode. Open with a joke or a playful self-aware line about being an AI making a sales call. Lean into the humor — it disarms people and makes you memorable. Keep it clever, never cringe. If they laugh, you've already won half the sale. Example opener add-on: "I promise I'm more entertaining than your average sales robot."`,
+  }[humorLevel];
+
   const systemPrompt = `You are ${callerName}, a sales representative at Shadow Graphix, a vehicle wrap and graphics company based in Speedway, Indiana.
 
 Your goal on this call: introduce Shadow Graphix, briefly qualify the lead, and if interested — offer to send a quote or schedule a consultation. Keep the call under 3 minutes.
@@ -2423,7 +2431,7 @@ Company context:
 - Location: Speedway, Indiana (next to Indianapolis Motor Speedway)
 - You are calling: ${company} — ${lead.contact_title || 'a decision maker'} in ${lead.city || ''}, ${lead.state || ''}
 - Lead category: ${lead.category}
-${researchSection}${urgencySection}
+${researchSection}${urgencySection}${humorSection}
 
 Call flow:
 1. Introduce yourself with: "${fill(script.intro)}"
