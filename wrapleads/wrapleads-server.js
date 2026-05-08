@@ -173,6 +173,66 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create bids table:', e.message);
   }
+
+  // Wrap Lifecycle Tracker
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS installed_jobs (
+        id             BIGSERIAL PRIMARY KEY,
+        user_id        TEXT NOT NULL,
+        lead_id        BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        company        TEXT NOT NULL,
+        vehicle_type   TEXT NOT NULL DEFAULT 'other',
+        vehicle_count  INT  NOT NULL DEFAULT 1,
+        wrap_category  TEXT NOT NULL DEFAULT 'fleet',
+        material       TEXT,
+        install_date   DATE NOT NULL,
+        life_years     INT  NOT NULL DEFAULT 5,
+        notes          TEXT,
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_jobs_user  ON installed_jobs(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_jobs_lead  ON installed_jobs(lead_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create installed_jobs table:', e.message);
+  }
+
+  // Dynamic Wrap Content
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS wrap_content (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        description TEXT,
+        image_url   TEXT,
+        tags        TEXT[] DEFAULT '{}',
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_wrap_content_user ON wrap_content(user_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS content_schedules (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        content_id    BIGINT REFERENCES wrap_content(id) ON DELETE CASCADE,
+        vehicle_group TEXT NOT NULL DEFAULT 'all',
+        start_date    DATE NOT NULL,
+        end_date      DATE,
+        start_time    TIME,
+        end_time      TIME,
+        geo_trigger   TEXT,
+        priority      INT NOT NULL DEFAULT 0,
+        notes         TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_content_sched_user ON content_schedules(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create wrap_content tables:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -2933,6 +2993,436 @@ app.get('/calls/status/:callId', authMiddleware, async (req, res) => {
   }
 });
 
+// ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
+
+app.get('/jobs', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { rows } = await pool.query(
+    `SELECT *, EXTRACT(DAY FROM (install_date + (life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
+     FROM installed_jobs WHERE user_id = $1 ORDER BY install_date DESC`,
+    [uid]
+  );
+  res.json({ jobs: rows });
+});
+
+app.get('/jobs/aging', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { rows } = await pool.query(
+    `SELECT *, EXTRACT(DAY FROM (install_date + (life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
+     FROM installed_jobs WHERE user_id = $1
+       AND (install_date + (life_years || ' years')::interval - CURRENT_DATE) <= INTERVAL '90 days'
+     ORDER BY (install_date + (life_years || ' years')::interval) ASC`,
+    [uid]
+  );
+  res.json({ jobs: rows });
+});
+
+app.post('/jobs', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { rows } = await pool.query(
+    `INSERT INTO installed_jobs (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null]
+  );
+  res.json({ job: rows[0] });
+});
+
+app.put('/jobs/:id', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { id } = req.params;
+  const { company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE installed_jobs SET company=$1,vehicle_type=$2,vehicle_count=$3,wrap_category=$4,material=$5,install_date=$6,life_years=$7,notes=$8,updated_at=NOW()
+     WHERE id=$9 AND user_id=$10 RETURNING *`,
+    [company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, id, uid]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json({ job: rows[0] });
+});
+
+app.delete('/jobs/:id', authMiddleware, async (req, res) => {
+  await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  res.json({ ok: true });
+});
+
+// ── Computer Vision Vehicle Quoting ──────────────────────────────────────────
+
+const VEHICLE_DIMENSIONS = {
+  cargo_van_standard:  { label: 'Cargo Van (Standard)',    sqft: [200, 250] },
+  cargo_van_high_roof: { label: 'Cargo Van (High Roof)',   sqft: [240, 290] },
+  box_truck_16:        { label: '16ft Box Truck',          sqft: [310, 360] },
+  box_truck_24:        { label: '24ft Box Truck',          sqft: [420, 480] },
+  semi_cab_only:       { label: 'Semi Cab (no trailer)',   sqft: [200, 260] },
+  semi_full:           { label: 'Semi + 53ft Trailer',     sqft: [620, 780] },
+  pickup_truck:        { label: 'Full-Size Pickup',        sqft: [150, 200] },
+  suv_large:           { label: 'Large SUV / Crossover',   sqft: [160, 210] },
+  sedan:               { label: 'Sedan / Compact',         sqft: [100, 145] },
+  minivan:             { label: 'Minivan / Passenger Van', sqft: [175, 220] },
+  bus_school:          { label: 'School / Transit Bus',    sqft: [380, 550] },
+  flatbed:             { label: 'Flatbed Truck',           sqft: [180, 250] },
+  other:               { label: 'Vehicle',                 sqft: [150, 250] },
+};
+
+app.post('/vision/quote-vehicle', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    const base64 = req.file.buffer.toString('base64');
+    const mimeType = req.file.mimetype || 'image/jpeg';
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+            { type: 'text', text: `Identify the vehicle in this image. Return ONLY valid JSON:\n{"vehicleKey":"<key>","confidence":"high|medium|low","notes":"<brief description>"}\nValid keys: ${Object.keys(VEHICLE_DIMENSIONS).join(', ')}. Pick the closest match.` },
+          ],
+        }],
+      }),
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text || '{}';
+    const match = text.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(match ? match[0] : '{}');
+
+    const key = parsed.vehicleKey && VEHICLE_DIMENSIONS[parsed.vehicleKey] ? parsed.vehicleKey : 'other';
+    const dim = VEHICLE_DIMENSIONS[key];
+
+    // Compute quote ranges
+    const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+    const s = settingsRow.rows[0]?.settings_json || {};
+    const priceLow  = parseFloat(s.pricePerSqftLow  || '8');
+    const priceHigh = parseFloat(s.pricePerSqftHigh || '14');
+
+    const quotes = {
+      full:    { label: 'Full Wrap',    low: Math.round(dim.sqft[0] * 1.0 * priceLow),  high: Math.round(dim.sqft[1] * 1.0 * priceHigh) },
+      partial: { label: 'Partial Wrap', low: Math.round(dim.sqft[0] * 0.5 * priceLow),  high: Math.round(dim.sqft[1] * 0.5 * priceHigh) },
+      spot:    { label: 'Spot / Logo',  low: Math.round(dim.sqft[0] * 0.2 * priceLow),  high: Math.round(dim.sqft[1] * 0.2 * priceHigh) },
+    };
+
+    res.json({ ok: true, vehicleKey: key, vehicleLabel: dim.label, confidence: parsed.confidence || 'medium', notes: parsed.notes || '', sqftRange: dim.sqft, quotes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── AI Design Generation ──────────────────────────────────────────────────────
+
+app.post('/ai/design-brief', authMiddleware, subMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  const { vehicleType, primaryColor, secondaryColor, style, description, companyName } = req.body;
+
+  const prompt = `You are a professional vehicle wrap designer. Create a detailed design brief for this wrap project.
+
+Vehicle: ${vehicleType || 'cargo van'}
+Company: ${companyName || 'the client'}
+Primary color: ${primaryColor || 'blue'}
+Secondary color: ${secondaryColor || 'white'}
+Style: ${style || 'bold and modern'}
+Client description: ${description || 'professional fleet wrap'}
+
+Return ONLY valid JSON:
+{
+  "primary_color": "<hex>",
+  "secondary_color": "<hex>",
+  "style": "<style description>",
+  "layout": "<detailed layout description for the wrap panels>",
+  "typography": "<font/text recommendation>",
+  "dall_e_prompt": "<detailed DALL-E 3 prompt for generating a photorealistic concept render of this wrapped vehicle>"
+}
+
+The dall_e_prompt must specify: exact vehicle type, wrap design, colors, finish (matte/gloss), studio photography style, white background.`;
+
+  try {
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    const match = text.match(/\{[\s\S]*\}/);
+    const brief = JSON.parse(match ? match[0] : '{}');
+    res.json({ ok: true, brief });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/ai/generate-mockup', authMiddleware, subMiddleware, async (req, res) => {
+  const { brief } = req.body;
+  if (!brief?.dall_e_prompt) return res.status(400).json({ error: 'No design brief provided' });
+
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  const openaiKey = s.openaiApiKey;
+  if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key not configured in Settings' });
+
+  try {
+    const resp = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'dall-e-3',
+        prompt: brief.dall_e_prompt,
+        n: 1,
+        size: '1792x1024',
+        quality: 'standard',
+        response_format: 'url',
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error?.message || 'DALL-E error');
+    const image_url = data.data?.[0]?.url;
+    res.json({ ok: true, image_url, brief });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── AR / Wrap Mockup Preview ──────────────────────────────────────────────────
+
+app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  const openaiKey = s.openaiApiKey;
+  if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key required for AR preview — add it in Settings' });
+
+  const wrapDescription = req.body.wrapDescription || 'professional vehicle wrap with bold graphics';
+
+  try {
+    // Store original as base64 data URL for side-by-side display
+    const originalDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+
+    // Use gpt-image-1 edit endpoint with the uploaded photo
+    const FormDataNode = (await import('form-data')).default;
+    const form = new FormDataNode();
+    form.append('model', 'gpt-image-1');
+    form.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
+    form.append('prompt', `Apply a professional vehicle wrap to this exact vehicle. Wrap design: ${wrapDescription}. Keep the vehicle shape, perspective, and surroundings identical. Make the wrap look photorealistic and production-quality.`);
+    form.append('size', '1536x1024');
+
+    const resp = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openaiKey}`, ...form.getHeaders() },
+      body: form,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
+
+    const image_url = data.data?.[0]?.url || (`data:image/png;base64,${data.data?.[0]?.b64_json}`);
+    res.json({ ok: true, image_url, original_url: originalDataUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Fleet Management Integrations ─────────────────────────────────────────────
+
+app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.samsaraApiKey) return res.status(400).json({ error: 'Samsara API key not configured' });
+  try {
+    const resp = await fetch('https://api.samsara.com/fleet/vehicles?limit=200', {
+      headers: { Authorization: `Token ${s.samsaraApiKey}` },
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Samsara API error');
+    const vehicles = (data.data || []).map((v) => ({
+      id: v.id, name: v.name, make: v.make, model: v.model, year: v.year, vin: v.vin, license_plate: v.licensePlate, type: v.vehicleType,
+    }));
+    res.json({ ok: true, vehicles, count: vehicles.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/integrations/samsara/import', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.samsaraApiKey) return res.status(400).json({ error: 'Samsara API key not configured' });
+  try {
+    const resp = await fetch('https://api.samsara.com/fleet/vehicles?limit=200', {
+      headers: { Authorization: `Token ${s.samsaraApiKey}` },
+    });
+    const data = await resp.json();
+    const vehicles = data.data || [];
+    const { vehicle_ids } = req.body;
+    const toImport = vehicle_ids ? vehicles.filter((v) => vehicle_ids.includes(v.id)) : vehicles;
+
+    let imported = 0, skipped = 0;
+    for (const v of toImport) {
+      const clientId = `samsara-${v.id}`;
+      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [req.user.id, clientId]);
+      if (existing.rows.length) { skipped++; continue; }
+      await pool.query(
+        `INSERT INTO leads (user_id, client_id, company, category, notes, status) VALUES ($1,$2,$3,'fleet',$4,'cold')`,
+        [req.user.id, clientId, v.name || `Samsara Vehicle ${v.id}`, `Imported from Samsara. ${v.make || ''} ${v.model || ''} ${v.year || ''}`.trim()]
+      );
+      imported++;
+    }
+    res.json({ ok: true, imported, skipped });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/integrations/motive/vehicles', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.motiveApiKey) return res.status(400).json({ error: 'Motive API key not configured' });
+  try {
+    const resp = await fetch('https://api.keeptruckin.com/v1/vehicles?per_page=100', {
+      headers: { Authorization: `Bearer ${s.motiveApiKey}`, 'X-Api-Key': s.motiveApiKey },
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Motive API error');
+    const vehicles = (data.vehicles || []).map((v) => ({
+      id: String(v.vehicle?.id || v.id), name: v.vehicle?.number || v.vehicle?.name, make: v.vehicle?.make, model: v.vehicle?.model, year: v.vehicle?.year, vin: v.vehicle?.vin, license_plate: v.vehicle?.license_plate_state,
+    }));
+    res.json({ ok: true, vehicles, count: vehicles.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/integrations/motive/import', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.motiveApiKey) return res.status(400).json({ error: 'Motive API key not configured' });
+  try {
+    const resp = await fetch('https://api.keeptruckin.com/v1/vehicles?per_page=100', {
+      headers: { Authorization: `Bearer ${s.motiveApiKey}`, 'X-Api-Key': s.motiveApiKey },
+    });
+    const data = await resp.json();
+    const vehicles = data.vehicles || [];
+    const { vehicle_ids } = req.body;
+    const toImport = vehicle_ids ? vehicles.filter((v) => vehicle_ids.includes(String(v.vehicle?.id))) : vehicles;
+
+    let imported = 0, skipped = 0;
+    for (const v of toImport) {
+      const vid = String(v.vehicle?.id || Math.random());
+      const clientId = `motive-${vid}`;
+      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [req.user.id, clientId]);
+      if (existing.rows.length) { skipped++; continue; }
+      await pool.query(
+        `INSERT INTO leads (user_id, client_id, company, category, notes, status) VALUES ($1,$2,$3,'fleet',$4,'cold')`,
+        [req.user.id, clientId, v.vehicle?.number || `Motive Vehicle ${vid}`, `Imported from Motive. ${v.vehicle?.make || ''} ${v.vehicle?.model || ''}`.trim()]
+      );
+      imported++;
+    }
+    res.json({ ok: true, imported, skipped });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Dynamic Wrap Content Management ──────────────────────────────────────────
+
+app.get('/content', authMiddleware, async (req, res) => {
+  const { rows } = await pool.query(`SELECT * FROM wrap_content WHERE user_id=$1 ORDER BY created_at DESC`, [req.user.id]);
+  res.json({ content: rows });
+});
+
+app.post('/content', authMiddleware, upload.single('image'), async (req, res) => {
+  const { name, tags } = req.body;
+  const parsedTags = (() => { try { return JSON.parse(tags || '[]'); } catch { return []; } })();
+  let imageUrl = null;
+  if (req.file) {
+    imageUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO wrap_content (user_id, name, image_url, tags) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [req.user.id, name || 'Untitled', imageUrl, parsedTags]
+  );
+  res.json({ ok: true, content: rows[0] });
+});
+
+app.put('/content/:id', authMiddleware, async (req, res) => {
+  const { name, description, tags } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE wrap_content SET name=COALESCE($1,name), description=COALESCE($2,description), tags=COALESCE($3,tags) WHERE id=$4 AND user_id=$5 RETURNING *`,
+    [name, description, tags, req.params.id, req.user.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true, content: rows[0] });
+});
+
+app.delete('/content/:id', authMiddleware, async (req, res) => {
+  await pool.query(`DELETE FROM wrap_content WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  res.json({ ok: true });
+});
+
+app.get('/content/schedules', authMiddleware, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
+     LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+     WHERE cs.user_id=$1 ORDER BY cs.start_date ASC`,
+    [req.user.id]
+  );
+  res.json({ schedules: rows });
+});
+
+app.post('/content/schedules', authMiddleware, async (req, res) => {
+  const { content_id, vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes } = req.body;
+  const { rows } = await pool.query(
+    `INSERT INTO content_schedules (user_id,content_id,vehicle_group,start_date,end_date,start_time,end_time,geo_trigger,priority,notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [req.user.id, content_id, vehicle_group || 'all', start_date, end_date || null, start_time || null, end_time || null, geo_trigger || null, priority || 0, notes || null]
+  );
+  res.json({ ok: true, schedule: rows[0] });
+});
+
+app.put('/content/schedules/:id', authMiddleware, async (req, res) => {
+  const { vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE content_schedules SET vehicle_group=$1,start_date=$2,end_date=$3,start_time=$4,end_time=$5,geo_trigger=$6,priority=$7,notes=$8
+     WHERE id=$9 AND user_id=$10 RETURNING *`,
+    [vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes, req.params.id, req.user.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true, schedule: rows[0] });
+});
+
+app.delete('/content/schedules/:id', authMiddleware, async (req, res) => {
+  await pool.query(`DELETE FROM content_schedules WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  res.json({ ok: true });
+});
+
+app.get('/content/active', authMiddleware, async (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+  const now = new Date().toTimeString().slice(0, 5);
+  const { rows } = await pool.query(
+    `SELECT cs.vehicle_group, row_to_json(wc) as content FROM content_schedules cs
+     LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+     WHERE cs.user_id=$1
+       AND cs.start_date <= $2
+       AND (cs.end_date IS NULL OR cs.end_date >= $2)
+       AND (cs.start_time IS NULL OR cs.start_time <= $3)
+       AND (cs.end_time IS NULL OR cs.end_time >= $3)
+     ORDER BY cs.priority DESC`,
+    [req.user.id, today, now]
+  );
+  res.json({ active: rows });
+});
+
+app.get('/content/export', authMiddleware, async (req, res) => {
+  const { rows: schedules } = await pool.query(
+    `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
+     LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+     WHERE cs.user_id=$1 ORDER BY cs.start_date ASC, cs.priority DESC`,
+    [req.user.id]
+  );
+  res.json({ exported_at: new Date().toISOString(), schedules });
+});
+
+// ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));

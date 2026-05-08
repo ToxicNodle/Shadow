@@ -179,6 +179,47 @@ export default function SettingsModal() {
         </div>
       </div>
 
+      <div className="settings-section">
+        <div className="settings-section-title">Vision Quote — Pricing</div>
+        <p className="settings-help">Override the default sq footage pricing used in instant vehicle quotes.</p>
+        <div className="field-row">
+          <div className="field-group">
+            <label className="field-label">Price / sq ft (low)</label>
+            <input className="input" {...f('pricePerSqftLow')} placeholder="8" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Price / sq ft (high)</label>
+            <input className="input" {...f('pricePerSqftHigh')} placeholder="14" />
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Design Studio &amp; AR Preview</div>
+        <p className="settings-help">
+          Powers AI wrap concept generation and AR preview. Get an API key at{' '}
+          <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">platform.openai.com</a>.
+          DALL-E 3 costs ~$0.04 per image.
+        </p>
+        <div className="field-group">
+          <label className="field-label">OpenAI API Key</label>
+          <input className="input" type="password" {...f('openaiApiKey')} placeholder="sk-…" />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Fleet Integrations</div>
+        <p className="settings-help">Connect your fleet management platform to import vehicles directly as leads.</p>
+        <div className="field-group">
+          <label className="field-label">Samsara API Key</label>
+          <input className="input" type="password" {...f('samsaraApiKey')} placeholder="samsara_api_…" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Motive (KeepTruckin) API Key</label>
+          <input className="input" type="password" {...f('motiveApiKey')} placeholder="Bearer token…" />
+        </div>
+      </div>
+
       <div className="modal-actions">
         <button className="btn" onClick={handleClose}>Cancel</button>
         <button className="btn btn-primary" onClick={handleSave}>Save Settings</button>

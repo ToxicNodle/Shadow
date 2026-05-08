@@ -144,6 +144,11 @@ export interface Settings {
   twilioFromNumber: string;
   portfolioUrl: string;
   callHumorLevel: 'none' | 'light' | 'medium' | 'high';
+  pricePerSqftLow: string;
+  pricePerSqftHigh: string;
+  openaiApiKey: string;
+  samsaraApiKey: string;
+  motiveApiKey: string;
 }
 
 export interface CarrierSearchParams {
@@ -257,4 +262,139 @@ export const DEFAULT_SETTINGS: Settings = {
   twilioFromNumber: '',
   portfolioUrl: '',
   callHumorLevel: 'light',
+  pricePerSqftLow: '8',
+  pricePerSqftHigh: '14',
+  openaiApiKey: '',
+  samsaraApiKey: '',
+  motiveApiKey: '',
 };
+
+// ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
+
+export type VehicleType =
+  | 'cargo_van_standard'
+  | 'cargo_van_high_roof'
+  | 'box_truck_16'
+  | 'box_truck_24'
+  | 'semi_cab_only'
+  | 'semi_full'
+  | 'pickup_truck'
+  | 'suv_large'
+  | 'sedan'
+  | 'minivan'
+  | 'bus_school'
+  | 'flatbed'
+  | 'other';
+
+export const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
+  cargo_van_standard:  'Cargo Van (Standard)',
+  cargo_van_high_roof: 'Cargo Van (High Roof)',
+  box_truck_16:        '16ft Box Truck',
+  box_truck_24:        '24ft Box Truck',
+  semi_cab_only:       'Semi Cab (no trailer)',
+  semi_full:           'Semi + 53ft Trailer',
+  pickup_truck:        'Full-Size Pickup',
+  suv_large:           'Large SUV / Crossover',
+  sedan:               'Sedan / Compact',
+  minivan:             'Minivan / Passenger Van',
+  bus_school:          'School / Transit Bus',
+  flatbed:             'Flatbed Truck',
+  other:               'Other',
+};
+
+export interface InstalledJob {
+  id: number;
+  user_id: string;
+  lead_id?: number | null;
+  company: string;
+  vehicle_type: VehicleType;
+  vehicle_count: number;
+  wrap_category: LeadCategory;
+  material?: string | null;
+  install_date: string;
+  life_years: number;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  days_until_expiry?: number;
+}
+
+// ── Computer Vision Quote ─────────────────────────────────────────────────────
+
+export interface VisionQuoteResult {
+  ok: boolean;
+  vehicleKey: string;
+  vehicleLabel: string;
+  confidence: 'high' | 'medium' | 'low';
+  notes: string;
+  sqftRange: [number, number];
+  quotes: {
+    full:    { label: string; low: number; high: number };
+    partial: { label: string; low: number; high: number };
+    spot:    { label: string; low: number; high: number };
+  };
+}
+
+// ── AI Design Generation ──────────────────────────────────────────────────────
+
+export interface DesignBrief {
+  primary_color: string;
+  secondary_color: string;
+  style: string;
+  layout: string;
+  typography: string;
+  dall_e_prompt: string;
+}
+
+export interface MockupResult {
+  ok: boolean;
+  image_url: string;
+  brief: DesignBrief;
+}
+
+// ── Fleet Integrations ────────────────────────────────────────────────────────
+
+export interface FleetVehicle {
+  id: string;
+  name?: string;
+  make?: string;
+  model?: string;
+  year?: number;
+  vin?: string;
+  license_plate?: string;
+  type?: string;
+}
+
+export interface FleetImportResult {
+  ok: boolean;
+  imported: number;
+  skipped: number;
+}
+
+// ── Dynamic Wrap Content ──────────────────────────────────────────────────────
+
+export interface WrapContent {
+  id: number;
+  user_id: string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  tags: string[];
+  created_at: string;
+}
+
+export interface ContentSchedule {
+  id: number;
+  user_id: string;
+  content_id: number;
+  content?: WrapContent;
+  vehicle_group: string;
+  start_date: string;
+  end_date?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  geo_trigger?: string | null;
+  priority: number;
+  notes?: string | null;
+  created_at: string;
+}

@@ -22,6 +22,8 @@ import BulkOutreachModal from '../components/modals/BulkOutreachModal';
 import PipelineView from '../components/pipeline/PipelineView';
 import BidsView from '../components/bids/BidsView';
 import MissionView from '../components/mission/MissionView';
+import JobsView from '../components/jobs/JobsView';
+import ContentView from '../components/content/ContentView';
 import CSVImportModal from '../components/modals/CSVImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
@@ -100,7 +102,7 @@ export default function CRMPage() {
       {mode === 'leads' && <PipelineStats />}
       <div className="crm-body">
         {mode === 'leads' && leadView === 'list' && <Sidebar />}
-        <main className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}`}>
+        <main className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}`}>
           {mode === 'leads'
             ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
             : mode === 'pipeline'
@@ -109,6 +111,10 @@ export default function CRMPage() {
             ? <BidsView />
             : mode === 'mission'
             ? <MissionView />
+            : mode === 'jobs'
+            ? <JobsView />
+            : mode === 'content'
+            ? <ContentView />
             : <DiscoverPage />}
         </main>
         {mode === 'leads' && <LeadDetail />}

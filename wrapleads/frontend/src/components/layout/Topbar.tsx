@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppStore } from '../../store/useAppStore';
 import type { AppMode } from '../../store/useAppStore';
+import VisionQuoteModal from '../modals/VisionQuoteModal';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
+  const [visionOpen, setVisionOpen] = useState(false);
   const {
     mode, setMode,
     leadView, setLeadView,
@@ -32,7 +35,7 @@ export default function Topbar() {
       </div>
 
       <div className="topbar-mode-switch">
-        {(['mission', 'leads', 'discover', 'pipeline', 'bids'] as AppMode[]).map((m) => (
+        {(['mission', 'leads', 'discover', 'pipeline', 'bids', 'jobs', 'content'] as AppMode[]).map((m) => (
           <button
             key={m}
             className={`mode-btn ${mode === m ? 'active' : ''}`}
@@ -42,7 +45,9 @@ export default function Topbar() {
               : m === 'leads' ? 'My Leads'
               : m === 'discover' ? 'Discover'
               : m === 'pipeline' ? 'Pipeline'
-              : 'Bid Tracker'}
+              : m === 'bids' ? 'Bid Tracker'
+              : m === 'jobs' ? 'Wrap Lifecycle'
+              : 'Content'}
           </button>
         ))}
       </div>
@@ -93,6 +98,13 @@ export default function Topbar() {
       </button>
 
       <div className="topbar-actions">
+        <button className="btn" onClick={() => setVisionOpen(true)} title="Vision quote — photograph a vehicle for instant estimate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+          </svg>
+          Vision Quote
+        </button>
         <button className="btn" onClick={() => setBlueprintOpen(true)} title="Scan blueprint PDF for wrap opportunities">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -117,7 +129,8 @@ export default function Topbar() {
           </svg>
         </button>
 
-        <div className="user-pill">
+        {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
+      <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>
           <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0]}</span>
           <button

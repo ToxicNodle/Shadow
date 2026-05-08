@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule } from './types';
 
 export const api = {
   // Auth
@@ -242,6 +242,93 @@ export const api = {
     authFetch<{ ok: boolean; id: number; duplicate: boolean }>(
       '/apollo/import-prospect', { method: 'POST', body: JSON.stringify({ prospect, category }) }
     ),
+
+  // Wrap Lifecycle Tracker
+  getJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs'),
+  getAgingJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs/aging'),
+  createJob: (job: Partial<InstalledJob>) =>
+    authFetch<{ job: InstalledJob }>('/jobs', { method: 'POST', body: JSON.stringify(job) }),
+  updateJob: (id: number, updates: Partial<InstalledJob>) =>
+    authFetch<{ job: InstalledJob }>(`/jobs/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteJob: (id: number) =>
+    authFetch<{ ok: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
+
+  // Computer Vision Quoting
+  quoteVehicle: (file: File) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    return fetch('/vision/quote-vehicle', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Vision quote failed');
+      return data as VisionQuoteResult;
+    });
+  },
+
+  // AR / Wrap Mockup Preview
+  arPreview: (file: File, wrapDescription: string) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('wrapDescription', wrapDescription);
+    return fetch('/vision/ar-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Preview failed');
+      return data as { ok: boolean; image_url: string; original_url: string };
+    });
+  },
+
+  // AI Design Generation
+  generateDesignBrief: (params: { vehicleType: string; primaryColor: string; secondaryColor: string; style: string; description: string; companyName: string }) =>
+    authFetch<{ ok: boolean; brief: DesignBrief }>('/ai/design-brief', { method: 'POST', body: JSON.stringify(params) }),
+  generateMockup: (brief: DesignBrief) =>
+    authFetch<MockupResult>('/ai/generate-mockup', { method: 'POST', body: JSON.stringify({ brief }) }),
+
+  // Fleet Management Integrations
+  getSamsaraVehicles: () => authFetch<{ ok: boolean; vehicles: FleetVehicle[]; count: number }>('/integrations/samsara/vehicles'),
+  importSamsaraVehicles: (vehicleIds?: string[]) =>
+    authFetch<FleetImportResult>('/integrations/samsara/import', { method: 'POST', body: JSON.stringify({ vehicle_ids: vehicleIds }) }),
+  getMotiveVehicles: () => authFetch<{ ok: boolean; vehicles: FleetVehicle[]; count: number }>('/integrations/motive/vehicles'),
+  importMotiveVehicles: (vehicleIds?: string[]) =>
+    authFetch<FleetImportResult>('/integrations/motive/import', { method: 'POST', body: JSON.stringify({ vehicle_ids: vehicleIds }) }),
+
+  // Dynamic Wrap Content
+  getContent: () => authFetch<{ content: WrapContent[] }>('/content'),
+  uploadContent: (file: File, name: string, tags: string[]) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('name', name);
+    form.append('tags', JSON.stringify(tags));
+    return fetch('/content', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Upload failed');
+      return data as { ok: boolean; content: WrapContent };
+    });
+  },
+  updateContent: (id: number, updates: Partial<WrapContent>) =>
+    authFetch<{ ok: boolean; content: WrapContent }>(`/content/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteContent: (id: number) => authFetch<{ ok: boolean }>(`/content/${id}`, { method: 'DELETE' }),
+  getSchedules: () => authFetch<{ schedules: ContentSchedule[] }>('/content/schedules'),
+  createSchedule: (schedule: Partial<ContentSchedule>) =>
+    authFetch<{ ok: boolean; schedule: ContentSchedule }>('/content/schedules', { method: 'POST', body: JSON.stringify(schedule) }),
+  updateSchedule: (id: number, updates: Partial<ContentSchedule>) =>
+    authFetch<{ ok: boolean; schedule: ContentSchedule }>(`/content/schedules/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteSchedule: (id: number) => authFetch<{ ok: boolean }>(`/content/schedules/${id}`, { method: 'DELETE' }),
+  getActiveContent: () => authFetch<{ active: { vehicle_group: string; content: WrapContent }[] }>('/content/active'),
+  exportSchedule: () => authFetch<object>('/content/export'),
 
   // AI Calling — campaigns
   getCampaigns: () =>
