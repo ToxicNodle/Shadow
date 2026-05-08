@@ -205,6 +205,16 @@ export const api = {
       '/leads/bulk-activate-sequences', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, tone }) }
     ),
 
+  // AI Phone Calls (Vapi.ai)
+  initiateCall: (leadId: number) =>
+    authFetch<{ ok: boolean; call_id: string; status: string }>(
+      '/calls/initiate', { method: 'POST', body: JSON.stringify({ lead_id: leadId }) }
+    ),
+  getCallStatus: (callId: string) =>
+    authFetch<{ ok: boolean; status: string; endedReason?: string }>(
+      `/calls/status/${callId}`
+    ),
+
   // Apollo bulk enrichment + prospecting
   bulkEnrichLeads: (params: {
     lead_ids?: number[];

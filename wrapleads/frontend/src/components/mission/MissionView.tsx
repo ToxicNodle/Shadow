@@ -1,7 +1,78 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+
+// ── AI Call Button ────────────────────────────────────────────────────────────
+
+type CallState = 'idle' | 'calling' | 'in-progress' | 'done' | 'voicemail' | 'no-answer' | 'error';
+
+function AutoCallButton({ leadId, phone }: { leadId: number; phone: string | null }) {
+  const [state, setState] = useState<CallState>('idle');
+  const [callId, setCallId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  async function initiateCall() {
+    if (!phone) { setError('No phone number on file'); return; }
+    setState('calling');
+    setError(null);
+    try {
+      const res = await api.initiateCall(leadId);
+      setCallId(res.call_id);
+      setState('in-progress');
+      // Poll for completion every 8s
+      pollRef.current = setInterval(async () => {
+        try {
+          const s = await api.getCallStatus(res.call_id);
+          if (s.status === 'ended') {
+            stopPolling();
+            const reason = s.endedReason || '';
+            if (reason === 'voicemail' || reason === 'machine-detected-greeting') setState('voicemail');
+            else if (reason === 'no-answer' || reason === 'customer-did-not-answer') setState('no-answer');
+            else setState('done');
+          }
+        } catch { stopPolling(); setState('done'); }
+      }, 8000);
+      // Safety stop after 5 min
+      setTimeout(() => { stopPolling(); if (state === 'in-progress') setState('done'); }, 300_000);
+    } catch (e: any) {
+      setState('error');
+      setError(e.message || 'Call failed');
+    }
+  }
+
+  if (!phone) return (
+    <span className="mission-call-no-phone">No phone #</span>
+  );
+
+  const labels: Record<CallState, string> = {
+    idle: '🤖 Auto-Call',
+    calling: 'Dialing…',
+    'in-progress': '📞 On Call…',
+    done: '✓ Call Done',
+    voicemail: '📬 Left VM',
+    'no-answer': '↩ No Answer',
+    error: '✗ Failed',
+  };
+
+  return (
+    <div className="mission-autocall-wrap">
+      <button
+        className={`mission-call-btn ${state === 'idle' ? 'mission-call-btn-auto' : state === 'done' ? 'mission-call-btn-done' : state === 'error' ? 'mission-call-btn-error' : 'mission-call-btn-active'}`}
+        onClick={state === 'idle' ? initiateCall : undefined}
+        disabled={state !== 'idle'}
+      >
+        {labels[state]}
+      </button>
+      {error && <div className="mission-call-error-tip">{error}</div>}
+    </div>
+  );
+}
 
 function daysAgo(d: string | null | undefined) {
   if (!d) return null;
@@ -449,6 +520,9 @@ export default function MissionView() {
             <p className="mission-call-desc">
               These leads received your full 3-email sequence and haven't replied yet.
               The next step is a phone call — email has done its job.
+              {settings.vapiApiKey && settings.vapiPhoneNumberId
+                ? <span className="mission-vapi-badge"> 🤖 AI Auto-Call enabled</span>
+                : <span className="mission-vapi-nudge"> · <button className="mission-link-btn" onClick={() => useAppStore.getState().setSettingsOpen(true)}>Add Vapi key</button> to enable AI auto-calling</span>}
             </p>
             <div className="mission-call-grid">
               {callReady!.map((l) => {
@@ -463,15 +537,20 @@ export default function MissionView() {
                       <span>{l.emails_sent ?? 3} emails sent</span>
                       {ago !== null && <span>{ago}d ago</span>}
                     </div>
-                    {l.phone ? (
-                      <a href={`tel:${l.phone}`} className="mission-call-btn mission-call-btn-primary">
-                        📞 Call Now
-                      </a>
-                    ) : (
-                      <button className="mission-call-btn" onClick={() => goToLead(l.id)}>
-                        Add Phone # →
-                      </button>
-                    )}
+                    <div className="mission-call-actions">
+                      {l.phone ? (
+                        <a href={`tel:${l.phone}`} className="mission-call-btn mission-call-btn-primary">
+                          📞 Call Now
+                        </a>
+                      ) : (
+                        <button className="mission-call-btn" onClick={() => goToLead(l.id)}>
+                          Add Phone # →
+                        </button>
+                      )}
+                      {settings.vapiApiKey && settings.vapiPhoneNumberId && (
+                        <AutoCallButton leadId={l.id} phone={l.phone} />
+                      )}
+                    </div>
                   </div>
                 );
               })}

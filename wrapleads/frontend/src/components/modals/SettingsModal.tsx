@@ -111,6 +111,27 @@ export default function SettingsModal() {
         )}
       </div>
 
+      <div className="settings-section">
+        <div className="settings-section-title">Vapi.ai — AI Phone Calls</div>
+        <p className="settings-help">
+          Power outbound AI calls from the Mission view. Get a free API key at{' '}
+          <a href="https://vapi.ai" target="_blank" rel="noreferrer">vapi.ai</a>{' '}
+          → Dashboard → API Keys. Then create a phone number in Vapi and paste its ID below.
+        </p>
+        <div className="field-group">
+          <label className="field-label">Vapi API Key</label>
+          <input className="input" type="password" {...f('vapiApiKey')} placeholder="vapi_…" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Vapi Phone Number ID</label>
+          <input className="input" {...f('vapiPhoneNumberId')} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Caller Name (shown on caller ID)</label>
+          <input className="input" {...f('vapiCallerName')} placeholder="Shadow Graphix" />
+        </div>
+      </div>
+
       <div className="modal-actions">
         <button className="btn" onClick={handleClose}>Cancel</button>
         <button className="btn btn-primary" onClick={handleSave}>Save Settings</button>

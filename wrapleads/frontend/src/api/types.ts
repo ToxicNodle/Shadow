@@ -135,6 +135,9 @@ export interface Settings {
   companyTagline: string;
   companyServices: string;
   apolloApiKey: string;
+  vapiApiKey: string;
+  vapiPhoneNumberId: string;
+  vapiCallerName: string;
 }
 
 export interface CarrierSearchParams {
@@ -239,4 +242,7 @@ export const DEFAULT_SETTINGS: Settings = {
   companyTagline: 'vehicle wraps, fleet graphics, DI-NOC, Rea Tec & color change',
   companyServices: 'fleet wraps and vehicle graphics, 3M DI-NOC architectural finishes, Rea Tec architectural films, custom color-change wraps',
   apolloApiKey: '',
+  vapiApiKey: '',
+  vapiPhoneNumberId: '',
+  vapiCallerName: '',
 };

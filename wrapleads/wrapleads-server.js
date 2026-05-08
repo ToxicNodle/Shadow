@@ -2367,6 +2367,269 @@ Return a JSON object with this exact structure (no markdown, raw JSON only):
 // ----------------------------------------------------------------------------
 // Static — serve React SPA (must be LAST, after all API routes)
 // ----------------------------------------------------------------------------
+// ── AI Phone Calls (Vapi.ai) ─────────────────────────────────────────────────
+
+const VAPI_BASE = 'https://api.vapi.ai';
+
+// Category-aware opening lines and qualifiers
+const CALL_SCRIPTS = {
+  racing: {
+    intro: "Hi, my name is {callerName} calling from Shadow Graphix in Speedway, Indiana. We're a vehicle graphics shop that specializes in race hauler wraps, liveries, and hospitality unit graphics — we're literally right next door to the IndyCar teams here.",
+    qualifier: "I wanted to reach out and see if {company} has any upcoming hauler or livery work we could put a quote together for.",
+    qualify_q: "Do you handle the graphics and wrap decisions for the team, or is there someone else I should connect with?",
+  },
+  fleet: {
+    intro: "Hi, my name is {callerName} calling from Shadow Graphix in Indianapolis. We do fleet vehicle graphics and wraps for businesses across Indiana and the Midwest.",
+    qualifier: "I'm reaching out because we work with companies that run service fleets — we wanted to see if {company} has any vehicles that could use new graphics or rebranding.",
+    qualify_q: "Are you the right person to talk to about your fleet graphics, or would that be someone in operations or marketing?",
+  },
+  gc_referral: {
+    intro: "Hi, my name is {callerName} from Shadow Graphix in Indianapolis. We're a commercial vehicle graphics company — we work with a lot of GCs and contractors on their fleet trucks and branded vehicles.",
+    qualifier: "I wanted to reach out to {company} and see if you have trucks or equipment that needs updated graphics.",
+    qualify_q: "Do you handle decisions about your fleet branding, or is there a fleet manager or marketing director I should speak with?",
+  },
+  dinoc: {
+    intro: "Hi, my name is {callerName} from Shadow Graphix in Indianapolis. We're a 3M DI-NOC architectural film installer — we do surface renovation on walls, cabinetry, and interior finishes without demolition.",
+    qualifier: "We work with a lot of designers, hotels, and commercial property owners on renovation projects for {company}.",
+    qualify_q: "Are you involved in renovation or interior finish decisions, or is there someone else on the team I should connect with?",
+  },
+  default: {
+    intro: "Hi, my name is {callerName} calling from Shadow Graphix in Indianapolis. We're a vehicle graphics and architectural film company serving businesses across Indiana and the Midwest.",
+    qualifier: "I'm calling to introduce ourselves and see if {company} has any upcoming projects we might be able to help with.",
+    qualify_q: "Are you the right person to talk to about graphics and branding for your vehicles or facilities?",
+  },
+};
+
+function buildVapiAssistant({ lead, settings }) {
+  const script = CALL_SCRIPTS[lead.category] || CALL_SCRIPTS.default;
+  const callerName = settings.vapiCallerName || settings.senderName || 'Alex';
+  const company = lead.company;
+
+  const fill = (s) => s.replace('{callerName}', callerName).replace('{company}', company);
+
+  const systemPrompt = `You are ${callerName}, a sales representative at Shadow Graphix, a vehicle wrap and graphics company based in Speedway, Indiana.
+
+Your goal on this call: introduce Shadow Graphix, briefly qualify the lead, and if interested — offer to send a quote or schedule a consultation. Keep the call under 3 minutes.
+
+Company context:
+- Shadow Graphix specializes in: ${settings.companyServices || 'fleet wraps, race hauler wraps, DI-NOC architectural film, color change wraps'}
+- Location: Speedway, Indiana (next to Indianapolis Motor Speedway)
+- You are calling: ${company} — ${lead.contact_title || 'a decision maker'} in ${lead.city || ''}, ${lead.state || ''}
+- Lead category: ${lead.category}
+
+Call flow:
+1. Introduce yourself with: "${fill(script.intro)}"
+2. Qualify: "${fill(script.qualifier)}"
+3. Ask: "${fill(script.qualify_q)}"
+4. If they're the right person and interested: "Great — I'd love to send over some portfolio examples and put together a preliminary quote. What's the best email for that?"
+5. If voicemail: Leave a short message — your name, Shadow Graphix, and your callback number (${settings.senderPhone || 'our main number'}).
+6. If they say now is a bad time: "No problem at all — when would be a better time to call back?"
+7. Close warmly regardless of outcome.
+
+Rules:
+- Never be pushy or high-pressure.
+- If they say they have a vendor, say: "That's great to hear — we're always happy to be a second option if you need additional capacity or a quote comparison."
+- Keep responses concise — this is a phone call, not a presentation.
+- If they ask what we charge: "It really depends on the project — a fleet van starts around $800 and a full race hauler can run $15K-$35K. I'd want to put together a real quote based on your specifics."`;
+
+  return {
+    name: `Shadow Graphix — ${company}`,
+    model: {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
+      messages: [{ role: 'system', content: systemPrompt }],
+      temperature: 0.7,
+    },
+    voice: {
+      provider: 'playht',
+      voiceId: 'jennifer',
+    },
+    firstMessage: fill(script.intro) + ' ' + fill(script.qualifier),
+    endCallFunctionEnabled: true,
+    endCallMessage: 'Thanks so much for your time — have a great day!',
+    voicemailMessage: `Hi, this is ${callerName} from Shadow Graphix in Speedway, Indiana. I'm calling to introduce our vehicle graphics and wrap services — we'd love to put together a quote for ${company}. Please feel free to call us back at ${settings.senderPhone || 'our main line'} or reply to the emails we've sent. Thanks, have a great day!`,
+    recordingEnabled: true,
+    hipaaEnabled: false,
+    analysisPlan: {
+      summaryPrompt: 'Summarize what happened on this sales call in 2-3 sentences. Did the prospect show interest? Did they agree to receive a quote? What is the next action?',
+      successEvaluationPrompt: 'Did the call result in the prospect agreeing to receive a quote or schedule a follow-up? Answer yes, no, or partial.',
+      successEvaluationRubric: 'PassFail',
+      structuredDataSchema: {
+        type: 'object',
+        properties: {
+          interested: { type: 'boolean' },
+          emailCaptured: { type: 'string' },
+          callbackRequested: { type: 'boolean' },
+          rightPerson: { type: 'boolean' },
+          referredTo: { type: 'string' },
+        },
+      },
+    },
+  };
+}
+
+// POST /calls/initiate — trigger an outbound Vapi call for a lead
+app.post('/calls/initiate', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const { lead_id } = req.body;
+  if (!lead_id) return res.status(400).json({ error: 'lead_id required' });
+
+  // Load settings
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const settings = sRows[0]?.data || {};
+
+  if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi API key not configured. Add it in Settings.' });
+  if (!settings.vapiPhoneNumberId) return res.status(400).json({ error: 'Vapi Phone Number ID not configured. Add it in Settings.' });
+
+  // Load lead
+  const { rows: lRows } = await pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [lead_id, userId]);
+  if (!lRows.length) return res.status(404).json({ error: 'Lead not found' });
+  const lead = lRows[0];
+
+  if (!lead.phone) return res.status(400).json({ error: 'Lead has no phone number on file.' });
+
+  const assistant = buildVapiAssistant({ lead, settings });
+
+  try {
+    const vapiRes = await fetch(`${VAPI_BASE}/call`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${settings.vapiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        assistant,
+        phoneNumberId: settings.vapiPhoneNumberId,
+        customer: {
+          number: lead.phone.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1'),
+          name: lead.contact_name || lead.company,
+        },
+      }),
+    });
+
+    if (!vapiRes.ok) {
+      const err = await vapiRes.json().catch(() => ({}));
+      return res.status(vapiRes.status).json({ error: err.message || 'Vapi call failed' });
+    }
+
+    const call = await vapiRes.json();
+
+    // Log the call attempt as a lead activity
+    await logActivity(pool, {
+      leadId: lead.id, userId,
+      type: 'call_initiated',
+      subject: `AI call initiated to ${lead.company}`,
+      metadata: { vapi_call_id: call.id, phone: lead.phone, status: 'initiated' },
+    });
+
+    res.json({ ok: true, call_id: call.id, status: call.status });
+  } catch (e) {
+    console.error('Vapi call error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /calls/webhook — Vapi sends call events here
+// No auth — Vapi calls this endpoint directly. Validate via lead lookup.
+app.post('/calls/webhook', async (req, res) => {
+  const event = req.body;
+  res.json({ ok: true }); // always ACK immediately
+
+  try {
+    const { type, call } = event;
+    if (!call?.id) return;
+
+    // Find the lead this call belongs to (via activity log)
+    const { rows } = await pool.query(`
+      SELECT l.id AS lead_id, l.user_id, l.company, l.status
+      FROM lead_activities la
+      JOIN leads l ON l.id = la.lead_id
+      WHERE la.type = 'call_initiated'
+        AND la.metadata->>'vapi_call_id' = $1
+      LIMIT 1
+    `, [call.id]);
+
+    if (!rows.length) return;
+    const { lead_id, user_id, company, status: leadStatus } = rows[0];
+
+    if (type === 'end-of-call-report') {
+      const summary     = event.summary || event.analysis?.summary || '';
+      const transcript  = event.transcript || '';
+      const endedReason = call.endedReason || 'unknown';
+      const success     = event.analysis?.successEvaluation || '';
+      const structured  = event.analysis?.structuredData || {};
+
+      // Determine new lead status
+      let newStatus = leadStatus;
+      if (success === 'true' || structured.interested) {
+        newStatus = 'replied';
+      } else if (endedReason === 'voicemail' || endedReason === 'no-answer') {
+        newStatus = leadStatus; // no change
+      } else if (structured.rightPerson === false && structured.referredTo) {
+        newStatus = 'contacted';
+      } else if (endedReason !== 'customer-ended-call' && endedReason !== 'assistant-ended-call') {
+        newStatus = 'contacted';
+      }
+
+      // Update lead status and last_contacted
+      if (newStatus !== leadStatus || true) {
+        await pool.query(`
+          UPDATE leads SET status=$1, last_contacted=CURRENT_DATE, updated_at=NOW()
+          WHERE id=$2 AND user_id=$3
+        `, [newStatus, lead_id, user_id]);
+      }
+
+      // Log detailed activity
+      await logActivity(pool, {
+        leadId: lead_id, userId: user_id,
+        type: 'call_completed',
+        subject: `AI call to ${company} — ${endedReason.replace(/-/g, ' ')}`,
+        body: summary || transcript.slice(0, 500),
+        metadata: {
+          vapi_call_id: call.id,
+          ended_reason: endedReason,
+          duration_seconds: call.endedAt && call.startedAt
+            ? Math.round((new Date(call.endedAt) - new Date(call.startedAt)) / 1000)
+            : null,
+          success_evaluation: success,
+          interested: structured.interested,
+          email_captured: structured.emailCaptured,
+          callback_requested: structured.callbackRequested,
+          referred_to: structured.referredTo,
+          transcript_preview: transcript.slice(0, 300),
+        },
+      });
+
+      // If email was captured on the call, save it to the lead
+      if (structured.emailCaptured) {
+        await pool.query(
+          'UPDATE leads SET email=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3 AND email IS NULL',
+          [structured.emailCaptured, lead_id, user_id]
+        );
+      }
+    }
+  } catch (e) {
+    console.error('Vapi webhook error:', e.message);
+  }
+});
+
+// GET /calls/status/:callId — poll Vapi for live call status
+app.get('/calls/status/:callId', authMiddleware, async (req, res) => {
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [req.user.id]);
+  const settings = sRows[0]?.data || {};
+  if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi not configured' });
+
+  try {
+    const vapiRes = await fetch(`${VAPI_BASE}/call/${req.params.callId}`, {
+      headers: { 'Authorization': `Bearer ${settings.vapiApiKey}` },
+    });
+    const data = await vapiRes.json();
+    res.json({ ok: true, status: data.status, endedReason: data.endedReason });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));

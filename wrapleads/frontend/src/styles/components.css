@@ -1395,3 +1395,36 @@
 .mission-prospector-co { font-size: 12px; color: var(--accent); font-weight: 500; }
 .mission-prospector-meta { font-size: 11px; color: var(--text-muted); }
 .mission-prospector-done { font-size: 12px; color: #22c55e; font-weight: 700; }
+
+/* ── AI Phone Call (Vapi) ───────────────────────────────────────────── */
+.mission-call-actions {
+  display: flex; flex-direction: column; gap: 5px; margin-top: 4px;
+}
+.mission-call-btn-auto {
+  background: #7c3aed; border-color: #7c3aed; color: #fff;
+}
+.mission-call-btn-auto:hover { background: #6d28d9; border-color: #6d28d9; color: #fff; }
+.mission-call-btn-active {
+  background: #0ea5e9; border-color: #0ea5e9; color: #fff; cursor: default;
+}
+.mission-call-btn-done {
+  background: #22c55e; border-color: #22c55e; color: #fff; cursor: default;
+}
+.mission-call-btn-error {
+  background: #ef4444; border-color: #ef4444; color: #fff; cursor: default;
+}
+.mission-call-no-phone {
+  font-size: 11px; color: var(--text-muted); text-align: center; padding: 6px 0;
+}
+.mission-call-error-tip {
+  font-size: 10px; color: #ef4444; margin-top: 2px; line-height: 1.3;
+}
+.mission-autocall-wrap { display: flex; flex-direction: column; gap: 2px; }
+.mission-vapi-badge {
+  color: #7c3aed; font-weight: 600; font-size: 12px; margin-left: 4px;
+}
+.mission-vapi-nudge { font-size: 12px; color: var(--text-muted); }
+.mission-link-btn {
+  background: none; border: none; padding: 0; color: var(--accent);
+  cursor: pointer; font-size: 12px; text-decoration: underline;
+}
