@@ -138,6 +138,11 @@ export interface Settings {
   vapiApiKey: string;
   vapiPhoneNumberId: string;
   vapiCallerName: string;
+  transferPhoneNumber: string;
+  twilioAccountSid: string;
+  twilioAuthToken: string;
+  twilioFromNumber: string;
+  portfolioUrl: string;
 }
 
 export interface CarrierSearchParams {
@@ -245,4 +250,9 @@ export const DEFAULT_SETTINGS: Settings = {
   vapiApiKey: '',
   vapiPhoneNumberId: '',
   vapiCallerName: '',
+  transferPhoneNumber: '',
+  twilioAccountSid: '',
+  twilioAuthToken: '',
+  twilioFromNumber: '',
+  portfolioUrl: '',
 };

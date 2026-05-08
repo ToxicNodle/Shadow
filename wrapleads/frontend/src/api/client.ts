@@ -243,6 +243,12 @@ export const api = {
       '/apollo/import-prospect', { method: 'POST', body: JSON.stringify({ prospect, category }) }
     ),
 
+  // AI Calling — campaigns
+  getCampaigns: () =>
+    authFetch<{ campaigns: { id: string; name: string; eventDate: string; weeksUntil: number; leadCount: number; urgency: string }[] }>('/calls/campaigns'),
+  launchCampaign: (id: string) =>
+    authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
+
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
   getBidSummary: () => authFetch<BidSummary>('/bids/summary'),

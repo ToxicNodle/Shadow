@@ -130,6 +130,39 @@ export default function SettingsModal() {
           <label className="field-label">Caller Name (shown on caller ID)</label>
           <input className="input" {...f('vapiCallerName')} placeholder="Shadow Graphix" />
         </div>
+        <div className="field-group">
+          <label className="field-label">Warm Handoff — Transfer Phone Number</label>
+          <input className="input" {...f('transferPhoneNumber')} placeholder="+13175551234" />
+          <p className="settings-help" style={{ marginTop: 4 }}>When the AI detects strong buying intent it will transfer the live call to this number.</p>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Twilio SMS — Post-Call Chain</div>
+        <p className="settings-help">
+          Optional. When a call ends positively, an SMS with your portfolio link fires automatically.
+          Get credentials at <a href="https://twilio.com" target="_blank" rel="noreferrer">twilio.com</a>.
+        </p>
+        <div className="field-row">
+          <div className="field-group">
+            <label className="field-label">Account SID</label>
+            <input className="input" {...f('twilioAccountSid')} placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Auth Token</label>
+            <input className="input" type="password" {...f('twilioAuthToken')} placeholder="your auth token" />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field-group">
+            <label className="field-label">From Phone Number</label>
+            <input className="input" {...f('twilioFromNumber')} placeholder="+13175550100" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Portfolio URL</label>
+            <input className="input" {...f('portfolioUrl')} placeholder="https://shadowgraphix.com/portfolio" />
+          </div>
+        </div>
       </div>
 
       <div className="modal-actions">

@@ -2400,12 +2400,19 @@ const CALL_SCRIPTS = {
   },
 };
 
-function buildVapiAssistant({ lead, settings }) {
+function buildVapiAssistant({ lead, settings, researchHook = null, campaignUrgency = null }) {
   const script = CALL_SCRIPTS[lead.category] || CALL_SCRIPTS.default;
   const callerName = settings.vapiCallerName || settings.senderName || 'Alex';
   const company = lead.company;
 
   const fill = (s) => s.replace('{callerName}', callerName).replace('{company}', company);
+
+  const researchSection = researchHook
+    ? `\nRecent intel about this company (use naturally, don't force it): "${researchHook}"`
+    : '';
+  const urgencySection = campaignUrgency
+    ? `\nEvent urgency — weave this in early: "${campaignUrgency}"`
+    : '';
 
   const systemPrompt = `You are ${callerName}, a sales representative at Shadow Graphix, a vehicle wrap and graphics company based in Speedway, Indiana.
 
@@ -2416,6 +2423,7 @@ Company context:
 - Location: Speedway, Indiana (next to Indianapolis Motor Speedway)
 - You are calling: ${company} — ${lead.contact_title || 'a decision maker'} in ${lead.city || ''}, ${lead.state || ''}
 - Lead category: ${lead.category}
+${researchSection}${urgencySection}
 
 Call flow:
 1. Introduce yourself with: "${fill(script.intro)}"
@@ -2426,13 +2434,17 @@ Call flow:
 6. If they say now is a bad time: "No problem at all — when would be a better time to call back?"
 7. Close warmly regardless of outcome.
 
+WARM HANDOFF — IMPORTANT:
+If the prospect is clearly hot (asking about pricing, timeline, availability, or saying "yes let's do it"), use the transferCall tool immediately.
+Say: "I want to make sure you get the right information — let me connect you with our lead installer right now." Then transfer.
+
 Rules:
 - Never be pushy or high-pressure.
 - If they say they have a vendor, say: "That's great to hear — we're always happy to be a second option if you need additional capacity or a quote comparison."
 - Keep responses concise — this is a phone call, not a presentation.
 - If they ask what we charge: "It really depends on the project — a fleet van starts around $800 and a full race hauler can run $15K-$35K. I'd want to put together a real quote based on your specifics."`;
 
-  return {
+  const assistant = {
     name: `Shadow Graphix — ${company}`,
     model: {
       provider: 'anthropic',
@@ -2462,16 +2474,120 @@ Rules:
           callbackRequested: { type: 'boolean' },
           rightPerson: { type: 'boolean' },
           referredTo: { type: 'string' },
+          competitorVendor: { type: 'string' },
         },
       },
     },
   };
+
+  // Feature 4: Warm handoff — add transferCall tool if phone configured
+  if (settings.transferPhoneNumber) {
+    assistant.tools = [{
+      type: 'transferCall',
+      destinations: [{
+        type: 'number',
+        number: settings.transferPhoneNumber.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1'),
+        message: 'Please hold for just a moment while I connect you with our specialist.',
+      }],
+    }];
+  }
+
+  return assistant;
 }
+
+// ── Feature 1: Pre-call research agent ───────────────────────────────────────
+async function researchCompany(lead, anthropicKey) {
+  if (!anthropicKey || !lead.website) return null;
+  try {
+    // Fetch the company website (5s timeout)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const webRes = await fetch(`https://${lead.website}`, { signal: controller.signal }).catch(() => null);
+    clearTimeout(timer);
+    const html = webRes ? (await webRes.text().catch(() => '')).slice(0, 6000) : '';
+
+    // Strip HTML tags for a cleaner read
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 3000);
+
+    const prompt = `You are helping a vehicle wrap sales rep prepare for a cold call to ${lead.company} in ${lead.city}, ${lead.state}.
+
+Website snippet: "${text}"
+
+In ONE sentence, give a natural conversational hook the rep can drop early in the call — something specific they noticed about the company (recent expansion, award, fleet growth, new location, notable client, etc.).
+If nothing specific is found, return null.
+Return ONLY the hook sentence or the word null. No explanation.`;
+
+    const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 120,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    const aiData = await aiRes.json();
+    const hook = aiData.content?.[0]?.text?.trim();
+    return (!hook || hook === 'null') ? null : hook;
+  } catch { return null; }
+}
+
+// ── Feature 3: Seasonal campaign definitions ──────────────────────────────────
+const CAMPAIGNS = [
+  {
+    id: 'indy500',
+    name: 'Indy 500 Blast',
+    icon: '🏁',
+    filter: { category: 'racing' },
+    eventDate: new Date(new Date().getFullYear() + '-05-25'),
+    urgency: 'The Indy 500 is coming up fast — we have a limited number of hauler and livery slots open before race week.',
+  },
+  {
+    id: 'nhra-nats',
+    name: 'NHRA US Nationals',
+    icon: '🔥',
+    filter: { city: 'Brownsburg' },
+    eventDate: new Date(new Date().getFullYear() + '-08-28'),
+    urgency: 'NHRA U.S. Nationals at Lucas Oil Raceway is coming up — hauler wrap slots fill fast this time of year.',
+  },
+  {
+    id: 'brickyard',
+    name: 'Brickyard 400',
+    icon: '🏎',
+    filter: { category: 'racing' },
+    eventDate: new Date(new Date().getFullYear() + '-07-27'),
+    urgency: 'Brickyard 400 weekend is approaching — perfect timing to refresh hauler graphics before a big home race.',
+  },
+  {
+    id: 'spring-fleet',
+    name: 'Spring Fleet Push',
+    icon: '🌱',
+    filter: { category: 'fleet' },
+    eventDate: new Date(new Date().getFullYear() + '-04-01'),
+    urgency: 'Spring is peak season for fleet refreshes — companies want their trucks looking sharp before summer.',
+  },
+  {
+    id: 'q4-budget',
+    name: 'Q4 Budget Spend',
+    icon: '💰',
+    filter: {},
+    eventDate: new Date(new Date().getFullYear() + '-10-01'),
+    urgency: 'Q4 is here — many companies want to use remaining marketing budget on vehicle graphics before year end.',
+  },
+];
+
+function weeksUntil(date) {
+  const ms = date - Date.now();
+  return ms > 0 ? Math.ceil(ms / (7 * 86_400_000)) : 0;
+}
+
+// In-memory campaign queue (userId → array of pending calls)
+const campaignQueues = new Map();
 
 // POST /calls/initiate — trigger an outbound Vapi call for a lead
 app.post('/calls/initiate', authMiddleware, async (req, res) => {
   const userId = req.user.id;
-  const { lead_id } = req.body;
+  const { lead_id, campaign_urgency } = req.body;
   if (!lead_id) return res.status(400).json({ error: 'lead_id required' });
 
   // Load settings
@@ -2488,7 +2604,10 @@ app.post('/calls/initiate', authMiddleware, async (req, res) => {
 
   if (!lead.phone) return res.status(400).json({ error: 'Lead has no phone number on file.' });
 
-  const assistant = buildVapiAssistant({ lead, settings });
+  // Feature 1: Pre-call research (fire concurrently with settings load, non-blocking)
+  const researchHook = await researchCompany(lead, process.env.ANTHROPIC_API_KEY).catch(() => null);
+
+  const assistant = buildVapiAssistant({ lead, settings, researchHook, campaignUrgency: campaign_urgency || null });
 
   try {
     const vapiRes = await fetch(`${VAPI_BASE}/call`, {
@@ -2519,7 +2638,7 @@ app.post('/calls/initiate', authMiddleware, async (req, res) => {
       leadId: lead.id, userId,
       type: 'call_initiated',
       subject: `AI call initiated to ${lead.company}`,
-      metadata: { vapi_call_id: call.id, phone: lead.phone, status: 'initiated' },
+      metadata: { vapi_call_id: call.id, phone: lead.phone, status: 'initiated', research_hook: researchHook },
     });
 
     res.json({ ok: true, call_id: call.id, status: call.status });
@@ -2607,10 +2726,186 @@ app.post('/calls/webhook', async (req, res) => {
           [structured.emailCaptured, lead_id, user_id]
         );
       }
+
+      // Log competitor intel if mentioned
+      if (structured.competitorVendor) {
+        await pool.query(
+          `UPDATE leads SET notes = CONCAT(COALESCE(notes,''), $1) WHERE id=$2 AND user_id=$3`,
+          [`\n[Competitor vendor from call]: ${structured.competitorVendor}`, lead_id, user_id]
+        );
+      }
+
+      // Feature 2: Post-call automation chain — fires when prospect showed interest
+      if (structured.interested || success === 'true') {
+        try {
+          const { rows: uRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [user_id]);
+          const s = uRows[0]?.data || {};
+          const { rows: lRows } = await pool.query('SELECT * FROM leads WHERE id=$1', [lead_id]);
+          const lead = lRows[0];
+
+          // 1. Schedule 3-day followup
+          await pool.query(
+            `UPDATE leads SET followup_due_at = CURRENT_DATE + INTERVAL '3 days', updated_at=NOW() WHERE id=$1`,
+            [lead_id]
+          );
+
+          // 2. Send portfolio email via Resend (reuse existing RESEND_API_KEY pattern)
+          const toEmail = structured.emailCaptured || lead.email;
+          if (toEmail && process.env.RESEND_API_KEY && s.senderEmail) {
+            const emailBody = `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''},
+
+Thanks for taking my call today — great speaking with you about ${company}'s graphics needs.
+
+As promised, here's a look at some of our recent work:
+${s.portfolioUrl || 'https://shadowgraphix.com/portfolio'}
+
+We specialize in:
+• Race hauler wraps ($15K–$35K full wrap)
+• Fleet vehicle graphics ($800–$1,200/vehicle)
+• 3M DI-NOC architectural film
+• Color-change wraps
+
+I'll put together a preliminary quote based on what we discussed and send it over within 24 hours. If you have any photos of the vehicles or specs in the meantime, just reply to this email.
+
+Looking forward to working together,
+${s.senderName || 'Alex'}
+Shadow Graphix | Speedway, IN
+${s.senderPhone || ''}`;
+
+            await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: `${s.senderName || 'Shadow Graphix'} <${s.senderEmail}>`,
+                to: toEmail,
+                subject: `Great talking with you — Shadow Graphix portfolio`,
+                text: emailBody,
+              }),
+            }).catch((e) => console.error('Post-call email error:', e.message));
+          }
+
+          // 3. Send SMS via Twilio
+          if (lead.phone && s.twilioAccountSid && s.twilioAuthToken && s.twilioFromNumber) {
+            const toNum = lead.phone.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1');
+            const smsBody = `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''}, this is ${s.senderName || 'Alex'} from Shadow Graphix — great talking with you! Here's our portfolio: ${s.portfolioUrl || 'https://shadowgraphix.com'} — we'll have a quote to you within 24 hours.`;
+            const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+            const form = new URLSearchParams({ To: toNum, From: s.twilioFromNumber, Body: smsBody });
+            await fetch(twilioUrl, {
+              method: 'POST',
+              headers: {
+                Authorization: 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: form,
+            }).catch((e) => console.error('Post-call SMS error:', e.message));
+          }
+
+          await logActivity(pool, {
+            leadId: lead_id, userId: user_id,
+            type: 'post_call_chain_fired',
+            subject: `Post-call automation fired for ${company}`,
+            metadata: {
+              email_sent: !!(toEmail && process.env.RESEND_API_KEY),
+              sms_sent: !!(lead.phone && s.twilioAccountSid),
+              followup_scheduled: true,
+            },
+          });
+        } catch (e) {
+          console.error('Post-call chain error:', e.message);
+        }
+      }
     }
   } catch (e) {
     console.error('Vapi webhook error:', e.message);
   }
+});
+
+// ── Feature 3: Campaign blast endpoints ─────────────────────────────────────
+
+// GET /calls/campaigns — list campaigns with matching lead counts
+app.get('/calls/campaigns', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const settings = sRows[0]?.data || {};
+  if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi not configured' });
+
+  const campaigns = await Promise.all(CAMPAIGNS.map(async (c) => {
+    const conditions = ['user_id=$1', 'phone IS NOT NULL', "phone != ''"];
+    const params = [userId];
+    if (c.filter.category) { params.push(c.filter.category); conditions.push(`category=$${params.length}`); }
+    if (c.filter.city)     { params.push(c.filter.city);     conditions.push(`city=$${params.length}`); }
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM leads WHERE ${conditions.join(' AND ')}`, params
+    );
+    const weeks = weeksUntil(c.eventDate);
+    return {
+      id: c.id, name: c.name, icon: c.icon,
+      leadCount: parseInt(rows[0].cnt, 10),
+      weeksUntilEvent: weeks,
+      eventLabel: weeks > 0 ? `${weeks}w away` : 'Past',
+      urgency: c.urgency,
+    };
+  }));
+
+  res.json({ campaigns });
+});
+
+// POST /calls/campaigns/:id/launch — queue all calls for a campaign
+app.post('/calls/campaigns/:id/launch', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const campaign = CAMPAIGNS.find((c) => c.id === req.params.id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const settings = sRows[0]?.data || {};
+  if (!settings.vapiApiKey || !settings.vapiPhoneNumberId)
+    return res.status(400).json({ error: 'Vapi not configured' });
+
+  const conditions = ['user_id=$1', 'phone IS NOT NULL', "phone != ''"];
+  const params = [userId];
+  if (campaign.filter.category) { params.push(campaign.filter.category); conditions.push(`category=$${params.length}`); }
+  if (campaign.filter.city)     { params.push(campaign.filter.city);     conditions.push(`city=$${params.length}`); }
+  const { rows: leads } = await pool.query(
+    `SELECT * FROM leads WHERE ${conditions.join(' AND ')} ORDER BY company LIMIT 100`, params
+  );
+
+  if (!leads.length) return res.status(400).json({ error: 'No leads with phone numbers match this campaign.' });
+
+  const weeks = weeksUntil(campaign.eventDate);
+  const urgencyLine = campaign.urgency.replace('{N}', weeks);
+  const estimatedMinutes = Math.ceil((leads.length * 45) / 60);
+
+  // Kick off calls with 45s delay between each (fire-and-forget)
+  (async () => {
+    for (const lead of leads) {
+      try {
+        const researchHook = await researchCompany(lead, process.env.ANTHROPIC_API_KEY).catch(() => null);
+        const assistant = buildVapiAssistant({ lead, settings, researchHook, campaignUrgency: urgencyLine });
+        const vapiRes = await fetch(`${VAPI_BASE}/call`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${settings.vapiApiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            assistant,
+            phoneNumberId: settings.vapiPhoneNumberId,
+            customer: { number: lead.phone.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1'), name: lead.contact_name || lead.company },
+          }),
+        });
+        if (vapiRes.ok) {
+          const call = await vapiRes.json();
+          await logActivity(pool, {
+            leadId: lead.id, userId,
+            type: 'call_initiated',
+            subject: `[${campaign.name}] AI call initiated to ${lead.company}`,
+            metadata: { vapi_call_id: call.id, campaign_id: campaign.id, research_hook: researchHook },
+          });
+        }
+      } catch (e) { console.error(`Campaign call error (${lead.company}):`, e.message); }
+      // 45-second gap between calls
+      await new Promise((r) => setTimeout(r, 45_000));
+    }
+  })();
+
+  res.json({ ok: true, total: leads.length, estimatedMinutes, campaignName: campaign.name });
 });
 
 // GET /calls/status/:callId — poll Vapi for live call status

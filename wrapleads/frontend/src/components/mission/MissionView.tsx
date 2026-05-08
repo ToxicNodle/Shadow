@@ -436,6 +436,112 @@ function ProspectorPanel({ apolloKey, onClose, onImported }: ProspectorPanelProp
   );
 }
 
+// ── Campaign Blast Panel ──────────────────────────────────────────────────────
+
+interface Campaign {
+  id: string;
+  name: string;
+  eventDate: string;
+  weeksUntil: number;
+  leadCount: number;
+  urgency: string;
+}
+
+interface CampaignPanelProps {
+  onClose: () => void;
+}
+
+function CampaignPanel({ onClose }: CampaignPanelProps) {
+  const [launching, setLaunching] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, { queued: number; estimatedMinutes: number }>>({});
+  const [confirming, setConfirming] = useState<Campaign | null>(null);
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['campaigns'],
+    queryFn: () => api.getCampaigns(),
+    staleTime: 5 * 60_000,
+  });
+
+  async function launchCampaign(campaign: Campaign) {
+    setConfirming(null);
+    setLaunching(campaign.id);
+    try {
+      const res = await api.launchCampaign(campaign.id);
+      setResults((r) => ({ ...r, [campaign.id]: { queued: res.queued, estimatedMinutes: res.estimatedMinutes } }));
+    } finally {
+      setLaunching(null);
+    }
+  }
+
+  return (
+    <div className="mission-campaign-panel">
+      <div className="mission-prospector-header">
+        <span className="mission-prospector-title">📅 Seasonal Campaign Blasts</span>
+        <button className="mission-action-btn" onClick={onClose}>✕ Close</button>
+      </div>
+      <p className="mission-campaign-desc">
+        One-click outbound AI call campaigns timed to real racing and seasonal events.
+        The AI injects event urgency into every call automatically.
+      </p>
+
+      {isLoading && <div className="pv-loading"><span className="spinner" /><span>Loading campaigns…</span></div>}
+      {isError && <div className="mission-enrich-error">Could not load campaigns. Check Vapi settings.</div>}
+
+      {data && (
+        <div className="mission-campaign-grid">
+          {data.campaigns.map((c) => {
+            const launched = results[c.id];
+            const isLaunching = launching === c.id;
+            const weeksLabel = c.weeksUntil <= 0 ? 'Happening now!' : c.weeksUntil === 1 ? '1 week away' : `${c.weeksUntil} weeks away`;
+            const urgencyClass = c.weeksUntil <= 2 ? 'campaign-urgency-hot' : c.weeksUntil <= 6 ? 'campaign-urgency-warm' : 'campaign-urgency-cool';
+
+            return (
+              <div key={c.id} className="mission-campaign-card">
+                <div className="mission-campaign-card-header">
+                  <span className="mission-campaign-name">{c.name}</span>
+                  <span className={`mission-campaign-urgency ${urgencyClass}`}>{weeksLabel}</span>
+                </div>
+                <p className="mission-campaign-blurb">{c.urgency}</p>
+                <div className="mission-campaign-card-footer">
+                  <span className="mission-campaign-count">
+                    {c.leadCount} lead{c.leadCount !== 1 ? 's' : ''} match · {c.eventDate}
+                  </span>
+                  {launched ? (
+                    <span className="mission-campaign-done">
+                      ✓ {launched.queued} calls queued (~{launched.estimatedMinutes} min)
+                    </span>
+                  ) : (
+                    <button
+                      className="btn btn-primary"
+                      disabled={isLaunching || c.leadCount === 0}
+                      onClick={() => setConfirming(c)}
+                    >
+                      {isLaunching ? 'Launching…' : c.leadCount === 0 ? 'No matches' : '🚀 Launch'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {confirming && (
+        <div className="mission-campaign-confirm-overlay">
+          <div className="mission-campaign-confirm">
+            <div className="mission-campaign-confirm-title">Launch "{confirming.name}"?</div>
+            <p>This will AI-call <strong>{confirming.leadCount} leads</strong> sequentially with 45-second gaps (~{Math.ceil(confirming.leadCount * 0.75)} min total).</p>
+            <div className="mission-campaign-confirm-actions">
+              <button className="btn" onClick={() => setConfirming(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => launchCampaign(confirming)}>Yes, Launch Campaign</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main MissionView ──────────────────────────────────────────────────────────
 
 export default function MissionView() {
@@ -445,6 +551,7 @@ export default function MissionView() {
   const [showBulk, setShowBulk] = useState(false);
   const [showEnrich, setShowEnrich] = useState(false);
   const [showProspector, setShowProspector] = useState(false);
+  const [showCampaigns, setShowCampaigns] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mission'],
@@ -500,7 +607,10 @@ export default function MissionView() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => setShowProspector((v) => !v)}>
+          <button className="btn" onClick={() => { setShowCampaigns((v) => !v); setShowProspector(false); }}>
+            📅 Campaigns
+          </button>
+          <button className="btn" onClick={() => { setShowProspector((v) => !v); setShowCampaigns(false); }}>
             🌐 Prospector
           </button>
           <button className="btn" onClick={() => refetch()}>↻ Refresh</button>
@@ -746,6 +856,13 @@ export default function MissionView() {
               onClose={() => setShowProspector(false)}
               onImported={() => refetch()}
             />
+          </section>
+        )}
+
+        {/* ── Campaign Blast ── */}
+        {showCampaigns && (
+          <section className="mission-card" style={{ gridColumn: '1 / -1', padding: 0, overflow: 'hidden' }}>
+            <CampaignPanel onClose={() => setShowCampaigns(false)} />
           </section>
         )}
 

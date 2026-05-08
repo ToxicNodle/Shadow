@@ -1428,3 +1428,54 @@
   background: none; border: none; padding: 0; color: var(--accent);
   cursor: pointer; font-size: 12px; text-decoration: underline;
 }
+
+/* ── Campaign Blast Panel ────────────────────────────────────────────── */
+.mission-campaign-panel { display: flex; flex-direction: column; }
+.mission-campaign-desc {
+  padding: 0 16px 12px;
+  font-size: 12px; color: var(--text-muted); margin: 0;
+}
+.mission-campaign-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+.mission-campaign-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--bg-card);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.mission-campaign-card-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.mission-campaign-name { font-size: 13px; font-weight: 700; }
+.mission-campaign-urgency {
+  font-size: 11px; font-weight: 600; border-radius: 4px; padding: 2px 7px;
+}
+.campaign-urgency-hot { background: #fef2f2; color: #dc2626; }
+.campaign-urgency-warm { background: #fff7ed; color: #ea580c; }
+.campaign-urgency-cool { background: #f0fdf4; color: #16a34a; }
+.mission-campaign-blurb {
+  font-size: 11px; color: var(--text-muted); margin: 0; line-height: 1.5;
+}
+.mission-campaign-card-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px;
+}
+.mission-campaign-count { font-size: 11px; color: var(--text-muted); }
+.mission-campaign-done { font-size: 12px; color: #22c55e; font-weight: 700; }
+.mission-campaign-confirm-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  display: flex; align-items: center; justify-content: center; z-index: 9999;
+}
+.mission-campaign-confirm {
+  background: var(--bg-card); border-radius: 12px; padding: 24px;
+  max-width: 420px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+}
+.mission-campaign-confirm-title {
+  font-size: 16px; font-weight: 700; margin-bottom: 10px;
+}
+.mission-campaign-confirm p { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+.mission-campaign-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
