@@ -9,7 +9,7 @@ type CallState = 'idle' | 'calling' | 'in-progress' | 'done' | 'voicemail' | 'no
 
 function AutoCallButton({ leadId, phone }: { leadId: number; phone: string | null }) {
   const [state, setState] = useState<CallState>('idle');
-  const [callId, setCallId] = useState<string | null>(null);
+  const [_callId, setCallId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -560,7 +560,7 @@ export default function MissionView() {
     refetchInterval: 5 * 60_000,
   });
 
-  function goToLead(leadId: number) {
+  function goToLead(_leadId: number) {
     // navigate to leads mode — the lead will be in the list
     setMode('leads');
   }

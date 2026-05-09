@@ -1,4 +1,4 @@
-export type LeadStatus = 'cold' | 'contacted' | 'replied' | 'meeting' | 'proposal' | 'won' | 'lost';
+export type LeadStatus = 'new' | 'cold' | 'contacted' | 'replied' | 'meeting' | 'proposal' | 'won' | 'lost';
 export type LeadCategory = 'fleet' | 'design' | 'construction' | 'dinoc' | 'reatec' | 'colorchange' | 'wallgraphics' | 'gc_referral' | 'racing';
 export type SubStatus = 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled';
 
@@ -189,6 +189,7 @@ export const CATEGORIES: Record<LeadCategory, string> = {
 };
 
 export const STATUSES: Record<LeadStatus, string> = {
+  new: 'New',
   cold: 'Cold',
   contacted: 'Contacted',
   replied: 'Replied',
