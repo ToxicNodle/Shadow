@@ -303,7 +303,7 @@ interface ColProps {
   onStatusChange: (id: number, s: BidStatus) => void;
 }
 
-function BidColumn({ status, label, color, bids, onEdit, onDelete, onStatusChange }: ColProps) {
+function BidColumn({ status: _status, label, color, bids, onEdit, onDelete, onStatusChange }: ColProps) {
   const totalValue = bids.reduce((s, b) => s + (b.estimated_value ?? 0), 0);
   return (
     <div className="bid-column">

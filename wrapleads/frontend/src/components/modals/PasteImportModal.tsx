@@ -23,6 +23,7 @@ const CAT_COLORS: Record<LeadCategory, string> = {
   colorchange:  '#f87171',
   wallgraphics: '#4ade80',
   gc_referral:  '#2dd4bf',
+  racing:       '#ef4444',
 };
 
 export default function PasteImportModal() {
