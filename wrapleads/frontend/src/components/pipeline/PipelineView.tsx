@@ -72,8 +72,10 @@ export default function PipelineView() {
   const { total, byStatus, byCategory, overdue, projectedRevenue, sequenceStats } = data;
 
   const activeLeads = total - (byStatus.won ?? 0) - (byStatus.lost ?? 0) - (byStatus.cold ?? 0);
-  const maxStatus = Math.max(...STATUS_ORDER.map((s) => byStatus[s] ?? 0), 1);
-  const catEntries = Object.entries(byCategory ?? {}).sort((a, b) => b[1] - a[1]);
+  const maxStatus = Math.max(...STATUS_ORDER.map((s) => (byStatus[s] ?? 0) as number), 1);
+  const catEntries = Object.entries(byCategory ?? {})
+    .map(([cat, count]) => [cat, count ?? 0] as [string, number])
+    .sort((a, b) => b[1] - a[1]);
   const maxCat = Math.max(...catEntries.map(([, c]) => c), 1);
 
   function goToLeads(status?: string, category?: string) {
