@@ -637,12 +637,18 @@ async function callApollo(apiPath, body, apiKey) {
   return { status: r.status, data };
 }
 
-function resolveApolloKey(req) {
-  return (req.body && req.body.apiKey) ? String(req.body.apiKey).trim() : ENV_APOLLO_KEY;
+async function resolveApolloKey(req) {
+  if (req.body?.apiKey) return String(req.body.apiKey).trim();
+  if (ENV_APOLLO_KEY) return ENV_APOLLO_KEY;
+  if (req.user?.id) {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [req.user.id]);
+    return r.rows[0]?.settings_json?.apolloApiKey || null;
+  }
+  return null;
 }
 
 app.post('/apollo/search', authMiddleware, subMiddleware, async (req, res) => {
-  const apiKey = resolveApolloKey(req);
+  const apiKey = await resolveApolloKey(req);
   if (!apiKey) return res.status(400).json({ error: 'No Apollo API key.' });
   const { company, domain, titles, limit } = req.body || {};
   if (!company) return res.status(400).json({ error: 'Missing field: company' });
