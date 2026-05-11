@@ -101,6 +101,17 @@ function pluralize(n, s, p) {
   return n === 1 ? `${n} ${s}` : `${n.toLocaleString()} ${p}`;
 }
 
+function classifySosIndustry(name) {
+  const n = (name || '').toUpperCase();
+  if (/CONSTRUCTION|CONTRACTING|CONTRACTOR|BUILDERS|BUILDER|ROOFING|MECHANICAL|ELECTRICAL|PLUMBING|HVAC/.test(n))
+    return 'construction_general';
+  if (/DESIGN|ARCHITECT|INTERIOR|STUDIO|CREATIVE/.test(n))
+    return 'design_general';
+  if (/TRANSPORT|TRUCKING|HAULING|LOGISTICS|FREIGHT|COURIER|DELIVERY/.test(n))
+    return 'trucking_general';
+  return 'general';
+}
+
 // ----------------------------------------------------------------------------
 // Batch insert / update
 // ----------------------------------------------------------------------------
@@ -226,7 +237,7 @@ async function main() {
         state:            source === 'sos_in' ? 'IN' : 'OH',
         zip:              pickField(row, fields.zip),
         country:          'US',
-        industry:         'general',                  // no fleet data in SOS
+        industry:         classifySosIndustry(name),
         added_to_registry: parseSosDate(pickField(row, fields.formed)),
         raw_data:         row,
       });

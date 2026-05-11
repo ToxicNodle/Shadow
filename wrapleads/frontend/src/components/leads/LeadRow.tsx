@@ -1,14 +1,23 @@
 import type { Lead } from '../../api/types';
 import { CATEGORIES, STATUSES } from '../../api/types';
 import { useAppStore } from '../../store/useAppStore';
+import { scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 
 interface Props {
   lead: Lead;
   selected: boolean;
+  checked: boolean;
 }
 
-export default function LeadRow({ lead, selected }: Props) {
-  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+export default function LeadRow({ lead, selected, checked }: Props) {
+  const { setCurrentLeadId, toggleLeadSelection } = useAppStore((s) => ({
+    setCurrentLeadId: s.setCurrentLeadId,
+    toggleLeadSelection: s.toggleLeadSelection,
+  }));
+
+  const score = scoreLead(lead);
+  const label = scoreLabel(score);
+  const color = SCORE_COLORS[label];
 
   function fmt(date: string) {
     if (!date) return '—';
@@ -24,6 +33,17 @@ export default function LeadRow({ lead, selected }: Props) {
       className={`lead-row ${selected ? 'selected' : ''}`}
       onClick={() => setCurrentLeadId(lead.id)}
     >
+      {/* Checkbox */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={(e) => { e.stopPropagation(); toggleLeadSelection(lead.id); }}>
+        <input
+          type="checkbox"
+          checked={checked}
+          readOnly
+          style={{ cursor: 'pointer', width: 14, height: 14, accentColor: 'var(--accent)' }}
+        />
+      </div>
+
       <div>
         <div className="lead-company">{lead.company}</div>
         <div className="lead-contact">
@@ -49,6 +69,17 @@ export default function LeadRow({ lead, selected }: Props) {
           {CATEGORIES[lead.category]}
         </div>
         <div className="lead-date">{fmt(lead.lastContacted)}</div>
+      </div>
+
+      {/* Score badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          background: `${color}22`, color, borderRadius: 4,
+          fontSize: 11, fontWeight: 700, padding: '2px 6px', minWidth: 28,
+        }}>
+          {score}
+        </div>
       </div>
 
       <div>

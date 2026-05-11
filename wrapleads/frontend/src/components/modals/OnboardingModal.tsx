@@ -46,8 +46,8 @@ export default function OnboardingModal({ onClose }: Props) {
               Welcome to WrapLeads
             </div>
             <p style={{ fontSize: 14, color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: 24 }}>
-              You're all set to start finding wrap clients. We've prepared <strong style={{ color: 'var(--text)' }}>57 sample leads</strong> — real
-              fleet companies, design firms, and construction businesses — to show you how the pipeline works.
+              You're all set to start finding wrap clients. We've prepared <strong style={{ color: 'var(--text)' }}>{SEED_LEADS.length} sample leads</strong> — fleet
+              companies, DI-NOC targets, color change prospects, wall graphics clients, and GC referral partners — to show you how the pipeline works.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button
@@ -56,7 +56,7 @@ export default function OnboardingModal({ onClose }: Props) {
                 onClick={loadSampleLeads}
                 disabled={loading}
               >
-                {loading ? <><span className="spinner" /> Loading…</> : '📋 Load 57 Sample Leads'}
+                {loading ? <><span className="spinner" /> Loading…</> : `📋 Load ${SEED_LEADS.length} Sample Leads`}
               </button>
               <button className="btn" style={{ justifyContent: 'center' }} onClick={() => setStep(2)}>
                 Skip — I'll add my own leads
