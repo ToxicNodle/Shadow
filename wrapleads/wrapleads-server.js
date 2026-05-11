@@ -273,6 +273,44 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create eink tables:', e.message);
   }
+
+  // Job Photos
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_photos (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        job_id     BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        image_data TEXT NOT NULL,
+        caption    TEXT,
+        photo_type TEXT NOT NULL DEFAULT 'other',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_photos_job ON job_photos(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create job_photos table:', e.message);
+  }
+
+  // Notifications
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        body       TEXT NOT NULL DEFAULT '',
+        metadata   JSONB DEFAULT '{}',
+        read_at    TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id) WHERE read_at IS NULL`);
+  } catch (e) {
+    console.warn('[migrate] Could not create notifications table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -303,6 +341,17 @@ app.use((req, res, next) => {
 // ----------------------------------------------------------------------------
 // Auth middleware
 // ----------------------------------------------------------------------------
+async function createNotification(userId, { type, title, body = '', metadata = {} }) {
+  try {
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, body, metadata) VALUES ($1,$2,$3,$4,$5)`,
+      [String(userId), type, title, body, JSON.stringify(metadata)]
+    );
+  } catch (e) {
+    console.warn('[notify]', e.message);
+  }
+}
+
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
@@ -2003,6 +2052,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
 
     const seq = seqR.rows[0];
 
+    const agingCount = agingR.rows[0].count;
     res.json({
       date: today,
       overdue: overdueR.rows,
@@ -2011,12 +2061,9 @@ app.get('/mission', authMiddleware, async (req, res) => {
       bidsThisWeek: bidsR.rows,
       callReady: callReadyR.rows,
       needsEmail: needsEmailR.rows,
-      sequences: {
-        active: seq.active,
-        pendingEmails: seq.pending_emails,
-      },
+      sequences: { active: seq.active, pendingEmails: seq.pending_emails },
       wonThisMonth: wonR.rows[0].count,
-      agingWraps: agingR.rows[0].count,
+      agingWraps: agingCount,
       priorityScore:
         callReadyR.rows.length * 5 +
         overdueR.rows.length * 3 +
@@ -2024,6 +2071,23 @@ app.get('/mission', authMiddleware, async (req, res) => {
         bidsR.rows.length * 2 +
         newR.rows.length,
     });
+
+    // Fire aging wrap notification once per day (non-blocking, after response)
+    if (agingCount > 0) {
+      pool.query(
+        `SELECT 1 FROM notifications WHERE user_id=$1 AND type='aging_wrap' AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
+        [uid]
+      ).then(({ rows }) => {
+        if (!rows.length) {
+          createNotification(uid, {
+            type: 'aging_wrap',
+            title: `${agingCount} wrap${agingCount > 1 ? 's' : ''} approaching refresh window`,
+            body: 'Check Aging Alerts in the Wrap Lifecycle view to re-engage these clients.',
+            metadata: { count: agingCount },
+          });
+        }
+      }).catch(() => {});
+    }
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2958,6 +3022,14 @@ app.post('/calls/webhook', async (req, res) => {
         );
       }
 
+      // Create notification for call completion
+      await createNotification(user_id, {
+        type: 'call_completed',
+        title: `AI call to ${company} — ${endedReason.replace(/-/g, ' ')}`,
+        body: summary ? summary.slice(0, 200) : `Call ended: ${endedReason}`,
+        metadata: { lead_id, company, success_evaluation: success, interested: structured.interested },
+      });
+
       // Log competitor intel if mentioned
       if (structured.competitorVendor) {
         await pool.query(
@@ -3583,6 +3655,283 @@ app.get('/content/export', authMiddleware, async (req, res) => {
     [req.user.id]
   );
   res.json({ exported_at: new Date().toISOString(), schedules });
+});
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+app.get('/notifications', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM notifications WHERE user_id=$1 ORDER BY read_at NULLS FIRST, created_at DESC LIMIT 50`,
+      [String(req.user.id)]
+    );
+    const unread = rows.filter((r) => !r.read_at).length;
+    res.json({ notifications: rows, unread });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/notifications/read-all', authMiddleware, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL`,
+      [String(req.user.id)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/notifications/:id/read', authMiddleware, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE notifications SET read_at=NOW() WHERE id=$1 AND user_id=$2`,
+      [req.params.id, String(req.user.id)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/notifications/:id', authMiddleware, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM notifications WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Job Photos ────────────────────────────────────────────────────────────────
+
+app.get('/jobs/:id/photos', authMiddleware, async (req, res) => {
+  try {
+    const own = await pool.query('SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query('SELECT * FROM job_photos WHERE job_id=$1 ORDER BY created_at ASC', [req.params.id]);
+    res.json({ photos: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/jobs/:id/photos', authMiddleware, upload.single('image'), async (req, res) => {
+  try {
+    const own = await pool.query('SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Job not found' });
+    if (!req.file) return res.status(400).json({ error: 'image required' });
+    const base64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    const { caption = '', photo_type = 'other' } = req.body;
+    const { rows } = await pool.query(
+      `INSERT INTO job_photos (user_id, job_id, image_data, caption, photo_type) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [String(req.user.id), req.params.id, base64, caption || null, photo_type]
+    );
+    res.json({ ok: true, photo: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/jobs/photos/:photoId', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM job_photos WHERE id=$1 AND user_id=$2', [req.params.photoId, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Quote PDF (HTML template, browser print) ──────────────────────────────────
+
+app.get('/bids/:id/quote', (req, res, next) => {
+  // Accept token from query param (needed for window.open from browser)
+  if (req.query.token && !req.headers.authorization) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+  next();
+}, authMiddleware, async (req, res) => {
+  try {
+    const { rows: bidRows } = await pool.query(
+      `SELECT b.*, l.company AS lead_company, l.contact_name, l.email AS lead_email, l.phone AS lead_phone, l.city, l.state
+       FROM bids b LEFT JOIN leads l ON l.id = b.lead_id
+       WHERE b.id=$1 AND b.user_id=$2`,
+      [req.params.id, String(req.user.id)]
+    );
+    if (!bidRows.length) return res.status(404).json({ error: 'Bid not found' });
+    const bid = bidRows[0];
+    const { rows: uRows } = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(req.user.id)]);
+    const s = uRows[0]?.settings_json || {};
+
+    const formatMoney = (n) => n ? `$${Number(n).toLocaleString()}` : '—';
+    const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quote — ${bid.project_name}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f5f7; color: #1a1c22; }
+  .page { max-width: 820px; margin: 32px auto; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,.1); }
+  .header { background: #1a1c22; padding: 36px 40px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .brand { color: #fff; }
+  .brand-name { font-size: 24px; font-weight: 800; letter-spacing: -.5px; }
+  .brand-name span { color: #6366f1; }
+  .brand-tag { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+  .brand-contact { text-align: right; color: #9ca3af; font-size: 12px; line-height: 1.7; }
+  .brand-contact strong { color: #fff; font-size: 14px; display: block; margin-bottom: 4px; }
+  .quote-label { background: #6366f1; color: #fff; padding: 6px 16px; border-radius: 20px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-top: 8px; display: inline-block; }
+  .body { padding: 40px; }
+  .section { margin-bottom: 32px; }
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #6b7280; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e7eb; }
+  .client-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field-label { font-size: 11px; color: #9ca3af; font-weight: 600; }
+  .field-value { font-size: 14px; font-weight: 600; color: #1a1c22; }
+  .project-title { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+  .project-meta { display: flex; gap: 16px; flex-wrap: wrap; }
+  .meta-chip { background: #f3f4f6; border-radius: 6px; padding: 4px 12px; font-size: 12px; font-weight: 600; color: #374151; }
+  .price-box { background: linear-gradient(135deg, #1a1c22 0%, #2d2f3a 100%); border-radius: 10px; padding: 28px; display: flex; align-items: center; justify-content: space-between; }
+  .price-label { color: #9ca3af; font-size: 13px; font-weight: 600; }
+  .price-value { font-size: 36px; font-weight: 900; color: #fff; }
+  .price-note { color: #6b7280; font-size: 11px; margin-top: 4px; }
+  .timeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .timeline-step { text-align: center; padding: 16px; background: #f9fafb; border-radius: 8px; }
+  .timeline-num { width: 28px; height: 28px; background: #6366f1; border-radius: 50%; color: #fff; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px; }
+  .timeline-title { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  .timeline-desc { font-size: 11px; color: #6b7280; }
+  .services-list { display: flex; flex-direction: column; gap: 10px; }
+  .service-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #f9fafb; border-radius: 8px; }
+  .service-dot { width: 8px; height: 8px; background: #6366f1; border-radius: 50%; flex-shrink: 0; }
+  .service-name { font-size: 13px; font-weight: 600; flex: 1; }
+  .service-detail { font-size: 12px; color: #6b7280; }
+  .terms { background: #f9fafb; border-radius: 8px; padding: 20px; }
+  .terms p { font-size: 12px; color: #6b7280; line-height: 1.7; margin-bottom: 8px; }
+  .terms p:last-child { margin-bottom: 0; }
+  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 8px; }
+  .sig-box { border-top: 2px solid #e5e7eb; padding-top: 12px; }
+  .sig-label { font-size: 11px; color: #9ca3af; font-weight: 600; }
+  .sig-name { font-size: 13px; font-weight: 700; margin-top: 4px; }
+  .sig-date { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+  .footer { background: #f3f4f6; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; }
+  .footer-note { font-size: 11px; color: #9ca3af; }
+  .footer-ref { font-size: 11px; font-weight: 700; color: #6366f1; }
+  @media print {
+    body { background: #fff; }
+    .page { margin: 0; border-radius: 0; box-shadow: none; }
+    .no-print { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="brand">
+      <div class="brand-name">${s.companyName || 'Shadow Graphix'}<span>.</span></div>
+      <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps &amp; Fleet Graphics'}</div>
+      <div class="quote-label">Quote Proposal</div>
+    </div>
+    <div class="brand-contact">
+      <strong>${s.senderName || ''}</strong>
+      ${s.senderTitle ? `<span>${s.senderTitle}</span><br>` : ''}
+      ${s.senderEmail ? `<span>${s.senderEmail}</span><br>` : ''}
+      ${s.senderPhone ? `<span>${s.senderPhone}</span>` : ''}
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="section">
+      <div class="project-title">${bid.project_name}</div>
+      <div class="project-meta">
+        <span class="meta-chip">${bid.project_type?.replace(/_/g, ' ').toUpperCase() || 'GENERAL'}</span>
+        ${bid.status !== 'tracking' ? `<span class="meta-chip">${bid.status.toUpperCase()}</span>` : ''}
+        ${bid.bid_due ? `<span class="meta-chip">Due: ${formatDate(bid.bid_due)}</span>` : ''}
+      </div>
+    </div>
+
+    ${bid.lead_company || bid.contact_name ? `
+    <div class="section">
+      <div class="section-title">Prepared For</div>
+      <div class="client-grid">
+        ${bid.lead_company ? `<div class="field"><span class="field-label">Company</span><span class="field-value">${bid.lead_company}</span></div>` : ''}
+        ${bid.contact_name ? `<div class="field"><span class="field-label">Contact</span><span class="field-value">${bid.contact_name}</span></div>` : ''}
+        ${bid.lead_email ? `<div class="field"><span class="field-label">Email</span><span class="field-value">${bid.lead_email}</span></div>` : ''}
+        ${bid.city || bid.state ? `<div class="field"><span class="field-label">Location</span><span class="field-value">${[bid.city, bid.state].filter(Boolean).join(', ')}</span></div>` : ''}
+      </div>
+    </div>` : ''}
+
+    ${bid.estimated_value ? `
+    <div class="section">
+      <div class="section-title">Estimated Investment</div>
+      <div class="price-box">
+        <div>
+          <div class="price-label">Project Estimate</div>
+          <div class="price-value">${formatMoney(bid.estimated_value)}</div>
+          <div class="price-note">Final price may vary based on vehicle count, material, and complexity</div>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="section-title">What's Included</div>
+      <div class="services-list">
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">Professional design (included)</span><span class="service-detail">Custom graphics crafted to your brand</span></div>
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">3M or Avery certified material</span><span class="service-detail">5-year warranty, removable without paint damage</span></div>
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">Professional installation</span><span class="service-detail">Climate-controlled facility, certified installers</span></div>
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">Quality inspection &amp; delivery</span><span class="service-detail">Photo documentation, care instructions included</span></div>
+        ${s.companyServices ? `<div class="service-row"><span class="service-dot"></span><span class="service-name">${s.companyServices}</span><span class="service-detail">Full-service shop capabilities</span></div>` : ''}
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Project Timeline</div>
+      <div class="timeline">
+        <div class="timeline-step"><div class="timeline-num">1</div><div class="timeline-title">Design Approval</div><div class="timeline-desc">2–3 business days</div></div>
+        <div class="timeline-step"><div class="timeline-num">2</div><div class="timeline-title">Print &amp; Prep</div><div class="timeline-desc">1–2 business days</div></div>
+        <div class="timeline-step"><div class="timeline-num">3</div><div class="timeline-title">Install</div><div class="timeline-desc">1–2 days per vehicle</div></div>
+      </div>
+    </div>
+
+    ${bid.notes ? `
+    <div class="section">
+      <div class="section-title">Project Notes</div>
+      <div class="terms"><p>${bid.notes.replace(/\n/g, '<br>')}</p></div>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="section-title">Terms &amp; Conditions</div>
+      <div class="terms">
+        <p>50% deposit required to begin production. Balance due upon completion. Pricing is valid for 30 days from the date of this quote.</p>
+        <p>Any changes to vehicle count, design scope, or materials after approval may affect final pricing. Rush fees may apply for timelines under 5 business days.</p>
+        <p>This quote covers labor and materials as described. Additional services (removal of existing vinyl, surface prep, repairs) will be quoted separately if required.</p>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Approval</div>
+      <div class="sig-grid">
+        <div class="sig-box">
+          <div class="sig-label">Authorized by</div>
+          <div class="sig-name">${s.companyName || 'Shadow Graphix'}</div>
+          <div class="sig-date">${s.senderName || ''} · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+        </div>
+        <div class="sig-box">
+          <div class="sig-label">Accepted by client</div>
+          <div class="sig-name" style="height:24px;"></div>
+          <div class="sig-date">Signature &amp; Date</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="footer-note">Quote valid for 30 days · Questions? ${s.senderEmail || 'contact@shadowgraphix.com'}</span>
+    <span class="footer-ref">REF: BID-${String(bid.id).padStart(4,'0')}</span>
+  </div>
+</div>
+
+<div class="no-print" style="text-align:center;padding:20px;">
+  <button onclick="window.print()" style="background:#6366f1;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;">
+    Save as PDF / Print
+  </button>
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── E Ink Device Infrastructure ──────────────────────────────────────────────

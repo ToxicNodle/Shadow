@@ -1,8 +1,92 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import type { InstalledJob, VehicleType, LeadCategory } from '../../api/types';
+import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../api/types';
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
+
+// ── Photo Gallery (inside job modal) ─────────────────────────────────────────
+
+function PhotoGallery({ jobId }: { jobId: number }) {
+  const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [caption, setCaption] = useState('');
+  const [photoType, setPhotoType] = useState<string>('before');
+  const [uploading, setUploading] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-photos', jobId],
+    queryFn: () => api.getJobPhotos(jobId),
+    staleTime: 60_000,
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (photoId: number) => api.deleteJobPhoto(photoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-photos', jobId] }),
+  });
+
+  async function handleUpload(file: File) {
+    setUploading(true);
+    try {
+      await api.uploadJobPhoto(jobId, file, caption, photoType);
+      qc.invalidateQueries({ queryKey: ['job-photos', jobId] });
+      setCaption('');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const photos: JobPhoto[] = data?.photos ?? [];
+  const TYPE_COLORS: Record<string, string> = { before: '#f59e0b', after: '#22c55e', detail: '#6366f1', other: '#6b7280' };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="field-group" style={{ flex: 1, minWidth: 120 }}>
+          <label className="field-label">Type</label>
+          <select className="input" value={photoType} onChange={(e) => setPhotoType(e.target.value)}>
+            <option value="before">Before</option>
+            <option value="after">After</option>
+            <option value="detail">Detail</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div className="field-group" style={{ flex: 2, minWidth: 160 }}>
+          <label className="field-label">Caption (optional)</label>
+          <input className="input" value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Driver side — finished" />
+        </div>
+        <div>
+          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
+            onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} />
+          <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={uploading} onClick={() => fileRef.current?.click()}>
+            {uploading ? 'Uploading…' : '+ Add Photo'}
+          </button>
+        </div>
+      </div>
+
+      {isLoading && <div className="pv-loading"><span className="spinner" /></div>}
+      {!isLoading && photos.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+          No photos yet. Add before and after shots to document the job.
+        </div>
+      )}
+
+      <div className="photo-grid">
+        {photos.map((p) => (
+          <div key={p.id} className="photo-card">
+            <img src={p.image_data} alt={p.caption || p.photo_type} className="photo-card-img" />
+            <div className="photo-card-overlay">
+              <span className="photo-type-badge" style={{ background: TYPE_COLORS[p.photo_type] ?? '#6b7280' }}>
+                {p.photo_type}
+              </span>
+              {p.caption && <span className="photo-caption">{p.caption}</span>}
+              <button className="photo-delete" onClick={() => deleteMut.mutate(p.id)}>✕</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ── Job Form Modal ────────────────────────────────────────────────────────────
 
@@ -14,6 +98,7 @@ interface JobModalProps {
 function JobModal({ job, onClose }: JobModalProps) {
   const isNew = job === 'new';
   const qc = useQueryClient();
+  const [activeTab, setActiveTab] = useState<'details' | 'photos'>('details');
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
     vehicle_type: (isNew ? 'cargo_van_standard' : (job as InstalledJob).vehicle_type) as VehicleType,
@@ -46,12 +131,21 @@ function JobModal({ job, onClose }: JobModalProps) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal-box" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">{isNew ? 'Log Completed Job' : 'Edit Job'}</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
-        <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {!isNew && (
+          <div className="jobs-tabs" style={{ margin: '0 24px', borderBottom: '1px solid var(--border)' }}>
+            <button className={`jobs-tab ${activeTab === 'details' ? 'active' : ''}`} onClick={() => setActiveTab('details')}>Details</button>
+            <button className={`jobs-tab ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}>📷 Photos</button>
+          </div>
+        )}
+        <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {(!isNew && activeTab === 'photos') ? (
+          <PhotoGallery jobId={(job as InstalledJob).id} />
+        ) : (
           <div className="field-row">
             <div className="field-group">
               <label className="field-label">Company</label>
@@ -119,6 +213,7 @@ function JobModal({ job, onClose }: JobModalProps) {
               {isNew ? 'Log Job' : 'Save Changes'}
             </button>
           </div>
+        )}
         </div>
       </div>
     </div>

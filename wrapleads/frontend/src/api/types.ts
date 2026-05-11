@@ -400,6 +400,35 @@ export interface ContentSchedule {
   created_at: string;
 }
 
+// ── Job Photos ────────────────────────────────────────────────────────────────
+
+export type JobPhotoType = 'before' | 'after' | 'detail' | 'other';
+
+export interface JobPhoto {
+  id: number;
+  user_id: string;
+  job_id: number;
+  image_data: string;
+  caption?: string | null;
+  photo_type: JobPhotoType;
+  created_at: string;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export type NotificationType = 'aging_wrap' | 'call_completed' | 'email_reply' | 'sequence_complete' | 'bid_due_soon';
+
+export interface AppNotification {
+  id: number;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  metadata: Record<string, unknown>;
+  read_at: string | null;
+  created_at: string;
+}
+
 // ── E Ink Device Infrastructure ───────────────────────────────────────────────
 
 export interface EinkDevice {

@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification } from './types';
 
 export const api = {
   // Auth
@@ -342,6 +342,35 @@ export const api = {
   pushContentToDevice: (deviceId: number, contentId: number) =>
     authFetch<{ ok: boolean; push_log_id: number }>(`/admin/devices/${deviceId}/push`, { method: 'POST', body: JSON.stringify({ content_id: contentId }) }),
   getDevicePushLog: (deviceId: number) => authFetch<{ log: EinkPushLog[] }>(`/admin/devices/${deviceId}/log`),
+
+  // Notifications
+  getNotifications: () => authFetch<{ notifications: AppNotification[]; unread: number }>('/notifications'),
+  markAllRead: () => authFetch<{ ok: boolean }>('/notifications/read-all', { method: 'PUT', body: '{}' }),
+  markRead: (id: number) => authFetch<{ ok: boolean }>(`/notifications/${id}/read`, { method: 'PUT', body: '{}' }),
+  deleteNotification: (id: number) => authFetch<{ ok: boolean }>(`/notifications/${id}`, { method: 'DELETE' }),
+
+  // Job Photos
+  getJobPhotos: (jobId: number) => authFetch<{ photos: JobPhoto[] }>(`/jobs/${jobId}/photos`),
+  uploadJobPhoto: (jobId: number, file: File, caption: string, photo_type: string) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('caption', caption);
+    form.append('photo_type', photo_type);
+    return fetch(`/jobs/${jobId}/photos`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Upload failed');
+      return data as { ok: boolean; photo: JobPhoto };
+    });
+  },
+  deleteJobPhoto: (photoId: number) => authFetch<{ ok: boolean }>(`/jobs/photos/${photoId}`, { method: 'DELETE' }),
+
+  // Quote PDF (opens in new tab)
+  openQuote: (bidId: number) => window.open(`/bids/${bidId}/quote?token=${getToken()}`, '_blank'),
 
   // AI Calling — campaigns
   getCampaigns: () =>
