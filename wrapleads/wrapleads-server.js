@@ -1976,6 +1976,67 @@ No markdown, no explanation. Just the JSON array.`;
   res.json({ ok: true, queued, failed, results });
 });
 
+// Win/Loss capture — records the deciding factor when a lead is won or lost
+app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const { factor = 'other', notes = '' } = req.body || {};
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'status_changed',
+      subject: `Win/Loss factor: ${factor}`,
+      body: notes,
+      metadata: { win_loss_factor: factor, win_loss_notes: notes },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// SMS outreach — sends a text via Twilio and logs activity
+app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const { message } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT phone, company, contact_name FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    if (!lead.phone) return res.status(400).json({ error: 'No phone number on this lead' });
+    if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+      return res.status(400).json({ error: 'Twilio not configured — add credentials in Settings' });
+    }
+
+    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+    const body = new URLSearchParams({ To: lead.phone, From: s.twilioFromNumber, Body: message });
+    const twilioResp = await fetch(twilioUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64'),
+      },
+      body: body.toString(),
+    });
+    const twilioData = await twilioResp.json();
+    if (!twilioResp.ok) throw new Error(twilioData.message || 'Twilio error');
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'called',
+      subject: 'SMS sent',
+      body: message,
+      metadata: { twilio_sid: twilioData.sid, to: lead.phone },
+    });
+    await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1`, [leadId]);
+
+    res.json({ ok: true, sid: twilioData.sid });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================================
 // Today's Mission — AI-prioritized daily action list
 // ============================================================================
@@ -2110,6 +2171,54 @@ app.get('/mission', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// AI Mission Brief — personalized morning brief generated from live mission data
+app.get('/mission/brief', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.json({ brief: null, reason: 'no_api_key' });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const [overdueR, repliedR, callReadyR, bidsR, wonR, agingR] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status IN ('contacted','replied') AND followup_due_at < $2`, [uid, today]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status='replied'`, [uid]),
+      pool.query(`
+        SELECT COUNT(DISTINCT l.id)::INT AS n FROM leads l JOIN email_queue q ON q.lead_id=l.id
+        WHERE l.user_id=$1 AND l.status='contacted'
+          AND NOT EXISTS (SELECT 1 FROM email_queue pq WHERE pq.lead_id=l.id AND pq.status='pending')
+        HAVING COUNT(q.id) FILTER (WHERE q.status='sent') >= 2
+      `, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM bids WHERE user_id=$1 AND status='tracking' AND bid_due >= $2 AND bid_due <= $2::date + INTERVAL '7 days'`, [uid, today]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month', NOW())`, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM installed_jobs WHERE user_id=$1 AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'`, [uid]),
+    ]);
+
+    const overdue = overdueR.rows[0]?.n ?? 0;
+    const replied = repliedR.rows[0]?.n ?? 0;
+    const callReady = callReadyR.rows[0]?.n ?? 0;
+    const bids = bidsR.rows[0]?.n ?? 0;
+    const won = wonR.rows[0]?.n ?? 0;
+    const aging = agingR.rows[0]?.n ?? 0;
+
+    const prompt = `You are a sharp sales coach for a vehicle wrap and graphics shop. Write a punchy 2-sentence morning briefing for the shop owner based on their CRM data. Be specific, action-oriented, and direct. No fluff, no greetings, no sign-off. Just the brief.
+
+Today's data:
+- Overdue follow-ups: ${overdue}
+- Leads that replied (need proposal): ${replied}
+- Leads call-ready (sequence done): ${callReady}
+- Bids due this week: ${bids}
+- Deals won this month: ${won}
+- Wraps aging toward refresh: ${aging}
+
+Write exactly 2 sentences. Start with the most urgent action. Second sentence previews what a win looks like today.`;
+
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 200);
+    res.json({ brief: text.trim() });
+  } catch (e) {
+    res.json({ brief: null, reason: 'error' });
+  }
+});
+
 // Background worker — processes pending queue emails
 async function processEmailQueue() {
   const resendKey = process.env.RESEND_API_KEY;
@@ -2201,6 +2310,101 @@ function startDripWorker() {
   processEmailQueue(); // run immediately on start
   setInterval(processEmailQueue, 60_000); // then every minute
   console.log('· Drip worker: running (checks queue every 60s)');
+}
+
+// Daily digest — sends each user a 7am morning briefing via email
+async function sendDailyDigests() {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    const { rows: users } = await pool.query(`
+      SELECT u.id, u.email, u.settings_json
+      FROM users u
+      WHERE u.sub_status IN ('trialing','active')
+        AND u.email IS NOT NULL AND u.email != ''
+    `);
+
+    for (const user of users) {
+      try {
+        const uid = String(user.id);
+        const s = user.settings_json || {};
+        const shopName = s.companyName || 'your shop';
+
+        const [overdueR, repliedR, callReadyR, bidsR, agingR] = await Promise.all([
+          pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status IN ('contacted','replied') AND followup_due_at < $2`, [uid, today]),
+          pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status='replied'`, [uid]),
+          pool.query(`
+            SELECT COUNT(DISTINCT l.id)::INT AS n FROM leads l JOIN email_queue q ON q.lead_id=l.id
+            WHERE l.user_id=$1 AND l.status='contacted'
+              AND NOT EXISTS (SELECT 1 FROM email_queue pq WHERE pq.lead_id=l.id AND pq.status='pending')
+            HAVING COUNT(q.id) FILTER (WHERE q.status='sent') >= 2
+          `, [uid]),
+          pool.query(`SELECT COUNT(*)::INT AS n FROM bids WHERE user_id=$1 AND status='tracking' AND bid_due >= $2 AND bid_due <= $2::date + INTERVAL '7 days'`, [uid, today]),
+          pool.query(`SELECT COUNT(*)::INT AS n FROM installed_jobs WHERE user_id=$1 AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'`, [uid]),
+        ]);
+
+        const overdue = overdueR.rows[0]?.n ?? 0;
+        const replied = repliedR.rows[0]?.n ?? 0;
+        const callReady = callReadyR.rows[0]?.n ?? 0;
+        const bids = bidsR.rows[0]?.n ?? 0;
+        const aging = agingR.rows[0]?.n ?? 0;
+
+        const totalActions = overdue + replied + callReady + bids;
+        if (totalActions === 0 && aging === 0) continue;
+
+        const rows = [];
+        if (callReady > 0) rows.push(`📞 ${callReady} lead${callReady > 1 ? 's' : ''} ready for a call — sequence complete`);
+        if (overdue > 0) rows.push(`⚠ ${overdue} overdue follow-up${overdue > 1 ? 's' : ''}`);
+        if (replied > 0) rows.push(`💬 ${replied} lead${replied > 1 ? 's' : ''} replied — send a proposal`);
+        if (bids > 0) rows.push(`📋 ${bids} bid${bids > 1 ? 's' : ''} due this week`);
+        if (aging > 0) rows.push(`🔄 ${aging} wrap${aging > 1 ? 's' : ''} approaching refresh window`);
+
+        const body = `Good morning from WrapLeads!
+
+Here's your daily briefing for ${shopName}:
+
+${rows.map((r) => `• ${r}`).join('\n')}
+
+Log in to WrapLeads to take action: https://app.wrapleads.io
+
+—
+WrapLeads Daily Digest
+Unsubscribe: reply "unsubscribe" to this email`;
+
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `WrapLeads <${fromEmail}>`,
+            to: user.email,
+            subject: `Your WrapLeads Briefing — ${totalActions} action${totalActions !== 1 ? 's' : ''} today`,
+            text: body,
+          }),
+        });
+        console.log(`[digest] Sent to ${user.email} (${totalActions} actions)`);
+      } catch (err) {
+        console.error(`[digest] Failed for user ${user.id}:`, err.message);
+      }
+    }
+  } catch (e) {
+    console.error('[digest worker]', e.message);
+  }
+}
+
+function startDigestWorker() {
+  const check = () => {
+    const now = new Date();
+    // Fire at 7:00 AM local server time
+    if (now.getHours() === 7 && now.getMinutes() === 0) {
+      sendDailyDigests();
+    }
+  };
+  // Check every minute — fires once when clock hits 7:00
+  setInterval(check, 60_000);
+  console.log('· Digest worker: running (daily briefing at 7:00 AM)');
 }
 
 // ----------------------------------------------------------------------------
@@ -4572,6 +4776,7 @@ app.listen(PORT, async () => {
   if (db.ok) {
     await migrateDb();
     startDripWorker();
+    startDigestWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {

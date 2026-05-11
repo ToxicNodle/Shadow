@@ -146,6 +146,7 @@ function JobModal({ job, onClose }: JobModalProps) {
         {(!isNew && activeTab === 'photos') ? (
           <PhotoGallery jobId={(job as InstalledJob).id} />
         ) : (
+          <>
           <div className="field-row">
             <div className="field-group">
               <label className="field-label">Company</label>
@@ -213,6 +214,7 @@ function JobModal({ job, onClose }: JobModalProps) {
               {isNew ? 'Log Job' : 'Save Changes'}
             </button>
           </div>
+          </>
         )}
         </div>
       </div>

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+import ROICalculatorModal from '../modals/ROICalculatorModal';
 
 // ── AI Call Button ────────────────────────────────────────────────────────────
 
@@ -552,12 +553,20 @@ export default function MissionView() {
   const [showEnrich, setShowEnrich] = useState(false);
   const [showProspector, setShowProspector] = useState(false);
   const [showCampaigns, setShowCampaigns] = useState(false);
+  const [showROI, setShowROI] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mission'],
     queryFn: () => api.getMission(),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
+  });
+
+  const { data: briefData } = useQuery({
+    queryKey: ['mission-brief'],
+    queryFn: () => api.getMissionBrief(),
+    staleTime: 60 * 60_000,
+    enabled: !!data,
   });
 
   function goToLead(_leadId: number) {
@@ -613,9 +622,20 @@ export default function MissionView() {
           <button className="btn" onClick={() => { setShowProspector((v) => !v); setShowCampaigns(false); }}>
             🌐 Prospector
           </button>
+          <button className="btn" onClick={() => setShowROI(true)} title="Wrap ROI Calculator">
+            📊 ROI
+          </button>
           <button className="btn" onClick={() => refetch()}>↻ Refresh</button>
         </div>
       </div>
+
+      {/* ── AI Brief ── */}
+      {briefData?.brief && (
+        <div className="mission-brief-bar">
+          <span className="mission-brief-icon">🧠</span>
+          <span className="mission-brief-text">{briefData.brief}</span>
+        </div>
+      )}
 
       <div className="mission-grid">
 
@@ -921,6 +941,13 @@ export default function MissionView() {
         )}
 
       </div>
+
+      {showROI && (
+        <ROICalculatorModal
+          onClose={() => setShowROI(false)}
+          companyName={settings.companyName}
+        />
+      )}
     </div>
   );
 }

@@ -387,6 +387,17 @@ export const api = {
   launchCampaign: (id: string) =>
     authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
 
+  // AI Mission Brief
+  getMissionBrief: () => authFetch<{ brief: string | null; reason?: string }>('/mission/brief'),
+
+  // Win/Loss capture
+  captureWinLoss: (leadId: number, factor: string, notes: string) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes }) }),
+
+  // SMS outreach
+  sendSms: (leadId: number, message: string) =>
+    authFetch<{ ok: boolean; sid?: string }>(`/leads/${leadId}/sms`, { method: 'POST', body: JSON.stringify({ message }) }),
+
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
   getBidSummary: () => authFetch<BidSummary>('/bids/summary'),

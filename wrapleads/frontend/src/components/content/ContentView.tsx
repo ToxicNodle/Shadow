@@ -330,9 +330,8 @@ function PushModal({ device, contentList, onClose }: { device: EinkDevice; conte
 
 // ── Device Detail Panel ───────────────────────────────────────────────────────
 
-function DeviceDetail({ device, contentList, onClose, onPush, onDelete }: {
+function DeviceDetail({ device, onClose, onPush, onDelete }: {
   device: EinkDevice;
-  contentList: WrapContent[];
   onClose: () => void;
   onPush: () => void;
   onDelete: () => void;
@@ -364,7 +363,7 @@ function DeviceDetail({ device, contentList, onClose, onPush, onDelete }: {
   return (
     <div className="device-detail-panel" onClick={(e) => e.stopPropagation()}>
       <div className="device-detail-header">
-        <div style={{ display: 'flex', align: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className={`device-status-dot ${statusKey}`} style={{ marginTop: 5 }} />
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>{device.name}</div>
@@ -553,7 +552,6 @@ function DeviceGrid({ contentList }: { contentList: WrapContent[] }) {
           <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setSelectedDevice(null)} />
           <DeviceDetail
             device={selectedDevice}
-            contentList={contentList}
             onClose={() => setSelectedDevice(null)}
             onPush={() => { setPushDevice(selectedDevice); setSelectedDevice(null); }}
             onDelete={() => deleteMut.mutate(selectedDevice.id)}
