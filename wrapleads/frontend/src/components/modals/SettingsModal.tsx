@@ -278,7 +278,7 @@ export default function SettingsModal() {
           {samsaraStatus === 'ok' && (
             <>
               <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>✓ {samsaraCount} vehicles found</span>
-              <button className="btn btn-primary" disabled={samsaraStatus === 'importing'} onClick={importSamsara}>
+              <button className="btn btn-primary" disabled={(samsaraStatus as FleetStatus) === 'importing'} onClick={importSamsara}>
                 Import as Leads
               </button>
             </>
@@ -303,7 +303,7 @@ export default function SettingsModal() {
           {motiveStatus === 'ok' && (
             <>
               <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>✓ {motiveCount} vehicles found</span>
-              <button className="btn btn-primary" disabled={motiveStatus === 'importing'} onClick={importMotive}>
+              <button className="btn btn-primary" disabled={(motiveStatus as FleetStatus) === 'importing'} onClick={importMotive}>
                 Import as Leads
               </button>
             </>
