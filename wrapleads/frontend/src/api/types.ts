@@ -399,3 +399,35 @@ export interface ContentSchedule {
   notes?: string | null;
   created_at: string;
 }
+
+// ── E Ink Device Infrastructure ───────────────────────────────────────────────
+
+export interface EinkDevice {
+  id: number;
+  user_id: string;
+  device_token: string;
+  serial_number?: string | null;
+  name: string;
+  vehicle_group: string;
+  lead_id?: number | null;
+  job_id?: number | null;
+  status: 'online' | 'offline' | 'updating' | 'error';
+  current_content_id?: number | null;
+  current_content?: WrapContent | null;
+  last_seen_at?: string | null;
+  last_location?: { lat: number; lng: number; timestamp: string } | null;
+  firmware_version?: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface EinkPushLog {
+  id: number;
+  device_id: number;
+  content_id?: number | null;
+  content?: WrapContent | null;
+  pushed_at: string;
+  acked_at?: string | null;
+  status: 'pending' | 'delivered' | 'failed';
+  error?: string | null;
+}

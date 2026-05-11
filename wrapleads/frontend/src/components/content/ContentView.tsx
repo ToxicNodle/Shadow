@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import type { WrapContent, ContentSchedule } from '../../api/types';
+import type { WrapContent, ContentSchedule, EinkDevice, EinkPushLog } from '../../api/types';
 
 const ALL_TAGS = ['brand', 'promo', 'seasonal', 'holiday', 'event', 'racing'];
 
@@ -193,12 +193,385 @@ function ScheduleModal({ schedule, contentList, onClose }: {
   );
 }
 
+// ── Register Device Modal ─────────────────────────────────────────────────────
+
+function RegisterDeviceModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({ name: '', serial_number: '', vehicle_group: 'fleet' });
+  const [token, setToken] = useState<string | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () => api.registerDevice({ name: form.name, serial_number: form.serial_number || undefined, vehicle_group: form.vehicle_group }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['devices'] });
+      setToken(data.device.device_token);
+    },
+  });
+
+  if (token) {
+    return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-box" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2 className="modal-title">Device Registered</h2>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+          <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+              Copy this token and paste it into your E Ink controller's configuration. It's shown once.
+            </p>
+            <div className="device-qr-wrap">
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>DEVICE TOKEN</span>
+              <code className="device-qr-token">{token}</code>
+              <button className="btn" style={{ fontSize: 11 }} onClick={() => navigator.clipboard.writeText(token)}>
+                Copy Token
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+              Configure the device to send <code style={{ fontSize: 10 }}>Authorization: Bearer {'<token>'}</code> in all requests to <code style={{ fontSize: 10 }}>/devices/register</code> and poll <code style={{ fontSize: 10 }}>/devices/{'<id>'}/content</code>.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-primary" onClick={onClose}>Done</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="modal-title">Register E Ink Device</h2>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="field-group">
+            <label className="field-label">Device Name</label>
+            <input className="input" value={form.name} onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))} placeholder="Fleet Truck #12 — Driver Side" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Serial Number (optional)</label>
+            <input className="input" value={form.serial_number} onChange={(e) => setForm((s) => ({ ...s, serial_number: e.target.value }))} placeholder="EP3-XXXXXX" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Vehicle Group</label>
+            <select className="input" value={form.vehicle_group} onChange={(e) => setForm((s) => ({ ...s, vehicle_group: e.target.value }))}>
+              {['fleet', 'racing', 'construction', 'custom', 'all'].map((g) => (
+                <option key={g} value={g}>{g === 'all' ? 'All Vehicles' : g.charAt(0).toUpperCase() + g.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={!form.name || mut.isPending} onClick={() => mut.mutate()}>
+              {mut.isPending ? 'Registering…' : 'Register Device'}
+            </button>
+          </div>
+          {mut.isError && <p style={{ fontSize: 12, color: 'var(--red)', margin: 0 }}>Registration failed. Check your connection.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Push Content Modal ────────────────────────────────────────────────────────
+
+function PushModal({ device, contentList, onClose }: { device: EinkDevice; contentList: WrapContent[]; onClose: () => void }) {
+  const [selected, setSelected] = useState<number | null>(null);
+  const mut = useMutation({
+    mutationFn: () => api.pushContentToDevice(device.id, selected!),
+    onSuccess: () => onClose(),
+  });
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="modal-title">Push Content — {device.name}</h2>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>Select a design to push to this device on its next poll cycle.</p>
+          {contentList.length === 0 ? (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>No content in library. Upload a design first.</p>
+          ) : (
+            <div className="content-grid" style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {contentList.map((c) => (
+                <div
+                  key={c.id}
+                  className="content-card"
+                  style={{ border: selected === c.id ? '2px solid var(--accent)' : undefined, cursor: 'pointer' }}
+                  onClick={() => setSelected(c.id)}
+                >
+                  {c.image_url
+                    ? <img src={c.image_url} alt={c.name} className="content-card-img" />
+                    : <div className="content-card-placeholder">🖼</div>}
+                  <div className="content-card-body">
+                    <span className="content-card-name">{c.name}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={!selected || mut.isPending} onClick={() => mut.mutate()}>
+              {mut.isPending ? 'Pushing…' : 'Push Now'}
+            </button>
+          </div>
+          {mut.isSuccess && <p style={{ fontSize: 12, color: '#22c55e', margin: 0 }}>Pushed — device will pick up on next poll.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Device Detail Panel ───────────────────────────────────────────────────────
+
+function DeviceDetail({ device, contentList, onClose, onPush, onDelete }: {
+  device: EinkDevice;
+  contentList: WrapContent[];
+  onClose: () => void;
+  onPush: () => void;
+  onDelete: () => void;
+}) {
+  const { data: logData } = useQuery({
+    queryKey: ['device-log', device.id],
+    queryFn: () => api.getDevicePushLog(device.id),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
+  const log: EinkPushLog[] = logData?.log ?? [];
+
+  const isOnline = device.status === 'online' && device.last_seen_at
+    ? (Date.now() - new Date(device.last_seen_at).getTime()) < 5 * 60 * 1000
+    : false;
+  const statusKey = isOnline ? 'online' : (device.status === 'updating' ? 'updating' : 'offline');
+
+  function relativeTime(ts: string | null | undefined) {
+    if (!ts) return 'never';
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  return (
+    <div className="device-detail-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="device-detail-header">
+        <div style={{ display: 'flex', align: 'center', gap: 8 }}>
+          <span className={`device-status-dot ${statusKey}`} style={{ marginTop: 5 }} />
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{device.name}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{device.vehicle_group} · {device.serial_number || 'No serial'}</div>
+          </div>
+        </div>
+        <button className="modal-close" onClick={onClose}>✕</button>
+      </div>
+
+      <div className="device-detail-section">
+        <div className="device-detail-label">Status</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+          <span className={`device-status-badge ${statusKey}`}>{isOnline ? 'Online' : device.status}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Last seen: {relativeTime(device.last_seen_at)}</span>
+        </div>
+        {device.firmware_version && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Firmware: {device.firmware_version}</div>
+        )}
+      </div>
+
+      {device.current_content && (
+        <div className="device-detail-section">
+          <div className="device-detail-label">Current Content</div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6 }}>
+            {device.current_content.image_url && (
+              <img src={device.current_content.image_url} alt="" style={{ width: 60, height: 44, objectFit: 'cover', borderRadius: 6 }} />
+            )}
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{device.current_content.name}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="device-detail-section">
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" style={{ fontSize: 12, flex: 1 }} onClick={onPush}>Push Content</button>
+          <button className="btn" style={{ fontSize: 12, color: 'var(--red)' }} onClick={onDelete}>Delete</button>
+        </div>
+      </div>
+
+      <div className="device-detail-section" style={{ flex: 1 }}>
+        <div className="device-detail-label">Push History</div>
+        {log.length === 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>No pushes yet.</p>}
+        {log.map((entry) => (
+          <div key={entry.id} className="push-log-row">
+            <div className="push-log-thumb">
+              {entry.content?.image_url
+                ? <img src={entry.content.image_url} alt="" />
+                : <span style={{ fontSize: 14 }}>🖼</span>}
+            </div>
+            <div className="push-log-info">
+              <span className="push-log-name">{entry.content?.name ?? `Content #${entry.content_id}`}</span>
+              <span className="push-log-time">{new Date(entry.pushed_at).toLocaleString()}</span>
+            </div>
+            <span className={`push-log-status ${entry.status}`}>{entry.status}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Device Grid ───────────────────────────────────────────────────────────────
+
+function DeviceGrid({ contentList }: { contentList: WrapContent[] }) {
+  const qc = useQueryClient();
+  const [showRegister, setShowRegister] = useState(false);
+  const [selectedDevice, setSelectedDevice] = useState<EinkDevice | null>(null);
+  const [pushDevice, setPushDevice] = useState<EinkDevice | null>(null);
+
+  const { data: devicesData, isLoading } = useQuery({
+    queryKey: ['devices'],
+    queryFn: () => api.getDevices(),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const { data: statusData } = useQuery({
+    queryKey: ['devices', 'status'],
+    queryFn: () => api.getDeviceStatus(),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => api.deleteDevice(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['devices'] });
+      setSelectedDevice(null);
+    },
+  });
+
+  const devices: EinkDevice[] = devicesData?.devices ?? [];
+
+  function isOnline(d: EinkDevice) {
+    return d.status === 'online' && d.last_seen_at
+      ? (Date.now() - new Date(d.last_seen_at).getTime()) < 5 * 60 * 1000
+      : false;
+  }
+
+  function relativeTime(ts: string | null | undefined) {
+    if (!ts) return 'never';
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  return (
+    <>
+      {statusData && (
+        <div className="device-stats-strip">
+          <div className="device-stat">
+            <span className="device-stat-value">{statusData.total}</span>
+            <span className="device-stat-label">Total Devices</span>
+          </div>
+          <div className="device-stat">
+            <span className="device-stat-value" style={{ color: '#22c55e' }}>{statusData.online}</span>
+            <span className="device-stat-label">Online</span>
+          </div>
+          <div className="device-stat">
+            <span className="device-stat-value" style={{ color: 'var(--text-muted)' }}>{statusData.offline}</span>
+            <span className="device-stat-label">Offline</span>
+          </div>
+          <div className="device-stat">
+            <span className="device-stat-value" style={{ color: '#f59e0b' }}>{statusData.updating}</span>
+            <span className="device-stat-label">Updating</span>
+          </div>
+        </div>
+      )}
+
+      {isLoading && <div className="pv-loading"><span className="spinner" /></div>}
+      {!isLoading && devices.length === 0 && (
+        <div className="jobs-empty">
+          <div className="jobs-empty-icon">📡</div>
+          <p>No E Ink devices registered yet.</p>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+            Register a device to start pushing dynamic content to programmable vehicle surfaces.
+          </p>
+          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowRegister(true)}>
+            Register First Device
+          </button>
+        </div>
+      )}
+
+      <div className="device-grid">
+        {devices.map((d) => {
+          const online = isOnline(d);
+          const statusKey = online ? 'online' : (d.status === 'updating' ? 'updating' : 'offline');
+          return (
+            <div key={d.id} className="device-card" onClick={() => setSelectedDevice(d)}>
+              <div className="device-card-thumb">
+                {d.current_content?.image_url
+                  ? <img src={d.current_content.image_url} alt="" />
+                  : <span className="device-card-thumb-empty">📡</span>}
+              </div>
+              <div className="device-card-body">
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span className={`device-status-dot ${statusKey}`} />
+                  <span className="device-card-name">{d.name}</span>
+                </div>
+                <div className="device-card-meta">
+                  <span className="device-group-chip">{d.vehicle_group}</span>
+                  <span>·</span>
+                  <span>{relativeTime(d.last_seen_at)}</span>
+                </div>
+                {d.current_content && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Showing: {d.current_content.name}</div>
+                )}
+                <div className="device-card-actions" onClick={(e) => e.stopPropagation()}>
+                  <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => setPushDevice(d)}>Push Content</button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {showRegister && <RegisterDeviceModal onClose={() => setShowRegister(false)} />}
+      {pushDevice && (
+        <PushModal device={pushDevice} contentList={contentList} onClose={() => setPushDevice(null)} />
+      )}
+      {selectedDevice && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setSelectedDevice(null)} />
+          <DeviceDetail
+            device={selectedDevice}
+            contentList={contentList}
+            onClose={() => setSelectedDevice(null)}
+            onPush={() => { setPushDevice(selectedDevice); setSelectedDevice(null); }}
+            onDelete={() => deleteMut.mutate(selectedDevice.id)}
+          />
+        </>
+      )}
+      {showRegister && <RegisterDeviceModal onClose={() => setShowRegister(false)} />}
+    </>
+  );
+}
+
 // ── Main ContentView ──────────────────────────────────────────────────────────
 
 export default function ContentView() {
-  const [tab, setTab] = useState<'library' | 'schedule' | 'active'>('library');
+  const [tab, setTab] = useState<'library' | 'schedule' | 'active' | 'devices'>('library');
   const [tagFilter, setTagFilter] = useState<string>('all');
   const [showUpload, setShowUpload] = useState(false);
+  const [showRegisterDevice, setShowRegisterDevice] = useState(false);
   const [scheduleModal, setScheduleModal] = useState<ContentSchedule | 'new' | null>(null);
   const qc = useQueryClient();
 
@@ -257,6 +630,9 @@ export default function ContentView() {
               </button>
             </>
           )}
+          {tab === 'devices' && (
+            <button className="btn btn-primary" onClick={() => setShowRegisterDevice(true)}>+ Register Device</button>
+          )}
         </div>
       </div>
 
@@ -281,6 +657,9 @@ export default function ContentView() {
         </button>
         <button className={`jobs-tab ${tab === 'active' ? 'active' : ''}`} onClick={() => setTab('active')}>
           Active Now
+        </button>
+        <button className={`jobs-tab ${tab === 'devices' ? 'active' : ''}`} onClick={() => setTab('devices')}>
+          Devices
         </button>
       </div>
 
@@ -389,7 +768,13 @@ export default function ContentView() {
         </div>
       )}
 
+      {/* ── Devices Tab ── */}
+      {tab === 'devices' && (
+        <DeviceGrid contentList={contentList} />
+      )}
+
       {showUpload && <UploadModal onClose={() => setShowUpload(false)} />}
+      {showRegisterDevice && <RegisterDeviceModal onClose={() => setShowRegisterDevice(false)} />}
       {scheduleModal && (
         <ScheduleModal
           schedule={scheduleModal}

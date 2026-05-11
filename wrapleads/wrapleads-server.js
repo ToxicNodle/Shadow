@@ -233,6 +233,46 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create wrap_content tables:', e.message);
   }
+
+  // E Ink Device Infrastructure
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS eink_devices (
+        id                   BIGSERIAL PRIMARY KEY,
+        user_id              TEXT NOT NULL,
+        device_token         TEXT NOT NULL UNIQUE,
+        serial_number        TEXT,
+        name                 TEXT NOT NULL,
+        vehicle_group        TEXT NOT NULL DEFAULT 'fleet',
+        lead_id              BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        job_id               BIGINT REFERENCES installed_jobs(id) ON DELETE SET NULL,
+        status               TEXT NOT NULL DEFAULT 'offline',
+        current_content_id   BIGINT REFERENCES wrap_content(id) ON DELETE SET NULL,
+        last_seen_at         TIMESTAMPTZ,
+        last_location        JSONB,
+        firmware_version     TEXT,
+        metadata             JSONB DEFAULT '{}',
+        created_at           TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_devices_user  ON eink_devices(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_devices_token ON eink_devices(device_token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_devices_group ON eink_devices(vehicle_group)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS eink_push_log (
+        id         BIGSERIAL PRIMARY KEY,
+        device_id  BIGINT NOT NULL REFERENCES eink_devices(id) ON DELETE CASCADE,
+        content_id BIGINT REFERENCES wrap_content(id) ON DELETE SET NULL,
+        pushed_at  TIMESTAMPTZ DEFAULT NOW(),
+        acked_at   TIMESTAMPTZ,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        error      TEXT
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_push_device ON eink_push_log(device_id, pushed_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create eink tables:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -3543,6 +3583,244 @@ app.get('/content/export', authMiddleware, async (req, res) => {
     [req.user.id]
   );
   res.json({ exported_at: new Date().toISOString(), schedules });
+});
+
+// ── E Ink Device Infrastructure ──────────────────────────────────────────────
+
+const EINK_PROVISION_SECRET = process.env.EINK_PROVISION_SECRET || 'eink-dev-secret';
+
+async function deviceAuthMiddleware(req, res, next) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'No device token' });
+  const token = header.slice(7).trim();
+  try {
+    const { rows } = await pool.query('SELECT * FROM eink_devices WHERE device_token=$1', [token]);
+    if (!rows[0]) return res.status(401).json({ error: 'Unknown device' });
+    req.device = rows[0];
+    next();
+  } catch (e) {
+    res.status(500).json({ error: 'DB error' });
+  }
+}
+
+// Device: first-time registration (uses provision secret, not JWT)
+app.post('/devices/register', async (req, res) => {
+  const secret = req.headers['x-provision-secret'] || '';
+  if (secret !== EINK_PROVISION_SECRET) return res.status(403).json({ error: 'Invalid provision secret' });
+  const { user_id, serial_number, name, vehicle_group = 'fleet', firmware_version } = req.body;
+  if (!user_id || !name) return res.status(400).json({ error: 'user_id and name required' });
+  try {
+    const device_token = crypto.randomBytes(32).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO eink_devices (user_id, device_token, serial_number, name, vehicle_group, firmware_version)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [user_id, device_token, serial_number || null, name, vehicle_group, firmware_version || null]
+    );
+    res.json({ ok: true, device_token, device_id: rows[0].id, device: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Device: get current content based on schedule engine
+app.get('/devices/:deviceId/content', deviceAuthMiddleware, async (req, res) => {
+  const device = req.device;
+  try {
+    // Update last_seen_at
+    await pool.query('UPDATE eink_devices SET last_seen_at=NOW(), status=$1 WHERE id=$2', ['online', device.id]);
+
+    // Resolve active content for this device's vehicle_group
+    const now = new Date();
+    const todayDate = now.toISOString().split('T')[0];
+    const currentTime = now.toTimeString().slice(0, 5);
+
+    const { rows: schedRows } = await pool.query(
+      `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
+       LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+       WHERE cs.user_id=$1
+         AND (cs.vehicle_group='all' OR cs.vehicle_group=$2)
+         AND cs.start_date <= $3
+         AND (cs.end_date IS NULL OR cs.end_date >= $3)
+         AND (cs.start_time IS NULL OR cs.start_time <= $4)
+         AND (cs.end_time IS NULL OR cs.end_time >= $4)
+       ORDER BY cs.priority DESC LIMIT 1`,
+      [device.user_id, device.vehicle_group, todayDate, currentTime]
+    );
+
+    if (!schedRows[0]) return res.json({ ok: true, content: null, push_log_id: null });
+
+    const sched = schedRows[0];
+    const { rows: logRows } = await pool.query(
+      `INSERT INTO eink_push_log (device_id, content_id, status) VALUES ($1, $2, 'pending') RETURNING id`,
+      [device.id, sched.content_id]
+    );
+
+    res.json({
+      ok: true,
+      content_id: sched.content_id,
+      content: sched.content,
+      push_log_id: logRows[0].id,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Device: heartbeat
+app.post('/devices/:deviceId/heartbeat', deviceAuthMiddleware, async (req, res) => {
+  const device = req.device;
+  const { status = 'online', location, firmware_version, battery_pct } = req.body;
+  try {
+    await pool.query(
+      `UPDATE eink_devices SET last_seen_at=NOW(), status=$1,
+       last_location=CASE WHEN $2::jsonb IS NOT NULL THEN $2::jsonb ELSE last_location END,
+       firmware_version=COALESCE($3, firmware_version),
+       metadata=jsonb_set(COALESCE(metadata,'{}'), '{battery_pct}', COALESCE($4::text::jsonb, metadata->'battery_pct'), true)
+       WHERE id=$5`,
+      [status, location ? JSON.stringify(location) : null, firmware_version || null, battery_pct != null ? battery_pct : null, device.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Device: acknowledge content delivery
+app.post('/devices/:deviceId/ack', deviceAuthMiddleware, async (req, res) => {
+  const device = req.device;
+  const { push_log_id, success = true, error: errMsg } = req.body;
+  if (!push_log_id) return res.status(400).json({ error: 'push_log_id required' });
+  try {
+    const status = success ? 'delivered' : 'failed';
+    const { rows } = await pool.query(
+      `UPDATE eink_push_log SET status=$1, acked_at=NOW(), error=$2 WHERE id=$3 AND device_id=$4 RETURNING content_id`,
+      [status, errMsg || null, push_log_id, device.id]
+    );
+    if (success && rows[0]?.content_id) {
+      await pool.query('UPDATE eink_devices SET current_content_id=$1 WHERE id=$2', [rows[0].content_id, device.id]);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: list devices
+app.get('/admin/devices', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT d.*, row_to_json(wc) as current_content
+       FROM eink_devices d
+       LEFT JOIN wrap_content wc ON wc.id = d.current_content_id
+       WHERE d.user_id=$1 ORDER BY d.created_at DESC`,
+      [req.user.id]
+    );
+    res.json({ devices: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: device summary status
+app.get('/admin/devices/status', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*)::int as total,
+         COUNT(*) FILTER (WHERE status='online' AND last_seen_at > NOW() - INTERVAL '5 minutes')::int as online,
+         COUNT(*) FILTER (WHERE status='offline' OR last_seen_at <= NOW() - INTERVAL '5 minutes' OR last_seen_at IS NULL)::int as offline,
+         COUNT(*) FILTER (WHERE status='updating')::int as updating
+       FROM eink_devices WHERE user_id=$1`,
+      [req.user.id]
+    );
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: create/register device from dashboard
+app.post('/admin/devices', authMiddleware, async (req, res) => {
+  const { name, serial_number, vehicle_group = 'fleet', lead_id, job_id } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  try {
+    const device_token = crypto.randomBytes(32).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO eink_devices (user_id, device_token, serial_number, name, vehicle_group, lead_id, job_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [req.user.id, device_token, serial_number || null, name, vehicle_group, lead_id || null, job_id || null]
+    );
+    res.json({ ok: true, device: { ...rows[0] } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: update device
+app.put('/admin/devices/:id', authMiddleware, async (req, res) => {
+  const { name, vehicle_group, lead_id, job_id } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE eink_devices SET
+         name=COALESCE($1,name),
+         vehicle_group=COALESCE($2,vehicle_group),
+         lead_id=$3,
+         job_id=$4
+       WHERE id=$5 AND user_id=$6 RETURNING *`,
+      [name, vehicle_group, lead_id ?? null, job_id ?? null, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Device not found' });
+    res.json({ ok: true, device: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: delete device
+app.delete('/admin/devices/:id', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: manually push content to a device
+app.post('/admin/devices/:id/push', authMiddleware, async (req, res) => {
+  const { content_id } = req.body;
+  if (!content_id) return res.status(400).json({ error: 'content_id required' });
+  try {
+    const { rows: deviceRows } = await pool.query(
+      'SELECT * FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]
+    );
+    if (!deviceRows[0]) return res.status(404).json({ error: 'Device not found' });
+    const { rows: logRows } = await pool.query(
+      `INSERT INTO eink_push_log (device_id, content_id, status) VALUES ($1, $2, 'pending') RETURNING id`,
+      [req.params.id, content_id]
+    );
+    res.json({ ok: true, push_log_id: logRows[0].id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: get push log for a device
+app.get('/admin/devices/:id/log', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT pl.*, row_to_json(wc) as content
+       FROM eink_push_log pl
+       LEFT JOIN wrap_content wc ON wc.id = pl.content_id
+       WHERE pl.device_id=$1
+         AND EXISTS (SELECT 1 FROM eink_devices d WHERE d.id=pl.device_id AND d.user_id=$2)
+       ORDER BY pl.pushed_at DESC LIMIT 20`,
+      [req.params.id, req.user.id]
+    );
+    res.json({ log: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────

@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog } from './types';
 
 export const api = {
   // Auth
@@ -330,6 +330,18 @@ export const api = {
   deleteSchedule: (id: number) => authFetch<{ ok: boolean }>(`/content/schedules/${id}`, { method: 'DELETE' }),
   getActiveContent: () => authFetch<{ active: { vehicle_group: string; content: WrapContent }[] }>('/content/active'),
   exportSchedule: () => authFetch<object>('/content/export'),
+
+  // E Ink Device Infrastructure
+  getDevices: () => authFetch<{ devices: EinkDevice[] }>('/admin/devices'),
+  getDeviceStatus: () => authFetch<{ total: number; online: number; offline: number; updating: number }>('/admin/devices/status'),
+  registerDevice: (d: { name: string; serial_number?: string; vehicle_group: string; lead_id?: number; job_id?: number }) =>
+    authFetch<{ ok: boolean; device: EinkDevice }>('/admin/devices', { method: 'POST', body: JSON.stringify(d) }),
+  updateDevice: (id: number, patch: Partial<EinkDevice>) =>
+    authFetch<{ ok: boolean; device: EinkDevice }>(`/admin/devices/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  deleteDevice: (id: number) => authFetch<{ ok: boolean }>(`/admin/devices/${id}`, { method: 'DELETE' }),
+  pushContentToDevice: (deviceId: number, contentId: number) =>
+    authFetch<{ ok: boolean; push_log_id: number }>(`/admin/devices/${deviceId}/push`, { method: 'POST', body: JSON.stringify({ content_id: contentId }) }),
+  getDevicePushLog: (deviceId: number) => authFetch<{ log: EinkPushLog[] }>(`/admin/devices/${deviceId}/log`),
 
   // AI Calling — campaigns
   getCampaigns: () =>
