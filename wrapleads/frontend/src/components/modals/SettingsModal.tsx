@@ -31,8 +31,8 @@ export default function SettingsModal() {
 
   async function testApollo() {
     try {
-      await api.apolloTest();
-      setApolloStatus('ok');
+      const result = await api.apolloTest();
+      setApolloStatus(result.ok ? 'ok' : 'fail');
     } catch {
       setApolloStatus('fail');
     }

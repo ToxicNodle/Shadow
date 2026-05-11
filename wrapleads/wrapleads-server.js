@@ -666,7 +666,7 @@ app.post('/apollo/search', authMiddleware, subMiddleware, async (req, res) => {
 });
 
 app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
-  const apiKey = resolveApolloKey(req);
+  const apiKey = await resolveApolloKey(req);
   if (!apiKey) return res.status(400).json({ error: 'No Apollo API key.' });
   const { firstName, lastName, company, domain, email, linkedinUrl } = req.body || {};
   if (!firstName && !lastName && !email) return res.status(400).json({ error: 'Need firstName + lastName, or email' });
@@ -747,7 +747,7 @@ Each under 180 words. Return raw JSON only:
 // Enriches all leads without email using Apollo, optionally auto-activates sequences
 app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
-  const apolloKey = resolveApolloKey(req);
+  const apolloKey = await resolveApolloKey(req);
   if (!apolloKey) return res.status(400).json({ error: 'No Apollo API key. Set APOLLO_API_KEY in server env or pass apiKey in request.' });
 
   const { lead_ids, auto_sequence = false, tone = 'Professional' } = req.body || {};
@@ -875,7 +875,7 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
 // Search Apollo's database for NEW leads by criteria and import them
 app.post('/apollo/prospect', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
-  const apolloKey = resolveApolloKey(req);
+  const apolloKey = await resolveApolloKey(req);
   if (!apolloKey) return res.status(400).json({ error: 'No Apollo API key.' });
 
   const {
@@ -2133,7 +2133,11 @@ Keep the email under 200 words. Use a compelling subject line. Return JSON: {"su
 
 // Apollo test route
 app.get('/apollo/test', authMiddleware, async (req, res) => {
-  const key = req.query.key || req.headers['x-apollo-key'];
+  let key = req.query.key || req.headers['x-apollo-key'] || ENV_APOLLO_KEY || null;
+  if (!key && req.user?.id) {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [req.user.id]);
+    key = r.rows[0]?.settings_json?.apolloApiKey || null;
+  }
   if (!key) return res.json({ ok: false });
   try {
     const r = await fetch(`${APOLLO_BASE}/auth/health_check`, {
