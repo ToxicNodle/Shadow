@@ -4,6 +4,8 @@ import { api } from '../../api/client';
 import Modal from '../ui/Modal';
 import type { Settings } from '../../api/types';
 
+type FleetStatus = 'idle' | 'testing' | 'ok' | 'fail' | 'importing' | 'imported';
+
 export default function SettingsModal() {
   const { settingsOpen, setSettingsOpen, settings, updateSettings, showToast } = useAppStore((s) => ({
     settingsOpen: s.settingsOpen,
@@ -14,24 +16,79 @@ export default function SettingsModal() {
   }));
   const [local, setLocal] = useState<Settings>(settings);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
+  const [samsaraStatus, setSamsaraStatus] = useState<FleetStatus>('idle');
+  const [samsaraCount, setSamsaraCount] = useState<number | null>(null);
+  const [samsaraImported, setSamsaraImported] = useState<{ imported: number; skipped: number } | null>(null);
+  const [motiveStatus, setMotiveStatus] = useState<FleetStatus>('idle');
+  const [motiveCount, setMotiveCount] = useState<number | null>(null);
+  const [motiveImported, setMotiveImported] = useState<{ imported: number; skipped: number } | null>(null);
 
   if (!settingsOpen) return null;
 
   function handleClose() {
     setSettingsOpen(false);
     setApolloStatus('idle');
+    setSamsaraStatus('idle');
+    setMotiveStatus('idle');
+  }
+
+  async function testSamsara() {
+    setSamsaraStatus('testing');
+    setSamsaraCount(null);
+    try {
+      const r = await api.getSamsaraVehicles();
+      setSamsaraCount(r.count);
+      setSamsaraStatus('ok');
+    } catch {
+      setSamsaraStatus('fail');
+    }
+  }
+
+  async function importSamsara() {
+    setSamsaraStatus('importing');
+    try {
+      const r = await api.importSamsaraVehicles();
+      setSamsaraImported({ imported: r.imported, skipped: r.skipped });
+      setSamsaraStatus('imported');
+    } catch {
+      setSamsaraStatus('fail');
+    }
+  }
+
+  async function testMotive() {
+    setMotiveStatus('testing');
+    setMotiveCount(null);
+    try {
+      const r = await api.getMotiveVehicles();
+      setMotiveCount(r.count);
+      setMotiveStatus('ok');
+    } catch {
+      setMotiveStatus('fail');
+    }
+  }
+
+  async function importMotive() {
+    setMotiveStatus('importing');
+    try {
+      const r = await api.importMotiveVehicles();
+      setMotiveImported({ imported: r.imported, skipped: r.skipped });
+      setMotiveStatus('imported');
+    } catch {
+      setMotiveStatus('fail');
+    }
   }
 
   function handleSave() {
     updateSettings(local);
+    api.saveSettings(local).catch(() => {});
     showToast('Settings saved');
     handleClose();
   }
 
   async function testApollo() {
     try {
-      await api.apolloTest();
-      setApolloStatus('ok');
+      const result = await api.apolloTest();
+      setApolloStatus(result.ok ? 'ok' : 'fail');
     } catch {
       setApolloStatus('fail');
     }
@@ -108,6 +165,157 @@ export default function SettingsModal() {
             {apolloStatus === 'fail' && <div className="apollo-test-fail">✗ Invalid key or connection failed</div>}
           </>
         )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Vapi.ai — AI Phone Calls</div>
+        <p className="settings-help">
+          Power outbound AI calls from the Mission view. Get a free API key at{' '}
+          <a href="https://vapi.ai" target="_blank" rel="noreferrer">vapi.ai</a>{' '}
+          → Dashboard → API Keys. Then create a phone number in Vapi and paste its ID below.
+        </p>
+        <div className="field-group">
+          <label className="field-label">Vapi API Key</label>
+          <input className="input" type="password" {...f('vapiApiKey')} placeholder="vapi_…" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Vapi Phone Number ID</label>
+          <input className="input" {...f('vapiPhoneNumberId')} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Caller Name (shown on caller ID)</label>
+          <input className="input" {...f('vapiCallerName')} placeholder="Shadow Graphix" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Call Humor Level</label>
+          <select
+            className="input"
+            value={local.callHumorLevel ?? 'light'}
+            onChange={(e) => setLocal((s) => ({ ...s, callHumorLevel: e.target.value as Settings['callHumorLevel'] }))}
+          >
+            <option value="none">None — strictly professional</option>
+            <option value="light">Light — friendly wit, occasional warmth</option>
+            <option value="medium">Medium — casual, self-deprecating, disarming</option>
+            <option value="high">High — full comedian, bold personality</option>
+          </select>
+          <p className="settings-help" style={{ marginTop: 4 }}>Controls how much personality and humor the AI injects during calls.</p>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Warm Handoff — Transfer Phone Number</label>
+          <input className="input" {...f('transferPhoneNumber')} placeholder="+13175551234" />
+          <p className="settings-help" style={{ marginTop: 4 }}>When the AI detects strong buying intent it will transfer the live call to this number.</p>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Twilio SMS — Post-Call Chain</div>
+        <p className="settings-help">
+          Optional. When a call ends positively, an SMS with your portfolio link fires automatically.
+          Get credentials at <a href="https://twilio.com" target="_blank" rel="noreferrer">twilio.com</a>.
+        </p>
+        <div className="field-row">
+          <div className="field-group">
+            <label className="field-label">Account SID</label>
+            <input className="input" {...f('twilioAccountSid')} placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Auth Token</label>
+            <input className="input" type="password" {...f('twilioAuthToken')} placeholder="your auth token" />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field-group">
+            <label className="field-label">From Phone Number</label>
+            <input className="input" {...f('twilioFromNumber')} placeholder="+13175550100" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Portfolio URL</label>
+            <input className="input" {...f('portfolioUrl')} placeholder="https://shadowgraphix.com/portfolio" />
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Vision Quote — Pricing</div>
+        <p className="settings-help">Override the default sq footage pricing used in instant vehicle quotes.</p>
+        <div className="field-row">
+          <div className="field-group">
+            <label className="field-label">Price / sq ft (low)</label>
+            <input className="input" {...f('pricePerSqftLow')} placeholder="8" />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Price / sq ft (high)</label>
+            <input className="input" {...f('pricePerSqftHigh')} placeholder="14" />
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Design Studio &amp; AR Preview</div>
+        <p className="settings-help">
+          Powers AI wrap concept generation and AR preview. Get an API key at{' '}
+          <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">platform.openai.com</a>.
+          DALL-E 3 costs ~$0.04 per image.
+        </p>
+        <div className="field-group">
+          <label className="field-label">OpenAI API Key</label>
+          <input className="input" type="password" {...f('openaiApiKey')} placeholder="sk-…" />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Fleet Integrations</div>
+        <p className="settings-help">Connect Samsara or Motive to pull your fleet roster and import vehicles as leads. Save your API key first, then test and import.</p>
+
+        <div className="field-group">
+          <label className="field-label">Samsara API Key</label>
+          <input className="input" type="password" {...f('samsaraApiKey')} placeholder="samsara_api_…" />
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn" disabled={samsaraStatus === 'testing'} onClick={testSamsara}>
+            {samsaraStatus === 'testing' ? 'Testing…' : 'Test Samsara'}
+          </button>
+          {samsaraStatus === 'ok' && (
+            <>
+              <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>✓ {samsaraCount} vehicles found</span>
+              <button className="btn btn-primary" disabled={samsaraStatus === 'importing'} onClick={importSamsara}>
+                Import as Leads
+              </button>
+            </>
+          )}
+          {samsaraStatus === 'importing' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Importing…</span>}
+          {samsaraStatus === 'imported' && samsaraImported && (
+            <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>
+              ✓ {samsaraImported.imported} imported, {samsaraImported.skipped} already existed
+            </span>
+          )}
+          {samsaraStatus === 'fail' && <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700 }}>✗ Connection failed — check key and save first</span>}
+        </div>
+
+        <div className="field-group" style={{ marginTop: 16 }}>
+          <label className="field-label">Motive (KeepTruckin) API Key</label>
+          <input className="input" type="password" {...f('motiveApiKey')} placeholder="Bearer token…" />
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn" disabled={motiveStatus === 'testing'} onClick={testMotive}>
+            {motiveStatus === 'testing' ? 'Testing…' : 'Test Motive'}
+          </button>
+          {motiveStatus === 'ok' && (
+            <>
+              <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>✓ {motiveCount} vehicles found</span>
+              <button className="btn btn-primary" disabled={motiveStatus === 'importing'} onClick={importMotive}>
+                Import as Leads
+              </button>
+            </>
+          )}
+          {motiveStatus === 'importing' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Importing…</span>}
+          {motiveStatus === 'imported' && motiveImported && (
+            <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>
+              ✓ {motiveImported.imported} imported, {motiveImported.skipped} already existed
+            </span>
+          )}
+          {motiveStatus === 'fail' && <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700 }}>✗ Connection failed — check key and save first</span>}
+        </div>
       </div>
 
       <div className="modal-actions">

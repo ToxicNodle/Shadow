@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Lead, LeadCategory, LeadStatus } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
+import { useAppStore } from '../../../store/useAppStore';
 
 interface Props {
   lead: Lead;
@@ -18,6 +19,7 @@ const US_STATES = [
 
 export default function InfoTab({ lead }: Props) {
   const { updateLead } = useLeads();
+  const { setProposalOpen } = useAppStore((s) => ({ setProposalOpen: s.setProposalOpen }));
   const [local, setLocal] = useState<Lead>(lead);
 
   function patch(field: keyof Lead, value: string) {
@@ -165,6 +167,21 @@ export default function InfoTab({ lead }: Props) {
           placeholder="e.g. fleet refresh, new branding"
         />
       </div>
+
+      <button
+        className="btn btn-primary"
+        style={{ width: '100%', justifyContent: 'center', padding: '10px', marginTop: 8 }}
+        onClick={() => setProposalOpen(true, lead.id)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+          <polyline points="10 9 9 9 8 9" />
+        </svg>
+        Generate Quote / Proposal
+      </button>
     </div>
   );
 }

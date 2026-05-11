@@ -1,32 +1,27 @@
+import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import type { AppMode } from '../../store/useAppStore';
-import { api } from '../../api/client';
+import VisionQuoteModal from '../modals/VisionQuoteModal';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
-  const { leads } = useLeads();
-  const { mode, setMode, setAddLeadOpen, setSettingsOpen, setBlueprintOpen, showToast } = useAppStore((s) => ({
+  const [visionOpen, setVisionOpen] = useState(false);
+  const {
+    mode, setMode,
+    leadView, setLeadView,
+    setCommandPaletteOpen,
+    setAddLeadOpen, setSettingsOpen, setBlueprintOpen,
+  } = useAppStore((s) => ({
     mode: s.mode,
     setMode: s.setMode,
+    leadView: s.leadView,
+    setLeadView: s.setLeadView,
+    setCommandPaletteOpen: s.setCommandPaletteOpen,
     setAddLeadOpen: s.setAddLeadOpen,
     setSettingsOpen: s.setSettingsOpen,
     setBlueprintOpen: s.setBlueprintOpen,
-    showToast: s.showToast,
   }));
-
-  const wonCount = leads.filter((l) => l.status === 'won').length;
-  const activeCount = leads.filter((l) => l.status !== 'won' && l.status !== 'lost').length;
-
-  async function handlePortal() {
-    try {
-      const { url } = await api.portal();
-      window.location.href = url;
-    } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
-    }
-  }
 
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
@@ -40,13 +35,19 @@ export default function Topbar() {
       </div>
 
       <div className="topbar-mode-switch">
-        {(['leads', 'discover'] as AppMode[]).map((m) => (
+        {(['mission', 'leads', 'discover', 'pipeline', 'bids', 'jobs', 'content'] as AppMode[]).map((m) => (
           <button
             key={m}
             className={`mode-btn ${mode === m ? 'active' : ''}`}
             onClick={() => setMode(m)}
           >
-            {m === 'leads' ? 'My Leads' : 'Discover'}
+            {m === 'mission' ? "Today's Mission"
+              : m === 'leads' ? 'My Leads'
+              : m === 'discover' ? 'Discover'
+              : m === 'pipeline' ? 'Pipeline'
+              : m === 'bids' ? 'Bid Tracker'
+              : m === 'jobs' ? 'Wrap Lifecycle'
+              : 'Content'}
           </button>
         ))}
       </div>
@@ -54,20 +55,56 @@ export default function Topbar() {
       <div className="topbar-spacer" />
 
       {mode === 'leads' && (
-        <>
-          <div className="topbar-stat">
-            <strong>{leads.length}</strong> leads
-          </div>
-          <div className="topbar-stat">
-            <strong>{activeCount}</strong> active
-          </div>
-          <div className="topbar-stat">
-            <strong>{wonCount}</strong> won
-          </div>
-        </>
+        <div className="view-toggle" title="Switch between list and kanban view">
+          <button
+            className={`view-btn${leadView === 'list' ? ' active' : ''}`}
+            onClick={() => setLeadView('list')}
+            title="List view"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" />
+              <line x1="3" y1="12" x2="3.01" y2="12" />
+              <line x1="3" y1="18" x2="3.01" y2="18" />
+            </svg>
+          </button>
+          <button
+            className={`view-btn${leadView === 'kanban' ? ' active' : ''}`}
+            onClick={() => setLeadView('kanban')}
+            title="Pipeline kanban"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="5" height="18" rx="1" />
+              <rect x="10" y="3" width="5" height="13" rx="1" />
+              <rect x="17" y="3" width="5" height="8" rx="1" />
+            </svg>
+          </button>
+        </div>
       )}
 
+      <button
+        className="cmd-k-btn"
+        onClick={() => setCommandPaletteOpen(true)}
+        title="Command palette (⌘K)"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <span>Search</span>
+        <kbd>⌘K</kbd>
+      </button>
+
       <div className="topbar-actions">
+        <button className="btn" onClick={() => setVisionOpen(true)} title="Vision quote — photograph a vehicle for instant estimate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+          </svg>
+          Vision Quote
+        </button>
         <button className="btn" onClick={() => setBlueprintOpen(true)} title="Scan blueprint PDF for wrap opportunities">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -92,21 +129,10 @@ export default function Topbar() {
           </svg>
         </button>
 
-        <div className="user-pill">
+        {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
+      <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>
           <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0]}</span>
-          {user?.subStatus === 'active' && (
-            <button
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2 }}
-              title="Billing"
-              onClick={handlePortal}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-                <line x1="1" y1="10" x2="23" y2="10" />
-              </svg>
-            </button>
-          )}
           <button
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2 }}
             title="Sign out"

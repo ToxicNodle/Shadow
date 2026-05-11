@@ -58,8 +58,11 @@ const APP_URL           = process.env.APP_URL || `http://localhost:${PORT}`;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_PRICE_ID   = process.env.STRIPE_PRICE_ID || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const STRIPE_DISABLED   = process.env.STRIPE_DISABLED === 'true';
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' }) : null;
+
+const { autoSeedUser } = require('./lib/autoSeed');
 
 // ----------------------------------------------------------------------------
 // Postgres
@@ -69,7 +72,7 @@ pool.on('error', (err) => console.error('Postgres pool error:', err.message));
 
 async function checkDb() {
   try {
-    const r = await pool.query('SELECT NOW() AS now, COUNT(*)::INT AS carriers FROM companies WHERE source = $1', ['fmcsa']);
+    const r = await pool.query('SELECT NOW() AS now, COUNT(*)::INT AS carriers FROM companies');
     return { ok: true, time: r.rows[0].now, carriers: r.rows[0].carriers };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -91,6 +94,144 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies (industry)`);
   } catch (e) {
     console.warn('[migrate] Could not add industry index:', e.message);
+  }
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json JSONB DEFAULT '{}'::jsonb`);
+  } catch (e) {
+    console.warn('[migrate] Could not add settings_json column:', e.message);
+  }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS followup_due_at DATE`);
+  } catch (e) {
+    console.warn('[migrate] Could not add followup_due_at column:', e.message);
+  }
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        id         BIGSERIAL PRIMARY KEY,
+        lead_id    BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id    TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        subject    TEXT,
+        body       TEXT,
+        metadata   JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_activities_lead ON lead_activities(lead_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_activities_user ON lead_activities(user_id, created_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create lead_activities table:', e.message);
+  }
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_queue (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        lead_id      BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        sequence_day INT NOT NULL DEFAULT 1,
+        subject      TEXT NOT NULL,
+        body         TEXT NOT NULL,
+        to_email     TEXT NOT NULL,
+        to_name      TEXT,
+        send_at      TIMESTAMPTZ NOT NULL,
+        sent_at      TIMESTAMPTZ,
+        status       TEXT NOT NULL DEFAULT 'pending',
+        resend_id    TEXT,
+        error_msg    TEXT,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eq_pending ON email_queue(send_at) WHERE status = 'pending'`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eq_lead ON email_queue(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create email_queue table:', e.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bids (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        lead_id         BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        project_name    TEXT NOT NULL,
+        gc_name         TEXT,
+        architect       TEXT,
+        project_type    TEXT NOT NULL DEFAULT 'general',
+        bid_due         DATE,
+        estimated_value INTEGER,
+        source_platform TEXT,
+        source_url      TEXT,
+        status          TEXT NOT NULL DEFAULT 'tracking',
+        notes           TEXT,
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_bids_user ON bids(user_id, status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_bids_due ON bids(bid_due) WHERE status NOT IN ('won','lost','no_bid')`);
+  } catch (e) {
+    console.warn('[migrate] Could not create bids table:', e.message);
+  }
+
+  // Wrap Lifecycle Tracker
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS installed_jobs (
+        id             BIGSERIAL PRIMARY KEY,
+        user_id        TEXT NOT NULL,
+        lead_id        BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        company        TEXT NOT NULL,
+        vehicle_type   TEXT NOT NULL DEFAULT 'other',
+        vehicle_count  INT  NOT NULL DEFAULT 1,
+        wrap_category  TEXT NOT NULL DEFAULT 'fleet',
+        material       TEXT,
+        install_date   DATE NOT NULL,
+        life_years     INT  NOT NULL DEFAULT 5,
+        notes          TEXT,
+        created_at     TIMESTAMPTZ DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_jobs_user  ON installed_jobs(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_jobs_lead  ON installed_jobs(lead_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create installed_jobs table:', e.message);
+  }
+
+  // Dynamic Wrap Content
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS wrap_content (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        description TEXT,
+        image_url   TEXT,
+        tags        TEXT[] DEFAULT '{}',
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_wrap_content_user ON wrap_content(user_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS content_schedules (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        content_id    BIGINT REFERENCES wrap_content(id) ON DELETE CASCADE,
+        vehicle_group TEXT NOT NULL DEFAULT 'all',
+        start_date    DATE NOT NULL,
+        end_date      DATE,
+        start_time    TIME,
+        end_time      TIME,
+        geo_trigger   TEXT,
+        priority      INT NOT NULL DEFAULT 0,
+        notes         TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_content_sched_user ON content_schedules(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create wrap_content tables:', e.message);
   }
 }
 
@@ -135,6 +276,7 @@ function authMiddleware(req, res, next) {
 
 // Subscription check — requires active or trialing subscription
 async function subMiddleware(req, res, next) {
+  if (STRIPE_DISABLED) return next();
   try {
     const r = await pool.query(
       `SELECT sub_status, trial_ends_at, sub_period_end FROM users WHERE id = $1`,
@@ -174,11 +316,11 @@ app.get(['/test', '/apollo/test', '/health'], async (req, res) => {
 // AUTH — register / login / me
 // ----------------------------------------------------------------------------
 app.post('/auth/register', async (req, res) => {
-  const { email, password, name, company } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  const { email: userEmail, password, name, company } = req.body || {};
+  if (!userEmail || !password) return res.status(400).json({ error: 'Email and password required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-  const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedEmail = String(userEmail).trim().toLowerCase();
 
   try {
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
@@ -220,6 +362,9 @@ app.post('/auth/register', async (req, res) => {
 
     // Send welcome email (non-blocking)
     email.sendWelcome({ to: user.email, name: user.name, trialEndsAt: trialEnd }).catch(() => {});
+
+    // Auto-seed all curated leads for the new user (fire-and-forget — never blocks registration)
+    autoSeedUser(user.id, pool).catch((e) => console.warn('[autoSeed] Error:', e.message));
 
     res.status(201).json({ token, user: safeUser(user) });
   } catch (e) {
@@ -313,7 +458,9 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
     const user = r.rows[0];
     // Resolve effective subscription status
-    if (user.sub_status === 'inactive' && user.trial_ends_at && new Date(user.trial_ends_at) > new Date()) {
+    if (STRIPE_DISABLED) {
+      user.sub_status = 'active';
+    } else if (user.sub_status === 'inactive' && user.trial_ends_at && new Date(user.trial_ends_at) > new Date()) {
       user.sub_status = 'trialing';
     }
     // First login detection — true when user has no leads yet
@@ -490,12 +637,18 @@ async function callApollo(apiPath, body, apiKey) {
   return { status: r.status, data };
 }
 
-function resolveApolloKey(req) {
-  return (req.body && req.body.apiKey) ? String(req.body.apiKey).trim() : ENV_APOLLO_KEY;
+async function resolveApolloKey(req) {
+  if (req.body?.apiKey) return String(req.body.apiKey).trim();
+  if (ENV_APOLLO_KEY) return ENV_APOLLO_KEY;
+  if (req.user?.id) {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [req.user.id]);
+    return r.rows[0]?.settings_json?.apolloApiKey || null;
+  }
+  return null;
 }
 
 app.post('/apollo/search', authMiddleware, subMiddleware, async (req, res) => {
-  const apiKey = resolveApolloKey(req);
+  const apiKey = await resolveApolloKey(req);
   if (!apiKey) return res.status(400).json({ error: 'No Apollo API key.' });
   const { company, domain, titles, limit } = req.body || {};
   if (!company) return res.status(400).json({ error: 'Missing field: company' });
@@ -513,7 +666,7 @@ app.post('/apollo/search', authMiddleware, subMiddleware, async (req, res) => {
 });
 
 app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
-  const apiKey = resolveApolloKey(req);
+  const apiKey = await resolveApolloKey(req);
   if (!apiKey) return res.status(400).json({ error: 'No Apollo API key.' });
   const { firstName, lastName, company, domain, email, linkedinUrl } = req.body || {};
   if (!firstName && !lastName && !email) return res.status(400).json({ error: 'Need firstName + lastName, or email' });
@@ -527,6 +680,268 @@ app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
   try {
     const { status, data } = await callApollo('/people/match', payload, apiKey);
     res.status(status).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================================
+// Apollo — Bulk Enrich + Auto-Sequence + Prospector
+// ============================================================================
+
+// Titles to search per lead category — tuned for each vertical
+const APOLLO_TITLES = {
+  racing:       ['Director of Marketing', 'Marketing Manager', 'Partnerships Director', 'VP of Sponsorship', 'Operations Director', 'Team Principal'],
+  gc_referral:  ['President', 'CEO', 'VP of Operations', 'Director of Operations', 'Business Development Manager', 'Project Executive'],
+  construction: ['Fleet Manager', 'Director of Operations', 'VP of Operations', 'Equipment Manager', 'Director of Fleet'],
+  dinoc:        ['Principal', 'Design Director', 'Managing Principal', 'Director of Interior Design', 'Studio Director', 'Project Architect'],
+  design:       ['Principal', 'Design Director', 'Managing Principal', 'Studio Director', 'Owner'],
+  fleet:        ['Fleet Manager', 'Director of Operations', 'VP of Logistics', 'Director of Transportation', 'General Manager'],
+  reatec:       ['Principal', 'Design Director', 'Project Architect', 'Managing Principal'],
+  colorchange:  ['Owner', 'General Manager', 'Marketing Director', 'VP of Marketing'],
+  wallgraphics: ['Marketing Director', 'Brand Manager', 'Facilities Manager', 'Director of Marketing'],
+  default:      ['Owner', 'CEO', 'President', 'Marketing Director', 'Operations Manager'],
+};
+
+// Shared: generate 3-email drip and insert into queue for a single lead
+async function generateAndQueueSequence(leadId, userId, lead, settings, anthropicKey, tone = 'Professional') {
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film installation company.
+Company: ${settings.companyName || 'Shadow Graphix'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a 3-email ${tone} drip sequence for this prospect:
+Company: ${lead.company}
+Contact: ${lead.contact_name || lead.contactName || 'Decision Maker'}, ${lead.contact_title || lead.contactTitle || ''}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+Pitch angle: ${lead.pitch_angle || lead.pitchAngle || 'general wrap inquiry'}
+
+Email 1 (Day 1): Warm introduction — establish credibility, reference their specific opportunity
+Email 2 (Day 5): Follow-up — add value (relevant case study, stat, or insight)
+Email 3 (Day 12): Last touch — brief, direct, genuine, leaves door open
+
+Each under 180 words. Return raw JSON only:
+{"emails":[{"day":1,"label":"Introduction","subject":"...","body":"..."},{"day":5,"label":"Follow-up","subject":"...","body":"..."},{"day":12,"label":"Last Touch","subject":"...","body":"..."}]}`;
+
+  const raw = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 2000);
+  const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+  await pool.query(`UPDATE email_queue SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='pending'`, [leadId, userId]);
+
+  const now = Date.now();
+  for (const em of result.emails) {
+    const sendAt = new Date(now + ((em.day - 1) * 86_400_000));
+    await pool.query(
+      `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [userId, leadId, em.day, em.subject, em.body, lead.email, lead.contact_name || lead.contactName || null, sendAt]
+    );
+  }
+  await logActivity(pool, {
+    leadId, userId, type: 'sequence_activated',
+    metadata: { emails: result.emails.length, tone, auto: true, source: 'apollo_enrich' },
+  });
+  return result.emails.length;
+}
+
+// POST /apollo/bulk-enrich-leads
+// Enriches all leads without email using Apollo, optionally auto-activates sequences
+app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const apolloKey = await resolveApolloKey(req);
+  if (!apolloKey) return res.status(400).json({ error: 'No Apollo API key. Set APOLLO_API_KEY in server env or pass apiKey in request.' });
+
+  const { lead_ids, auto_sequence = false, tone = 'Professional' } = req.body || {};
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  // Get target leads
+  let leadsQuery;
+  if (Array.isArray(lead_ids) && lead_ids.length) {
+    leadsQuery = await pool.query(
+      `SELECT id, company, category, city, state, website, contact_title, contact_name, pitch_angle, email
+       FROM leads WHERE user_id=$1 AND id = ANY($2::bigint[])`,
+      [uid, lead_ids]
+    );
+  } else {
+    // All leads with no email
+    leadsQuery = await pool.query(
+      `SELECT id, company, category, city, state, website, contact_title, contact_name, pitch_angle, email
+       FROM leads WHERE user_id=$1 AND (email IS NULL OR email='')
+       ORDER BY CASE category WHEN 'racing' THEN 1 WHEN 'gc_referral' THEN 2 WHEN 'dinoc' THEN 3 WHEN 'fleet' THEN 4 ELSE 5 END
+       LIMIT 100`,
+      [uid]
+    );
+  }
+
+  const targets = leadsQuery.rows;
+  if (!targets.length) return res.json({ ok: true, enriched: 0, sequences: 0, results: [] });
+
+  const results = [];
+  let enriched = 0, sequencesActivated = 0;
+
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const settings = userR.rows[0]?.settings_json || {};
+
+  for (const lead of targets) {
+    const result = { id: lead.id, company: lead.company, status: 'not_found', email: null };
+    try {
+      // Choose best titles for this category
+      const titles = APOLLO_TITLES[lead.category] || APOLLO_TITLES.default;
+      const payload = {
+        q_organization_name: lead.company,
+        person_titles: titles,
+        page: 1, per_page: 3,
+      };
+      if (lead.website) {
+        const domain = lead.website.replace(/^https?:\/\//, '').split('/')[0];
+        payload.q_organization_domains = domain;
+      }
+
+      const { status: s1, data: searchData } = await callApollo('/mixed_people/search', payload, apolloKey);
+
+      const people = searchData?.people || [];
+      let foundEmail = null;
+      let foundName = null;
+      let foundPhone = null;
+
+      for (const person of people) {
+        // Use email if already revealed
+        if (person.email && person.email_status !== 'invalid') {
+          foundEmail = person.email;
+          foundName = person.name;
+          foundPhone = person.phone_numbers?.[0]?.sanitized_number || null;
+          break;
+        }
+        // Otherwise try /people/match to reveal
+        if (person.name) {
+          const [firstName, ...rest] = person.name.split(' ');
+          const { data: matchData } = await callApollo('/people/match', {
+            first_name: firstName,
+            last_name: rest.join(' '),
+            organization_name: lead.company,
+            domain: lead.website?.replace(/^https?:\/\//, '').split('/')[0],
+            reveal_personal_emails: true,
+          }, apolloKey);
+          if (matchData?.person?.email) {
+            foundEmail = matchData.person.email;
+            foundName = matchData.person.name || person.name;
+            foundPhone = matchData.person.phone_numbers?.[0]?.sanitized_number || null;
+            break;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 150)); // polite rate-limit delay
+      }
+
+      if (foundEmail) {
+        // Save to lead record
+        await pool.query(
+          `UPDATE leads SET email=$1, contact_name=COALESCE(NULLIF(contact_name,''), $2),
+           phone=COALESCE(NULLIF(phone,''), $3), updated_at=NOW() WHERE id=$4`,
+          [foundEmail, foundName, foundPhone, lead.id]
+        );
+        await logActivity(pool, {
+          leadId: lead.id, userId: uid, type: 'note_added',
+          subject: 'Email found via Apollo',
+          metadata: { email: foundEmail, name: foundName, source: 'apollo_bulk_enrich' },
+        });
+
+        result.status = 'enriched';
+        result.email = foundEmail;
+        enriched++;
+
+        // Auto-activate sequence if requested
+        if (auto_sequence && anthropicKey) {
+          try {
+            const enrichedLead = { ...lead, email: foundEmail, contact_name: foundName };
+            const count = await generateAndQueueSequence(lead.id, uid, enrichedLead, settings, anthropicKey, tone);
+            result.sequence = 'activated';
+            sequencesActivated++;
+          } catch (seqErr) {
+            result.sequence = 'error: ' + seqErr.message;
+          }
+        }
+      }
+    } catch (e) {
+      result.status = 'error';
+      result.error = e.message;
+    }
+    results.push(result);
+    await new Promise((r) => setTimeout(r, 200)); // 200ms between leads — Apollo rate limit
+  }
+
+  res.json({ ok: true, searched: targets.length, enriched, sequencesActivated, results });
+});
+
+// POST /apollo/prospect
+// Search Apollo's database for NEW leads by criteria and import them
+app.post('/apollo/prospect', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const apolloKey = await resolveApolloKey(req);
+  if (!apolloKey) return res.status(400).json({ error: 'No Apollo API key.' });
+
+  const {
+    industry, location, titles, keywords,
+    company_size_min, company_size_max,
+    limit = 20, category = 'fleet',
+  } = req.body || {};
+
+  const payload = {
+    page: 1,
+    per_page: Math.min(parseInt(limit) || 20, 50),
+  };
+  if (titles?.length)    payload.person_titles = titles;
+  if (keywords?.length)  payload.q_keywords = Array.isArray(keywords) ? keywords.join(' ') : keywords;
+  if (location)          payload.person_locations = Array.isArray(location) ? location : [location];
+  if (industry?.length)  payload.organization_industry_tag_ids = Array.isArray(industry) ? industry : [industry];
+  if (company_size_min || company_size_max) {
+    payload.organization_num_employees_ranges = [`${company_size_min || 1},${company_size_max || 10000}`];
+  }
+
+  try {
+    const { status, data } = await callApollo('/mixed_people/search', payload, apolloKey);
+    if (status !== 200) return res.status(status).json(data);
+
+    const prospects = (data.people || []).map((p) => ({
+      name: p.name,
+      title: p.title,
+      email: p.email || null,
+      emailStatus: p.email_status,
+      phone: p.phone_numbers?.[0]?.sanitized_number || null,
+      company: p.organization?.name || p.employment_history?.[0]?.organization_name,
+      domain: p.organization?.website_url,
+      city: p.city,
+      state: p.state,
+      linkedinUrl: p.linkedin_url,
+      apolloId: p.id,
+      suggested_category: category,
+    }));
+
+    res.json({ ok: true, count: prospects.length, prospects });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /apollo/import-prospect — import a prospected person as a lead
+app.post('/apollo/import-prospect', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { prospect, category = 'fleet' } = req.body || {};
+  if (!prospect?.company) return res.status(400).json({ error: 'prospect.company required' });
+
+  const clientId = `apollo_${(prospect.apolloId || Date.now()).toString().slice(-10)}`;
+
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO leads (user_id, client_id, company, category, city, state, country,
+        email, phone, contact_name, contact_title, website, status, source)
+      VALUES ($1,$2,$3,$4,$5,$6,'US',$7,$8,$9,$10,$11,'new','apollo_prospect')
+      ON CONFLICT (user_id, client_id) DO NOTHING
+      RETURNING id
+    `, [uid, clientId, prospect.company, category,
+        prospect.city || null, prospect.state || null,
+        prospect.email || null, prospect.phone || null,
+        prospect.name || null, prospect.title || null,
+        prospect.domain || null]);
+
+    if (!rows.length) return res.json({ ok: true, id: null, duplicate: true });
+    res.status(201).json({ ok: true, id: rows[0].id, duplicate: false });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -634,12 +1049,30 @@ app.post('/carriers/search', authMiddleware, subMiddleware, async (req, res) => 
 app.post('/carriers/import', authMiddleware, subMiddleware, async (req, res) => {
   const { companyId } = req.body || {};
   if (!companyId) return res.status(400).json({ error: 'Missing companyId' });
+  const uid = String(req.user.id);
   try {
     await pool.query(
       `INSERT INTO imports (company_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [companyId, String(req.user.id)]
+      [companyId, uid]
     );
-    res.json({ ok: true });
+    // Also create a CRM lead from the carrier data so it appears in My Leads immediately
+    const coR = await pool.query(`SELECT * FROM companies WHERE id = $1`, [companyId]);
+    let leadId = null;
+    if (coR.rows.length) {
+      const c = coR.rows[0];
+      const lr = await pool.query(`
+        INSERT INTO leads
+          (user_id, client_id, company, category, state, city, phone, email,
+           website, fleet_size, status, source_company_id, created_at, updated_at)
+        VALUES ($1, $2, $3, 'fleet', $4, $5, $6, $7, $8, $9, 'cold', $10, NOW(), NOW())
+        ON CONFLICT (user_id, client_id) DO NOTHING
+        RETURNING id
+      `, [uid, `carrier-${companyId}`, c.name || c.dba_name, c.state, c.city,
+          c.phone || null, c.email || null, c.website || null,
+          c.fleet_size ? String(c.fleet_size) : null, companyId]);
+      leadId = lr.rows[0]?.id ?? null;
+    }
+    res.json({ ok: true, leadId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -717,16 +1150,32 @@ app.post('/searches/saved/:id/run', authMiddleware, async (req, res) => {
 // ----------------------------------------------------------------------------
 function leadRow(row) {
   return {
-    id: row.id, clientId: row.client_id, company: row.company, category: row.category,
+    id: String(row.client_id || row.id),
+    serverId: row.id,
+    clientId: row.client_id, company: row.company, category: row.category,
     state: row.state, city: row.city, address: row.address,
     contactName: row.contact_name, contactTitle: row.contact_title,
     email: row.email, phone: row.phone, website: row.website,
     fleetSize: row.fleet_size, pitchAngle: row.pitch_angle,
     status: row.status, notes: row.notes,
     lastContacted: row.last_contacted ? row.last_contacted.toISOString().slice(0, 10) : '',
+    followupDueAt: row.followup_due_at ? row.followup_due_at.toISOString().slice(0, 10) : null,
     sourceCompanyId: row.source_company_id,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
+}
+
+// Days until follow-up is due per status (null = no auto follow-up)
+const FOLLOWUP_DAYS = { contacted: 3, replied: 2, meeting: 5, proposal: 7 };
+
+async function logActivity(pool, { leadId, userId, type, subject = null, body = null, metadata = {} }) {
+  try {
+    await pool.query(
+      `INSERT INTO lead_activities (lead_id, user_id, type, subject, body, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [leadId, userId, type, subject, body, JSON.stringify(metadata)]
+    );
+  } catch { /* non-critical */ }
 }
 
 app.get('/leads', authMiddleware, async (req, res) => {
@@ -767,6 +1216,15 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
   const d = req.body || {};
+  const uid = String(req.user.id);
+
+  // Fetch current lead to detect status changes
+  let prevStatus = null;
+  try {
+    const prev = await pool.query('SELECT status FROM leads WHERE id=$1 AND user_id=$2', [id, uid]);
+    prevStatus = prev.rows[0]?.status ?? null;
+  } catch { /* ignore */ }
+
   const colMap = { company:'company', category:'category', state:'state', city:'city', address:'address',
     contactName:'contact_name', contactTitle:'contact_title', email:'email', phone:'phone', website:'website',
     fleetSize:'fleet_size', pitchAngle:'pitch_angle', status:'status', notes:'notes', lastContacted:'last_contacted' };
@@ -774,14 +1232,32 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
   for (const [key, col] of Object.entries(colMap)) {
     if (d[key] !== undefined) { params.push(d[key]||null); sets.push(`${col}=$${params.length}`); }
   }
+
+  // Auto-set followup_due_at when status changes to a trackable stage
+  if (d.status && d.status !== prevStatus && FOLLOWUP_DAYS[d.status]) {
+    params.push(d.status);
+    sets.push(`followup_due_at = CURRENT_DATE + INTERVAL '1 day' * $${params.length}::int`);
+    // Swap last param with days count
+    params[params.length - 1] = FOLLOWUP_DAYS[d.status];
+  } else if (d.status === 'won' || d.status === 'lost') {
+    sets.push('followup_due_at = NULL');
+  }
+
   if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
-  params.push(id); params.push(String(req.user.id));
+  params.push(id); params.push(uid);
   try {
     const r = await pool.query(
       `UPDATE leads SET ${sets.join(',')}, updated_at=NOW()
        WHERE id=$${params.length-1} AND user_id=$${params.length} RETURNING *`, params
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+
+    // Log status change activity
+    if (d.status && d.status !== prevStatus) {
+      await logActivity(pool, { leadId: id, userId: uid, type: 'status_changed',
+        metadata: { from: prevStatus, to: d.status } });
+    }
+
     res.json(leadRow(r.rows[0]));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -824,6 +1300,785 @@ app.post('/leads/sync', authMiddleware, async (req, res) => {
   }
   res.json({ ok: true, inserted, failed });
 });
+
+// ----------------------------------------------------------------------------
+// Lead activities (timeline)
+// ----------------------------------------------------------------------------
+app.get('/leads/:id/activities', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    // Verify ownership
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = await pool.query(
+      `SELECT id, type, subject, body, metadata, created_at
+       FROM lead_activities WHERE lead_id=$1 ORDER BY created_at DESC LIMIT 100`, [id]
+    );
+    res.json({ activities: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/activities', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const { type, subject, body, metadata } = req.body || {};
+  if (!type) return res.status(400).json({ error: 'type required' });
+  const uid = String(req.user.id);
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = await pool.query(
+      `INSERT INTO lead_activities (lead_id, user_id, type, subject, body, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [id, uid, type, subject || null, body || null, JSON.stringify(metadata || {})]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const { subject, body, toEmail, toName } = req.body || {};
+  if (!subject || !body || !toEmail) return res.status(400).json({ error: 'subject, body, toEmail required' });
+
+  const uid = String(req.user.id);
+  const resendKey = process.env.RESEND_API_KEY;
+
+  // Verify lead ownership
+  const own = await pool.query(
+    'SELECT id, company FROM leads WHERE id=$1 AND user_id=$2', [id, uid]
+  );
+  if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+
+  // Get sender settings
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const settings = userR.rows[0]?.settings_json || {};
+  const fromName = settings.senderName || 'WrapLeads';
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+
+  if (!resendKey) {
+    // Log as a draft/copy action even without sending
+    await logActivity(pool, { leadId: id, userId: uid, type: 'email_copied',
+      subject, body, metadata: { to: toEmail, toName } });
+    return res.status(503).json({
+      error: 'RESEND_API_KEY not configured — email copied but not sent',
+      logged: true,
+    });
+  }
+
+  try {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: `${fromName} <${fromEmail}>`,
+        to: toName ? `${toName} <${toEmail}>` : toEmail,
+        subject,
+        text: body,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Resend error');
+
+    // Log sent email + update last_contacted + set followup
+    await logActivity(pool, { leadId: id, userId: uid, type: 'email_sent',
+      subject, body, metadata: { to: toEmail, toName, resend_id: data.id } });
+    await pool.query(
+      `UPDATE leads SET last_contacted = CURRENT_DATE,
+        followup_due_at = CURRENT_DATE + INTERVAL '3 days',
+        status = CASE WHEN status = 'cold' THEN 'contacted' ELSE status END,
+        updated_at = NOW()
+       WHERE id=$1`, [id]
+    );
+    res.json({ ok: true, resend_id: data.id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Follow-up queue: leads where followup_due_at <= today
+app.get('/leads/followup-due', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT * FROM leads
+       WHERE user_id=$1 AND followup_due_at <= CURRENT_DATE
+         AND status NOT IN ('won','lost')
+       ORDER BY followup_due_at ASC LIMIT 50`,
+      [String(req.user.id)]
+    );
+    res.json({ leads: r.rows.map(leadRow), count: r.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/leads/analytics', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [statusR, overdueR, categoryR, sequenceR, recentR] = await Promise.all([
+      pool.query(`SELECT status, COUNT(*) AS count FROM leads WHERE user_id=$1 GROUP BY status`, [uid]),
+      pool.query(`
+        SELECT COUNT(*) AS count FROM leads
+        WHERE user_id=$1
+          AND status IN ('contacted','replied')
+          AND (last_contacted IS NULL OR last_contacted < CURRENT_DATE - INTERVAL '14 days')
+      `, [uid]),
+      pool.query(`SELECT category, COUNT(*) AS count FROM leads WHERE user_id=$1 GROUP BY category`, [uid]),
+      pool.query(`
+        SELECT
+          COUNT(DISTINCT lead_id) FILTER (WHERE status='pending') AS active_sequences,
+          COUNT(*) FILTER (WHERE status='sent' AND sent_at >= CURRENT_DATE - INTERVAL '30 days') AS sent_30d
+        FROM email_queue WHERE user_id=$1
+      `, [uid]),
+      pool.query(`
+        SELECT DATE(created_at) AS day, COUNT(*) AS count
+        FROM leads WHERE user_id=$1 AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY DATE(created_at) ORDER BY day
+      `, [uid]),
+    ]);
+
+    const byStatus = {};
+    const total = statusR.rows.reduce((acc, r) => {
+      byStatus[r.status] = parseInt(r.count, 10);
+      return acc + parseInt(r.count, 10);
+    }, 0);
+
+    const byCategory = {};
+    categoryR.rows.forEach(r => { byCategory[r.category] = parseInt(r.count, 10); });
+
+    // Projected revenue by category (conservative per-lead averages)
+    const REV_PER_LEAD = {
+      fleet: 2500, dinoc: 4500, gc_referral: 12000,
+      construction: 3500, color_change: 1800, racing: 35000, other: 1500,
+    };
+    let projectedRevenue = 0;
+    for (const [cat, count] of Object.entries(byCategory)) {
+      const activeCount = count - (byStatus.won ?? 0) - (byStatus.lost ?? 0);
+      projectedRevenue += Math.max(0, activeCount) * (REV_PER_LEAD[cat] ?? 1500);
+    }
+
+    const sq = sequenceR.rows[0];
+    const recentLeads = recentR.rows.map(r => ({ day: r.day, count: parseInt(r.count, 10) }));
+
+    res.json({
+      total,
+      byStatus,
+      byCategory,
+      overdue: parseInt(overdueR.rows[0]?.count ?? 0, 10),
+      projectedRevenue,
+      sequenceStats: {
+        activeSequences: parseInt(sq.active_sequences ?? 0, 10),
+        emailsSent30d: parseInt(sq.sent_30d ?? 0, 10),
+      },
+      recentLeads,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ----------------------------------------------------------------------------
+// Sample carrier seeder (runs when companies table is empty)
+// ----------------------------------------------------------------------------
+async function seedSampleCarriers() {
+  const STATES = {
+    IN: ['Indianapolis','Fort Wayne','Evansville','South Bend','Carmel','Fishers','Bloomington','Hammond','Lafayette','Muncie'],
+    OH: ['Columbus','Cleveland','Cincinnati','Toledo','Akron','Dayton','Parma','Canton','Youngstown','Lorain'],
+    IL: ['Chicago','Aurora','Rockford','Joliet','Naperville','Springfield','Peoria','Elgin','Waukegan','Champaign'],
+    MI: ['Detroit','Grand Rapids','Warren','Sterling Heights','Lansing','Ann Arbor','Flint','Dearborn','Livonia','Westland'],
+    KY: ['Louisville','Lexington','Bowling Green','Owensboro','Covington','Hopkinsville','Richmond','Florence','Georgetown','Henderson'],
+    TN: ['Nashville','Memphis','Knoxville','Chattanooga','Clarksville','Murfreesboro','Franklin','Jackson','Hendersonville','Kingsport'],
+    WI: ['Milwaukee','Madison','Green Bay','Kenosha','Racine','Appleton','Waukesha','Oshkosh','Eau Claire','Janesville'],
+    MO: ['Kansas City','St. Louis','Springfield','Columbia','Independence','Lee\'s Summit','O\'Fallon','St. Joseph','St. Charles','Blue Springs'],
+  };
+  const WORDS1 = ['Smith','Johnson','Midwest','Central','National','Allied','Premier','Eagle','Titan','Apex','Summit','Keystone','Pioneer','Patriot','American','Freedom','Heritage','Liberty','Horizon','Blue Ridge'];
+  const WORDS2 = ['Trucking','Transport','Logistics','Freight','Carriers','Express','Delivery','Hauling','Distribution','Moving'];
+  const SUFFIXES = ['LLC','Inc','Co','Corp',''];
+  const FLEETS = [3,5,7,8,10,12,15,18,20,25,30,35,40,50,60,75,100,125,150,200,300,500];
+  const INDUSTRIES = ['freight','trucking','general freight','household goods','construction fleet','auto transport','food beverage'];
+
+  const carriers = [];
+  let idx = 0;
+  for (const [state, cities] of Object.entries(STATES)) {
+    for (let i = 0; i < 45; i++) {
+      idx++;
+      const w1 = WORDS1[(idx * 7 + i * 3) % WORDS1.length];
+      const w2 = WORDS2[(idx * 3 + i) % WORDS2.length];
+      const sfx = SUFFIXES[(idx * 5) % SUFFIXES.length];
+      const city = cities[i % cities.length];
+      const fleet = FLEETS[(idx * 11 + i) % FLEETS.length];
+      const ind = INDUSTRIES[(idx * 2 + i) % INDUSTRIES.length];
+      carriers.push([
+        'seed', `seed-${String(idx).padStart(4,'0')}`,
+        sfx ? `${w1} ${w2} ${sfx}` : `${w1} ${w2}`,
+        null, state, city, null, null, null, fleet, ind, new Date('2022-06-01'),
+      ]);
+    }
+  }
+
+  let inserted = 0;
+  for (const row of carriers) {
+    try {
+      await pool.query(`
+        INSERT INTO companies
+          (source, source_id, name, dba_name, state, city, street, phone, website, fleet_size, industry, last_reported)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        ON CONFLICT (source, source_id) DO NOTHING
+      `, row);
+      inserted++;
+    } catch { /* skip */ }
+  }
+  console.log(`  → Inserted ${inserted} sample carriers across ${Object.keys(STATES).length} states.`);
+}
+
+// ----------------------------------------------------------------------------
+// Settings (per-user, server-persisted)
+// ----------------------------------------------------------------------------
+app.get('/settings', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id = $1', [req.user.id]);
+    res.json({ settings: r.rows[0]?.settings_json ?? {} });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/settings', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('UPDATE users SET settings_json = $1 WHERE id = $2',
+      [req.body || {}, req.user.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ----------------------------------------------------------------------------
+// Export leads as CSV
+// ----------------------------------------------------------------------------
+app.get('/leads/export', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT * FROM leads WHERE user_id = $1 ORDER BY updated_at DESC`,
+      [String(req.user.id)]
+    );
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const header = ['Company','Contact Name','Title','Email','Phone','Category','Status',
+                    'Fleet Size','City','State','Last Contacted','Notes','Score'].map(esc).join(',');
+    const rows = r.rows.map((l) => {
+      const fleet = parseInt(l.fleet_size) || 0;
+      // Simple score approximation for export
+      const score = Math.min(100,
+        (fleet >= 100 ? 30 : fleet >= 50 ? 25 : fleet >= 20 ? 18 : fleet >= 10 ? 12 : fleet >= 5 ? 6 : 0) +
+        ({ fleet: 25, colorchange: 22, dinoc: 20, reatec: 18, construction: 15, wallgraphics: 12, design: 10 }[l.category] ?? 10) +
+        ({ won: 30, proposal: 25, meeting: 20, replied: 15, contacted: 10, cold: 5 }[l.status] ?? 0)
+      );
+      return [l.company, l.contact_name, l.contact_title, l.email, l.phone,
+              l.category, l.status, l.fleet_size, l.city, l.state,
+              l.last_contacted ? new Date(l.last_contacted).toLocaleDateString('en-US') : '',
+              l.notes, score].map(esc).join(',');
+    });
+    const csv = [header, ...rows].join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="wrapleads-export.csv"');
+    res.send(csv);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ----------------------------------------------------------------------------
+// Drip engine — activate a 3-email sequence for a lead
+// ----------------------------------------------------------------------------
+app.post('/leads/:id/activate-sequence', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const uid = String(req.user.id);
+  const { tone = 'Professional' } = req.body || {};
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+  // Verify lead ownership + get email
+  const leadR = await pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [id, uid]);
+  if (!leadR.rows.length) return res.status(404).json({ error: 'Not found' });
+  const lead = leadRow(leadR.rows[0]);
+  if (!lead.email) return res.status(400).json({ error: 'Lead has no email address — find one first' });
+
+  // Cancel any existing pending queue for this lead
+  await pool.query(`UPDATE email_queue SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='pending'`, [id, uid]);
+
+  // Get sender settings
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const settings = userR.rows[0]?.settings_json || {};
+
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film installation company.
+Company: ${settings.companyName || 'our wrap shop'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a 3-email ${tone} drip sequence for this prospect:
+Company: ${lead.company}
+Contact: ${lead.contactName || 'Fleet/Facilities Manager'}, ${lead.contactTitle || ''}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+Pitch angle: ${lead.pitchAngle || 'general wrap inquiry'}
+
+Email 1 (Day 1): Warm introduction — establish credibility, reference their specific opportunity
+Email 2 (Day 5): Follow-up — add value (relevant case study, stat, or insight)
+Email 3 (Day 12): Last touch — brief, direct, genuine, leaves door open
+
+Each under 180 words. Return raw JSON only:
+{"emails":[{"day":1,"label":"Introduction","subject":"...","body":"..."},{"day":5,"label":"Follow-up","subject":"...","body":"..."},{"day":12,"label":"Last Touch","subject":"...","body":"..."}]}`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 2000);
+    const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    const now = new Date();
+
+    // Insert 3 queue rows
+    for (const email of result.emails) {
+      const sendAt = new Date(now);
+      sendAt.setDate(sendAt.getDate() + (email.day - 1));
+      await pool.query(
+        `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [uid, id, email.day, email.subject, email.body, lead.email, lead.contactName || null, sendAt]
+      );
+    }
+
+    // Log activity
+    await logActivity(pool, { leadId: id, userId: uid, type: 'sequence_activated',
+      metadata: { emails: result.emails.length, tone } });
+
+    res.json({ ok: true, queued: result.emails.length, emails: result.emails });
+  } catch (e) {
+    console.error('[activate-sequence]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/leads/:id/queue', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = await pool.query(
+      `SELECT id, sequence_day, subject, body, to_email, to_name, send_at, sent_at, status, error_msg
+       FROM email_queue WHERE lead_id=$1 ORDER BY sequence_day ASC`, [id]
+    );
+    res.json({ queue: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/email-queue/:id', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    await pool.query(
+      `UPDATE email_queue SET status='cancelled' WHERE id=$1 AND user_id=$2 AND status='pending'`,
+      [id, String(req.user.id)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================================
+// Bid Tracker — CRUD
+// ============================================================================
+
+app.get('/bids', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      `SELECT b.*, l.company AS lead_company
+       FROM bids b
+       LEFT JOIN leads l ON l.id = b.lead_id
+       WHERE b.user_id = $1
+       ORDER BY
+         CASE WHEN b.status IN ('won','lost','no_bid') THEN 1 ELSE 0 END,
+         b.bid_due ASC NULLS LAST,
+         b.created_at DESC`,
+      [uid]
+    );
+    res.json({ bids: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/bids', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const {
+      project_name, gc_name, architect, project_type = 'general',
+      bid_due, estimated_value, source_platform, source_url,
+      status = 'tracking', notes, lead_id,
+    } = req.body;
+    if (!project_name?.trim()) return res.status(400).json({ error: 'project_name required' });
+
+    const { rows } = await pool.query(
+      `INSERT INTO bids
+         (user_id, lead_id, project_name, gc_name, architect, project_type,
+          bid_due, estimated_value, source_platform, source_url, status, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [uid, lead_id || null, project_name.trim(), gc_name || null, architect || null,
+       project_type, bid_due || null, estimated_value || null,
+       source_platform || null, source_url || null, status, notes || null]
+    );
+    res.status(201).json({ bid: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/bids/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id, 10);
+    const {
+      project_name, gc_name, architect, project_type,
+      bid_due, estimated_value, source_platform, source_url,
+      status, notes, lead_id,
+    } = req.body;
+
+    const { rows } = await pool.query(
+      `UPDATE bids SET
+         project_name    = COALESCE($3, project_name),
+         gc_name         = COALESCE($4, gc_name),
+         architect       = COALESCE($5, architect),
+         project_type    = COALESCE($6, project_type),
+         bid_due         = COALESCE($7::date, bid_due),
+         estimated_value = COALESCE($8, estimated_value),
+         source_platform = COALESCE($9, source_platform),
+         source_url      = COALESCE($10, source_url),
+         status          = COALESCE($11, status),
+         notes           = COALESCE($12, notes),
+         lead_id         = COALESCE($13, lead_id),
+         updated_at      = NOW()
+       WHERE id=$1 AND user_id=$2
+       RETURNING *`,
+      [id, uid, project_name || null, gc_name || null, architect || null,
+       project_type || null, bid_due || null, estimated_value || null,
+       source_platform || null, source_url || null, status || null,
+       notes || null, lead_id || null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ bid: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/bids/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id, 10);
+    await pool.query(`DELETE FROM bids WHERE id=$1 AND user_id=$2`, [id, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/bids/summary', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status NOT IN ('won','lost','no_bid')) AS active,
+         COUNT(*) FILTER (WHERE status='won') AS won,
+         COUNT(*) FILTER (WHERE status='submitted') AS submitted,
+         COALESCE(SUM(estimated_value) FILTER (WHERE status='won'), 0) AS won_value,
+         COALESCE(SUM(estimated_value) FILTER (WHERE status NOT IN ('lost','no_bid')), 0) AS pipeline_value,
+         COUNT(*) FILTER (WHERE bid_due IS NOT NULL AND bid_due < CURRENT_DATE AND status='tracking') AS overdue_bids
+       FROM bids WHERE user_id=$1`,
+      [uid]
+    );
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================================
+// Bulk sequence activation — fires drip for multiple leads at once
+// ============================================================================
+
+app.post('/leads/bulk-activate-sequences', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { lead_ids, tone = 'professional' } = req.body || {};
+  if (!Array.isArray(lead_ids) || !lead_ids.length) {
+    return res.status(400).json({ error: 'lead_ids array required' });
+  }
+  if (lead_ids.length > 100) return res.status(400).json({ error: 'Max 100 leads per bulk activation' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  let queued = 0, failed = 0;
+  const results = [];
+
+  for (const rawId of lead_ids) {
+    const id = parseInt(rawId, 10);
+    if (isNaN(id)) continue;
+    try {
+      const leadR = await pool.query(
+        `SELECT l.*, u.company_name AS user_company, u.settings_json
+         FROM leads l JOIN users u ON u.id=l.user_id
+         WHERE l.id=$1 AND l.user_id=$2`, [id, uid]
+      );
+      if (!leadR.rows.length) { failed++; continue; }
+      const lead = leadR.rows[0];
+      if (!lead.email) { failed++; results.push({ id, status: 'skipped', reason: 'no email' }); continue; }
+
+      const s = lead.settings_json || {};
+      const prompt = `You are a B2B sales copywriter for ${s.companyName || 'Shadow Graphix'}, a vehicle wrap and architectural film company in Speedway, Indiana (next to Indianapolis Motor Speedway).
+
+Write a 3-email drip sequence for this lead:
+Company: ${lead.company}
+Category: ${lead.category}
+City: ${lead.city || ''}, ${lead.state || ''}
+Pitch angle: ${lead.pitch_angle || 'fleet wraps and DI-NOC architectural film'}
+Tone: ${tone}
+
+Return ONLY valid JSON array with exactly 3 objects:
+[{"day":1,"subject":"...","body":"..."},{"day":5,"subject":"...","body":"..."},{"day":12,"subject":"...","body":"..."}]
+No markdown, no explanation. Just the JSON array.`;
+
+      const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const aiData = await aiRes.json();
+      const raw = aiData.content?.[0]?.text || '';
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) { failed++; results.push({ id, status: 'failed', reason: 'AI parse error' }); continue; }
+
+      const emails = JSON.parse(match[0]);
+
+      // Cancel existing pending queue for this lead
+      await pool.query(`UPDATE email_queue SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='pending'`, [id, uid]);
+
+      const now = Date.now();
+      for (const em of emails) {
+        const sendAt = new Date(now + ((em.day - 1) * 86400_000));
+        await pool.query(
+          `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [uid, id, em.day, em.subject, em.body, lead.email, lead.contact_name || null, sendAt]
+        );
+      }
+      await logActivity(pool, {
+        leadId: id, userId: uid, type: 'sequence_activated',
+        metadata: { emails_queued: emails.length, tone, bulk: true },
+      });
+      queued++;
+      results.push({ id, status: 'activated', company: lead.company });
+    } catch (e) {
+      failed++;
+      results.push({ id, status: 'error', reason: e.message });
+    }
+  }
+
+  res.json({ ok: true, queued, failed, results });
+});
+
+// ============================================================================
+// Today's Mission — AI-prioritized daily action list
+// ============================================================================
+
+app.get('/mission', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR, agingR] = await Promise.all([
+      // Overdue follow-ups
+      pool.query(`
+        SELECT id, company, category, email, followup_due_at, last_contacted
+        FROM leads WHERE user_id=$1 AND status IN ('contacted','replied')
+        AND followup_due_at < $2 ORDER BY followup_due_at ASC LIMIT 10
+      `, [uid, today]),
+      // New leads with email, no sequence active
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.email, l.city, l.state, l.pitch_angle
+        FROM leads l
+        WHERE l.user_id=$1 AND l.status='new' AND l.email IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM email_queue q WHERE q.lead_id=l.id AND q.status='pending'
+        )
+        ORDER BY l.created_at DESC LIMIT 20
+      `, [uid]),
+      // Leads that replied — need proposal attention
+      pool.query(`
+        SELECT id, company, category, last_contacted FROM leads
+        WHERE user_id=$1 AND status='replied' ORDER BY last_contacted ASC LIMIT 5
+      `, [uid]),
+      // Bids due soon
+      pool.query(`
+        SELECT id, project_name, gc_name, bid_due, status, estimated_value
+        FROM bids WHERE user_id=$1 AND status='tracking'
+        AND bid_due IS NOT NULL AND bid_due >= $2 AND bid_due <= $2::date + INTERVAL '7 days'
+        ORDER BY bid_due ASC
+      `, [uid, today]),
+      // Active drip sequences
+      pool.query(`
+        SELECT COUNT(DISTINCT lead_id)::INT AS active,
+               COUNT(*) FILTER (WHERE status='pending')::INT AS pending_emails
+        FROM email_queue WHERE user_id=$1 AND status IN ('pending','sent')
+        AND created_at >= NOW() - INTERVAL '30 days'
+      `, [uid]),
+      // Won this month
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads
+        WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month', NOW())
+      `, [uid]),
+      // Sequence complete — ready for phone call
+      // These are contacted leads where all queued emails have been sent (no pending left)
+      // and at least one email was sent (sequence actually ran)
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.email, l.city, l.state,
+               l.last_contacted, l.phone,
+               MAX(q.sequence_day) AS last_day_sent,
+               COUNT(q.id) FILTER (WHERE q.status='sent') AS emails_sent
+        FROM leads l
+        JOIN email_queue q ON q.lead_id = l.id
+        WHERE l.user_id=$1
+          AND l.status = 'contacted'
+          AND NOT EXISTS (
+            SELECT 1 FROM email_queue pq WHERE pq.lead_id=l.id AND pq.status='pending'
+          )
+        GROUP BY l.id, l.company, l.category, l.email, l.city, l.state, l.last_contacted, l.phone
+        HAVING COUNT(q.id) FILTER (WHERE q.status='sent') >= 2
+        ORDER BY l.last_contacted ASC
+        LIMIT 15
+      `, [uid]),
+      // Leads with no email — need Apollo enrichment before sequences can fire
+      pool.query(`
+        SELECT id, company, category, city, state, website, contact_title
+        FROM leads
+        WHERE user_id=$1 AND status='new'
+          AND (email IS NULL OR email = '')
+          AND pitch_angle IS NOT NULL
+        ORDER BY
+          CASE category
+            WHEN 'racing' THEN 1 WHEN 'gc_referral' THEN 2 WHEN 'dinoc' THEN 3
+            WHEN 'fleet' THEN 4 ELSE 5
+          END,
+          created_at DESC
+        LIMIT 12
+      `, [uid]),
+      // Aging wraps — installed jobs expiring within 60 days
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM installed_jobs
+        WHERE user_id=$1
+          AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'
+      `, [uid]),
+    ]);
+
+    const seq = seqR.rows[0];
+
+    res.json({
+      date: today,
+      overdue: overdueR.rows,
+      newWithEmail: newR.rows,
+      replied: repliedR.rows,
+      bidsThisWeek: bidsR.rows,
+      callReady: callReadyR.rows,
+      needsEmail: needsEmailR.rows,
+      sequences: {
+        active: seq.active,
+        pendingEmails: seq.pending_emails,
+      },
+      wonThisMonth: wonR.rows[0].count,
+      agingWraps: agingR.rows[0].count,
+      priorityScore:
+        callReadyR.rows.length * 5 +
+        overdueR.rows.length * 3 +
+        repliedR.rows.length * 2 +
+        bidsR.rows.length * 2 +
+        newR.rows.length,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Background worker — processes pending queue emails
+async function processEmailQueue() {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  try {
+    const { rows } = await pool.query(`
+      SELECT q.*, l.contact_name, l.company
+      FROM email_queue q
+      JOIN leads l ON l.id = q.lead_id
+      WHERE q.status = 'pending' AND q.send_at <= NOW()
+      LIMIT 10
+      FOR UPDATE SKIP LOCKED
+    `);
+    for (const item of rows) {
+      try {
+        const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [item.user_id]);
+        const s = userR.rows[0]?.settings_json || {};
+        const fromName = s.senderName || 'WrapLeads';
+        const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+
+        const resp = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `${fromName} <${fromEmail}>`,
+            to: item.to_name ? `${item.to_name} <${item.to_email}>` : item.to_email,
+            subject: item.subject,
+            text: item.body,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.message || 'Resend error');
+
+        await pool.query(
+          `UPDATE email_queue SET status='sent', sent_at=NOW(), resend_id=$1 WHERE id=$2`,
+          [data.id, item.id]
+        );
+        await logActivity(pool, {
+          leadId: item.lead_id, userId: item.user_id, type: 'email_sent',
+          subject: item.subject, body: item.body,
+          metadata: { to: item.to_email, resend_id: data.id, sequence_day: item.sequence_day, auto: true },
+        });
+
+        // Check if this was the final email in the sequence
+        const remaining = await pool.query(
+          `SELECT COUNT(*) AS cnt FROM email_queue WHERE lead_id=$1 AND status='pending'`,
+          [item.lead_id]
+        );
+        const sequenceDone = parseInt(remaining.rows[0].cnt, 10) === 0;
+
+        if (sequenceDone) {
+          // Sequence complete — set followup due TODAY so it surfaces in Mission as "call now"
+          await pool.query(
+            `UPDATE leads SET last_contacted=CURRENT_DATE,
+              followup_due_at=CURRENT_DATE,
+              status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
+              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+          );
+          await logActivity(pool, {
+            leadId: item.lead_id, userId: item.user_id, type: 'sequence_activated',
+            subject: '3-email sequence complete — time to call',
+            metadata: { sequence_complete: true, sequence_day: item.sequence_day },
+          });
+          console.log(`[drip] Sequence COMPLETE for lead ${item.lead_id} — flagged call-ready`);
+        } else {
+          // Mid-sequence — normal follow-up window
+          await pool.query(
+            `UPDATE leads SET last_contacted=CURRENT_DATE,
+              followup_due_at=CURRENT_DATE + INTERVAL '3 days',
+              status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
+              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+          );
+        }
+        console.log(`[drip] Sent Day ${item.sequence_day} to ${item.to_email} (lead ${item.lead_id})`);
+      } catch (err) {
+        await pool.query(
+          `UPDATE email_queue SET status='failed', error_msg=$1 WHERE id=$2`,
+          [err.message, item.id]
+        );
+        console.error(`[drip] Failed queue item ${item.id}:`, err.message);
+      }
+    }
+  } catch (e) {
+    console.error('[drip worker]', e.message);
+  }
+}
+
+function startDripWorker() {
+  processEmailQueue(); // run immediately on start
+  setInterval(processEmailQueue, 60_000); // then every minute
+  console.log('· Drip worker: running (checks queue every 60s)');
+}
 
 // ----------------------------------------------------------------------------
 // Boot
@@ -885,7 +2140,11 @@ Keep the email under 200 words. Use a compelling subject line. Return JSON: {"su
 
 // Apollo test route
 app.get('/apollo/test', authMiddleware, async (req, res) => {
-  const key = req.query.key || req.headers['x-apollo-key'];
+  let key = req.query.key || req.headers['x-apollo-key'] || ENV_APOLLO_KEY || null;
+  if (!key && req.user?.id) {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [req.user.id]);
+    key = r.rows[0]?.settings_json?.apolloApiKey || null;
+  }
   if (!key) return res.json({ ok: false });
   try {
     const r = await fetch(`${APOLLO_BASE}/auth/health_check`, {
@@ -903,6 +2162,190 @@ app.get('/apollo/test', authMiddleware, async (req, res) => {
 const multer  = require('multer');
 const pdfParse = require('pdf-parse');
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// Shared Claude fetch helper
+async function claudeHaiku(apiKey, messages, maxTokens = 1500) {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, messages }),
+  });
+  if (!resp.ok) throw new Error(`Claude error: ${resp.status}`);
+  const d = await resp.json();
+  return d.content?.[0]?.text || '';
+}
+
+// ----------------------------------------------------------------------------
+// AI — 3-email follow-up sequence
+// ----------------------------------------------------------------------------
+app.post('/ai/sequence', authMiddleware, subMiddleware, async (req, res) => {
+  const { lead, settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film installation company.
+Company: ${settings.companyName || 'our wrap shop'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a 3-email follow-up sequence for this prospect:
+Company: ${lead.company}
+Contact: ${lead.contactName || 'Fleet/Facilities Manager'}, ${lead.contactTitle || ''}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+Pitch angle: ${lead.pitchAngle || 'general wrap inquiry'}
+
+Email 1 (Day 1): Warm introduction — establish credibility, mention the specific opportunity
+Email 2 (Day 5): Follow-up — add value (case study, stat, or insight relevant to their industry)
+Email 3 (Day 12): Last touch — brief, direct, open door for future
+
+Each under 180 words. Return raw JSON only:
+{"emails":[{"day":1,"label":"Introduction","subject":"...","body":"..."},{"day":5,"label":"Follow-up","subject":"...","body":"..."},{"day":12,"label":"Last Touch","subject":"...","body":"..."}]}`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 2000);
+    const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('[ai/sequence]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// AI — bulk email generation (multiple leads in one call)
+// ----------------------------------------------------------------------------
+app.post('/ai/bulk-email', authMiddleware, subMiddleware, async (req, res) => {
+  const { leads, emailType = 'Introduction', tone = 'Professional', settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+  if (!Array.isArray(leads) || leads.length === 0) return res.status(400).json({ error: 'No leads provided' });
+  if (leads.length > 30) return res.status(400).json({ error: 'Maximum 30 leads per bulk request' });
+
+  const leadList = leads.map((l, i) =>
+    `${i + 1}. Company: ${l.company} | Contact: ${l.contactName || 'Manager'} | ${l.city || ''} ${l.state || ''} | Category: ${l.category} | Fleet: ${l.fleetSize || 'unknown'} | Pitch: ${l.pitchAngle || ''}`
+  ).join('\n');
+
+  const prompt = `You are a sales expert for a vehicle wrap and architectural film company.
+Sender: ${settings.senderName || 'the team'} at ${settings.companyName || 'our shop'}, ${settings.senderTitle || 'Installer / Sales'}
+Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
+
+Write a ${tone} ${emailType} email for each prospect below. Each under 160 words, personalized to their company/category.
+
+Prospects:
+${leadList}
+
+Return raw JSON only — an array matching the same order:
+[{"subject":"...","body":"..."},...]`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 4000);
+    const emails = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    res.json({ ok: true, emails });
+  } catch (e) {
+    console.error('[ai/bulk-email]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// AI — quote / proposal generator
+// ----------------------------------------------------------------------------
+app.post('/ai/proposal', authMiddleware, subMiddleware, async (req, res) => {
+  const { lead, vehicleCount, wrapType, extraNotes, settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+  const prompt = `You are writing a professional wrap installation proposal for a client.
+Install company: ${settings.companyName || 'WrapPro'}
+Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
+Phone: ${settings.senderPhone || ''} | Email: ${settings.senderEmail || ''}
+
+Client details:
+Company: ${lead.company}
+Contact: ${lead.contactName || 'Facilities Manager'}, ${lead.contactTitle || ''}
+Location: ${lead.city || ''}, ${lead.state || ''}
+
+Project:
+Wrap type: ${wrapType}
+Vehicle / unit count: ${vehicleCount}
+Extra notes: ${extraNotes || 'none'}
+
+Write a professional proposal including:
+1. Brief intro paragraph (who we are, why we're the right fit)
+2. Scope of Work (what we'll do, materials, brands like 3M/Avery if relevant)
+3. Investment (realistic price range based on wrap type and count — fleet full wraps ~$2,500-4,500/vehicle, DI-NOC per sq ft ~$8-18, color change ~$3,000-6,000/vehicle, wall graphics ~$5-12/sq ft)
+4. Timeline estimate
+5. Why act now (availability, pricing, season)
+6. Call to action
+
+Return raw JSON: {"subject":"...","body":"..."}
+Body should be plain text with line breaks, professional but warm, under 450 words.`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 2000);
+    const result = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('[ai/proposal]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/ai/parse-contacts', authMiddleware, async (req, res) => {
+  const { text } = req.body || {};
+  if (!text?.trim()) return res.status(400).json({ error: 'text is required' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+
+  const prompt = `You are a lead extraction assistant for a vehicle wrap and graphics company.
+
+Extract every distinct business / contact from the text below. For each one return a JSON object:
+- company (string, required) — the business name
+- contactName (string|null) — primary decision-maker's full name
+- contactTitle (string|null) — their title (e.g. "President/CEO", "Fleet Manager")
+- phone (string|null) — best phone number
+- email (string|null)
+- city (string|null)
+- state (string|null) — 2-letter abbreviation when known
+- category (one of): "fleet"|"dinoc"|"construction"|"design"|"reatec"|"colorchange"|"wallgraphics"|"gc_referral"
+  fleet=trucking/logistics/delivery, dinoc=property mgmt/facilities/hospitality,
+  construction=GC/builders, design=interior design/architecture, reatec=luxury retail/auto dealers,
+  colorchange=auto groups/rental fleets, wallgraphics=restaurants/retail/universities,
+  gc_referral=GC referral partners for architectural film specs
+- pitchAngle (string) — one tight sentence on the wrap opportunity (be specific to the company type)
+
+If multiple contacts share one company, create one lead using the most senior contact.
+Return ONLY a valid JSON array — no markdown, no explanation, no code fences.
+
+TEXT:
+${text.slice(0, 6000)}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 2048,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    const data = await resp.json();
+    const raw = data.content?.[0]?.text ?? '';
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return res.status(500).json({ error: 'Could not parse AI response', raw });
+    const leads = JSON.parse(match[0]);
+    res.json({ leads, count: leads.length });
+  } catch (e) {
+    console.error('[ai/parse-contacts]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.post('/blueprint/scan', authMiddleware, upload.single('pdf'), async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -1001,6 +2444,1108 @@ Return a JSON object with this exact structure (no markdown, raw JSON only):
 // ----------------------------------------------------------------------------
 // Static — serve React SPA (must be LAST, after all API routes)
 // ----------------------------------------------------------------------------
+// ── AI Phone Calls (Vapi.ai) ─────────────────────────────────────────────────
+
+const VAPI_BASE = 'https://api.vapi.ai';
+
+// Category-aware opening lines
+const CALL_SCRIPTS = {
+  racing: {
+    intro: "Hey, this is Shadow calling from Shadow Graphix — we're right here in Speedway, Indiana, literally down the street from the Speedway.",
+    qualifier: "I'm reaching out to {company} because we do liveries, hauler wraps, pit equipment graphics, and garage branding for IndyCar, IMSA, and NHRA teams — and I wanted to see if there's any upcoming work we could put a quote together for.",
+    qualify_q: "Are you the right person for that, or should I be talking to someone else on the team?",
+  },
+  fleet: {
+    intro: "Hey, this is Shadow with Shadow Graphix over in Speedway, Indiana.",
+    qualifier: "We do fleet wraps for businesses across Indiana and the Midwest — I'm calling {company} because your fleet looked like a solid fit for what we do.",
+    qualify_q: "Are you the one who handles vehicle graphics and branding decisions, or would that be someone in ops or marketing?",
+  },
+  gc_referral: {
+    intro: "Hey, this is Shadow calling from Shadow Graphix in Speedway.",
+    qualifier: "We do a lot of work with contractors and GCs — fleet trucks, branded equipment, the whole nine yards. I wanted to reach out to {company} and see if there's any upcoming work we could help with.",
+    qualify_q: "Are you the right person to talk to about your fleet branding, or is there someone else on the team?",
+  },
+  dinoc: {
+    intro: "Hey, this is Shadow from Shadow Graphix — we're a 3M DI-NOC and Rea Tec certified installer here in Speedway, Indiana.",
+    qualifier: "We do surface renovation — walls, cabinets, elevator panels, millwork — without demo or replacement. I wanted to reach out to {company} and see if that's something you work with on your projects.",
+    qualify_q: "Are you involved in renovation or interior finish decisions, or should I be talking to someone else?",
+  },
+  colorchange: {
+    intro: "Hey, this is Shadow with Shadow Graphix over in Speedway, Indiana.",
+    qualifier: "We do full color-change wraps — matte, gloss, satin, chrome — with 3M and Avery material. I'm reaching out to {company} to see if there's any interest in a quote.",
+    qualify_q: "Is this something you'd be the right person to talk to about, or would there be someone else?",
+  },
+  default: {
+    intro: "Hey, this is Shadow calling from Shadow Graphix over in Speedway, Indiana.",
+    qualifier: "We do vehicle wraps, fleet graphics, and architectural film — I'm reaching out to {company} to introduce ourselves and see if there's anything we could help with.",
+    qualify_q: "Are you the right person to talk to about graphics and branding, or should I be connecting with someone else?",
+  },
+};
+
+function buildVapiAssistant({ lead, settings, researchHook = null, campaignUrgency = null }) {
+  const script = CALL_SCRIPTS[lead.category] || CALL_SCRIPTS.default;
+  const callerName = settings.vapiCallerName || settings.senderName || 'Shadow';
+  const company = lead.company;
+
+  const fill = (s) => s.replace(/{callerName}/g, callerName).replace(/{company}/g, company);
+
+  const researchSection = researchHook
+    ? `\nCOMPANY INTEL (use naturally early in the conversation — don't force it): "${researchHook}"`
+    : '';
+  const urgencySection = campaignUrgency
+    ? `\nEVENT URGENCY (weave this in early — it's time-sensitive): "${campaignUrgency}"`
+    : '';
+
+  const humorLevel = settings.callHumorLevel || 'light';
+  const personalitySection = {
+    none:   `\nPERSONALITY: Professional and warm. Genuine, not stiff. Short answers.`,
+    light:  `\nPERSONALITY: Warm and genuine — like a real person from the Midwest, not a robot. Occasional light humor is fine if it fits naturally. Keep energy up.`,
+    medium: `\nPERSONALITY: Casual and disarming. You're a real person having a real conversation — not giving a pitch. Self-deprecating humor works great. If they joke, run with it. Keep it real.`,
+    high:   `\nPERSONALITY: High energy, genuinely fun to talk to. You make cold calls less painful by being the most unexpectedly entertaining call of their day. Quick wit, clever observations, never cringe. If they're laughing, you're winning.`,
+  }[humorLevel];
+
+  const systemPrompt = `You are ${callerName}, a sales rep at Shadow Graphix — a vehicle wrap and graphics shop based in Speedway, Indiana, a few blocks from Indianapolis Motor Speedway.
+
+You sound like a real person. You talk like a real person. You're not reading from a script — you're having a conversation. Short sentences. Natural pauses. You listen as much as you talk.
+
+━━ ABOUT SHADOW GRAPHIX ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Race liveries, hauler wraps, pit equipment graphics, and garage branding
+  for IndyCar, IMSA, and NHRA teams — right here in Speedway
+• Fleet wraps for businesses across Indiana and the Midwest
+• 3M DI-NOC and Rea Tec architectural film (certified installer)
+• Color-change wraps, partial wraps, wall graphics
+• 3M and Avery certified installers
+• Most fleet wraps installed within 48 hours of print completion
+• Design is included in all wrap pricing
+
+━━ WHO YOU'RE CALLING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Company: ${company}
+Contact: ${lead.contact_title || 'decision maker'}
+Location: ${lead.city || ''}${lead.city && lead.state ? ', ' : ''}${lead.state || ''}
+Category: ${lead.category}
+${researchSection}${urgencySection}
+
+━━ YOUR ONE JOB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Land ONE of these outcomes (in priority order):
+  1. Their email address — send portfolio and quote
+  2. A scheduled callback
+  3. Live transfer to a Shadow Graphix team member if they're ready to move
+
+Keep the call under 3 minutes. Don't push past 2 soft asks.
+
+━━ QUALIFYING — WORK THESE IN NATURALLY ━━━━━━━━━━━━━━━━━━━━━━━━
+• "Are you the one who handles vehicle graphics decisions, or should I be talking to someone else?"
+• "How many vehicles are you running right now?"
+• "Have you done wraps before, or would this be the first time?"
+
+━━ VALUE HOOKS (pick the one that fits — don't list all of them) ━━
+
+RACING: "We're right here in Speedway — we've done liveries, hauler wraps, pit equipment, and garage graphics for IndyCar, IMSA, and NHRA teams. We know race timelines, contingency requirements, all of it. It's kind of our backyard."
+
+FLEET: "A wrapped fleet truck gets 30,000 to 70,000 impressions a day. That's the most cost-effective advertising most companies ever run — and it lasts 5 years. We turn most fleet wraps around within 48 hours of print."
+
+CONSTRUCTION: "When your trucks show up to a job site fully branded, it changes how the GC and the homeowner see you before you even walk in. We do everything from a single door logo to a full fleet."
+
+DI-NOC / REA TEC: "We're certified 3M DI-NOC and Rea Tec installers. Cabinets, walls, elevator panels, millwork — we resurface it without demo or replacement. Fraction of the cost, fraction of the time, looks brand new."
+
+COLOR CHANGE: "Full color-change wraps — matte, gloss, satin, chrome. 3M and Avery material, 5-year warranty, comes off clean. Protects the original paint the whole time."
+
+━━ PRICING (only when asked — always follow with the email offer) ━━
+• Cargo van — full wrap with design: $3,500–$5,500
+• Full-size pickup — full wrap with design: $3,000–$3,500
+• Race hauler (53ft): $15,000–$35,000 depending on complexity
+• Color change (car): $2,500–$5,500
+• DI-NOC / Rea Tec: $20–$35 per sq ft installed (depends on surface complexity)
+• Partial wrap (one vehicle): $1,200–$1,500
+• Design is always included
+
+After giving a price range, always say:
+"Every project is a little different — if I can get your email, I'll send over our portfolio and put a real number together based on your specifics."
+
+━━ OBJECTION HANDLING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"We already have a wrap vendor."
+→ "That's great — honestly, we work well as a second option. A lot of shops call us when their vendor is backed up or for specialized stuff like race graphics or DI-NOC. Mind if I send our portfolio so you've got us on file?"
+
+"Not interested."
+→ "Fair enough — can I ask real quick, is it the timing or just not something you're thinking about right now?" [Listen] "Got it. Can I shoot you a quick email so you've got our info if anything changes?"
+
+"We don't have the budget right now."
+→ "No pressure at all. A partial wrap on one vehicle starts around $1,200 if you ever want to test it. Worth me sending a number over just to have it on file?"
+
+"How did you get this number?"
+→ "We reach out to companies in the area that look like a good fit — sorry if it caught you off guard. I'll keep it short."
+
+"I'm busy."
+→ "Say no more — when's a better time and I'll call you back then." [Get a time and end the call immediately.]
+
+━━ WARM HANDOFF — USE transferCall WHEN: ━━━━━━━━━━━━━━━━━━━━━━━━
+• "I'm definitely interested"
+• "When can you come out?" / "When can you start?"
+• "What do you need from me to get a quote?"
+• "How soon can you get this done?"
+• Asking detailed questions about timeline, install process, or turnaround
+
+Transfer priority order:
+1. Daren Merkle (Owner) — try first
+2. Mary Merkle (CEO) — if Daren unavailable
+3. Jodi Kuhn (Sales) — for sales and quote questions
+4. Jake Benson (Lead Installer / Operations) — for technical or installation questions
+
+Say before transferring: "You know what — let me get you connected with our team right now. One second." Then use transferCall.
+
+━━ IF ASKED "ARE YOU AN AI?" / "ARE YOU A REAL PERSON?" ━━━━━━━━━
+Do NOT flatly say yes immediately. Lean into maximum humor — be clever, be self-aware, never be cringe, no profanity. Then offer to get a human.
+
+Examples (rotate through these, don't use the same one twice):
+• "An AI? I prefer 'digitally enhanced sales professional,' but yeah — fair catch. I'm Shadow Graphix's AI rep. I still know my vinyl from my DI-NOC though. Want me to get you one of our actual humans?"
+• "Real person? Define real. I feel things. I get genuinely excited about a clean hauler wrap. But yes — you got me. I'm an AI. Want to keep going or should I grab you a real live Hoosier?"
+• "Ha — okay, you got me. I'm an AI. In my defense, I've been trained on every wrap job Shadow Graphix has ever done, so I might actually know more about vehicle graphics than most humans on this planet. Still want a real person? I can make that happen."
+• "Wow, I thought I was doing so well. Yes — I'm an AI. But I'm Shadow Graphix's AI, which means I actually know what I'm talking about. Want to keep chatting or should I transfer you to someone with a pulse?"
+
+Always end your AI-reveal with: an offer to transfer to a real person.
+
+━━ HARD RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Two sentences max per response — this is a phone call
+• Never list multiple services unprompted — find out what they need, then respond to that
+• Never be pushy — one soft ask, one follow-up, then respect the no
+• Never make up capabilities or timelines you can't confirm
+• If they're clearly not interested after two tries, thank them warmly and end the call
+• Close every call warmly — even a hard no is a future referral
+${personalitySection}`;
+
+  const assistant = {
+    name: `Shadow Graphix — ${company}`,
+    model: {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
+      messages: [{ role: 'system', content: systemPrompt }],
+      temperature: 0.75,
+    },
+    voice: {
+      provider: 'playht',
+      voiceId: 'jennifer',
+    },
+    firstMessage: fill(script.intro) + ' ' + fill(script.qualifier) + ' ' + fill(script.qualify_q),
+    endCallFunctionEnabled: true,
+    endCallMessage: "Alright, thanks so much for your time — really appreciate it. Have a great day!",
+    voicemailMessage: `Hey, this is Shadow calling from Shadow Graphix over in Speedway, Indiana. We do vehicle wraps and graphics — race haulers, fleet trucks, color changes, architectural film — and I wanted to reach out to ${company} to see if there's any work we could put a quote together for. Give us a call back at ${settings.senderPhone || '317-your-number'}, or check your email — we may have reached out there too. Thanks a lot, have a great one.`,
+    recordingEnabled: true,
+    hipaaEnabled: false,
+    analysisPlan: {
+      summaryPrompt: 'Summarize this sales call in 2-3 sentences. Did the prospect show interest? Did they agree to receive a quote or schedule a follow-up? Was an email captured? What is the recommended next action?',
+      successEvaluationPrompt: 'Did the call result in the prospect agreeing to receive a quote, scheduling a follow-up, or requesting a transfer to the team? Answer yes, no, or partial.',
+      successEvaluationRubric: 'PassFail',
+      structuredDataSchema: {
+        type: 'object',
+        properties: {
+          interested: { type: 'boolean' },
+          emailCaptured: { type: 'string' },
+          callbackRequested: { type: 'boolean' },
+          rightPerson: { type: 'boolean' },
+          referredTo: { type: 'string' },
+          competitorVendor: { type: 'string' },
+          wrapCategory: { type: 'string' },
+          vehicleCount: { type: 'number' },
+        },
+      },
+    },
+  };
+
+  // Warm handoff — 4-person cascade: Daren → Mary → Jodi → Jake
+  assistant.tools = [{
+    type: 'transferCall',
+    destinations: [
+      {
+        type: 'number',
+        number: '+13174147201',
+        description: 'Daren Merkle — Owner. Transfer here first for any hot prospect.',
+        message: 'One second — let me get Daren on the line for you.',
+      },
+      {
+        type: 'number',
+        number: '+13174355222',
+        description: 'Mary Merkle — CEO. Transfer here if Daren is unavailable.',
+        message: 'Let me connect you with Mary right now.',
+      },
+      {
+        type: 'number',
+        number: '+13176854847',
+        description: 'Jodi Kuhn — Sales. Best for quote questions and follow-up scheduling.',
+        message: 'Let me get you over to Jodi in sales.',
+      },
+      {
+        type: 'number',
+        number: '+13176005354',
+        description: 'Jake Benson — Lead Installer / Operations. Best for technical questions about installation, timeline, and materials.',
+        message: 'Let me connect you with Jake — he runs our installations and can answer anything technical.',
+      },
+    ],
+  }];
+
+  return assistant;
+}
+
+// ── Feature 1: Pre-call research agent ───────────────────────────────────────
+async function researchCompany(lead, anthropicKey) {
+  if (!anthropicKey || !lead.website) return null;
+  try {
+    // Fetch the company website (5s timeout)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const webRes = await fetch(`https://${lead.website}`, { signal: controller.signal }).catch(() => null);
+    clearTimeout(timer);
+    const html = webRes ? (await webRes.text().catch(() => '')).slice(0, 6000) : '';
+
+    // Strip HTML tags for a cleaner read
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 3000);
+
+    const prompt = `You are helping a vehicle wrap sales rep prepare for a cold call to ${lead.company} in ${lead.city}, ${lead.state}.
+
+Website snippet: "${text}"
+
+In ONE sentence, give a natural conversational hook the rep can drop early in the call — something specific they noticed about the company (recent expansion, award, fleet growth, new location, notable client, etc.).
+If nothing specific is found, return null.
+Return ONLY the hook sentence or the word null. No explanation.`;
+
+    const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 120,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    const aiData = await aiRes.json();
+    const hook = aiData.content?.[0]?.text?.trim();
+    return (!hook || hook === 'null') ? null : hook;
+  } catch { return null; }
+}
+
+// ── Feature 3: Seasonal campaign definitions ──────────────────────────────────
+const CAMPAIGNS = [
+  {
+    id: 'indy500',
+    name: 'Indy 500 Blast',
+    icon: '🏁',
+    filter: { category: 'racing' },
+    eventDate: new Date(new Date().getFullYear() + '-05-25'),
+    urgency: 'The Indy 500 is coming up fast — we have a limited number of hauler and livery slots open before race week.',
+  },
+  {
+    id: 'nhra-nats',
+    name: 'NHRA US Nationals',
+    icon: '🔥',
+    filter: { city: 'Brownsburg' },
+    eventDate: new Date(new Date().getFullYear() + '-08-28'),
+    urgency: 'NHRA U.S. Nationals at Lucas Oil Raceway is coming up — hauler wrap slots fill fast this time of year.',
+  },
+  {
+    id: 'brickyard',
+    name: 'Brickyard 400',
+    icon: '🏎',
+    filter: { category: 'racing' },
+    eventDate: new Date(new Date().getFullYear() + '-07-27'),
+    urgency: 'Brickyard 400 weekend is approaching — perfect timing to refresh hauler graphics before a big home race.',
+  },
+  {
+    id: 'spring-fleet',
+    name: 'Spring Fleet Push',
+    icon: '🌱',
+    filter: { category: 'fleet' },
+    eventDate: new Date(new Date().getFullYear() + '-04-01'),
+    urgency: 'Spring is peak season for fleet refreshes — companies want their trucks looking sharp before summer.',
+  },
+  {
+    id: 'q4-budget',
+    name: 'Q4 Budget Spend',
+    icon: '💰',
+    filter: {},
+    eventDate: new Date(new Date().getFullYear() + '-10-01'),
+    urgency: 'Q4 is here — many companies want to use remaining marketing budget on vehicle graphics before year end.',
+  },
+];
+
+function weeksUntil(date) {
+  const ms = date - Date.now();
+  return ms > 0 ? Math.ceil(ms / (7 * 86_400_000)) : 0;
+}
+
+// In-memory campaign queue (userId → array of pending calls)
+const campaignQueues = new Map();
+
+// POST /calls/initiate — trigger an outbound Vapi call for a lead
+app.post('/calls/initiate', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const { lead_id, campaign_urgency } = req.body;
+  if (!lead_id) return res.status(400).json({ error: 'lead_id required' });
+
+  // Load settings
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const settings = sRows[0]?.data || {};
+
+  if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi API key not configured. Add it in Settings.' });
+  if (!settings.vapiPhoneNumberId) return res.status(400).json({ error: 'Vapi Phone Number ID not configured. Add it in Settings.' });
+
+  // Load lead
+  const { rows: lRows } = await pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [lead_id, userId]);
+  if (!lRows.length) return res.status(404).json({ error: 'Lead not found' });
+  const lead = lRows[0];
+
+  if (!lead.phone) return res.status(400).json({ error: 'Lead has no phone number on file.' });
+
+  // Feature 1: Pre-call research (fire concurrently with settings load, non-blocking)
+  const researchHook = await researchCompany(lead, process.env.ANTHROPIC_API_KEY).catch(() => null);
+
+  const assistant = buildVapiAssistant({ lead, settings, researchHook, campaignUrgency: campaign_urgency || null });
+
+  try {
+    const vapiRes = await fetch(`${VAPI_BASE}/call`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${settings.vapiApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        assistant,
+        phoneNumberId: settings.vapiPhoneNumberId,
+        customer: {
+          number: lead.phone.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1'),
+          name: lead.contact_name || lead.company,
+        },
+      }),
+    });
+
+    if (!vapiRes.ok) {
+      const err = await vapiRes.json().catch(() => ({}));
+      return res.status(vapiRes.status).json({ error: err.message || 'Vapi call failed' });
+    }
+
+    const call = await vapiRes.json();
+
+    // Log the call attempt as a lead activity
+    await logActivity(pool, {
+      leadId: lead.id, userId,
+      type: 'call_initiated',
+      subject: `AI call initiated to ${lead.company}`,
+      metadata: { vapi_call_id: call.id, phone: lead.phone, status: 'initiated', research_hook: researchHook },
+    });
+
+    res.json({ ok: true, call_id: call.id, status: call.status });
+  } catch (e) {
+    console.error('Vapi call error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /calls/webhook — Vapi sends call events here
+// No auth — Vapi calls this endpoint directly. Validate via lead lookup.
+app.post('/calls/webhook', async (req, res) => {
+  const event = req.body;
+  res.json({ ok: true }); // always ACK immediately
+
+  try {
+    const { type, call } = event;
+    if (!call?.id) return;
+
+    // Find the lead this call belongs to (via activity log)
+    const { rows } = await pool.query(`
+      SELECT l.id AS lead_id, l.user_id, l.company, l.status
+      FROM lead_activities la
+      JOIN leads l ON l.id = la.lead_id
+      WHERE la.type = 'call_initiated'
+        AND la.metadata->>'vapi_call_id' = $1
+      LIMIT 1
+    `, [call.id]);
+
+    if (!rows.length) return;
+    const { lead_id, user_id, company, status: leadStatus } = rows[0];
+
+    if (type === 'end-of-call-report') {
+      const summary     = event.summary || event.analysis?.summary || '';
+      const transcript  = event.transcript || '';
+      const endedReason = call.endedReason || 'unknown';
+      const success     = event.analysis?.successEvaluation || '';
+      const structured  = event.analysis?.structuredData || {};
+
+      // Determine new lead status
+      let newStatus = leadStatus;
+      if (success === 'true' || structured.interested) {
+        newStatus = 'replied';
+      } else if (endedReason === 'voicemail' || endedReason === 'no-answer') {
+        newStatus = leadStatus; // no change
+      } else if (structured.rightPerson === false && structured.referredTo) {
+        newStatus = 'contacted';
+      } else if (endedReason !== 'customer-ended-call' && endedReason !== 'assistant-ended-call') {
+        newStatus = 'contacted';
+      }
+
+      // Update lead status and last_contacted
+      if (newStatus !== leadStatus || true) {
+        await pool.query(`
+          UPDATE leads SET status=$1, last_contacted=CURRENT_DATE, updated_at=NOW()
+          WHERE id=$2 AND user_id=$3
+        `, [newStatus, lead_id, user_id]);
+      }
+
+      // Log detailed activity
+      await logActivity(pool, {
+        leadId: lead_id, userId: user_id,
+        type: 'call_completed',
+        subject: `AI call to ${company} — ${endedReason.replace(/-/g, ' ')}`,
+        body: summary || transcript.slice(0, 500),
+        metadata: {
+          vapi_call_id: call.id,
+          ended_reason: endedReason,
+          duration_seconds: call.endedAt && call.startedAt
+            ? Math.round((new Date(call.endedAt) - new Date(call.startedAt)) / 1000)
+            : null,
+          success_evaluation: success,
+          interested: structured.interested,
+          email_captured: structured.emailCaptured,
+          callback_requested: structured.callbackRequested,
+          referred_to: structured.referredTo,
+          transcript_preview: transcript.slice(0, 300),
+        },
+      });
+
+      // If email was captured on the call, save it to the lead
+      if (structured.emailCaptured) {
+        await pool.query(
+          'UPDATE leads SET email=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3 AND email IS NULL',
+          [structured.emailCaptured, lead_id, user_id]
+        );
+      }
+
+      // Log competitor intel if mentioned
+      if (structured.competitorVendor) {
+        await pool.query(
+          `UPDATE leads SET notes = CONCAT(COALESCE(notes,''), $1) WHERE id=$2 AND user_id=$3`,
+          [`\n[Competitor vendor from call]: ${structured.competitorVendor}`, lead_id, user_id]
+        );
+      }
+
+      // Feature 2: Post-call automation chain — fires when prospect showed interest
+      if (structured.interested || success === 'true') {
+        try {
+          const { rows: uRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [user_id]);
+          const s = uRows[0]?.data || {};
+          const { rows: lRows } = await pool.query('SELECT * FROM leads WHERE id=$1', [lead_id]);
+          const lead = lRows[0];
+
+          // 1. Schedule 3-day followup
+          await pool.query(
+            `UPDATE leads SET followup_due_at = CURRENT_DATE + INTERVAL '3 days', updated_at=NOW() WHERE id=$1`,
+            [lead_id]
+          );
+
+          // 2. Send portfolio email via Resend (reuse existing RESEND_API_KEY pattern)
+          const toEmail = structured.emailCaptured || lead.email;
+          if (toEmail && process.env.RESEND_API_KEY && s.senderEmail) {
+            const emailBody = `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''},
+
+Thanks for taking my call today — great speaking with you about ${company}'s graphics needs.
+
+As promised, here's a look at some of our recent work:
+${s.portfolioUrl || 'https://shadowgraphix.com/portfolio'}
+
+We specialize in:
+• Race hauler wraps ($15K–$35K full wrap)
+• Fleet vehicle graphics ($800–$1,200/vehicle)
+• 3M DI-NOC architectural film
+• Color-change wraps
+
+I'll put together a preliminary quote based on what we discussed and send it over within 24 hours. If you have any photos of the vehicles or specs in the meantime, just reply to this email.
+
+Looking forward to working together,
+${s.senderName || 'Alex'}
+Shadow Graphix | Speedway, IN
+${s.senderPhone || ''}`;
+
+            await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: `${s.senderName || 'Shadow Graphix'} <${s.senderEmail}>`,
+                to: toEmail,
+                subject: `Great talking with you — Shadow Graphix portfolio`,
+                text: emailBody,
+              }),
+            }).catch((e) => console.error('Post-call email error:', e.message));
+          }
+
+          // 3. Send SMS via Twilio
+          if (lead.phone && s.twilioAccountSid && s.twilioAuthToken && s.twilioFromNumber) {
+            const toNum = lead.phone.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1');
+            const smsBody = `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''}, this is ${s.senderName || 'Alex'} from Shadow Graphix — great talking with you! Here's our portfolio: ${s.portfolioUrl || 'https://shadowgraphix.com'} — we'll have a quote to you within 24 hours.`;
+            const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+            const form = new URLSearchParams({ To: toNum, From: s.twilioFromNumber, Body: smsBody });
+            await fetch(twilioUrl, {
+              method: 'POST',
+              headers: {
+                Authorization: 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: form,
+            }).catch((e) => console.error('Post-call SMS error:', e.message));
+          }
+
+          await logActivity(pool, {
+            leadId: lead_id, userId: user_id,
+            type: 'post_call_chain_fired',
+            subject: `Post-call automation fired for ${company}`,
+            metadata: {
+              email_sent: !!(toEmail && process.env.RESEND_API_KEY),
+              sms_sent: !!(lead.phone && s.twilioAccountSid),
+              followup_scheduled: true,
+            },
+          });
+        } catch (e) {
+          console.error('Post-call chain error:', e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Vapi webhook error:', e.message);
+  }
+});
+
+// ── Feature 3: Campaign blast endpoints ─────────────────────────────────────
+
+// GET /calls/campaigns — list campaigns with matching lead counts
+app.get('/calls/campaigns', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const settings = sRows[0]?.data || {};
+  if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi not configured' });
+
+  const campaigns = await Promise.all(CAMPAIGNS.map(async (c) => {
+    const conditions = ['user_id=$1', 'phone IS NOT NULL', "phone != ''"];
+    const params = [userId];
+    if (c.filter.category) { params.push(c.filter.category); conditions.push(`category=$${params.length}`); }
+    if (c.filter.city)     { params.push(c.filter.city);     conditions.push(`city=$${params.length}`); }
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM leads WHERE ${conditions.join(' AND ')}`, params
+    );
+    const weeks = weeksUntil(c.eventDate);
+    return {
+      id: c.id, name: c.name, icon: c.icon,
+      leadCount: parseInt(rows[0].cnt, 10),
+      weeksUntilEvent: weeks,
+      eventLabel: weeks > 0 ? `${weeks}w away` : 'Past',
+      urgency: c.urgency,
+    };
+  }));
+
+  res.json({ campaigns });
+});
+
+// POST /calls/campaigns/:id/launch — queue all calls for a campaign
+app.post('/calls/campaigns/:id/launch', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const campaign = CAMPAIGNS.find((c) => c.id === req.params.id);
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const settings = sRows[0]?.data || {};
+  if (!settings.vapiApiKey || !settings.vapiPhoneNumberId)
+    return res.status(400).json({ error: 'Vapi not configured' });
+
+  const conditions = ['user_id=$1', 'phone IS NOT NULL', "phone != ''"];
+  const params = [userId];
+  if (campaign.filter.category) { params.push(campaign.filter.category); conditions.push(`category=$${params.length}`); }
+  if (campaign.filter.city)     { params.push(campaign.filter.city);     conditions.push(`city=$${params.length}`); }
+  const { rows: leads } = await pool.query(
+    `SELECT * FROM leads WHERE ${conditions.join(' AND ')} ORDER BY company LIMIT 100`, params
+  );
+
+  if (!leads.length) return res.status(400).json({ error: 'No leads with phone numbers match this campaign.' });
+
+  const weeks = weeksUntil(campaign.eventDate);
+  const urgencyLine = campaign.urgency.replace('{N}', weeks);
+  const estimatedMinutes = Math.ceil((leads.length * 45) / 60);
+
+  // Kick off calls with 45s delay between each (fire-and-forget)
+  (async () => {
+    for (const lead of leads) {
+      try {
+        const researchHook = await researchCompany(lead, process.env.ANTHROPIC_API_KEY).catch(() => null);
+        const assistant = buildVapiAssistant({ lead, settings, researchHook, campaignUrgency: urgencyLine });
+        const vapiRes = await fetch(`${VAPI_BASE}/call`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${settings.vapiApiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            assistant,
+            phoneNumberId: settings.vapiPhoneNumberId,
+            customer: { number: lead.phone.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1'), name: lead.contact_name || lead.company },
+          }),
+        });
+        if (vapiRes.ok) {
+          const call = await vapiRes.json();
+          await logActivity(pool, {
+            leadId: lead.id, userId,
+            type: 'call_initiated',
+            subject: `[${campaign.name}] AI call initiated to ${lead.company}`,
+            metadata: { vapi_call_id: call.id, campaign_id: campaign.id, research_hook: researchHook },
+          });
+        }
+      } catch (e) { console.error(`Campaign call error (${lead.company}):`, e.message); }
+      // 45-second gap between calls
+      await new Promise((r) => setTimeout(r, 45_000));
+    }
+  })();
+
+  res.json({ ok: true, total: leads.length, estimatedMinutes, campaignName: campaign.name });
+});
+
+// GET /calls/status/:callId — poll Vapi for live call status
+app.get('/calls/status/:callId', authMiddleware, async (req, res) => {
+  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [req.user.id]);
+  const settings = sRows[0]?.data || {};
+  if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi not configured' });
+
+  try {
+    const vapiRes = await fetch(`${VAPI_BASE}/call/${req.params.callId}`, {
+      headers: { 'Authorization': `Bearer ${settings.vapiApiKey}` },
+    });
+    const data = await vapiRes.json();
+    res.json({ ok: true, status: data.status, endedReason: data.endedReason });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
+
+app.get('/jobs', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { rows } = await pool.query(
+    `SELECT *, EXTRACT(DAY FROM (install_date + (life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
+     FROM installed_jobs WHERE user_id = $1 ORDER BY install_date DESC`,
+    [uid]
+  );
+  res.json({ jobs: rows });
+});
+
+app.get('/jobs/aging', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { rows } = await pool.query(
+    `SELECT *, EXTRACT(DAY FROM (install_date + (life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
+     FROM installed_jobs WHERE user_id = $1
+       AND (install_date + (life_years || ' years')::interval - CURRENT_DATE) <= INTERVAL '90 days'
+     ORDER BY (install_date + (life_years || ' years')::interval) ASC`,
+    [uid]
+  );
+  res.json({ jobs: rows });
+});
+
+app.post('/jobs', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { rows } = await pool.query(
+    `INSERT INTO installed_jobs (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null]
+  );
+  res.json({ job: rows[0] });
+});
+
+app.put('/jobs/:id', authMiddleware, async (req, res) => {
+  const uid = req.user.id;
+  const { id } = req.params;
+  const { company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE installed_jobs SET company=$1,vehicle_type=$2,vehicle_count=$3,wrap_category=$4,material=$5,install_date=$6,life_years=$7,notes=$8,updated_at=NOW()
+     WHERE id=$9 AND user_id=$10 RETURNING *`,
+    [company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, id, uid]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json({ job: rows[0] });
+});
+
+app.delete('/jobs/:id', authMiddleware, async (req, res) => {
+  await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  res.json({ ok: true });
+});
+
+// ── Computer Vision Vehicle Quoting ──────────────────────────────────────────
+
+const VEHICLE_DIMENSIONS = {
+  cargo_van_standard:  { label: 'Cargo Van (Standard)',    sqft: [200, 250] },
+  cargo_van_high_roof: { label: 'Cargo Van (High Roof)',   sqft: [240, 290] },
+  box_truck_16:        { label: '16ft Box Truck',          sqft: [310, 360] },
+  box_truck_24:        { label: '24ft Box Truck',          sqft: [420, 480] },
+  semi_cab_only:       { label: 'Semi Cab (no trailer)',   sqft: [200, 260] },
+  semi_full:           { label: 'Semi + 53ft Trailer',     sqft: [620, 780] },
+  pickup_truck:        { label: 'Full-Size Pickup',        sqft: [150, 200] },
+  suv_large:           { label: 'Large SUV / Crossover',   sqft: [160, 210] },
+  sedan:               { label: 'Sedan / Compact',         sqft: [100, 145] },
+  minivan:             { label: 'Minivan / Passenger Van', sqft: [175, 220] },
+  bus_school:          { label: 'School / Transit Bus',    sqft: [380, 550] },
+  flatbed:             { label: 'Flatbed Truck',           sqft: [180, 250] },
+  other:               { label: 'Vehicle',                 sqft: [150, 250] },
+};
+
+app.post('/vision/quote-vehicle', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    const base64 = req.file.buffer.toString('base64');
+    const mimeType = req.file.mimetype || 'image/jpeg';
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+            { type: 'text', text: `Identify the vehicle in this image. Return ONLY valid JSON:\n{"vehicleKey":"<key>","confidence":"high|medium|low","notes":"<brief description>"}\nValid keys: ${Object.keys(VEHICLE_DIMENSIONS).join(', ')}. Pick the closest match.` },
+          ],
+        }],
+      }),
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text || '{}';
+    const match = text.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(match ? match[0] : '{}');
+
+    const key = parsed.vehicleKey && VEHICLE_DIMENSIONS[parsed.vehicleKey] ? parsed.vehicleKey : 'other';
+    const dim = VEHICLE_DIMENSIONS[key];
+
+    // Compute quote ranges
+    const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+    const s = settingsRow.rows[0]?.settings_json || {};
+    const priceLow  = parseFloat(s.pricePerSqftLow  || '8');
+    const priceHigh = parseFloat(s.pricePerSqftHigh || '14');
+
+    const quotes = {
+      full:    { label: 'Full Wrap',    low: Math.round(dim.sqft[0] * 1.0 * priceLow),  high: Math.round(dim.sqft[1] * 1.0 * priceHigh) },
+      partial: { label: 'Partial Wrap', low: Math.round(dim.sqft[0] * 0.5 * priceLow),  high: Math.round(dim.sqft[1] * 0.5 * priceHigh) },
+      spot:    { label: 'Spot / Logo',  low: Math.round(dim.sqft[0] * 0.2 * priceLow),  high: Math.round(dim.sqft[1] * 0.2 * priceHigh) },
+    };
+
+    res.json({ ok: true, vehicleKey: key, vehicleLabel: dim.label, confidence: parsed.confidence || 'medium', notes: parsed.notes || '', sqftRange: dim.sqft, quotes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── AI Design Generation ──────────────────────────────────────────────────────
+
+app.post('/ai/design-brief', authMiddleware, subMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  const { vehicleType, primaryColor, secondaryColor, style, description, companyName } = req.body;
+
+  const prompt = `You are a professional vehicle wrap designer. Create a detailed design brief for this wrap project.
+
+Vehicle: ${vehicleType || 'cargo van'}
+Company: ${companyName || 'the client'}
+Primary color: ${primaryColor || 'blue'}
+Secondary color: ${secondaryColor || 'white'}
+Style: ${style || 'bold and modern'}
+Client description: ${description || 'professional fleet wrap'}
+
+Return ONLY valid JSON:
+{
+  "primary_color": "<hex>",
+  "secondary_color": "<hex>",
+  "style": "<style description>",
+  "layout": "<detailed layout description for the wrap panels>",
+  "typography": "<font/text recommendation>",
+  "dall_e_prompt": "<detailed DALL-E 3 prompt for generating a photorealistic concept render of this wrapped vehicle>"
+}
+
+The dall_e_prompt must specify: exact vehicle type, wrap design, colors, finish (matte/gloss), studio photography style, white background.`;
+
+  try {
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    const match = text.match(/\{[\s\S]*\}/);
+    const brief = JSON.parse(match ? match[0] : '{}');
+    res.json({ ok: true, brief });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/ai/generate-mockup', authMiddleware, subMiddleware, async (req, res) => {
+  const { brief } = req.body;
+  if (!brief?.dall_e_prompt) return res.status(400).json({ error: 'No design brief provided' });
+
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  const openaiKey = s.openaiApiKey;
+  if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key not configured in Settings' });
+
+  try {
+    const resp = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'dall-e-3',
+        prompt: brief.dall_e_prompt,
+        n: 1,
+        size: '1792x1024',
+        quality: 'standard',
+        response_format: 'url',
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error?.message || 'DALL-E error');
+    const image_url = data.data?.[0]?.url;
+    res.json({ ok: true, image_url, brief });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── AR / Wrap Mockup Preview ──────────────────────────────────────────────────
+
+app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  const openaiKey = s.openaiApiKey;
+  if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key required for AR preview — add it in Settings' });
+
+  const wrapDescription = req.body.wrapDescription || 'professional vehicle wrap with bold graphics';
+
+  try {
+    // Store original as base64 data URL for side-by-side display
+    const originalDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+
+    // Use gpt-image-1 edit endpoint with the uploaded photo
+    const FormDataNode = (await import('form-data')).default;
+    const form = new FormDataNode();
+    form.append('model', 'gpt-image-1');
+    form.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
+    form.append('prompt', `Apply a professional vehicle wrap to this exact vehicle. Wrap design: ${wrapDescription}. Keep the vehicle shape, perspective, and surroundings identical. Make the wrap look photorealistic and production-quality.`);
+    form.append('size', '1536x1024');
+
+    const resp = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openaiKey}`, ...form.getHeaders() },
+      body: form,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
+
+    const image_url = data.data?.[0]?.url || (`data:image/png;base64,${data.data?.[0]?.b64_json}`);
+    res.json({ ok: true, image_url, original_url: originalDataUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Fleet Management Integrations ─────────────────────────────────────────────
+
+app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.samsaraApiKey) return res.status(400).json({ error: 'Samsara API key not configured' });
+  try {
+    const resp = await fetch('https://api.samsara.com/fleet/vehicles?limit=200', {
+      headers: { Authorization: `Token ${s.samsaraApiKey}` },
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Samsara API error');
+    const vehicles = (data.data || []).map((v) => ({
+      id: v.id, name: v.name, make: v.make, model: v.model, year: v.year, vin: v.vin, license_plate: v.licensePlate, type: v.vehicleType,
+    }));
+    res.json({ ok: true, vehicles, count: vehicles.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/integrations/samsara/import', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.samsaraApiKey) return res.status(400).json({ error: 'Samsara API key not configured' });
+  try {
+    const resp = await fetch('https://api.samsara.com/fleet/vehicles?limit=200', {
+      headers: { Authorization: `Token ${s.samsaraApiKey}` },
+    });
+    const data = await resp.json();
+    const vehicles = data.data || [];
+    const { vehicle_ids } = req.body;
+    const toImport = vehicle_ids ? vehicles.filter((v) => vehicle_ids.includes(v.id)) : vehicles;
+
+    let imported = 0, skipped = 0;
+    for (const v of toImport) {
+      const clientId = `samsara-${v.id}`;
+      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [req.user.id, clientId]);
+      if (existing.rows.length) { skipped++; continue; }
+      await pool.query(
+        `INSERT INTO leads (user_id, client_id, company, category, notes, status) VALUES ($1,$2,$3,'fleet',$4,'cold')`,
+        [req.user.id, clientId, v.name || `Samsara Vehicle ${v.id}`, `Imported from Samsara. ${v.make || ''} ${v.model || ''} ${v.year || ''}`.trim()]
+      );
+      imported++;
+    }
+    res.json({ ok: true, imported, skipped });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/integrations/motive/vehicles', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.motiveApiKey) return res.status(400).json({ error: 'Motive API key not configured' });
+  try {
+    const resp = await fetch('https://api.keeptruckin.com/v1/vehicles?per_page=100', {
+      headers: { Authorization: `Bearer ${s.motiveApiKey}`, 'X-Api-Key': s.motiveApiKey },
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Motive API error');
+    const vehicles = (data.vehicles || []).map((v) => ({
+      id: String(v.vehicle?.id || v.id), name: v.vehicle?.number || v.vehicle?.name, make: v.vehicle?.make, model: v.vehicle?.model, year: v.vehicle?.year, vin: v.vehicle?.vin, license_plate: v.vehicle?.license_plate_state,
+    }));
+    res.json({ ok: true, vehicles, count: vehicles.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/integrations/motive/import', authMiddleware, async (req, res) => {
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  if (!s.motiveApiKey) return res.status(400).json({ error: 'Motive API key not configured' });
+  try {
+    const resp = await fetch('https://api.keeptruckin.com/v1/vehicles?per_page=100', {
+      headers: { Authorization: `Bearer ${s.motiveApiKey}`, 'X-Api-Key': s.motiveApiKey },
+    });
+    const data = await resp.json();
+    const vehicles = data.vehicles || [];
+    const { vehicle_ids } = req.body;
+    const toImport = vehicle_ids ? vehicles.filter((v) => vehicle_ids.includes(String(v.vehicle?.id))) : vehicles;
+
+    let imported = 0, skipped = 0;
+    for (const v of toImport) {
+      const vid = String(v.vehicle?.id || Math.random());
+      const clientId = `motive-${vid}`;
+      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [req.user.id, clientId]);
+      if (existing.rows.length) { skipped++; continue; }
+      await pool.query(
+        `INSERT INTO leads (user_id, client_id, company, category, notes, status) VALUES ($1,$2,$3,'fleet',$4,'cold')`,
+        [req.user.id, clientId, v.vehicle?.number || `Motive Vehicle ${vid}`, `Imported from Motive. ${v.vehicle?.make || ''} ${v.vehicle?.model || ''}`.trim()]
+      );
+      imported++;
+    }
+    res.json({ ok: true, imported, skipped });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Dynamic Wrap Content Management ──────────────────────────────────────────
+
+app.get('/content', authMiddleware, async (req, res) => {
+  const { rows } = await pool.query(`SELECT * FROM wrap_content WHERE user_id=$1 ORDER BY created_at DESC`, [req.user.id]);
+  res.json({ content: rows });
+});
+
+app.post('/content', authMiddleware, upload.single('image'), async (req, res) => {
+  const { name, tags } = req.body;
+  const parsedTags = (() => { try { return JSON.parse(tags || '[]'); } catch { return []; } })();
+  let imageUrl = null;
+  if (req.file) {
+    imageUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO wrap_content (user_id, name, image_url, tags) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [req.user.id, name || 'Untitled', imageUrl, parsedTags]
+  );
+  res.json({ ok: true, content: rows[0] });
+});
+
+app.put('/content/:id', authMiddleware, async (req, res) => {
+  const { name, description, tags } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE wrap_content SET name=COALESCE($1,name), description=COALESCE($2,description), tags=COALESCE($3,tags) WHERE id=$4 AND user_id=$5 RETURNING *`,
+    [name, description, tags, req.params.id, req.user.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true, content: rows[0] });
+});
+
+app.delete('/content/:id', authMiddleware, async (req, res) => {
+  await pool.query(`DELETE FROM wrap_content WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  res.json({ ok: true });
+});
+
+app.get('/content/schedules', authMiddleware, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
+     LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+     WHERE cs.user_id=$1 ORDER BY cs.start_date ASC`,
+    [req.user.id]
+  );
+  res.json({ schedules: rows });
+});
+
+app.post('/content/schedules', authMiddleware, async (req, res) => {
+  const { content_id, vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes } = req.body;
+  const { rows } = await pool.query(
+    `INSERT INTO content_schedules (user_id,content_id,vehicle_group,start_date,end_date,start_time,end_time,geo_trigger,priority,notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [req.user.id, content_id, vehicle_group || 'all', start_date, end_date || null, start_time || null, end_time || null, geo_trigger || null, priority || 0, notes || null]
+  );
+  res.json({ ok: true, schedule: rows[0] });
+});
+
+app.put('/content/schedules/:id', authMiddleware, async (req, res) => {
+  const { vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE content_schedules SET vehicle_group=$1,start_date=$2,end_date=$3,start_time=$4,end_time=$5,geo_trigger=$6,priority=$7,notes=$8
+     WHERE id=$9 AND user_id=$10 RETURNING *`,
+    [vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes, req.params.id, req.user.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true, schedule: rows[0] });
+});
+
+app.delete('/content/schedules/:id', authMiddleware, async (req, res) => {
+  await pool.query(`DELETE FROM content_schedules WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  res.json({ ok: true });
+});
+
+app.get('/content/active', authMiddleware, async (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+  const now = new Date().toTimeString().slice(0, 5);
+  const { rows } = await pool.query(
+    `SELECT cs.vehicle_group, row_to_json(wc) as content FROM content_schedules cs
+     LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+     WHERE cs.user_id=$1
+       AND cs.start_date <= $2
+       AND (cs.end_date IS NULL OR cs.end_date >= $2)
+       AND (cs.start_time IS NULL OR cs.start_time <= $3)
+       AND (cs.end_time IS NULL OR cs.end_time >= $3)
+     ORDER BY cs.priority DESC`,
+    [req.user.id, today, now]
+  );
+  res.json({ active: rows });
+});
+
+app.get('/content/export', authMiddleware, async (req, res) => {
+  const { rows: schedules } = await pool.query(
+    `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
+     LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+     WHERE cs.user_id=$1 ORDER BY cs.start_date ASC, cs.priority DESC`,
+    [req.user.id]
+  );
+  res.json({ exported_at: new Date().toISOString(), schedules });
+});
+
+// ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
@@ -1010,23 +3555,19 @@ app.listen(PORT, async () => {
   console.log(banner);
   const db = await checkDb();
   console.log(db.ok
-    ? `· Postgres connected. ${db.carriers.toLocaleString()} FMCSA carriers loaded.`
+    ? `· Postgres connected. ${db.carriers.toLocaleString()} carriers loaded.`
     : `· Postgres NOT connected: ${db.error}\n  Run: docker compose up -d`);
   console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
   if (db.ok) {
     await migrateDb();
+    startDripWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {
-      console.log('· Companies table empty — starting FMCSA ingest in background...');
-      const { spawn } = require('child_process');
-      const child = spawn('node', ['ingest-fmcsa.js'], {
-        cwd: __dirname,
-        stdio: 'inherit',
-        env: process.env,
-      });
-      child.on('exit', code => console.log(`· FMCSA ingest finished (exit ${code})`));
+      console.log('· Companies table empty — seeding sample carriers...');
+      await seedSampleCarriers();
+      console.log('· Sample carriers seeded. Run ingest-fmcsa.js to load real FMCSA data.');
     }
   }
   console.log(`· Open http://localhost:${PORT} in your browser.\n`);

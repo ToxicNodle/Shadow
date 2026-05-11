@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule } from './types';
 
 export const api = {
   // Auth
@@ -74,13 +74,35 @@ export const api = {
   createLead: (lead: Partial<Lead>) =>
     authFetch<{ id: number }>('/leads', { method: 'POST', body: JSON.stringify(lead) }),
   updateLead: (serverId: number, patch: Partial<Lead>) =>
-    authFetch<void>(`/leads/${serverId}`, { method: 'PUT', body: JSON.stringify(patch) }),
+    authFetch<Lead>(`/leads/${serverId}`, { method: 'PUT', body: JSON.stringify(patch) }),
   deleteLead: (serverId: number) =>
     authFetch<void>(`/leads/${serverId}`, { method: 'DELETE' }),
   syncLeads: (leads: Partial<Lead>[]) =>
     authFetch<{ inserted: number; failed: number }>('/leads/sync', {
       method: 'POST', body: JSON.stringify({ leads }),
     }),
+
+  // Lead activities
+  getActivities: (serverId: number) =>
+    authFetch<{ activities: import('./types').LeadActivity[] }>(`/leads/${serverId}/activities`),
+  logActivity: (serverId: number, activity: { type: string; subject?: string; body?: string; metadata?: Record<string, unknown> }) =>
+    authFetch<import('./types').LeadActivity>(`/leads/${serverId}/activities`, {
+      method: 'POST', body: JSON.stringify(activity),
+    }),
+  sendEmail: (serverId: number, payload: { subject: string; body: string; toEmail: string; toName?: string }) =>
+    authFetch<{ ok: boolean; resend_id?: string }>(`/leads/${serverId}/send-email`, {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+  getFollowupDue: () =>
+    authFetch<{ leads: Lead[]; count: number }>('/leads/followup-due'),
+  activateSequence: (serverId: number, tone?: string) =>
+    authFetch<{ ok: boolean; queued: number; emails: { day: number; label: string; subject: string; body: string }[] }>(
+      `/leads/${serverId}/activate-sequence`, { method: 'POST', body: JSON.stringify({ tone }) }
+    ),
+  getQueue: (serverId: number) =>
+    authFetch<{ queue: QueuedEmail[] }>(`/leads/${serverId}/queue`),
+  cancelQueueItem: (queueId: number) =>
+    authFetch<{ ok: boolean }>(`/email-queue/${queueId}`, { method: 'DELETE' }),
 
   // Carriers
   searchCarriers: (params: CarrierSearchParams) =>
@@ -116,6 +138,18 @@ export const api = {
     authFetch<{ subject: string; body: string }>('/ai/email', {
       method: 'POST', body: JSON.stringify(params),
     }),
+  generateSequence: (params: { lead: Lead; tone: string; settings: object }) =>
+    authFetch<{ emails: { day: number; label: string; subject: string; body: string }[] }>('/ai/sequence', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  bulkEmail: (params: { leads: Lead[]; tone: string; settings: object }) =>
+    authFetch<{ emails: { leadId: string; company: string; subject: string; body: string }[] }>('/ai/bulk-email', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  generateProposal: (params: { lead: Lead; services: string[]; pricing: Record<string, number>; notes: string; settings: object }) =>
+    authFetch<{ subject: string; body: string }>('/ai/proposal', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
 
   // Blueprint scanner
   scanBlueprint: (file: File) => {
@@ -133,7 +167,183 @@ export const api = {
     });
   },
 
+  // AI contact parser
+  parseContacts: (text: string) =>
+    authFetch<{ leads: import('./types').ParsedContact[]; count: number }>('/ai/parse-contacts', {
+      method: 'POST', body: JSON.stringify({ text }),
+    }),
+
+  // Analytics
+  analytics: () => authFetch<PipelineAnalytics>('/leads/analytics'),
+
+  // Settings (server-persisted)
+  getSettings: () => authFetch<{ settings: Partial<import('./types').Settings> }>('/settings'),
+  saveSettings: (settings: Partial<import('./types').Settings>) =>
+    authFetch<{ ok: boolean }>('/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+
   // Stripe
   checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),
   portal: () => authFetch<{ url: string }>('/stripe/portal', { method: 'POST', body: '{}' }),
+
+  // Mission dashboard
+  getMission: () => authFetch<{
+    date: string;
+    overdue: { id: number; company: string; category: string; email: string; followup_due_at: string; last_contacted: string }[];
+    newWithEmail: { id: number; company: string; category: string; email: string; city: string; state: string; pitch_angle: string }[];
+    replied: { id: number; company: string; category: string; last_contacted: string }[];
+    bidsThisWeek: { id: number; project_name: string; gc_name: string; bid_due: string; status: string; estimated_value: number }[];
+    callReady: { id: number; company: string; category: string; city: string; state: string; phone: string | null; last_contacted: string; emails_sent: number }[];
+    needsEmail: { id: number; company: string; category: string; city: string; state: string; contact_title: string | null; estimated_value: number }[];
+    sequences: { active: number; pendingEmails: number };
+    wonThisMonth: number;
+    agingWraps: number;
+    priorityScore: number;
+  }>('/mission'),
+
+  // Bulk sequence activation
+  bulkActivateSequences: (leadIds: number[], tone?: string) =>
+    authFetch<{ ok: boolean; queued: number; failed: number; results: { id: number; status: string; company?: string; reason?: string }[] }>(
+      '/leads/bulk-activate-sequences', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, tone }) }
+    ),
+
+  // AI Phone Calls (Vapi.ai)
+  initiateCall: (leadId: number) =>
+    authFetch<{ ok: boolean; call_id: string; status: string }>(
+      '/calls/initiate', { method: 'POST', body: JSON.stringify({ lead_id: leadId }) }
+    ),
+  getCallStatus: (callId: string) =>
+    authFetch<{ ok: boolean; status: string; endedReason?: string }>(
+      `/calls/status/${callId}`
+    ),
+
+  // Apollo bulk enrichment + prospecting
+  bulkEnrichLeads: (params: {
+    lead_ids?: number[];
+    all?: boolean;
+    auto_sequence?: boolean;
+    tone?: string;
+    apiKey?: string;
+  }) =>
+    authFetch<{ ok: boolean; searched: number; enriched: number; sequencesActivated: number; results: { id: number; company: string; status: 'enriched' | 'skipped' | 'error'; email?: string; reason?: string }[] }>(
+      '/apollo/bulk-enrich-leads', { method: 'POST', body: JSON.stringify(params) }
+    ),
+  prospect: (params: {
+    industry?: string;
+    location?: string | string[];
+    titles?: string[];
+    keywords?: string;
+    limit?: number;
+    category?: string;
+    apiKey?: string;
+  }) =>
+    authFetch<{ ok: boolean; count: number; prospects: { name: string; title: string; company: string; city: string; state: string; email?: string; phone?: string; linkedin?: string; domain?: string }[] }>(
+      '/apollo/prospect', { method: 'POST', body: JSON.stringify(params) }
+    ),
+  importProspect: (prospect: object, category: string) =>
+    authFetch<{ ok: boolean; id: number; duplicate: boolean }>(
+      '/apollo/import-prospect', { method: 'POST', body: JSON.stringify({ prospect, category }) }
+    ),
+
+  // Wrap Lifecycle Tracker
+  getJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs'),
+  getAgingJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs/aging'),
+  createJob: (job: Partial<InstalledJob>) =>
+    authFetch<{ job: InstalledJob }>('/jobs', { method: 'POST', body: JSON.stringify(job) }),
+  updateJob: (id: number, updates: Partial<InstalledJob>) =>
+    authFetch<{ job: InstalledJob }>(`/jobs/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteJob: (id: number) =>
+    authFetch<{ ok: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
+
+  // Computer Vision Quoting
+  quoteVehicle: (file: File) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    return fetch('/vision/quote-vehicle', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Vision quote failed');
+      return data as VisionQuoteResult;
+    });
+  },
+
+  // AR / Wrap Mockup Preview
+  arPreview: (file: File, wrapDescription: string) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('wrapDescription', wrapDescription);
+    return fetch('/vision/ar-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Preview failed');
+      return data as { ok: boolean; image_url: string; original_url: string };
+    });
+  },
+
+  // AI Design Generation
+  generateDesignBrief: (params: { vehicleType: string; primaryColor: string; secondaryColor: string; style: string; description: string; companyName: string }) =>
+    authFetch<{ ok: boolean; brief: DesignBrief }>('/ai/design-brief', { method: 'POST', body: JSON.stringify(params) }),
+  generateMockup: (brief: DesignBrief) =>
+    authFetch<MockupResult>('/ai/generate-mockup', { method: 'POST', body: JSON.stringify({ brief }) }),
+
+  // Fleet Management Integrations
+  getSamsaraVehicles: () => authFetch<{ ok: boolean; vehicles: FleetVehicle[]; count: number }>('/integrations/samsara/vehicles'),
+  importSamsaraVehicles: (vehicleIds?: string[]) =>
+    authFetch<FleetImportResult>('/integrations/samsara/import', { method: 'POST', body: JSON.stringify({ vehicle_ids: vehicleIds }) }),
+  getMotiveVehicles: () => authFetch<{ ok: boolean; vehicles: FleetVehicle[]; count: number }>('/integrations/motive/vehicles'),
+  importMotiveVehicles: (vehicleIds?: string[]) =>
+    authFetch<FleetImportResult>('/integrations/motive/import', { method: 'POST', body: JSON.stringify({ vehicle_ids: vehicleIds }) }),
+
+  // Dynamic Wrap Content
+  getContent: () => authFetch<{ content: WrapContent[] }>('/content'),
+  uploadContent: (file: File, name: string, tags: string[]) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('name', name);
+    form.append('tags', JSON.stringify(tags));
+    return fetch('/content', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Upload failed');
+      return data as { ok: boolean; content: WrapContent };
+    });
+  },
+  updateContent: (id: number, updates: Partial<WrapContent>) =>
+    authFetch<{ ok: boolean; content: WrapContent }>(`/content/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteContent: (id: number) => authFetch<{ ok: boolean }>(`/content/${id}`, { method: 'DELETE' }),
+  getSchedules: () => authFetch<{ schedules: ContentSchedule[] }>('/content/schedules'),
+  createSchedule: (schedule: Partial<ContentSchedule>) =>
+    authFetch<{ ok: boolean; schedule: ContentSchedule }>('/content/schedules', { method: 'POST', body: JSON.stringify(schedule) }),
+  updateSchedule: (id: number, updates: Partial<ContentSchedule>) =>
+    authFetch<{ ok: boolean; schedule: ContentSchedule }>(`/content/schedules/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteSchedule: (id: number) => authFetch<{ ok: boolean }>(`/content/schedules/${id}`, { method: 'DELETE' }),
+  getActiveContent: () => authFetch<{ active: { vehicle_group: string; content: WrapContent }[] }>('/content/active'),
+  exportSchedule: () => authFetch<object>('/content/export'),
+
+  // AI Calling — campaigns
+  getCampaigns: () =>
+    authFetch<{ campaigns: { id: string; name: string; eventDate: string; weeksUntil: number; leadCount: number; urgency: string }[] }>('/calls/campaigns'),
+  launchCampaign: (id: string) =>
+    authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
+
+  // Bid tracker
+  getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
+  getBidSummary: () => authFetch<BidSummary>('/bids/summary'),
+  createBid: (bid: Partial<Bid>) =>
+    authFetch<{ bid: Bid }>('/bids', { method: 'POST', body: JSON.stringify(bid) }),
+  updateBid: (id: number, updates: Partial<Bid>) =>
+    authFetch<{ bid: Bid }>(`/bids/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
+  deleteBid: (id: number) =>
+    authFetch<{ ok: boolean }>(`/bids/${id}`, { method: 'DELETE' }),
 };

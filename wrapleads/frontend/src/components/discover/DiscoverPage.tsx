@@ -1,5 +1,6 @@
 import { useCarrierStats } from '../../hooks/useCarriers';
 import { useAppStore } from '../../store/useAppStore';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import FilterRow from './FilterRow';
 import CarrierTable from './CarrierTable';
@@ -7,10 +8,12 @@ import SavedChips from './SavedChips';
 
 export default function DiscoverPage() {
   const { data: stats } = useCarrierStats();
-  const { selectedCarrierIds, clearSelectedCarrierIds, showToast } = useAppStore((s) => ({
+  const qc = useQueryClient();
+  const { selectedCarrierIds, clearSelectedCarrierIds, showToast, setMode } = useAppStore((s) => ({
     selectedCarrierIds: s.selectedCarrierIds,
     clearSelectedCarrierIds: s.clearSelectedCarrierIds,
     showToast: s.showToast,
+    setMode: s.setMode,
   }));
 
   async function bulkImport() {
@@ -25,7 +28,9 @@ export default function DiscoverPage() {
       }
     }
     clearSelectedCarrierIds();
-    showToast(`Imported ${success} of ${ids.length} carriers`);
+    qc.invalidateQueries({ queryKey: ['leads'] });
+    showToast(`${success} carrier${success !== 1 ? 's' : ''} added to My Leads`);
+    if (success > 0) setMode('leads');
   }
 
   return (
@@ -37,7 +42,7 @@ export default function DiscoverPage() {
         </div>
         <div className="discover-stat-card">
           <div className="discover-stat-value">{stats?.sweet_spot?.toLocaleString() ?? '—'}</div>
-          <div className="discover-stat-label">Sweet Spot (5–50 units)</div>
+          <div className="discover-stat-label">Sweet Spot (25–500 units)</div>
         </div>
         <div className="discover-stat-card">
           <div className="discover-stat-value">{stats?.states ?? '—'}</div>
