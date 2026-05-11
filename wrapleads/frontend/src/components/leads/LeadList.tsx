@@ -1,10 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import type { LeadSort } from '../../store/useAppStore';
 import LeadRow from './LeadRow';
 import { scoreLead } from '../../utils/scoring';
-import { getToken } from '../../api/client';
+import { api, getToken } from '../../api/client';
 
 function downloadCSV() {
   fetch('/leads/export', { headers: { Authorization: `Bearer ${getToken()}` } })
@@ -38,6 +39,15 @@ export default function LeadList() {
     setPasteImportOpen: s.setPasteImportOpen,
   }));
 
+  const [hotOnly, setHotOnly] = useState(false);
+  const [seqStatus, setSeqStatus] = useState<'idle' | 'running' | 'done'>('idle');
+
+  const bulkSeqMut = useMutation({
+    mutationFn: (ids: number[]) => api.bulkActivateSequences(ids),
+    onMutate: () => setSeqStatus('running'),
+    onSettled: () => { setSeqStatus('done'); setTimeout(() => setSeqStatus('idle'), 3000); },
+  });
+
   const filtered = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     const base = leads.filter((l) => {
@@ -45,6 +55,7 @@ export default function LeadList() {
       if (activeFilter.status !== 'all' && l.status !== activeFilter.status) return false;
       if (activeFilter.state && l.state !== activeFilter.state) return false;
       if (activeFilter.followupDue && !(l.followupDueAt && l.followupDueAt <= today)) return false;
+      if (hotOnly && scoreLead(l) < 65) return false;
       if (activeFilter.search) {
         const q = activeFilter.search.toLowerCase();
         const haystack = [l.company, l.contactName, l.email, l.city, l.state].join(' ').toLowerCase();
@@ -157,24 +168,52 @@ export default function LeadList() {
         <span className="lead-count-badge">{filtered.length} / {leads.length}</span>
       </div>
 
+      {/* Hot filter toggle */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+        <button
+          className={`btn ${hotOnly ? 'btn-primary' : ''}`}
+          style={{ fontSize: 11, padding: '3px 10px' }}
+          onClick={() => setHotOnly((h) => !h)}
+          title="Show only hot leads (score ≥ 65)"
+        >
+          🔥 Hot Only
+        </button>
+        {hotOnly && (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {filtered.length} hot lead{filtered.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+
       {/* Bulk selection toolbar */}
       {selCount > 0 && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 10,
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
           padding: '8px 14px', background: 'var(--accent)', borderRadius: 6,
           margin: '0 0 8px', color: '#fff', fontSize: 13,
         }}>
-          <span style={{ fontWeight: 600 }}>{selCount} lead{selCount !== 1 ? 's' : ''} selected</span>
+          <span style={{ fontWeight: 600 }}>{selCount} selected</span>
           <button
             className="btn"
-            style={{ fontSize: 12, background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', padding: '4px 12px' }}
+            style={{ fontSize: 11, background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', padding: '3px 10px' }}
             onClick={() => setBulkOutreachOpen(true)}
           >
             ⚡ Bulk Email
           </button>
           <button
             className="btn"
-            style={{ fontSize: 12, background: 'transparent', color: 'rgba(255,255,255,0.8)', border: '1px solid rgba(255,255,255,0.3)', padding: '4px 10px' }}
+            style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
+            disabled={seqStatus === 'running'}
+            onClick={() => {
+              const ids = leads.filter((l) => selectedLeadIds.has(l.id) && l.serverId).map((l) => l.serverId!);
+              if (ids.length) bulkSeqMut.mutate(ids);
+            }}
+          >
+            {seqStatus === 'running' ? 'Activating…' : seqStatus === 'done' ? '✓ Done' : '📧 Activate Sequences'}
+          </button>
+          <button
+            className="btn"
+            style={{ fontSize: 11, background: 'transparent', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
             onClick={clearLeadSelection}
           >
             Clear

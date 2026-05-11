@@ -61,7 +61,7 @@ export default function DesignStudioTab({ lead }: Props) {
       setImageUrl(mockupRes.image_url);
       setStep('done');
 
-      await api.logActivity(lead.id, {
+      await api.logActivity(Number(lead.id), {
         type: 'note_added',
         subject: 'Design Concept Generated',
         body: `AI design concept created: ${briefRes.brief.style}. Layout: ${briefRes.brief.layout}`,

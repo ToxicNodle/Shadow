@@ -24,6 +24,7 @@ import BidsView from '../components/bids/BidsView';
 import MissionView from '../components/mission/MissionView';
 import JobsView from '../components/jobs/JobsView';
 import ContentView from '../components/content/ContentView';
+import AnalyticsView from '../components/analytics/AnalyticsView';
 import CSVImportModal from '../components/modals/CSVImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
@@ -115,6 +116,8 @@ export default function CRMPage() {
             ? <JobsView />
             : mode === 'content'
             ? <ContentView />
+            : mode === 'analytics'
+            ? <AnalyticsView />
             : <DiscoverPage />}
         </main>
         {mode === 'leads' && <LeadDetail />}

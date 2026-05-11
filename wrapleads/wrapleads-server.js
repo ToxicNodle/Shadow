@@ -233,6 +233,103 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create wrap_content tables:', e.message);
   }
+
+  // E Ink Device Infrastructure
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS eink_devices (
+        id                   BIGSERIAL PRIMARY KEY,
+        user_id              TEXT NOT NULL,
+        device_token         TEXT NOT NULL UNIQUE,
+        serial_number        TEXT,
+        name                 TEXT NOT NULL,
+        vehicle_group        TEXT NOT NULL DEFAULT 'fleet',
+        lead_id              BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        job_id               BIGINT REFERENCES installed_jobs(id) ON DELETE SET NULL,
+        status               TEXT NOT NULL DEFAULT 'offline',
+        current_content_id   BIGINT REFERENCES wrap_content(id) ON DELETE SET NULL,
+        last_seen_at         TIMESTAMPTZ,
+        last_location        JSONB,
+        firmware_version     TEXT,
+        metadata             JSONB DEFAULT '{}',
+        created_at           TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_devices_user  ON eink_devices(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_devices_token ON eink_devices(device_token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_devices_group ON eink_devices(vehicle_group)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS eink_push_log (
+        id         BIGSERIAL PRIMARY KEY,
+        device_id  BIGINT NOT NULL REFERENCES eink_devices(id) ON DELETE CASCADE,
+        content_id BIGINT REFERENCES wrap_content(id) ON DELETE SET NULL,
+        pushed_at  TIMESTAMPTZ DEFAULT NOW(),
+        acked_at   TIMESTAMPTZ,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        error      TEXT
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_eink_push_device ON eink_push_log(device_id, pushed_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create eink tables:', e.message);
+  }
+
+  // Job Photos
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_photos (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        job_id     BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        image_data TEXT NOT NULL,
+        caption    TEXT,
+        photo_type TEXT NOT NULL DEFAULT 'other',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_photos_job ON job_photos(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create job_photos table:', e.message);
+  }
+
+  // Client Portal Links
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS portal_links (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        lead_id    BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        token      TEXT NOT NULL UNIQUE,
+        label      TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_user  ON portal_links(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_lead  ON portal_links(lead_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_token ON portal_links(token)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create portal_links table:', e.message);
+  }
+
+  // Notifications
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        body       TEXT NOT NULL DEFAULT '',
+        metadata   JSONB DEFAULT '{}',
+        read_at    TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id) WHERE read_at IS NULL`);
+  } catch (e) {
+    console.warn('[migrate] Could not create notifications table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -263,6 +360,17 @@ app.use((req, res, next) => {
 // ----------------------------------------------------------------------------
 // Auth middleware
 // ----------------------------------------------------------------------------
+async function createNotification(userId, { type, title, body = '', metadata = {} }) {
+  try {
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, body, metadata) VALUES ($1,$2,$3,$4,$5)`,
+      [String(userId), type, title, body, JSON.stringify(metadata)]
+    );
+  } catch (e) {
+    console.warn('[notify]', e.message);
+  }
+}
+
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' });
@@ -1475,6 +1583,141 @@ app.get('/leads/analytics', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================================
+// Full Analytics Dashboard — pipeline intelligence
+// ============================================================================
+
+app.get('/analytics', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [
+      pipelineR, wonTrendR, catWinR, activity30dR,
+      avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR
+    ] = await Promise.all([
+      // Pipeline by status
+      pool.query(`
+        SELECT status, COUNT(*)::INT AS count
+        FROM leads WHERE user_id=$1 GROUP BY status
+      `, [uid]),
+
+      // Won per month — last 6 months
+      pool.query(`
+        SELECT TO_CHAR(DATE_TRUNC('month', updated_at), 'Mon YY') AS month,
+               COUNT(*)::INT AS won,
+               DATE_TRUNC('month', updated_at) AS sort_key
+        FROM leads WHERE user_id=$1 AND status='won'
+          AND updated_at >= NOW() - INTERVAL '6 months'
+        GROUP BY DATE_TRUNC('month', updated_at)
+        ORDER BY DATE_TRUNC('month', updated_at)
+      `, [uid]),
+
+      // Category win breakdown
+      pool.query(`
+        SELECT category,
+               COUNT(*)::INT AS total,
+               COUNT(*) FILTER (WHERE status='won')::INT AS won,
+               COUNT(*) FILTER (WHERE status='lost')::INT AS lost
+        FROM leads WHERE user_id=$1
+        GROUP BY category ORDER BY total DESC
+      `, [uid]),
+
+      // Activity last 30 days
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE type='email_sent')::INT AS emails,
+          COUNT(*) FILTER (WHERE type IN ('called'))::INT AS calls,
+          COUNT(*) FILTER (WHERE type='meeting_set')::INT AS meetings,
+          COUNT(*) FILTER (WHERE type='sequence_activated')::INT AS sequences
+        FROM lead_activities
+        WHERE user_id=$1 AND created_at >= NOW() - INTERVAL '30 days'
+      `, [uid]),
+
+      // Avg days new → won
+      pool.query(`
+        SELECT ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_days
+        FROM leads WHERE user_id=$1 AND status='won'
+          AND updated_at >= NOW() - INTERVAL '12 months'
+      `, [uid]),
+
+      // Win/Loss factors from activities
+      pool.query(`
+        SELECT metadata->>'win_loss_factor' AS factor, COUNT(*)::INT AS count
+        FROM lead_activities
+        WHERE user_id=$1 AND type='status_changed'
+          AND metadata->>'win_loss_factor' IS NOT NULL
+        GROUP BY factor ORDER BY count DESC LIMIT 8
+      `, [uid]),
+
+      // Competitor leaderboard
+      pool.query(`
+        SELECT metadata->>'competitor' AS competitor, COUNT(*)::INT AS count
+        FROM lead_activities
+        WHERE user_id=$1 AND type='status_changed'
+          AND metadata->>'competitor' IS NOT NULL AND metadata->>'competitor' != ''
+        GROUP BY competitor ORDER BY count DESC LIMIT 8
+      `, [uid]),
+
+      // Top leads by score proxy (fleet size, category priority)
+      pool.query(`
+        SELECT id, company, status, category, fleet_size, city, state
+        FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost')
+        ORDER BY
+          CASE category WHEN 'racing' THEN 1 WHEN 'gc_referral' THEN 2 WHEN 'dinoc' THEN 3 WHEN 'fleet' THEN 4 ELSE 5 END,
+          CASE WHEN fleet_size ~ '^[0-9]+$' THEN fleet_size::INT ELSE 0 END DESC
+        LIMIT 5
+      `, [uid]),
+
+      // Job stats
+      pool.query(`
+        SELECT
+          COUNT(*)::INT AS total_jobs,
+          SUM(vehicle_count)::INT AS total_vehicles,
+          COUNT(*) FILTER (WHERE (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '90 days')::INT AS aging_90d
+        FROM installed_jobs WHERE user_id=$1
+      `, [uid]),
+    ]);
+
+    const byStatus = {};
+    let totalLeads = 0;
+    pipelineR.rows.forEach((r) => { byStatus[r.status] = r.count; totalLeads += r.count; });
+
+    const won = byStatus['won'] ?? 0;
+    const lost = byStatus['lost'] ?? 0;
+    const winRate = (won + lost) > 0 ? Math.round((won / (won + lost)) * 100) : null;
+
+    const REV_EST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500, other: 2500 };
+    let pipelineValue = 0;
+    catWinR.rows.forEach((r) => {
+      const active = r.total - r.won - r.lost;
+      pipelineValue += Math.max(0, active) * (REV_EST[r.category] ?? 2500);
+    });
+
+    const act = activity30dR.rows[0] ?? {};
+    const js = jobStatsR.rows[0] ?? {};
+
+    res.json({
+      summary: {
+        totalLeads, won, lost, winRate,
+        avgDaysToClose: avgCloseR.rows[0]?.avg_days ?? null,
+        pipelineValue,
+      },
+      byStatus,
+      wonTrend: wonTrendR.rows.map((r) => ({ month: r.month, won: r.won })),
+      byCategory: catWinR.rows,
+      activity30d: {
+        emails: act.emails ?? 0,
+        calls: act.calls ?? 0,
+        meetings: act.meetings ?? 0,
+        sequences: act.sequences ?? 0,
+      },
+      winLossFactors: winLossR.rows,
+      competitors: competitorR.rows,
+      topLeads: topLeadsR.rows,
+      jobs: js,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Sample carrier seeder (runs when companies table is empty)
 // ----------------------------------------------------------------------------
@@ -1868,6 +2111,71 @@ No markdown, no explanation. Just the JSON array.`;
   res.json({ ok: true, queued, failed, results });
 });
 
+// Win/Loss capture — records the deciding factor when a lead is won or lost
+app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const { factor = 'other', notes = '', competitor = '' } = req.body || {};
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'status_changed',
+      subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}`,
+      body: notes,
+      metadata: {
+        win_loss_factor: factor,
+        win_loss_notes: notes,
+        ...(competitor ? { competitor } : {}),
+      },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// SMS outreach — sends a text via Twilio and logs activity
+app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const { message } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT phone, company, contact_name FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    if (!lead.phone) return res.status(400).json({ error: 'No phone number on this lead' });
+    if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+      return res.status(400).json({ error: 'Twilio not configured — add credentials in Settings' });
+    }
+
+    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+    const body = new URLSearchParams({ To: lead.phone, From: s.twilioFromNumber, Body: message });
+    const twilioResp = await fetch(twilioUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64'),
+      },
+      body: body.toString(),
+    });
+    const twilioData = await twilioResp.json();
+    if (!twilioResp.ok) throw new Error(twilioData.message || 'Twilio error');
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'called',
+      subject: 'SMS sent',
+      body: message,
+      metadata: { twilio_sid: twilioData.sid, to: lead.phone },
+    });
+    await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1`, [leadId]);
+
+    res.json({ ok: true, sid: twilioData.sid });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================================
 // Today's Mission — AI-prioritized daily action list
 // ============================================================================
@@ -1963,6 +2271,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
 
     const seq = seqR.rows[0];
 
+    const agingCount = agingR.rows[0].count;
     res.json({
       date: today,
       overdue: overdueR.rows,
@@ -1971,12 +2280,9 @@ app.get('/mission', authMiddleware, async (req, res) => {
       bidsThisWeek: bidsR.rows,
       callReady: callReadyR.rows,
       needsEmail: needsEmailR.rows,
-      sequences: {
-        active: seq.active,
-        pendingEmails: seq.pending_emails,
-      },
+      sequences: { active: seq.active, pendingEmails: seq.pending_emails },
       wonThisMonth: wonR.rows[0].count,
-      agingWraps: agingR.rows[0].count,
+      agingWraps: agingCount,
       priorityScore:
         callReadyR.rows.length * 5 +
         overdueR.rows.length * 3 +
@@ -1984,7 +2290,72 @@ app.get('/mission', authMiddleware, async (req, res) => {
         bidsR.rows.length * 2 +
         newR.rows.length,
     });
+
+    // Fire aging wrap notification once per day (non-blocking, after response)
+    if (agingCount > 0) {
+      pool.query(
+        `SELECT 1 FROM notifications WHERE user_id=$1 AND type='aging_wrap' AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
+        [uid]
+      ).then(({ rows }) => {
+        if (!rows.length) {
+          createNotification(uid, {
+            type: 'aging_wrap',
+            title: `${agingCount} wrap${agingCount > 1 ? 's' : ''} approaching refresh window`,
+            body: 'Check Aging Alerts in the Wrap Lifecycle view to re-engage these clients.',
+            metadata: { count: agingCount },
+          });
+        }
+      }).catch(() => {});
+    }
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// AI Mission Brief — personalized morning brief generated from live mission data
+app.get('/mission/brief', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.json({ brief: null, reason: 'no_api_key' });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const [overdueR, repliedR, callReadyR, bidsR, wonR, agingR] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status IN ('contacted','replied') AND followup_due_at < $2`, [uid, today]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status='replied'`, [uid]),
+      pool.query(`
+        SELECT COUNT(DISTINCT l.id)::INT AS n FROM leads l JOIN email_queue q ON q.lead_id=l.id
+        WHERE l.user_id=$1 AND l.status='contacted'
+          AND NOT EXISTS (SELECT 1 FROM email_queue pq WHERE pq.lead_id=l.id AND pq.status='pending')
+        HAVING COUNT(q.id) FILTER (WHERE q.status='sent') >= 2
+      `, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM bids WHERE user_id=$1 AND status='tracking' AND bid_due >= $2 AND bid_due <= $2::date + INTERVAL '7 days'`, [uid, today]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month', NOW())`, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM installed_jobs WHERE user_id=$1 AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'`, [uid]),
+    ]);
+
+    const overdue = overdueR.rows[0]?.n ?? 0;
+    const replied = repliedR.rows[0]?.n ?? 0;
+    const callReady = callReadyR.rows[0]?.n ?? 0;
+    const bids = bidsR.rows[0]?.n ?? 0;
+    const won = wonR.rows[0]?.n ?? 0;
+    const aging = agingR.rows[0]?.n ?? 0;
+
+    const prompt = `You are a sharp sales coach for a vehicle wrap and graphics shop. Write a punchy 2-sentence morning briefing for the shop owner based on their CRM data. Be specific, action-oriented, and direct. No fluff, no greetings, no sign-off. Just the brief.
+
+Today's data:
+- Overdue follow-ups: ${overdue}
+- Leads that replied (need proposal): ${replied}
+- Leads call-ready (sequence done): ${callReady}
+- Bids due this week: ${bids}
+- Deals won this month: ${won}
+- Wraps aging toward refresh: ${aging}
+
+Write exactly 2 sentences. Start with the most urgent action. Second sentence previews what a win looks like today.`;
+
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 200);
+    res.json({ brief: text.trim() });
+  } catch (e) {
+    res.json({ brief: null, reason: 'error' });
+  }
 });
 
 // Background worker — processes pending queue emails
@@ -2078,6 +2449,166 @@ function startDripWorker() {
   processEmailQueue(); // run immediately on start
   setInterval(processEmailQueue, 60_000); // then every minute
   console.log('· Drip worker: running (checks queue every 60s)');
+}
+
+// Daily digest — sends each user a 7am morning briefing via email
+async function sendDailyDigests() {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    const { rows: users } = await pool.query(`
+      SELECT u.id, u.email, u.settings_json
+      FROM users u
+      WHERE u.sub_status IN ('trialing','active')
+        AND u.email IS NOT NULL AND u.email != ''
+    `);
+
+    for (const user of users) {
+      try {
+        const uid = String(user.id);
+        const s = user.settings_json || {};
+        const shopName = s.companyName || 'your shop';
+
+        const [overdueR, repliedR, callReadyR, bidsR, agingR] = await Promise.all([
+          pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status IN ('contacted','replied') AND followup_due_at < $2`, [uid, today]),
+          pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status='replied'`, [uid]),
+          pool.query(`
+            SELECT COUNT(DISTINCT l.id)::INT AS n FROM leads l JOIN email_queue q ON q.lead_id=l.id
+            WHERE l.user_id=$1 AND l.status='contacted'
+              AND NOT EXISTS (SELECT 1 FROM email_queue pq WHERE pq.lead_id=l.id AND pq.status='pending')
+            HAVING COUNT(q.id) FILTER (WHERE q.status='sent') >= 2
+          `, [uid]),
+          pool.query(`SELECT COUNT(*)::INT AS n FROM bids WHERE user_id=$1 AND status='tracking' AND bid_due >= $2 AND bid_due <= $2::date + INTERVAL '7 days'`, [uid, today]),
+          pool.query(`SELECT COUNT(*)::INT AS n FROM installed_jobs WHERE user_id=$1 AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'`, [uid]),
+        ]);
+
+        const overdue = overdueR.rows[0]?.n ?? 0;
+        const replied = repliedR.rows[0]?.n ?? 0;
+        const callReady = callReadyR.rows[0]?.n ?? 0;
+        const bids = bidsR.rows[0]?.n ?? 0;
+        const aging = agingR.rows[0]?.n ?? 0;
+
+        const totalActions = overdue + replied + callReady + bids;
+        if (totalActions === 0 && aging === 0) continue;
+
+        const rows = [];
+        if (callReady > 0) rows.push(`📞 ${callReady} lead${callReady > 1 ? 's' : ''} ready for a call — sequence complete`);
+        if (overdue > 0) rows.push(`⚠ ${overdue} overdue follow-up${overdue > 1 ? 's' : ''}`);
+        if (replied > 0) rows.push(`💬 ${replied} lead${replied > 1 ? 's' : ''} replied — send a proposal`);
+        if (bids > 0) rows.push(`📋 ${bids} bid${bids > 1 ? 's' : ''} due this week`);
+        if (aging > 0) rows.push(`🔄 ${aging} wrap${aging > 1 ? 's' : ''} approaching refresh window`);
+
+        const body = `Good morning from WrapLeads!
+
+Here's your daily briefing for ${shopName}:
+
+${rows.map((r) => `• ${r}`).join('\n')}
+
+Log in to WrapLeads to take action: https://app.wrapleads.io
+
+—
+WrapLeads Daily Digest
+Unsubscribe: reply "unsubscribe" to this email`;
+
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `WrapLeads <${fromEmail}>`,
+            to: user.email,
+            subject: `Your WrapLeads Briefing — ${totalActions} action${totalActions !== 1 ? 's' : ''} today`,
+            text: body,
+          }),
+        });
+        console.log(`[digest] Sent to ${user.email} (${totalActions} actions)`);
+      } catch (err) {
+        console.error(`[digest] Failed for user ${user.id}:`, err.message);
+      }
+    }
+  } catch (e) {
+    console.error('[digest worker]', e.message);
+  }
+}
+
+function startDigestWorker() {
+  const check = () => {
+    const now = new Date();
+    // Fire at 7:00 AM local server time
+    if (now.getHours() === 7 && now.getMinutes() === 0) {
+      sendDailyDigests();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Digest worker: running (daily briefing at 7:00 AM)');
+}
+
+// Cold lead re-engagement — queues a single check-in email for leads inactive 60+ days
+async function processColdLeads() {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return;
+  try {
+    // Find leads inactive >= 60 days that haven't been re-engaged in the last 90 days
+    const { rows: leads } = await pool.query(`
+      SELECT l.id, l.company, l.category, l.email, l.contact_name, l.city, l.state,
+             l.pitch_angle, l.fleet_size, l.user_id, u.settings_json
+      FROM leads l
+      JOIN users u ON u.id = l.user_id::bigint
+      WHERE l.status IN ('cold', 'contacted')
+        AND l.email IS NOT NULL AND l.email != ''
+        AND (l.last_contacted IS NULL OR l.last_contacted < CURRENT_DATE - INTERVAL '60 days')
+        AND l.updated_at < NOW() - INTERVAL '60 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM email_queue q
+          WHERE q.lead_id = l.id AND q.created_at >= NOW() - INTERVAL '90 days'
+        )
+        AND u.sub_status IN ('trialing', 'active')
+      LIMIT 5
+    `);
+
+    for (const lead of leads) {
+      try {
+        const s = lead.settings_json || {};
+        const senderName = s.senderName || 'the team';
+        const companyName = s.companyName || 'Shadow Graphix';
+        const prompt = `Write a short, natural re-engagement email (under 100 words) to ${lead.contact_name || 'the team'} at ${lead.company}. Category: ${lead.category}. This is a cold lead we haven't contacted in 60+ days. Be warm, not pushy. No subject line — just the body. Sign off as ${senderName} at ${companyName}.`;
+        const body = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 300);
+
+        const sendAt = new Date(Date.now() + Math.random() * 4 * 3_600_000); // random within next 4h
+        await pool.query(`
+          INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at, status, created_at)
+          VALUES ($1, $2, 0, $3, $4, $5, $6, $7, 'pending', NOW())
+        `, [
+          lead.user_id,
+          lead.id,
+          `Checking in — ${lead.company}`,
+          body.trim(),
+          lead.email,
+          lead.contact_name || null,
+          sendAt,
+        ]);
+        console.log(`[cold-nurture] Queued re-engagement for lead ${lead.id} (${lead.company})`);
+      } catch (err) {
+        console.error(`[cold-nurture] Failed for lead ${lead.id}:`, err.message);
+      }
+    }
+  } catch (e) {
+    console.error('[cold-nurture worker]', e.message);
+  }
+}
+
+function startColdNurtureWorker() {
+  // Run once at 8:00 AM daily
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 0) {
+      processColdLeads();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Cold nurture worker: running (daily at 8:00 AM)');
 }
 
 // ----------------------------------------------------------------------------
@@ -2918,6 +3449,14 @@ app.post('/calls/webhook', async (req, res) => {
         );
       }
 
+      // Create notification for call completion
+      await createNotification(user_id, {
+        type: 'call_completed',
+        title: `AI call to ${company} — ${endedReason.replace(/-/g, ' ')}`,
+        body: summary ? summary.slice(0, 200) : `Call ended: ${endedReason}`,
+        metadata: { lead_id, company, success_evaluation: success, interested: structured.interested },
+      });
+
       // Log competitor intel if mentioned
       if (structured.competitorVendor) {
         await pool.query(
@@ -3545,6 +4084,885 @@ app.get('/content/export', authMiddleware, async (req, res) => {
   res.json({ exported_at: new Date().toISOString(), schedules });
 });
 
+// ── Client Portal ────────────────────────────────────────────────────────────
+
+app.post('/portal-links', authMiddleware, async (req, res) => {
+  const { lead_id, label } = req.body;
+  if (!lead_id) return res.status(400).json({ error: 'lead_id required' });
+  const uid = String(req.user.id);
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [lead_id, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    // Upsert — one link per lead
+    const existing = await pool.query('SELECT * FROM portal_links WHERE lead_id=$1 AND user_id=$2', [lead_id, uid]);
+    if (existing.rows.length) return res.json({ ok: true, link: existing.rows[0] });
+    const token = crypto.randomBytes(24).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO portal_links (user_id, lead_id, token, label) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [uid, lead_id, token, label || null]
+    );
+    res.json({ ok: true, link: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/portal-links/lead/:leadId', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM portal_links WHERE lead_id=$1 AND user_id=$2',
+      [req.params.leadId, String(req.user.id)]
+    );
+    res.json({ link: rows[0] || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/portal-links/:id', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM portal_links WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUBLIC — client portal page
+app.get('/portal/:token', async (req, res) => {
+  try {
+    const { rows: linkRows } = await pool.query(
+      `SELECT pl.*, l.company, l.contact_name, l.status, l.category, l.city, l.state, l.email AS lead_email
+       FROM portal_links pl JOIN leads l ON l.id = pl.lead_id
+       WHERE pl.token=$1`, [req.params.token]
+    );
+    if (!linkRows.length) return res.status(404).send('<h1>Link not found or expired.</h1>');
+    const link = linkRows[0];
+
+    // Fetch shop settings
+    const { rows: uRows } = await pool.query('SELECT settings_json FROM users WHERE id=$1', [link.user_id]);
+    const s = uRows[0]?.settings_json || {};
+
+    // Fetch job photos for any installed jobs linked to this lead
+    const { rows: photos } = await pool.query(
+      `SELECT jp.* FROM job_photos jp
+       JOIN installed_jobs ij ON ij.id = jp.job_id
+       WHERE ij.lead_id=$1 ORDER BY jp.photo_type, jp.created_at ASC`,
+      [link.lead_id]
+    );
+
+    // Fetch active bid/quote
+    const { rows: bids } = await pool.query(
+      `SELECT * FROM bids WHERE lead_id=$1 AND status NOT IN ('won','lost','no_bid') ORDER BY created_at DESC LIMIT 1`,
+      [link.lead_id]
+    );
+    const bid = bids[0];
+
+    // Fetch design concept (latest activity with image)
+    const { rows: designActs } = await pool.query(
+      `SELECT * FROM lead_activities WHERE lead_id=$1 AND (type='note_added') AND metadata->>'image_url' IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      [link.lead_id]
+    );
+    const designImg = designActs[0]?.metadata?.image_url;
+
+    // Fetch recent activities (last 8, public-safe types only)
+    const { rows: activities } = await pool.query(
+      `SELECT type, subject, created_at FROM lead_activities
+       WHERE lead_id=$1 AND type IN ('email_sent','called','meeting_set','status_changed','note_added')
+       ORDER BY created_at DESC LIMIT 8`,
+      [link.lead_id]
+    );
+
+    const STATUS_STEPS = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won'];
+    const currentStepIdx = STATUS_STEPS.indexOf(link.status);
+
+    const ACT_LABELS: Record<string, string> = {
+      email_sent: 'Email sent', called: 'Call made', meeting_set: 'Meeting scheduled',
+      status_changed: 'Status updated', note_added: 'Update',
+    };
+
+    const beforePhotos = photos.filter((p) => p.photo_type === 'before');
+    const afterPhotos  = photos.filter((p) => p.photo_type === 'after');
+    const detailPhotos = photos.filter((p) => p.photo_type === 'detail' || p.photo_type === 'other');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${link.company} — ${s.companyName || 'Your Wrap Shop'}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e5e7eb; min-height: 100vh; }
+  a { color: #6366f1; }
+  .hero { background: linear-gradient(135deg, #1a1c22 0%, #16181f 100%); border-bottom: 1px solid #2d2f3a; padding: 28px 20px; }
+  .hero-inner { max-width: 780px; margin: 0 auto; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; }
+  .brand-name { font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -.5px; }
+  .brand-name span { color: #6366f1; }
+  .brand-tag { font-size: 11px; color: #6b7280; margin-top: 3px; }
+  .portal-badge { background: #6366f122; border: 1px solid #6366f155; color: #818cf8; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; letter-spacing: .05em; }
+  .page { max-width: 780px; margin: 0 auto; padding: 28px 20px; display: flex; flex-direction: column; gap: 24px; }
+  .section { background: #1a1c22; border: 1px solid #2d2f3a; border-radius: 14px; overflow: hidden; }
+  .section-header { padding: 16px 20px; border-bottom: 1px solid #2d2f3a; display: flex; align-items: center; justify-content: space-between; }
+  .section-title { font-size: 13px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .08em; }
+  .section-body { padding: 20px; }
+  .project-name { font-size: 26px; font-weight: 800; color: #fff; margin-bottom: 6px; }
+  .project-meta { display: flex; gap: 10px; flex-wrap: wrap; }
+  .meta-chip { background: #2d2f3a; border-radius: 6px; padding: 3px 10px; font-size: 12px; color: #9ca3af; font-weight: 600; }
+  .meta-chip.accent { background: #6366f122; color: #818cf8; border: 1px solid #6366f133; }
+  .steps { display: flex; gap: 0; overflow-x: auto; padding: 4px 0; }
+  .step { flex: 1; min-width: 80px; text-align: center; position: relative; }
+  .step::before { content: ''; position: absolute; top: 16px; left: 0; right: 0; height: 2px; background: #2d2f3a; z-index: 0; }
+  .step:first-child::before { left: 50%; }
+  .step:last-child::before { right: 50%; }
+  .step-dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #2d2f3a; background: #1a1c22; margin: 6px auto; position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; font-size: 9px; }
+  .step.done .step-dot { background: #6366f1; border-color: #6366f1; }
+  .step.current .step-dot { background: #fff; border-color: #6366f1; box-shadow: 0 0 0 4px #6366f133; }
+  .step.done::before, .step.current::before { background: #6366f1; }
+  .step-label { font-size: 10px; color: #6b7280; margin-top: 4px; }
+  .step.done .step-label, .step.current .step-label { color: #e5e7eb; font-weight: 700; }
+  .photo-section { display: flex; flex-direction: column; gap: 12px; }
+  .photo-group-label { font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .08em; }
+  .photo-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .photo-item { border-radius: 10px; overflow: hidden; aspect-ratio: 4/3; }
+  .photo-item img { width: 100%; height: 100%; object-fit: cover; }
+  .quote-box { background: linear-gradient(135deg, #1e2030 0%, #1a1c22 100%); border: 1px solid #6366f133; border-radius: 10px; padding: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .quote-value { font-size: 32px; font-weight: 900; color: #fff; }
+  .quote-label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+  .quote-note { font-size: 11px; color: #6b7280; margin-top: 4px; }
+  .cta-btn { background: #6366f1; color: #fff; border: none; padding: 14px 32px; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 12px; transition: background .15s; }
+  .cta-btn:hover { background: #4f46e5; }
+  .cta-btn:disabled { background: #4b5563; cursor: default; }
+  .approved-badge { background: #22c55e22; border: 1px solid #22c55e44; color: #22c55e; padding: 10px 20px; border-radius: 8px; font-weight: 700; text-align: center; font-size: 14px; }
+  .feedback-form { display: flex; flex-direction: column; gap: 12px; }
+  .feedback-textarea { width: 100%; background: #0f1117; border: 1px solid #2d2f3a; border-radius: 8px; padding: 12px; color: #e5e7eb; font-size: 14px; font-family: inherit; resize: vertical; min-height: 80px; }
+  .feedback-textarea:focus { outline: none; border-color: #6366f1; }
+  .submit-btn { background: #2d2f3a; color: #e5e7eb; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .submit-btn:hover { background: #374151; }
+  .activity-list { display: flex; flex-direction: column; gap: 0; }
+  .activity-row { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #2d2f3a; align-items: flex-start; }
+  .activity-row:last-child { border-bottom: none; }
+  .activity-dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1; flex-shrink: 0; margin-top: 5px; }
+  .activity-text { font-size: 12px; color: #9ca3af; }
+  .activity-time { font-size: 10px; color: #4b5563; margin-top: 2px; }
+  .contact-row { display: flex; gap: 12px; align-items: center; }
+  .contact-avatar { width: 40px; height: 40px; border-radius: 50%; background: #6366f133; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; color: #818cf8; flex-shrink: 0; }
+  .contact-info { display: flex; flex-direction: column; gap: 2px; }
+  .contact-name { font-size: 14px; font-weight: 700; color: #fff; }
+  .contact-detail { font-size: 12px; color: #6b7280; }
+  .design-img { width: 100%; border-radius: 10px; }
+  .footer { text-align: center; padding: 20px; color: #4b5563; font-size: 11px; }
+  @media (max-width: 600px) { .hero-inner { flex-direction: column; } .steps { gap: 4px; } .step-label { font-size: 9px; } }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-inner">
+    <div>
+      <div class="brand-name">${s.companyName || 'Shadow Graphix'}<span>.</span></div>
+      <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps & Fleet Graphics'}</div>
+    </div>
+    <span class="portal-badge">CLIENT PORTAL</span>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- Project Header -->
+  <div class="section">
+    <div class="section-body">
+      <div class="project-name">${link.company}</div>
+      <div class="project-meta">
+        ${link.category ? `<span class="meta-chip accent">${link.category.toUpperCase()}</span>` : ''}
+        ${link.city || link.state ? `<span class="meta-chip">📍 ${[link.city, link.state].filter(Boolean).join(', ')}</span>` : ''}
+        ${link.contact_name ? `<span class="meta-chip">👤 ${link.contact_name}</span>` : ''}
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Progress -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Project Status</span></div>
+    <div class="section-body">
+      <div class="steps">
+        ${['New', 'Contacted', 'Replied', 'Meeting', 'Proposal', 'Won'].map((label, i) => {
+          const cls = i < currentStepIdx ? 'done' : i === currentStepIdx ? 'current' : '';
+          const checkmark = i < currentStepIdx ? '✓' : '';
+          return `<div class="step ${cls}"><div class="step-dot">${checkmark}</div><div class="step-label">${label}</div></div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>
+
+  ${bid ? `
+  <!-- Quote -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Your Quote</span></div>
+    <div class="section-body">
+      <div class="quote-box">
+        <div>
+          <div class="quote-label">Project Estimate</div>
+          <div class="quote-value">${bid.estimated_value ? `$${Number(bid.estimated_value).toLocaleString()}` : '—'}</div>
+          <div class="quote-note">${bid.project_name}</div>
+        </div>
+        ${bid.bid_due ? `<div><div class="quote-label">Quote Valid Until</div><div style="font-size:16px;font-weight:700;color:#fff">${new Date(bid.bid_due).toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'})}</div></div>` : ''}
+      </div>
+      ${link.status !== 'won' ? `
+      <form id="approve-form" onsubmit="submitApproval(event)">
+        <button type="submit" class="cta-btn" id="approve-btn">✓ Approve This Quote</button>
+      </form>
+      <p id="approved-msg" class="approved-badge" style="display:none;margin-top:12px">✓ Quote approved — we'll be in touch shortly!</p>
+      ` : `<div class="approved-badge" style="margin-top:12px">✓ Project in progress</div>`}
+    </div>
+  </div>` : ''}
+
+  ${(beforePhotos.length > 0 || afterPhotos.length > 0 || detailPhotos.length > 0) ? `
+  <!-- Job Photos -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Install Documentation</span></div>
+    <div class="section-body photo-section">
+      ${beforePhotos.length > 0 ? `<div class="photo-group-label">Before</div><div class="photo-row">${beforePhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Before'}"></div>`).join('')}</div>` : ''}
+      ${afterPhotos.length > 0 ? `<div class="photo-group-label">After</div><div class="photo-row">${afterPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'After'}"></div>`).join('')}</div>` : ''}
+      ${detailPhotos.length > 0 ? `<div class="photo-group-label">Detail</div><div class="photo-row">${detailPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Detail'}"></div>`).join('')}</div>` : ''}
+    </div>
+  </div>` : ''}
+
+  ${designImg ? `
+  <!-- Design Concept -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Design Concept</span></div>
+    <div class="section-body"><img src="${designImg}" class="design-img" alt="Wrap Design Concept"></div>
+  </div>` : ''}
+
+  ${activities.length > 0 ? `
+  <!-- Activity Timeline -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Project Updates</span></div>
+    <div class="section-body">
+      <div class="activity-list">
+        ${activities.map((a) => `
+        <div class="activity-row">
+          <div class="activity-dot"></div>
+          <div>
+            <div class="activity-text">${ACT_LABELS[a.type] || a.type}${a.subject ? ` — ${a.subject}` : ''}</div>
+            <div class="activity-time">${new Date(a.created_at).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>
+  </div>` : ''}
+
+  <!-- Feedback -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Leave Feedback</span></div>
+    <div class="section-body">
+      <form id="feedback-form" class="feedback-form" onsubmit="submitFeedback(event)">
+        <textarea class="feedback-textarea" id="feedback-text" placeholder="Questions, requests, or feedback…" rows="3"></textarea>
+        <div style="display:flex;justify-content:flex-end;">
+          <button type="submit" class="submit-btn">Send Feedback</button>
+        </div>
+      </form>
+      <p id="feedback-msg" style="display:none;font-size:12px;color:#22c55e;margin-top:8px">Thank you — we'll follow up shortly.</p>
+    </div>
+  </div>
+
+  <!-- Contact -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Your Contact</span></div>
+    <div class="section-body">
+      <div class="contact-row">
+        <div class="contact-avatar">${(s.senderName || 'S').charAt(0).toUpperCase()}</div>
+        <div class="contact-info">
+          <span class="contact-name">${s.senderName || s.companyName || 'Shadow Graphix'}</span>
+          <span class="contact-detail">${s.senderTitle || ''}</span>
+          ${s.senderEmail ? `<a href="mailto:${s.senderEmail}" class="contact-detail">${s.senderEmail}</a>` : ''}
+          ${s.senderPhone ? `<span class="contact-detail">${s.senderPhone}</span>` : ''}
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">Powered by WrapLeads · ${s.companyName || 'Shadow Graphix'}</div>
+
+<script>
+  async function submitApproval(e) {
+    e.preventDefault();
+    document.getElementById('approve-btn').disabled = true;
+    document.getElementById('approve-btn').textContent = 'Approving…';
+    try {
+      await fetch('/portal/${req.params.token}/approve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      document.getElementById('approve-form').style.display = 'none';
+      document.getElementById('approved-msg').style.display = 'block';
+    } catch { document.getElementById('approve-btn').disabled = false; document.getElementById('approve-btn').textContent = '✓ Approve This Quote'; }
+  }
+  async function submitFeedback(e) {
+    e.preventDefault();
+    const text = document.getElementById('feedback-text').value.trim();
+    if (!text) return;
+    document.querySelector('.submit-btn').disabled = true;
+    try {
+      await fetch('/portal/${req.params.token}/feedback', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ feedback: text }) });
+      document.getElementById('feedback-form').style.display = 'none';
+      document.getElementById('feedback-msg').style.display = 'block';
+    } catch { document.querySelector('.submit-btn').disabled = false; }
+  }
+</script>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (e) { res.status(500).send('Server error'); }
+});
+
+// Portal actions — PUBLIC (no auth, token identifies)
+app.post('/portal/:token/approve', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM portal_links WHERE token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [link.lead_id]);
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'status_changed', subject: 'Client approved quote via portal' });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} approved their quote!`,
+      body: 'Client clicked "Approve" on the portal link. Follow up now.',
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/portal/:token/feedback', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM portal_links WHERE token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    const { feedback } = req.body;
+    if (!feedback?.trim()) return res.status(400).json({ error: 'feedback required' });
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'note_added', subject: 'Client feedback via portal', body: feedback });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `New feedback from ${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company}`,
+      body: feedback.slice(0, 200),
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+app.get('/notifications', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM notifications WHERE user_id=$1 ORDER BY read_at NULLS FIRST, created_at DESC LIMIT 50`,
+      [String(req.user.id)]
+    );
+    const unread = rows.filter((r) => !r.read_at).length;
+    res.json({ notifications: rows, unread });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/notifications/read-all', authMiddleware, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL`,
+      [String(req.user.id)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/notifications/:id/read', authMiddleware, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE notifications SET read_at=NOW() WHERE id=$1 AND user_id=$2`,
+      [req.params.id, String(req.user.id)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/notifications/:id', authMiddleware, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM notifications WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Job Photos ────────────────────────────────────────────────────────────────
+
+app.get('/jobs/:id/photos', authMiddleware, async (req, res) => {
+  try {
+    const own = await pool.query('SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query('SELECT * FROM job_photos WHERE job_id=$1 ORDER BY created_at ASC', [req.params.id]);
+    res.json({ photos: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/jobs/:id/photos', authMiddleware, upload.single('image'), async (req, res) => {
+  try {
+    const own = await pool.query('SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Job not found' });
+    if (!req.file) return res.status(400).json({ error: 'image required' });
+    const base64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    const { caption = '', photo_type = 'other' } = req.body;
+    const { rows } = await pool.query(
+      `INSERT INTO job_photos (user_id, job_id, image_data, caption, photo_type) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [String(req.user.id), req.params.id, base64, caption || null, photo_type]
+    );
+    res.json({ ok: true, photo: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/jobs/photos/:photoId', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM job_photos WHERE id=$1 AND user_id=$2', [req.params.photoId, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Quote PDF (HTML template, browser print) ──────────────────────────────────
+
+app.get('/bids/:id/quote', (req, res, next) => {
+  // Accept token from query param (needed for window.open from browser)
+  if (req.query.token && !req.headers.authorization) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+  next();
+}, authMiddleware, async (req, res) => {
+  try {
+    const { rows: bidRows } = await pool.query(
+      `SELECT b.*, l.company AS lead_company, l.contact_name, l.email AS lead_email, l.phone AS lead_phone, l.city, l.state
+       FROM bids b LEFT JOIN leads l ON l.id = b.lead_id
+       WHERE b.id=$1 AND b.user_id=$2`,
+      [req.params.id, String(req.user.id)]
+    );
+    if (!bidRows.length) return res.status(404).json({ error: 'Bid not found' });
+    const bid = bidRows[0];
+    const { rows: uRows } = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(req.user.id)]);
+    const s = uRows[0]?.settings_json || {};
+
+    const formatMoney = (n) => n ? `$${Number(n).toLocaleString()}` : '—';
+    const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quote — ${bid.project_name}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f5f7; color: #1a1c22; }
+  .page { max-width: 820px; margin: 32px auto; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,.1); }
+  .header { background: #1a1c22; padding: 36px 40px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .brand { color: #fff; }
+  .brand-name { font-size: 24px; font-weight: 800; letter-spacing: -.5px; }
+  .brand-name span { color: #6366f1; }
+  .brand-tag { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+  .brand-contact { text-align: right; color: #9ca3af; font-size: 12px; line-height: 1.7; }
+  .brand-contact strong { color: #fff; font-size: 14px; display: block; margin-bottom: 4px; }
+  .quote-label { background: #6366f1; color: #fff; padding: 6px 16px; border-radius: 20px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-top: 8px; display: inline-block; }
+  .body { padding: 40px; }
+  .section { margin-bottom: 32px; }
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #6b7280; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e7eb; }
+  .client-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field-label { font-size: 11px; color: #9ca3af; font-weight: 600; }
+  .field-value { font-size: 14px; font-weight: 600; color: #1a1c22; }
+  .project-title { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+  .project-meta { display: flex; gap: 16px; flex-wrap: wrap; }
+  .meta-chip { background: #f3f4f6; border-radius: 6px; padding: 4px 12px; font-size: 12px; font-weight: 600; color: #374151; }
+  .price-box { background: linear-gradient(135deg, #1a1c22 0%, #2d2f3a 100%); border-radius: 10px; padding: 28px; display: flex; align-items: center; justify-content: space-between; }
+  .price-label { color: #9ca3af; font-size: 13px; font-weight: 600; }
+  .price-value { font-size: 36px; font-weight: 900; color: #fff; }
+  .price-note { color: #6b7280; font-size: 11px; margin-top: 4px; }
+  .timeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .timeline-step { text-align: center; padding: 16px; background: #f9fafb; border-radius: 8px; }
+  .timeline-num { width: 28px; height: 28px; background: #6366f1; border-radius: 50%; color: #fff; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px; }
+  .timeline-title { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  .timeline-desc { font-size: 11px; color: #6b7280; }
+  .services-list { display: flex; flex-direction: column; gap: 10px; }
+  .service-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #f9fafb; border-radius: 8px; }
+  .service-dot { width: 8px; height: 8px; background: #6366f1; border-radius: 50%; flex-shrink: 0; }
+  .service-name { font-size: 13px; font-weight: 600; flex: 1; }
+  .service-detail { font-size: 12px; color: #6b7280; }
+  .terms { background: #f9fafb; border-radius: 8px; padding: 20px; }
+  .terms p { font-size: 12px; color: #6b7280; line-height: 1.7; margin-bottom: 8px; }
+  .terms p:last-child { margin-bottom: 0; }
+  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 8px; }
+  .sig-box { border-top: 2px solid #e5e7eb; padding-top: 12px; }
+  .sig-label { font-size: 11px; color: #9ca3af; font-weight: 600; }
+  .sig-name { font-size: 13px; font-weight: 700; margin-top: 4px; }
+  .sig-date { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+  .footer { background: #f3f4f6; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; }
+  .footer-note { font-size: 11px; color: #9ca3af; }
+  .footer-ref { font-size: 11px; font-weight: 700; color: #6366f1; }
+  @media print {
+    body { background: #fff; }
+    .page { margin: 0; border-radius: 0; box-shadow: none; }
+    .no-print { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="brand">
+      <div class="brand-name">${s.companyName || 'Shadow Graphix'}<span>.</span></div>
+      <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps &amp; Fleet Graphics'}</div>
+      <div class="quote-label">Quote Proposal</div>
+    </div>
+    <div class="brand-contact">
+      <strong>${s.senderName || ''}</strong>
+      ${s.senderTitle ? `<span>${s.senderTitle}</span><br>` : ''}
+      ${s.senderEmail ? `<span>${s.senderEmail}</span><br>` : ''}
+      ${s.senderPhone ? `<span>${s.senderPhone}</span>` : ''}
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="section">
+      <div class="project-title">${bid.project_name}</div>
+      <div class="project-meta">
+        <span class="meta-chip">${bid.project_type?.replace(/_/g, ' ').toUpperCase() || 'GENERAL'}</span>
+        ${bid.status !== 'tracking' ? `<span class="meta-chip">${bid.status.toUpperCase()}</span>` : ''}
+        ${bid.bid_due ? `<span class="meta-chip">Due: ${formatDate(bid.bid_due)}</span>` : ''}
+      </div>
+    </div>
+
+    ${bid.lead_company || bid.contact_name ? `
+    <div class="section">
+      <div class="section-title">Prepared For</div>
+      <div class="client-grid">
+        ${bid.lead_company ? `<div class="field"><span class="field-label">Company</span><span class="field-value">${bid.lead_company}</span></div>` : ''}
+        ${bid.contact_name ? `<div class="field"><span class="field-label">Contact</span><span class="field-value">${bid.contact_name}</span></div>` : ''}
+        ${bid.lead_email ? `<div class="field"><span class="field-label">Email</span><span class="field-value">${bid.lead_email}</span></div>` : ''}
+        ${bid.city || bid.state ? `<div class="field"><span class="field-label">Location</span><span class="field-value">${[bid.city, bid.state].filter(Boolean).join(', ')}</span></div>` : ''}
+      </div>
+    </div>` : ''}
+
+    ${bid.estimated_value ? `
+    <div class="section">
+      <div class="section-title">Estimated Investment</div>
+      <div class="price-box">
+        <div>
+          <div class="price-label">Project Estimate</div>
+          <div class="price-value">${formatMoney(bid.estimated_value)}</div>
+          <div class="price-note">Final price may vary based on vehicle count, material, and complexity</div>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="section-title">What's Included</div>
+      <div class="services-list">
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">Professional design (included)</span><span class="service-detail">Custom graphics crafted to your brand</span></div>
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">3M or Avery certified material</span><span class="service-detail">5-year warranty, removable without paint damage</span></div>
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">Professional installation</span><span class="service-detail">Climate-controlled facility, certified installers</span></div>
+        <div class="service-row"><span class="service-dot"></span><span class="service-name">Quality inspection &amp; delivery</span><span class="service-detail">Photo documentation, care instructions included</span></div>
+        ${s.companyServices ? `<div class="service-row"><span class="service-dot"></span><span class="service-name">${s.companyServices}</span><span class="service-detail">Full-service shop capabilities</span></div>` : ''}
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Project Timeline</div>
+      <div class="timeline">
+        <div class="timeline-step"><div class="timeline-num">1</div><div class="timeline-title">Design Approval</div><div class="timeline-desc">2–3 business days</div></div>
+        <div class="timeline-step"><div class="timeline-num">2</div><div class="timeline-title">Print &amp; Prep</div><div class="timeline-desc">1–2 business days</div></div>
+        <div class="timeline-step"><div class="timeline-num">3</div><div class="timeline-title">Install</div><div class="timeline-desc">1–2 days per vehicle</div></div>
+      </div>
+    </div>
+
+    ${bid.notes ? `
+    <div class="section">
+      <div class="section-title">Project Notes</div>
+      <div class="terms"><p>${bid.notes.replace(/\n/g, '<br>')}</p></div>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="section-title">Terms &amp; Conditions</div>
+      <div class="terms">
+        <p>50% deposit required to begin production. Balance due upon completion. Pricing is valid for 30 days from the date of this quote.</p>
+        <p>Any changes to vehicle count, design scope, or materials after approval may affect final pricing. Rush fees may apply for timelines under 5 business days.</p>
+        <p>This quote covers labor and materials as described. Additional services (removal of existing vinyl, surface prep, repairs) will be quoted separately if required.</p>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Approval</div>
+      <div class="sig-grid">
+        <div class="sig-box">
+          <div class="sig-label">Authorized by</div>
+          <div class="sig-name">${s.companyName || 'Shadow Graphix'}</div>
+          <div class="sig-date">${s.senderName || ''} · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+        </div>
+        <div class="sig-box">
+          <div class="sig-label">Accepted by client</div>
+          <div class="sig-name" style="height:24px;"></div>
+          <div class="sig-date">Signature &amp; Date</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="footer-note">Quote valid for 30 days · Questions? ${s.senderEmail || 'contact@shadowgraphix.com'}</span>
+    <span class="footer-ref">REF: BID-${String(bid.id).padStart(4,'0')}</span>
+  </div>
+</div>
+
+<div class="no-print" style="text-align:center;padding:20px;">
+  <button onclick="window.print()" style="background:#6366f1;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;">
+    Save as PDF / Print
+  </button>
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── E Ink Device Infrastructure ──────────────────────────────────────────────
+
+const EINK_PROVISION_SECRET = process.env.EINK_PROVISION_SECRET || 'eink-dev-secret';
+
+async function deviceAuthMiddleware(req, res, next) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'No device token' });
+  const token = header.slice(7).trim();
+  try {
+    const { rows } = await pool.query('SELECT * FROM eink_devices WHERE device_token=$1', [token]);
+    if (!rows[0]) return res.status(401).json({ error: 'Unknown device' });
+    req.device = rows[0];
+    next();
+  } catch (e) {
+    res.status(500).json({ error: 'DB error' });
+  }
+}
+
+// Device: first-time registration (uses provision secret, not JWT)
+app.post('/devices/register', async (req, res) => {
+  const secret = req.headers['x-provision-secret'] || '';
+  if (secret !== EINK_PROVISION_SECRET) return res.status(403).json({ error: 'Invalid provision secret' });
+  const { user_id, serial_number, name, vehicle_group = 'fleet', firmware_version } = req.body;
+  if (!user_id || !name) return res.status(400).json({ error: 'user_id and name required' });
+  try {
+    const device_token = crypto.randomBytes(32).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO eink_devices (user_id, device_token, serial_number, name, vehicle_group, firmware_version)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [user_id, device_token, serial_number || null, name, vehicle_group, firmware_version || null]
+    );
+    res.json({ ok: true, device_token, device_id: rows[0].id, device: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Device: get current content based on schedule engine
+app.get('/devices/:deviceId/content', deviceAuthMiddleware, async (req, res) => {
+  const device = req.device;
+  try {
+    // Update last_seen_at
+    await pool.query('UPDATE eink_devices SET last_seen_at=NOW(), status=$1 WHERE id=$2', ['online', device.id]);
+
+    // Resolve active content for this device's vehicle_group
+    const now = new Date();
+    const todayDate = now.toISOString().split('T')[0];
+    const currentTime = now.toTimeString().slice(0, 5);
+
+    const { rows: schedRows } = await pool.query(
+      `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
+       LEFT JOIN wrap_content wc ON wc.id = cs.content_id
+       WHERE cs.user_id=$1
+         AND (cs.vehicle_group='all' OR cs.vehicle_group=$2)
+         AND cs.start_date <= $3
+         AND (cs.end_date IS NULL OR cs.end_date >= $3)
+         AND (cs.start_time IS NULL OR cs.start_time <= $4)
+         AND (cs.end_time IS NULL OR cs.end_time >= $4)
+       ORDER BY cs.priority DESC LIMIT 1`,
+      [device.user_id, device.vehicle_group, todayDate, currentTime]
+    );
+
+    if (!schedRows[0]) return res.json({ ok: true, content: null, push_log_id: null });
+
+    const sched = schedRows[0];
+    const { rows: logRows } = await pool.query(
+      `INSERT INTO eink_push_log (device_id, content_id, status) VALUES ($1, $2, 'pending') RETURNING id`,
+      [device.id, sched.content_id]
+    );
+
+    res.json({
+      ok: true,
+      content_id: sched.content_id,
+      content: sched.content,
+      push_log_id: logRows[0].id,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Device: heartbeat
+app.post('/devices/:deviceId/heartbeat', deviceAuthMiddleware, async (req, res) => {
+  const device = req.device;
+  const { status = 'online', location, firmware_version, battery_pct } = req.body;
+  try {
+    await pool.query(
+      `UPDATE eink_devices SET last_seen_at=NOW(), status=$1,
+       last_location=CASE WHEN $2::jsonb IS NOT NULL THEN $2::jsonb ELSE last_location END,
+       firmware_version=COALESCE($3, firmware_version),
+       metadata=jsonb_set(COALESCE(metadata,'{}'), '{battery_pct}', COALESCE($4::text::jsonb, metadata->'battery_pct'), true)
+       WHERE id=$5`,
+      [status, location ? JSON.stringify(location) : null, firmware_version || null, battery_pct != null ? battery_pct : null, device.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Device: acknowledge content delivery
+app.post('/devices/:deviceId/ack', deviceAuthMiddleware, async (req, res) => {
+  const device = req.device;
+  const { push_log_id, success = true, error: errMsg } = req.body;
+  if (!push_log_id) return res.status(400).json({ error: 'push_log_id required' });
+  try {
+    const status = success ? 'delivered' : 'failed';
+    const { rows } = await pool.query(
+      `UPDATE eink_push_log SET status=$1, acked_at=NOW(), error=$2 WHERE id=$3 AND device_id=$4 RETURNING content_id`,
+      [status, errMsg || null, push_log_id, device.id]
+    );
+    if (success && rows[0]?.content_id) {
+      await pool.query('UPDATE eink_devices SET current_content_id=$1 WHERE id=$2', [rows[0].content_id, device.id]);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: list devices
+app.get('/admin/devices', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT d.*, row_to_json(wc) as current_content
+       FROM eink_devices d
+       LEFT JOIN wrap_content wc ON wc.id = d.current_content_id
+       WHERE d.user_id=$1 ORDER BY d.created_at DESC`,
+      [req.user.id]
+    );
+    res.json({ devices: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: device summary status
+app.get('/admin/devices/status', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*)::int as total,
+         COUNT(*) FILTER (WHERE status='online' AND last_seen_at > NOW() - INTERVAL '5 minutes')::int as online,
+         COUNT(*) FILTER (WHERE status='offline' OR last_seen_at <= NOW() - INTERVAL '5 minutes' OR last_seen_at IS NULL)::int as offline,
+         COUNT(*) FILTER (WHERE status='updating')::int as updating
+       FROM eink_devices WHERE user_id=$1`,
+      [req.user.id]
+    );
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: create/register device from dashboard
+app.post('/admin/devices', authMiddleware, async (req, res) => {
+  const { name, serial_number, vehicle_group = 'fleet', lead_id, job_id } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  try {
+    const device_token = crypto.randomBytes(32).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO eink_devices (user_id, device_token, serial_number, name, vehicle_group, lead_id, job_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [req.user.id, device_token, serial_number || null, name, vehicle_group, lead_id || null, job_id || null]
+    );
+    res.json({ ok: true, device: { ...rows[0] } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: update device
+app.put('/admin/devices/:id', authMiddleware, async (req, res) => {
+  const { name, vehicle_group, lead_id, job_id } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE eink_devices SET
+         name=COALESCE($1,name),
+         vehicle_group=COALESCE($2,vehicle_group),
+         lead_id=$3,
+         job_id=$4
+       WHERE id=$5 AND user_id=$6 RETURNING *`,
+      [name, vehicle_group, lead_id ?? null, job_id ?? null, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Device not found' });
+    res.json({ ok: true, device: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: delete device
+app.delete('/admin/devices/:id', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: manually push content to a device
+app.post('/admin/devices/:id/push', authMiddleware, async (req, res) => {
+  const { content_id } = req.body;
+  if (!content_id) return res.status(400).json({ error: 'content_id required' });
+  try {
+    const { rows: deviceRows } = await pool.query(
+      'SELECT * FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]
+    );
+    if (!deviceRows[0]) return res.status(404).json({ error: 'Device not found' });
+    const { rows: logRows } = await pool.query(
+      `INSERT INTO eink_push_log (device_id, content_id, status) VALUES ($1, $2, 'pending') RETURNING id`,
+      [req.params.id, content_id]
+    );
+    res.json({ ok: true, push_log_id: logRows[0].id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: get push log for a device
+app.get('/admin/devices/:id/log', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT pl.*, row_to_json(wc) as content
+       FROM eink_push_log pl
+       LEFT JOIN wrap_content wc ON wc.id = pl.content_id
+       WHERE pl.device_id=$1
+         AND EXISTS (SELECT 1 FROM eink_devices d WHERE d.id=pl.device_id AND d.user_id=$2)
+       ORDER BY pl.pushed_at DESC LIMIT 20`,
+      [req.params.id, req.user.id]
+    );
+    res.json({ log: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
@@ -3562,6 +4980,8 @@ app.listen(PORT, async () => {
   if (db.ok) {
     await migrateDb();
     startDripWorker();
+    startDigestWorker();
+    startColdNurtureWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {

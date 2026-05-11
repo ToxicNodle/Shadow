@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import type { Lead, LeadCategory, LeadStatus } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
+import { api } from '../../../api/client';
 
 interface Props {
   lead: Lead;
@@ -17,14 +19,132 @@ const US_STATES = [
   'VA','WA','WV','WI','WY',
 ];
 
+const WIN_LOSS_FACTORS = [
+  { value: 'price', label: 'Price' },
+  { value: 'timeline', label: 'Timeline' },
+  { value: 'relationship', label: 'Relationship' },
+  { value: 'quality', label: 'Quality / Portfolio' },
+  { value: 'competition', label: 'Chose Competitor' },
+  { value: 'no_budget', label: 'No Budget' },
+  { value: 'not_ready', label: 'Not Ready Yet' },
+  { value: 'other', label: 'Other' },
+];
+
+function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+  const [factor, setFactor] = useState('');
+  const [notes, setNotes] = useState('');
+  const [competitor, setCompetitor] = useState('');
+  const mut = useMutation({
+    mutationFn: () => api.captureWinLoss(lead.serverId!, factor || 'other', notes, competitor),
+    onSuccess: onClose,
+  });
+  const outcome = lead.status === 'won' ? 'Won' : 'Lost';
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-box" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span style={{ fontSize: 22 }}>{outcome === 'Won' ? '🏆' : '📋'}</span>
+          <h2 className="modal-title" style={{ margin: 0 }}>Deal {outcome} — What was the factor?</h2>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '12px 0' }}>
+          {WIN_LOSS_FACTORS.map((f) => (
+            <button
+              key={f.value}
+              className={`btn ${factor === f.value ? 'btn-primary' : ''}`}
+              style={{ fontSize: 12, padding: '4px 12px' }}
+              onClick={() => setFactor(f.value)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {factor === 'competition' && (
+          <input
+            className="input"
+            placeholder="Competitor name (optional)"
+            style={{ width: '100%', marginBottom: 8 }}
+            value={competitor}
+            onChange={(e) => setCompetitor(e.target.value)}
+            autoFocus
+          />
+        )}
+        <textarea
+          className="input"
+          placeholder="Any notes? (optional)"
+          rows={3}
+          style={{ width: '100%', resize: 'vertical', marginBottom: 12 }}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn" onClick={onClose}>Skip</button>
+          <button
+            className="btn btn-primary"
+            disabled={mut.isPending}
+            onClick={() => mut.mutate()}
+          >
+            {mut.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SmsModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+  const [msg, setMsg] = useState('');
+  const mut = useMutation({
+    mutationFn: () => api.sendSms(lead.serverId!, msg),
+    onSuccess: onClose,
+  });
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-box" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span style={{ fontSize: 20 }}>💬</span>
+          <h2 className="modal-title" style={{ margin: 0 }}>Text {lead.contactName || lead.company}</h2>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>{lead.phone}</div>
+        <textarea
+          className="input"
+          placeholder="Your message…"
+          rows={4}
+          style={{ width: '100%', resize: 'vertical', marginBottom: 12 }}
+          value={msg}
+          onChange={(e) => setMsg(e.target.value)}
+          autoFocus
+        />
+        {mut.isError && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{(mut.error as Error).message}</div>}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button
+            className="btn btn-primary"
+            disabled={!msg.trim() || mut.isPending}
+            onClick={() => mut.mutate()}
+          >
+            {mut.isPending ? 'Sending…' : '💬 Send SMS'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function InfoTab({ lead }: Props) {
   const { updateLead } = useLeads();
   const { setProposalOpen } = useAppStore((s) => ({ setProposalOpen: s.setProposalOpen }));
   const [local, setLocal] = useState<Lead>(lead);
+  const [showWinLoss, setShowWinLoss] = useState(false);
+  const [showSms, setShowSms] = useState(false);
+  const [prevStatus, setPrevStatus] = useState<LeadStatus>(lead.status);
 
   function patch(field: keyof Lead, value: string) {
     const updated = { ...local, [field]: value };
     setLocal(updated);
+    if (field === 'status' && (value === 'won' || value === 'lost') && value !== prevStatus) {
+      setPrevStatus(value as LeadStatus);
+      setTimeout(() => setShowWinLoss(true), 300);
+    }
     if (lead.serverId) {
       updateLead({ serverId: lead.serverId, patch: { [field]: value } });
     }
@@ -104,12 +224,25 @@ export default function InfoTab({ lead }: Props) {
       <div className="field-row">
         <div className="field-group">
           <label className="field-label">Phone</label>
-          <input
-            className="input"
-            value={local.phone}
-            onChange={(e) => setLocal({ ...local, phone: e.target.value })}
-            onBlur={(e) => patch('phone', e.target.value)}
-          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="input"
+              value={local.phone}
+              onChange={(e) => setLocal({ ...local, phone: e.target.value })}
+              onBlur={(e) => patch('phone', e.target.value)}
+              style={{ flex: 1 }}
+            />
+            {local.phone && (
+              <button
+                className="btn"
+                style={{ fontSize: 11, padding: '4px 10px', whiteSpace: 'nowrap' }}
+                onClick={() => setShowSms(true)}
+                title="Send SMS"
+              >
+                💬 SMS
+              </button>
+            )}
+          </div>
         </div>
         <div className="field-group">
           <label className="field-label">Fleet Size</label>
@@ -182,6 +315,13 @@ export default function InfoTab({ lead }: Props) {
         </svg>
         Generate Quote / Proposal
       </button>
+
+      {showWinLoss && lead.serverId && (
+        <WinLossModal lead={local} onClose={() => setShowWinLoss(false)} />
+      )}
+      {showSms && lead.serverId && (
+        <SmsModal lead={local} onClose={() => setShowSms(false)} />
+      )}
     </div>
   );
 }

@@ -1,0 +1,265 @@
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../api/client';
+import { useAppStore } from '../../store/useAppStore';
+import { CATEGORIES, STATUSES } from '../../api/types';
+
+function fmt(n: number) {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+  return `$${n}`;
+}
+
+function pct(n: number, total: number) {
+  if (!total) return 0;
+  return Math.round((n / total) * 100);
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  new: '#6366f1',
+  cold: '#94a3b8',
+  contacted: '#3b82f6',
+  replied: '#8b5cf6',
+  meeting: '#f59e0b',
+  proposal: '#f97316',
+  won: '#22c55e',
+  lost: '#ef4444',
+};
+
+const FACTOR_LABELS: Record<string, string> = {
+  price: 'Price', timeline: 'Timeline', relationship: 'Relationship',
+  quality: 'Quality', competition: 'Competition', no_budget: 'No Budget',
+  not_ready: 'Not Ready', other: 'Other',
+};
+
+function StatCard({ label, value, sub, accent }: { label: string; value: string | number; sub?: string; accent?: string }) {
+  return (
+    <div className="an-stat-card">
+      <div className="an-stat-label">{label}</div>
+      <div className="an-stat-value" style={accent ? { color: accent } : {}}>{value}</div>
+      {sub && <div className="an-stat-sub">{sub}</div>}
+    </div>
+  );
+}
+
+function BarRow({ label, value, max, color, count }: { label: string; value: number; max: number; color?: string; count?: number | string }) {
+  const w = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 2;
+  return (
+    <div className="an-bar-row">
+      <div className="an-bar-label">{label}</div>
+      <div className="an-bar-track">
+        <div className="an-bar-fill" style={{ width: `${w}%`, background: color || 'var(--accent)' }} />
+      </div>
+      <div className="an-bar-count">{count ?? value}</div>
+    </div>
+  );
+}
+
+export default function AnalyticsView() {
+  const setMode = useAppStore((s) => s.setMode);
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['analytics'],
+    queryFn: () => api.getAnalytics(),
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+
+  if (isLoading || !data) {
+    return (
+      <div className="pv-loading">
+        <span className="spinner spinner-lg" />
+        <span>Loading analytics…</span>
+      </div>
+    );
+  }
+
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs } = data;
+  const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
+  const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
+  const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
+  const maxComp = Math.max(...(competitors ?? []).map((c) => c.count), 1);
+
+  const statusOrder = ['won', 'proposal', 'meeting', 'replied', 'contacted', 'cold', 'new', 'lost'];
+  const statusRows = statusOrder
+    .filter((s) => byStatus[s])
+    .map((s) => ({ status: s, count: byStatus[s] }));
+  const maxStatus = Math.max(...statusRows.map((r) => r.count), 1);
+
+  const totalActivity = activity30d.emails + activity30d.calls + activity30d.meetings + activity30d.sequences;
+
+  return (
+    <div className="an-root">
+      <div className="an-header">
+        <div>
+          <h1 className="an-title">Analytics</h1>
+          <p className="an-sub">Pipeline intelligence for Shadow Graphix</p>
+        </div>
+        <button className="btn" onClick={() => setMode('mission')}>← Mission</button>
+      </div>
+
+      {/* ── Summary Strip ── */}
+      <div className="an-stat-strip">
+        <StatCard label="Total Leads" value={summary.totalLeads} />
+        <StatCard label="Pipeline Value" value={fmt(summary.pipelineValue)} sub="estimated" accent="var(--accent)" />
+        <StatCard label="Won This Year" value={summary.won} accent="#22c55e" />
+        <StatCard label="Win Rate" value={summary.winRate !== null ? `${summary.winRate}%` : '—'} sub="won / (won+lost)" accent={summary.winRate && summary.winRate >= 30 ? '#22c55e' : '#f59e0b'} />
+        <StatCard label="Avg Days to Close" value={summary.avgDaysToClose !== null ? `${summary.avgDaysToClose}d` : '—'} />
+        <StatCard label="Installs Tracked" value={jobs.total_jobs} sub={`${jobs.total_vehicles ?? 0} vehicles`} />
+        <StatCard label="Aging Wraps" value={jobs.aging_90d} sub="< 90 days" accent={jobs.aging_90d > 0 ? '#f59e0b' : undefined} />
+      </div>
+
+      <div className="an-grid">
+
+        {/* ── Pipeline by Status ── */}
+        <div className="an-card">
+          <div className="an-card-title">Pipeline by Stage</div>
+          <div className="an-bar-list">
+            {statusRows.map((r) => (
+              <BarRow
+                key={r.status}
+                label={STATUSES[r.status as keyof typeof STATUSES] || r.status}
+                value={r.count}
+                max={maxStatus}
+                color={STATUS_COLORS[r.status]}
+                count={`${r.count} (${pct(r.count, summary.totalLeads)}%)`}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* ── Won Trend ── */}
+        <div className="an-card">
+          <div className="an-card-title">Deals Won — Last 6 Months</div>
+          {wonTrend.length === 0 ? (
+            <div className="an-empty">No won deals yet — keep pushing.</div>
+          ) : (
+            <div className="an-trend-bars">
+              {wonTrend.map((t) => (
+                <div key={t.month} className="an-trend-col">
+                  <div className="an-trend-val">{t.won}</div>
+                  <div
+                    className="an-trend-bar"
+                    style={{ height: `${Math.max(4, Math.round((t.won / maxTrend) * 80))}px` }}
+                  />
+                  <div className="an-trend-label">{t.month}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Category Performance ── */}
+        <div className="an-card">
+          <div className="an-card-title">Performance by Category</div>
+          <div className="an-bar-list">
+            {byCategory.map((c) => (
+              <div key={c.category} className="an-cat-row">
+                <div className="an-bar-row" style={{ marginBottom: 2 }}>
+                  <div className="an-bar-label">{CATEGORIES[c.category as keyof typeof CATEGORIES] || c.category}</div>
+                  <div className="an-bar-track">
+                    <div className="an-bar-fill" style={{ width: `${Math.max(2, pct(c.total, maxCat))}%`, background: 'var(--accent)' }} />
+                    {c.won > 0 && (
+                      <div className="an-bar-fill an-bar-won" style={{ width: `${pct(c.won, maxCat)}%` }} />
+                    )}
+                  </div>
+                  <div className="an-bar-count">{c.total} total · {c.won} won</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Activity Last 30d ── */}
+        <div className="an-card">
+          <div className="an-card-title">Activity — Last 30 Days</div>
+          <div className="an-activity-grid">
+            <div className="an-activity-item">
+              <div className="an-activity-icon">✉</div>
+              <div className="an-activity-val">{activity30d.emails}</div>
+              <div className="an-activity-label">Emails Sent</div>
+            </div>
+            <div className="an-activity-item">
+              <div className="an-activity-icon">📞</div>
+              <div className="an-activity-val">{activity30d.calls}</div>
+              <div className="an-activity-label">Calls Made</div>
+            </div>
+            <div className="an-activity-item">
+              <div className="an-activity-icon">📅</div>
+              <div className="an-activity-val">{activity30d.meetings}</div>
+              <div className="an-activity-label">Meetings Set</div>
+            </div>
+            <div className="an-activity-item">
+              <div className="an-activity-icon">🚀</div>
+              <div className="an-activity-val">{activity30d.sequences}</div>
+              <div className="an-activity-label">Sequences Done</div>
+            </div>
+          </div>
+          <div className="an-activity-total">{totalActivity} total touchpoints</div>
+        </div>
+
+        {/* ── Win/Loss Factors ── */}
+        {winLossFactors.length > 0 && (
+          <div className="an-card">
+            <div className="an-card-title">Win/Loss Factors</div>
+            <div className="an-bar-list">
+              {winLossFactors.map((f) => (
+                <BarRow
+                  key={f.factor}
+                  label={FACTOR_LABELS[f.factor] || f.factor}
+                  value={f.count}
+                  max={maxFactor}
+                  color="#8b5cf6"
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Competitor Leaderboard ── */}
+        {competitors && competitors.length > 0 && (
+          <div className="an-card">
+            <div className="an-card-title">Competitors You Lost To</div>
+            <div className="an-bar-list">
+              {competitors.map((c, i) => (
+                <BarRow
+                  key={c.competitor}
+                  label={`${i + 1}. ${c.competitor}`}
+                  value={c.count}
+                  max={maxComp}
+                  color="#ef4444"
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Top Leads to Work ── */}
+        {topLeads.length > 0 && (
+          <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+            <div className="an-card-title">Top Leads to Work Now</div>
+            <div className="an-top-leads">
+              {topLeads.map((l) => (
+                <div
+                  key={l.id}
+                  className="an-top-lead-row"
+                  onClick={() => { setCurrentLeadId(String(l.id)); setMode('leads'); }}
+                >
+                  <div className="an-top-lead-company">{l.company}</div>
+                  <div className="an-top-lead-meta">
+                    {CATEGORIES[l.category as keyof typeof CATEGORIES] || l.category}
+                    {l.city && l.state ? ` · ${l.city}, ${l.state}` : ''}
+                    {l.fleet_size ? ` · ${l.fleet_size} units` : ''}
+                  </div>
+                  <span className={`status-tag ${l.status}`}>{STATUSES[l.status as keyof typeof STATUSES] || l.status}</span>
+                  <span className="an-arrow">→</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}

@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink } from './types';
 
 export const api = {
   // Auth
@@ -331,11 +331,85 @@ export const api = {
   getActiveContent: () => authFetch<{ active: { vehicle_group: string; content: WrapContent }[] }>('/content/active'),
   exportSchedule: () => authFetch<object>('/content/export'),
 
+  // E Ink Device Infrastructure
+  getDevices: () => authFetch<{ devices: EinkDevice[] }>('/admin/devices'),
+  getDeviceStatus: () => authFetch<{ total: number; online: number; offline: number; updating: number }>('/admin/devices/status'),
+  registerDevice: (d: { name: string; serial_number?: string; vehicle_group: string; lead_id?: number; job_id?: number }) =>
+    authFetch<{ ok: boolean; device: EinkDevice }>('/admin/devices', { method: 'POST', body: JSON.stringify(d) }),
+  updateDevice: (id: number, patch: Partial<EinkDevice>) =>
+    authFetch<{ ok: boolean; device: EinkDevice }>(`/admin/devices/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  deleteDevice: (id: number) => authFetch<{ ok: boolean }>(`/admin/devices/${id}`, { method: 'DELETE' }),
+  pushContentToDevice: (deviceId: number, contentId: number) =>
+    authFetch<{ ok: boolean; push_log_id: number }>(`/admin/devices/${deviceId}/push`, { method: 'POST', body: JSON.stringify({ content_id: contentId }) }),
+  getDevicePushLog: (deviceId: number) => authFetch<{ log: EinkPushLog[] }>(`/admin/devices/${deviceId}/log`),
+
+  // Notifications
+  getNotifications: () => authFetch<{ notifications: AppNotification[]; unread: number }>('/notifications'),
+  markAllRead: () => authFetch<{ ok: boolean }>('/notifications/read-all', { method: 'PUT', body: '{}' }),
+  markRead: (id: number) => authFetch<{ ok: boolean }>(`/notifications/${id}/read`, { method: 'PUT', body: '{}' }),
+  deleteNotification: (id: number) => authFetch<{ ok: boolean }>(`/notifications/${id}`, { method: 'DELETE' }),
+
+  // Job Photos
+  getJobPhotos: (jobId: number) => authFetch<{ photos: JobPhoto[] }>(`/jobs/${jobId}/photos`),
+  uploadJobPhoto: (jobId: number, file: File, caption: string, photo_type: string) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('caption', caption);
+    form.append('photo_type', photo_type);
+    return fetch(`/jobs/${jobId}/photos`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Upload failed');
+      return data as { ok: boolean; photo: JobPhoto };
+    });
+  },
+  deleteJobPhoto: (photoId: number) => authFetch<{ ok: boolean }>(`/jobs/photos/${photoId}`, { method: 'DELETE' }),
+
+  // Quote PDF (opens in new tab)
+  openQuote: (bidId: number) => window.open(`/bids/${bidId}/quote?token=${getToken()}`, '_blank'),
+
+  // Client Portal
+  createPortalLink: (leadId: number) =>
+    authFetch<{ ok: boolean; link: PortalLink }>('/portal-links', { method: 'POST', body: JSON.stringify({ lead_id: leadId }) }),
+  getPortalLink: (leadId: number) =>
+    authFetch<{ link: PortalLink | null }>(`/portal-links/lead/${leadId}`),
+  deletePortalLink: (id: number) =>
+    authFetch<{ ok: boolean }>(`/portal-links/${id}`, { method: 'DELETE' }),
+  getPortalUrl: (token: string) => `${window.location.origin}/portal/${token}`,
+
   // AI Calling — campaigns
   getCampaigns: () =>
     authFetch<{ campaigns: { id: string; name: string; eventDate: string; weeksUntil: number; leadCount: number; urgency: string }[] }>('/calls/campaigns'),
   launchCampaign: (id: string) =>
     authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
+
+  // Analytics Dashboard
+  getAnalytics: () => authFetch<{
+    summary: { totalLeads: number; won: number; lost: number; winRate: number | null; avgDaysToClose: number | null; pipelineValue: number };
+    byStatus: Record<string, number>;
+    wonTrend: { month: string; won: number }[];
+    byCategory: { category: string; total: number; won: number; lost: number }[];
+    activity30d: { emails: number; calls: number; meetings: number; sequences: number };
+    winLossFactors: { factor: string; count: number }[];
+    competitors: { competitor: string; count: number }[];
+    topLeads: { id: number; company: string; status: string; category: string; fleet_size: string; city: string; state: string }[];
+    jobs: { total_jobs: number; total_vehicles: number; aging_90d: number };
+  }>('/analytics'),
+
+  // AI Mission Brief
+  getMissionBrief: () => authFetch<{ brief: string | null; reason?: string }>('/mission/brief'),
+
+  // Win/Loss capture
+  captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),
+
+  // SMS outreach
+  sendSms: (leadId: number, message: string) =>
+    authFetch<{ ok: boolean; sid?: string }>(`/leads/${leadId}/sms`, { method: 'POST', body: JSON.stringify({ message }) }),
 
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),

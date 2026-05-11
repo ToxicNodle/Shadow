@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import type { Lead } from '../../api/types';
 import { CATEGORIES, STATUSES } from '../../api/types';
 import { useAppStore } from '../../store/useAppStore';
-import { scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
+import { scoreBreakdown, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 
 interface Props {
   lead: Lead;
@@ -15,7 +16,9 @@ export default function LeadRow({ lead, selected, checked }: Props) {
     toggleLeadSelection: s.toggleLeadSelection,
   }));
 
-  const score = scoreLead(lead);
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const breakdown = scoreBreakdown(lead);
+  const score = breakdown.total;
   const label = scoreLabel(score);
   const color = SCORE_COLORS[label];
 
@@ -71,15 +74,35 @@ export default function LeadRow({ lead, selected, checked }: Props) {
         <div className="lead-date">{fmt(lead.lastContacted)}</div>
       </div>
 
-      {/* Score badge */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          background: `${color}22`, color, borderRadius: 4,
-          fontSize: 11, fontWeight: 700, padding: '2px 6px', minWidth: 28,
-        }}>
+      {/* Score badge with breakdown popover */}
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: `${color}22`, color, borderRadius: 4,
+            fontSize: 11, fontWeight: 700, padding: '2px 6px', minWidth: 28,
+            cursor: 'pointer',
+          }}
+          onMouseEnter={() => setShowBreakdown(true)}
+          onMouseLeave={() => setShowBreakdown(false)}
+          onClick={(e) => { e.stopPropagation(); setShowBreakdown((v) => !v); }}
+        >
           {score}
         </div>
+        {showBreakdown && (
+          <div className="score-breakdown-pop" onClick={(e) => e.stopPropagation()}>
+            <div className="score-breakdown-title">Score Breakdown</div>
+            {breakdown.factors.map((f) => (
+              <div key={f.label} className="score-breakdown-row">
+                <span className="score-breakdown-label">{f.label}</span>
+                <span className="score-breakdown-pts" style={{ color: f.points > 0 ? color : 'var(--text-faint)' }}>
+                  +{f.points}
+                </span>
+              </div>
+            ))}
+            <div className="score-breakdown-total">Total: {score} / 100</div>
+          </div>
+        )}
       </div>
 
       <div>
