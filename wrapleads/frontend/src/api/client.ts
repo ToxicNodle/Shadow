@@ -47,7 +47,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink } from './types';
 
 export const api = {
   // Auth
@@ -371,6 +371,15 @@ export const api = {
 
   // Quote PDF (opens in new tab)
   openQuote: (bidId: number) => window.open(`/bids/${bidId}/quote?token=${getToken()}`, '_blank'),
+
+  // Client Portal
+  createPortalLink: (leadId: number) =>
+    authFetch<{ ok: boolean; link: PortalLink }>('/portal-links', { method: 'POST', body: JSON.stringify({ lead_id: leadId }) }),
+  getPortalLink: (leadId: number) =>
+    authFetch<{ link: PortalLink | null }>(`/portal-links/lead/${leadId}`),
+  deletePortalLink: (id: number) =>
+    authFetch<{ ok: boolean }>(`/portal-links/${id}`, { method: 'DELETE' }),
+  getPortalUrl: (token: string) => `${window.location.origin}/portal/${token}`,
 
   // AI Calling — campaigns
   getCampaigns: () =>

@@ -400,6 +400,17 @@ export interface ContentSchedule {
   created_at: string;
 }
 
+// ── Client Portal ────────────────────────────────────────────────────────────
+
+export interface PortalLink {
+  id: number;
+  user_id: string;
+  lead_id: number;
+  token: string;
+  label?: string | null;
+  created_at: string;
+}
+
 // ── Job Photos ────────────────────────────────────────────────────────────────
 
 export type JobPhotoType = 'before' | 'after' | 'detail' | 'other';

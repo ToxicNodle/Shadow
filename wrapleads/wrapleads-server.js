@@ -292,6 +292,25 @@ async function migrateDb() {
     console.warn('[migrate] Could not create job_photos table:', e.message);
   }
 
+  // Client Portal Links
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS portal_links (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        lead_id    BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        token      TEXT NOT NULL UNIQUE,
+        label      TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_user  ON portal_links(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_lead  ON portal_links(lead_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_token ON portal_links(token)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create portal_links table:', e.message);
+  }
+
   // Notifications
   try {
     await pool.query(`
@@ -3655,6 +3674,370 @@ app.get('/content/export', authMiddleware, async (req, res) => {
     [req.user.id]
   );
   res.json({ exported_at: new Date().toISOString(), schedules });
+});
+
+// ── Client Portal ────────────────────────────────────────────────────────────
+
+app.post('/portal-links', authMiddleware, async (req, res) => {
+  const { lead_id, label } = req.body;
+  if (!lead_id) return res.status(400).json({ error: 'lead_id required' });
+  const uid = String(req.user.id);
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [lead_id, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    // Upsert — one link per lead
+    const existing = await pool.query('SELECT * FROM portal_links WHERE lead_id=$1 AND user_id=$2', [lead_id, uid]);
+    if (existing.rows.length) return res.json({ ok: true, link: existing.rows[0] });
+    const token = crypto.randomBytes(24).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO portal_links (user_id, lead_id, token, label) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [uid, lead_id, token, label || null]
+    );
+    res.json({ ok: true, link: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/portal-links/lead/:leadId', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM portal_links WHERE lead_id=$1 AND user_id=$2',
+      [req.params.leadId, String(req.user.id)]
+    );
+    res.json({ link: rows[0] || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/portal-links/:id', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM portal_links WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUBLIC — client portal page
+app.get('/portal/:token', async (req, res) => {
+  try {
+    const { rows: linkRows } = await pool.query(
+      `SELECT pl.*, l.company, l.contact_name, l.status, l.category, l.city, l.state, l.email AS lead_email
+       FROM portal_links pl JOIN leads l ON l.id = pl.lead_id
+       WHERE pl.token=$1`, [req.params.token]
+    );
+    if (!linkRows.length) return res.status(404).send('<h1>Link not found or expired.</h1>');
+    const link = linkRows[0];
+
+    // Fetch shop settings
+    const { rows: uRows } = await pool.query('SELECT settings_json FROM users WHERE id=$1', [link.user_id]);
+    const s = uRows[0]?.settings_json || {};
+
+    // Fetch job photos for any installed jobs linked to this lead
+    const { rows: photos } = await pool.query(
+      `SELECT jp.* FROM job_photos jp
+       JOIN installed_jobs ij ON ij.id = jp.job_id
+       WHERE ij.lead_id=$1 ORDER BY jp.photo_type, jp.created_at ASC`,
+      [link.lead_id]
+    );
+
+    // Fetch active bid/quote
+    const { rows: bids } = await pool.query(
+      `SELECT * FROM bids WHERE lead_id=$1 AND status NOT IN ('won','lost','no_bid') ORDER BY created_at DESC LIMIT 1`,
+      [link.lead_id]
+    );
+    const bid = bids[0];
+
+    // Fetch design concept (latest activity with image)
+    const { rows: designActs } = await pool.query(
+      `SELECT * FROM lead_activities WHERE lead_id=$1 AND (type='note_added') AND metadata->>'image_url' IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      [link.lead_id]
+    );
+    const designImg = designActs[0]?.metadata?.image_url;
+
+    // Fetch recent activities (last 8, public-safe types only)
+    const { rows: activities } = await pool.query(
+      `SELECT type, subject, created_at FROM lead_activities
+       WHERE lead_id=$1 AND type IN ('email_sent','called','meeting_set','status_changed','note_added')
+       ORDER BY created_at DESC LIMIT 8`,
+      [link.lead_id]
+    );
+
+    const STATUS_STEPS = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won'];
+    const currentStepIdx = STATUS_STEPS.indexOf(link.status);
+
+    const ACT_LABELS: Record<string, string> = {
+      email_sent: 'Email sent', called: 'Call made', meeting_set: 'Meeting scheduled',
+      status_changed: 'Status updated', note_added: 'Update',
+    };
+
+    const beforePhotos = photos.filter((p) => p.photo_type === 'before');
+    const afterPhotos  = photos.filter((p) => p.photo_type === 'after');
+    const detailPhotos = photos.filter((p) => p.photo_type === 'detail' || p.photo_type === 'other');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${link.company} — ${s.companyName || 'Your Wrap Shop'}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e5e7eb; min-height: 100vh; }
+  a { color: #6366f1; }
+  .hero { background: linear-gradient(135deg, #1a1c22 0%, #16181f 100%); border-bottom: 1px solid #2d2f3a; padding: 28px 20px; }
+  .hero-inner { max-width: 780px; margin: 0 auto; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; }
+  .brand-name { font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -.5px; }
+  .brand-name span { color: #6366f1; }
+  .brand-tag { font-size: 11px; color: #6b7280; margin-top: 3px; }
+  .portal-badge { background: #6366f122; border: 1px solid #6366f155; color: #818cf8; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; letter-spacing: .05em; }
+  .page { max-width: 780px; margin: 0 auto; padding: 28px 20px; display: flex; flex-direction: column; gap: 24px; }
+  .section { background: #1a1c22; border: 1px solid #2d2f3a; border-radius: 14px; overflow: hidden; }
+  .section-header { padding: 16px 20px; border-bottom: 1px solid #2d2f3a; display: flex; align-items: center; justify-content: space-between; }
+  .section-title { font-size: 13px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .08em; }
+  .section-body { padding: 20px; }
+  .project-name { font-size: 26px; font-weight: 800; color: #fff; margin-bottom: 6px; }
+  .project-meta { display: flex; gap: 10px; flex-wrap: wrap; }
+  .meta-chip { background: #2d2f3a; border-radius: 6px; padding: 3px 10px; font-size: 12px; color: #9ca3af; font-weight: 600; }
+  .meta-chip.accent { background: #6366f122; color: #818cf8; border: 1px solid #6366f133; }
+  .steps { display: flex; gap: 0; overflow-x: auto; padding: 4px 0; }
+  .step { flex: 1; min-width: 80px; text-align: center; position: relative; }
+  .step::before { content: ''; position: absolute; top: 16px; left: 0; right: 0; height: 2px; background: #2d2f3a; z-index: 0; }
+  .step:first-child::before { left: 50%; }
+  .step:last-child::before { right: 50%; }
+  .step-dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #2d2f3a; background: #1a1c22; margin: 6px auto; position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; font-size: 9px; }
+  .step.done .step-dot { background: #6366f1; border-color: #6366f1; }
+  .step.current .step-dot { background: #fff; border-color: #6366f1; box-shadow: 0 0 0 4px #6366f133; }
+  .step.done::before, .step.current::before { background: #6366f1; }
+  .step-label { font-size: 10px; color: #6b7280; margin-top: 4px; }
+  .step.done .step-label, .step.current .step-label { color: #e5e7eb; font-weight: 700; }
+  .photo-section { display: flex; flex-direction: column; gap: 12px; }
+  .photo-group-label { font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .08em; }
+  .photo-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .photo-item { border-radius: 10px; overflow: hidden; aspect-ratio: 4/3; }
+  .photo-item img { width: 100%; height: 100%; object-fit: cover; }
+  .quote-box { background: linear-gradient(135deg, #1e2030 0%, #1a1c22 100%); border: 1px solid #6366f133; border-radius: 10px; padding: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .quote-value { font-size: 32px; font-weight: 900; color: #fff; }
+  .quote-label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+  .quote-note { font-size: 11px; color: #6b7280; margin-top: 4px; }
+  .cta-btn { background: #6366f1; color: #fff; border: none; padding: 14px 32px; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; margin-top: 12px; transition: background .15s; }
+  .cta-btn:hover { background: #4f46e5; }
+  .cta-btn:disabled { background: #4b5563; cursor: default; }
+  .approved-badge { background: #22c55e22; border: 1px solid #22c55e44; color: #22c55e; padding: 10px 20px; border-radius: 8px; font-weight: 700; text-align: center; font-size: 14px; }
+  .feedback-form { display: flex; flex-direction: column; gap: 12px; }
+  .feedback-textarea { width: 100%; background: #0f1117; border: 1px solid #2d2f3a; border-radius: 8px; padding: 12px; color: #e5e7eb; font-size: 14px; font-family: inherit; resize: vertical; min-height: 80px; }
+  .feedback-textarea:focus { outline: none; border-color: #6366f1; }
+  .submit-btn { background: #2d2f3a; color: #e5e7eb; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .submit-btn:hover { background: #374151; }
+  .activity-list { display: flex; flex-direction: column; gap: 0; }
+  .activity-row { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #2d2f3a; align-items: flex-start; }
+  .activity-row:last-child { border-bottom: none; }
+  .activity-dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1; flex-shrink: 0; margin-top: 5px; }
+  .activity-text { font-size: 12px; color: #9ca3af; }
+  .activity-time { font-size: 10px; color: #4b5563; margin-top: 2px; }
+  .contact-row { display: flex; gap: 12px; align-items: center; }
+  .contact-avatar { width: 40px; height: 40px; border-radius: 50%; background: #6366f133; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; color: #818cf8; flex-shrink: 0; }
+  .contact-info { display: flex; flex-direction: column; gap: 2px; }
+  .contact-name { font-size: 14px; font-weight: 700; color: #fff; }
+  .contact-detail { font-size: 12px; color: #6b7280; }
+  .design-img { width: 100%; border-radius: 10px; }
+  .footer { text-align: center; padding: 20px; color: #4b5563; font-size: 11px; }
+  @media (max-width: 600px) { .hero-inner { flex-direction: column; } .steps { gap: 4px; } .step-label { font-size: 9px; } }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-inner">
+    <div>
+      <div class="brand-name">${s.companyName || 'Shadow Graphix'}<span>.</span></div>
+      <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps & Fleet Graphics'}</div>
+    </div>
+    <span class="portal-badge">CLIENT PORTAL</span>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- Project Header -->
+  <div class="section">
+    <div class="section-body">
+      <div class="project-name">${link.company}</div>
+      <div class="project-meta">
+        ${link.category ? `<span class="meta-chip accent">${link.category.toUpperCase()}</span>` : ''}
+        ${link.city || link.state ? `<span class="meta-chip">📍 ${[link.city, link.state].filter(Boolean).join(', ')}</span>` : ''}
+        ${link.contact_name ? `<span class="meta-chip">👤 ${link.contact_name}</span>` : ''}
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Progress -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Project Status</span></div>
+    <div class="section-body">
+      <div class="steps">
+        ${['New', 'Contacted', 'Replied', 'Meeting', 'Proposal', 'Won'].map((label, i) => {
+          const cls = i < currentStepIdx ? 'done' : i === currentStepIdx ? 'current' : '';
+          const checkmark = i < currentStepIdx ? '✓' : '';
+          return `<div class="step ${cls}"><div class="step-dot">${checkmark}</div><div class="step-label">${label}</div></div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>
+
+  ${bid ? `
+  <!-- Quote -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Your Quote</span></div>
+    <div class="section-body">
+      <div class="quote-box">
+        <div>
+          <div class="quote-label">Project Estimate</div>
+          <div class="quote-value">${bid.estimated_value ? `$${Number(bid.estimated_value).toLocaleString()}` : '—'}</div>
+          <div class="quote-note">${bid.project_name}</div>
+        </div>
+        ${bid.bid_due ? `<div><div class="quote-label">Quote Valid Until</div><div style="font-size:16px;font-weight:700;color:#fff">${new Date(bid.bid_due).toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'})}</div></div>` : ''}
+      </div>
+      ${link.status !== 'won' ? `
+      <form id="approve-form" onsubmit="submitApproval(event)">
+        <button type="submit" class="cta-btn" id="approve-btn">✓ Approve This Quote</button>
+      </form>
+      <p id="approved-msg" class="approved-badge" style="display:none;margin-top:12px">✓ Quote approved — we'll be in touch shortly!</p>
+      ` : `<div class="approved-badge" style="margin-top:12px">✓ Project in progress</div>`}
+    </div>
+  </div>` : ''}
+
+  ${(beforePhotos.length > 0 || afterPhotos.length > 0 || detailPhotos.length > 0) ? `
+  <!-- Job Photos -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Install Documentation</span></div>
+    <div class="section-body photo-section">
+      ${beforePhotos.length > 0 ? `<div class="photo-group-label">Before</div><div class="photo-row">${beforePhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Before'}"></div>`).join('')}</div>` : ''}
+      ${afterPhotos.length > 0 ? `<div class="photo-group-label">After</div><div class="photo-row">${afterPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'After'}"></div>`).join('')}</div>` : ''}
+      ${detailPhotos.length > 0 ? `<div class="photo-group-label">Detail</div><div class="photo-row">${detailPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Detail'}"></div>`).join('')}</div>` : ''}
+    </div>
+  </div>` : ''}
+
+  ${designImg ? `
+  <!-- Design Concept -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Design Concept</span></div>
+    <div class="section-body"><img src="${designImg}" class="design-img" alt="Wrap Design Concept"></div>
+  </div>` : ''}
+
+  ${activities.length > 0 ? `
+  <!-- Activity Timeline -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Project Updates</span></div>
+    <div class="section-body">
+      <div class="activity-list">
+        ${activities.map((a) => `
+        <div class="activity-row">
+          <div class="activity-dot"></div>
+          <div>
+            <div class="activity-text">${ACT_LABELS[a.type] || a.type}${a.subject ? ` — ${a.subject}` : ''}</div>
+            <div class="activity-time">${new Date(a.created_at).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>
+  </div>` : ''}
+
+  <!-- Feedback -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Leave Feedback</span></div>
+    <div class="section-body">
+      <form id="feedback-form" class="feedback-form" onsubmit="submitFeedback(event)">
+        <textarea class="feedback-textarea" id="feedback-text" placeholder="Questions, requests, or feedback…" rows="3"></textarea>
+        <div style="display:flex;justify-content:flex-end;">
+          <button type="submit" class="submit-btn">Send Feedback</button>
+        </div>
+      </form>
+      <p id="feedback-msg" style="display:none;font-size:12px;color:#22c55e;margin-top:8px">Thank you — we'll follow up shortly.</p>
+    </div>
+  </div>
+
+  <!-- Contact -->
+  <div class="section">
+    <div class="section-header"><span class="section-title">Your Contact</span></div>
+    <div class="section-body">
+      <div class="contact-row">
+        <div class="contact-avatar">${(s.senderName || 'S').charAt(0).toUpperCase()}</div>
+        <div class="contact-info">
+          <span class="contact-name">${s.senderName || s.companyName || 'Shadow Graphix'}</span>
+          <span class="contact-detail">${s.senderTitle || ''}</span>
+          ${s.senderEmail ? `<a href="mailto:${s.senderEmail}" class="contact-detail">${s.senderEmail}</a>` : ''}
+          ${s.senderPhone ? `<span class="contact-detail">${s.senderPhone}</span>` : ''}
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">Powered by WrapLeads · ${s.companyName || 'Shadow Graphix'}</div>
+
+<script>
+  async function submitApproval(e) {
+    e.preventDefault();
+    document.getElementById('approve-btn').disabled = true;
+    document.getElementById('approve-btn').textContent = 'Approving…';
+    try {
+      await fetch('/portal/${req.params.token}/approve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      document.getElementById('approve-form').style.display = 'none';
+      document.getElementById('approved-msg').style.display = 'block';
+    } catch { document.getElementById('approve-btn').disabled = false; document.getElementById('approve-btn').textContent = '✓ Approve This Quote'; }
+  }
+  async function submitFeedback(e) {
+    e.preventDefault();
+    const text = document.getElementById('feedback-text').value.trim();
+    if (!text) return;
+    document.querySelector('.submit-btn').disabled = true;
+    try {
+      await fetch('/portal/${req.params.token}/feedback', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ feedback: text }) });
+      document.getElementById('feedback-form').style.display = 'none';
+      document.getElementById('feedback-msg').style.display = 'block';
+    } catch { document.querySelector('.submit-btn').disabled = false; }
+  }
+</script>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (e) { res.status(500).send('Server error'); }
+});
+
+// Portal actions — PUBLIC (no auth, token identifies)
+app.post('/portal/:token/approve', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM portal_links WHERE token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [link.lead_id]);
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'status_changed', subject: 'Client approved quote via portal' });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} approved their quote!`,
+      body: 'Client clicked "Approve" on the portal link. Follow up now.',
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/portal/:token/feedback', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM portal_links WHERE token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    const { feedback } = req.body;
+    if (!feedback?.trim()) return res.status(400).json({ error: 'feedback required' });
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'note_added', subject: 'Client feedback via portal', body: feedback });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `New feedback from ${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company}`,
+      body: feedback.slice(0, 200),
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Notifications ─────────────────────────────────────────────────────────────
