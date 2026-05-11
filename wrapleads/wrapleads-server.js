@@ -1583,6 +1583,141 @@ app.get('/leads/analytics', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================================
+// Full Analytics Dashboard — pipeline intelligence
+// ============================================================================
+
+app.get('/analytics', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [
+      pipelineR, wonTrendR, catWinR, activity30dR,
+      avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR
+    ] = await Promise.all([
+      // Pipeline by status
+      pool.query(`
+        SELECT status, COUNT(*)::INT AS count
+        FROM leads WHERE user_id=$1 GROUP BY status
+      `, [uid]),
+
+      // Won per month — last 6 months
+      pool.query(`
+        SELECT TO_CHAR(DATE_TRUNC('month', updated_at), 'Mon YY') AS month,
+               COUNT(*)::INT AS won,
+               DATE_TRUNC('month', updated_at) AS sort_key
+        FROM leads WHERE user_id=$1 AND status='won'
+          AND updated_at >= NOW() - INTERVAL '6 months'
+        GROUP BY DATE_TRUNC('month', updated_at)
+        ORDER BY DATE_TRUNC('month', updated_at)
+      `, [uid]),
+
+      // Category win breakdown
+      pool.query(`
+        SELECT category,
+               COUNT(*)::INT AS total,
+               COUNT(*) FILTER (WHERE status='won')::INT AS won,
+               COUNT(*) FILTER (WHERE status='lost')::INT AS lost
+        FROM leads WHERE user_id=$1
+        GROUP BY category ORDER BY total DESC
+      `, [uid]),
+
+      // Activity last 30 days
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE type='email_sent')::INT AS emails,
+          COUNT(*) FILTER (WHERE type IN ('called'))::INT AS calls,
+          COUNT(*) FILTER (WHERE type='meeting_set')::INT AS meetings,
+          COUNT(*) FILTER (WHERE type='sequence_activated')::INT AS sequences
+        FROM lead_activities
+        WHERE user_id=$1 AND created_at >= NOW() - INTERVAL '30 days'
+      `, [uid]),
+
+      // Avg days new → won
+      pool.query(`
+        SELECT ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_days
+        FROM leads WHERE user_id=$1 AND status='won'
+          AND updated_at >= NOW() - INTERVAL '12 months'
+      `, [uid]),
+
+      // Win/Loss factors from activities
+      pool.query(`
+        SELECT metadata->>'win_loss_factor' AS factor, COUNT(*)::INT AS count
+        FROM lead_activities
+        WHERE user_id=$1 AND type='status_changed'
+          AND metadata->>'win_loss_factor' IS NOT NULL
+        GROUP BY factor ORDER BY count DESC LIMIT 8
+      `, [uid]),
+
+      // Competitor leaderboard
+      pool.query(`
+        SELECT metadata->>'competitor' AS competitor, COUNT(*)::INT AS count
+        FROM lead_activities
+        WHERE user_id=$1 AND type='status_changed'
+          AND metadata->>'competitor' IS NOT NULL AND metadata->>'competitor' != ''
+        GROUP BY competitor ORDER BY count DESC LIMIT 8
+      `, [uid]),
+
+      // Top leads by score proxy (fleet size, category priority)
+      pool.query(`
+        SELECT id, company, status, category, fleet_size, city, state
+        FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost')
+        ORDER BY
+          CASE category WHEN 'racing' THEN 1 WHEN 'gc_referral' THEN 2 WHEN 'dinoc' THEN 3 WHEN 'fleet' THEN 4 ELSE 5 END,
+          CASE WHEN fleet_size ~ '^[0-9]+$' THEN fleet_size::INT ELSE 0 END DESC
+        LIMIT 5
+      `, [uid]),
+
+      // Job stats
+      pool.query(`
+        SELECT
+          COUNT(*)::INT AS total_jobs,
+          SUM(vehicle_count)::INT AS total_vehicles,
+          COUNT(*) FILTER (WHERE (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '90 days')::INT AS aging_90d
+        FROM installed_jobs WHERE user_id=$1
+      `, [uid]),
+    ]);
+
+    const byStatus = {};
+    let totalLeads = 0;
+    pipelineR.rows.forEach((r) => { byStatus[r.status] = r.count; totalLeads += r.count; });
+
+    const won = byStatus['won'] ?? 0;
+    const lost = byStatus['lost'] ?? 0;
+    const winRate = (won + lost) > 0 ? Math.round((won / (won + lost)) * 100) : null;
+
+    const REV_EST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500, other: 2500 };
+    let pipelineValue = 0;
+    catWinR.rows.forEach((r) => {
+      const active = r.total - r.won - r.lost;
+      pipelineValue += Math.max(0, active) * (REV_EST[r.category] ?? 2500);
+    });
+
+    const act = activity30dR.rows[0] ?? {};
+    const js = jobStatsR.rows[0] ?? {};
+
+    res.json({
+      summary: {
+        totalLeads, won, lost, winRate,
+        avgDaysToClose: avgCloseR.rows[0]?.avg_days ?? null,
+        pipelineValue,
+      },
+      byStatus,
+      wonTrend: wonTrendR.rows.map((r) => ({ month: r.month, won: r.won })),
+      byCategory: catWinR.rows,
+      activity30d: {
+        emails: act.emails ?? 0,
+        calls: act.calls ?? 0,
+        meetings: act.meetings ?? 0,
+        sequences: act.sequences ?? 0,
+      },
+      winLossFactors: winLossR.rows,
+      competitors: competitorR.rows,
+      topLeads: topLeadsR.rows,
+      jobs: js,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Sample carrier seeder (runs when companies table is empty)
 // ----------------------------------------------------------------------------
@@ -1981,12 +2116,16 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
     const leadId = Number(req.params.id);
-    const { factor = 'other', notes = '' } = req.body || {};
+    const { factor = 'other', notes = '', competitor = '' } = req.body || {};
     await logActivity(pool, {
       leadId, userId: uid, type: 'status_changed',
-      subject: `Win/Loss factor: ${factor}`,
+      subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}`,
       body: notes,
-      metadata: { win_loss_factor: factor, win_loss_notes: notes },
+      metadata: {
+        win_loss_factor: factor,
+        win_loss_notes: notes,
+        ...(competitor ? { competitor } : {}),
+      },
     });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2402,9 +2541,74 @@ function startDigestWorker() {
       sendDailyDigests();
     }
   };
-  // Check every minute — fires once when clock hits 7:00
   setInterval(check, 60_000);
   console.log('· Digest worker: running (daily briefing at 7:00 AM)');
+}
+
+// Cold lead re-engagement — queues a single check-in email for leads inactive 60+ days
+async function processColdLeads() {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return;
+  try {
+    // Find leads inactive >= 60 days that haven't been re-engaged in the last 90 days
+    const { rows: leads } = await pool.query(`
+      SELECT l.id, l.company, l.category, l.email, l.contact_name, l.city, l.state,
+             l.pitch_angle, l.fleet_size, l.user_id, u.settings_json
+      FROM leads l
+      JOIN users u ON u.id = l.user_id::bigint
+      WHERE l.status IN ('cold', 'contacted')
+        AND l.email IS NOT NULL AND l.email != ''
+        AND (l.last_contacted IS NULL OR l.last_contacted < CURRENT_DATE - INTERVAL '60 days')
+        AND l.updated_at < NOW() - INTERVAL '60 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM email_queue q
+          WHERE q.lead_id = l.id AND q.created_at >= NOW() - INTERVAL '90 days'
+        )
+        AND u.sub_status IN ('trialing', 'active')
+      LIMIT 5
+    `);
+
+    for (const lead of leads) {
+      try {
+        const s = lead.settings_json || {};
+        const senderName = s.senderName || 'the team';
+        const companyName = s.companyName || 'Shadow Graphix';
+        const prompt = `Write a short, natural re-engagement email (under 100 words) to ${lead.contact_name || 'the team'} at ${lead.company}. Category: ${lead.category}. This is a cold lead we haven't contacted in 60+ days. Be warm, not pushy. No subject line — just the body. Sign off as ${senderName} at ${companyName}.`;
+        const body = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 300);
+
+        const sendAt = new Date(Date.now() + Math.random() * 4 * 3_600_000); // random within next 4h
+        await pool.query(`
+          INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at, status, created_at)
+          VALUES ($1, $2, 0, $3, $4, $5, $6, $7, 'pending', NOW())
+        `, [
+          lead.user_id,
+          lead.id,
+          `Checking in — ${lead.company}`,
+          body.trim(),
+          lead.email,
+          lead.contact_name || null,
+          sendAt,
+        ]);
+        console.log(`[cold-nurture] Queued re-engagement for lead ${lead.id} (${lead.company})`);
+      } catch (err) {
+        console.error(`[cold-nurture] Failed for lead ${lead.id}:`, err.message);
+      }
+    }
+  } catch (e) {
+    console.error('[cold-nurture worker]', e.message);
+  }
+}
+
+function startColdNurtureWorker() {
+  // Run once at 8:00 AM daily
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 0) {
+      processColdLeads();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Cold nurture worker: running (daily at 8:00 AM)');
 }
 
 // ----------------------------------------------------------------------------
@@ -4777,6 +4981,7 @@ app.listen(PORT, async () => {
     await migrateDb();
     startDripWorker();
     startDigestWorker();
+    startColdNurtureWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {

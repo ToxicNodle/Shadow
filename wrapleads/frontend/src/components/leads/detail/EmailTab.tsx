@@ -11,7 +11,89 @@ interface Props {
 const EMAIL_TYPES = ['Introduction', 'Follow-up', 'Fleet Proposal', 'Re-engage'];
 const TONES = ['Professional', 'Friendly', 'Direct', 'Consultative'];
 
-type TabMode = 'single' | 'sequence';
+type TabMode = 'single' | 'sequence' | 'templates';
+
+interface EmailTemplate {
+  label: string;
+  tag: string;
+  subject: string;
+  body: string;
+}
+
+const BUILT_IN_TEMPLATES: EmailTemplate[] = [
+  {
+    label: 'Price Objection',
+    tag: 'Objection',
+    subject: `Re: Wrap Quote`,
+    body: `Hi {{contactName}},\n\nThanks for the feedback on pricing. I want to make sure you have the full picture — a fleet wrap on {{vehicleType}} typically generates 30,000–70,000 impressions per day. Over 5 years, that's often the most cost-effective advertising our clients run.\n\nI'd be happy to put together a phased option — start with one or two vehicles and scale up. Would that work for your budget?\n\nLet me know and I'll get you a revised quote.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Follow-Up After Meeting',
+    tag: 'Follow-up',
+    subject: `Great talking with you — next steps for {{company}}`,
+    body: `Hi {{contactName}},\n\nReally enjoyed our conversation. Based on what we discussed, I'm putting together a custom quote for your fleet and will have it over to you by end of week.\n\nIn the meantime, feel free to browse our recent work: {{portfolioUrl}}\n\nLooking forward to earning your business.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Re-Engage Cold Lead',
+    tag: 'Re-Engage',
+    subject: `Quick check-in — {{company}}`,
+    body: `Hi {{contactName}},\n\nHoping this finds you well. I know we connected a while back about wrapping your fleet — just wanted to check if that's still something on your radar.\n\nWe recently completed a similar project for a fleet in your area and the client loved the results. Happy to share photos if useful.\n\nNo pressure — just wanted to stay on your radar.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Proposal Reminder',
+    tag: 'Proposal',
+    subject: `Your wrap proposal — any questions?`,
+    body: `Hi {{contactName}},\n\nI sent over a proposal last week and wanted to follow up. Do you have any questions on the pricing, materials, or timeline?\n\nI'm happy to hop on a quick call or adjust anything to better fit your needs.\n\nWaiting on your end — just let me know.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Warm Introduction',
+    tag: 'Intro',
+    subject: `Fleet graphics for {{company}} — quick intro`,
+    body: `Hi {{contactName}},\n\nMy name is {{senderName}} with {{companyName}}. We specialize in fleet wraps and vehicle graphics across Indiana and the Midwest — certified 3M and Avery installers.\n\nI came across {{company}} and thought there might be a fit. We've wrapped fleets from 1 vehicle to 100+, and most jobs turn around within 48 hours of print.\n\nWould you be open to a quick call to see if it makes sense?\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Wrap Refresh / Re-Order',
+    tag: 'Re-Order',
+    subject: `Time to refresh your wrap? — {{company}}`,
+    body: `Hi {{contactName}},\n\nHoping you're still loving the wrap we put on your fleet. Based on our install records, your vehicles are approaching the typical refresh window.\n\nWraps that are starting to fade or peel actually hurt your brand more than no wrap at all. We can re-wrap your fleet quickly — and with updated branding if you've evolved since the last install.\n\nWant me to put together a refresh quote?\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Racing / Event Livery',
+    tag: 'Racing',
+    subject: `Race livery for your upcoming season — {{company}}`,
+    body: `Hi {{contactName}},\n\nWe're right here in Speedway, Indiana — steps from the Speedway — and we specialize in race liveries, hauler wraps, pit equipment graphics, and garage branding for IndyCar, IMSA, and NHRA teams.\n\nWith your season coming up, I wanted to reach out about your livery needs. We handle contingency requirements, sponsor placement specs, and tight race-weekend timelines.\n\nWould love to put together a concept for your team.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'GC Referral Partner',
+    tag: 'Referral',
+    subject: `Partnership opportunity — graphics for your subs`,
+    body: `Hi {{contactName}},\n\nWe work with several GCs across Indiana as their preferred graphics vendor — fleet trucks for their subcontractors, branded signage, site graphics, and more.\n\nI'd love to offer your subs preferred pricing in exchange for referrals. It's a simple program — when a sub needs wraps, you send them to us, they get a discount, and we handle everything.\n\nWould you be open to a quick chat about how this works?\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'DI-NOC Surface Refresh',
+    tag: 'DI-NOC',
+    subject: `Surface refresh without demo — {{company}}`,
+    body: `Hi {{contactName}},\n\nWe're certified 3M DI-NOC and Rea Tec installers — we resurface cabinets, walls, elevator panels, and millwork without demolition or replacement.\n\nFor a fraction of the cost and time of traditional renovation, we can make surfaces look brand new. Lead times are typically 1–3 days depending on scope.\n\nI'd love to send over some before/after examples if you have an upcoming project.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Competition Lost — Stay in Touch',
+    tag: 'Lost',
+    subject: `Thanks for the opportunity — {{company}}`,
+    body: `Hi {{contactName}},\n\nThanks for considering us — I know you went a different direction this time, and I completely understand.\n\nIf anything comes up down the road — a second vehicle, a second shop location, or if you're ever looking for a backup vendor — we'd love to earn a shot.\n\nI'll stay in touch and hope we can work together in the future.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Quick ROI Summary',
+    tag: 'ROI',
+    subject: `The math on wrapping your fleet — {{company}}`,
+    body: `Hi {{contactName}},\n\nI ran some quick numbers for your fleet:\n\n• A wrapped vehicle generates 30,000–70,000 impressions per day\n• Over 5 years, that's tens of millions of brand exposures\n• Cost per 1,000 impressions: $0.77 vs. $5.50 for a billboard\n\nYou're already paying for those trucks to drive around — a wrap turns them into a rolling billboard that pays for itself in year one.\n\nWant me to run the numbers specific to your fleet size?\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+  {
+    label: 'Post-Install Check-In',
+    tag: 'Check-In',
+    subject: `How's the wrap holding up? — {{company}}`,
+    body: `Hi {{contactName}},\n\nJust checking in — it's been a while since we wrapped your vehicles and wanted to make sure everything is holding up well and you're happy with the results.\n\nIf there's ever anything that needs attention, just let us know — we stand behind our work.\n\nAlso, if you know anyone else who might need wraps, referrals are always appreciated!\n\nBest,\n{{senderName}}\n{{companyName}}`,
+  },
+];
 
 interface SequenceEmail {
   day: number;
@@ -39,6 +121,31 @@ export default function EmailTab({ lead }: Props) {
   const [sequence, setSequence] = useState<SequenceEmail[] | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [activating, setActivating] = useState(false);
+  const [copiedTpl, setCopiedTpl] = useState<number | null>(null);
+
+  function fillTemplate(tpl: EmailTemplate) {
+    const fill = (s: string) => s
+      .replace(/\{\{contactName\}\}/g, lead.contactName || lead.company)
+      .replace(/\{\{company\}\}/g, lead.company)
+      .replace(/\{\{senderName\}\}/g, settings.senderName || 'Your Name')
+      .replace(/\{\{companyName\}\}/g, settings.companyName || 'Shadow Graphix')
+      .replace(/\{\{portfolioUrl\}\}/g, settings.portfolioUrl || 'our website')
+      .replace(/\{\{vehicleType\}\}/g, lead.fleetSize ? `a ${lead.fleetSize}-unit fleet` : 'your vehicles');
+    return { subject: fill(tpl.subject), body: fill(tpl.body) };
+  }
+
+  function loadTemplate(tpl: EmailTemplate) {
+    const filled = fillTemplate(tpl);
+    setResult(filled);
+    setTabMode('single');
+  }
+
+  function copyTemplate(tpl: EmailTemplate, idx: number) {
+    const filled = fillTemplate(tpl);
+    navigator.clipboard.writeText(`Subject: ${filled.subject}\n\n${filled.body}`);
+    setCopiedTpl(idx);
+    setTimeout(() => setCopiedTpl(null), 1800);
+  }
 
   const settingsIncomplete = !settings.senderName.trim() || !settings.companyName.trim();
 
@@ -143,21 +250,43 @@ export default function EmailTab({ lead }: Props) {
     <div>
       {/* Mode tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 14, background: 'var(--bg-input)', borderRadius: 8, padding: 4 }}>
-        {(['single', 'sequence'] as TabMode[]).map((m) => (
+        {(['single', 'sequence', 'templates'] as TabMode[]).map((m) => (
           <button
             key={m}
             onClick={() => { setTabMode(m); setResult(null); setSequence(null); }}
             style={{
-              flex: 1, padding: '6px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+              flex: 1, padding: '6px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
               background: tabMode === m ? 'var(--accent)' : 'transparent',
               color: tabMode === m ? '#fff' : 'var(--text-dim)',
               transition: 'all 0.15s',
             }}
           >
-            {m === 'single' ? '✉ Single Email' : '📅 3-Email Sequence'}
+            {m === 'single' ? '✉ Single' : m === 'sequence' ? '📅 Sequence' : '📋 Templates'}
           </button>
         ))}
       </div>
+
+      {tabMode === 'templates' && (
+        <div className="tpl-grid">
+          {BUILT_IN_TEMPLATES.map((tpl, i) => (
+            <div key={i} className="tpl-card">
+              <div className="tpl-card-header">
+                <span className="tpl-tag">{tpl.tag}</span>
+                <span className="tpl-name">{tpl.label}</span>
+              </div>
+              <div className="tpl-preview">{fillTemplate(tpl).body.split('\n').slice(0, 3).join(' ').slice(0, 120)}…</div>
+              <div className="tpl-actions">
+                <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => loadTemplate(tpl)}>
+                  Use Template
+                </button>
+                <button className="btn" style={{ fontSize: 11 }} onClick={() => copyTemplate(tpl, i)}>
+                  {copiedTpl === i ? '✓ Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {tabMode === 'single' && (
         <div className="field-group">

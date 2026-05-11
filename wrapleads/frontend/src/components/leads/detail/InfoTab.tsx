@@ -33,8 +33,9 @@ const WIN_LOSS_FACTORS = [
 function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   const [factor, setFactor] = useState('');
   const [notes, setNotes] = useState('');
+  const [competitor, setCompetitor] = useState('');
   const mut = useMutation({
-    mutationFn: () => api.captureWinLoss(lead.serverId!, factor || 'other', notes),
+    mutationFn: () => api.captureWinLoss(lead.serverId!, factor || 'other', notes, competitor),
     onSuccess: onClose,
   });
   const outcome = lead.status === 'won' ? 'Won' : 'Lost';
@@ -57,6 +58,16 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
             </button>
           ))}
         </div>
+        {factor === 'competition' && (
+          <input
+            className="input"
+            placeholder="Competitor name (optional)"
+            style={{ width: '100%', marginBottom: 8 }}
+            value={competitor}
+            onChange={(e) => setCompetitor(e.target.value)}
+            autoFocus
+          />
+        )}
         <textarea
           className="input"
           placeholder="Any notes? (optional)"

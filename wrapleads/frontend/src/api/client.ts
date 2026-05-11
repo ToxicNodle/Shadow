@@ -387,12 +387,25 @@ export const api = {
   launchCampaign: (id: string) =>
     authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
 
+  // Analytics Dashboard
+  getAnalytics: () => authFetch<{
+    summary: { totalLeads: number; won: number; lost: number; winRate: number | null; avgDaysToClose: number | null; pipelineValue: number };
+    byStatus: Record<string, number>;
+    wonTrend: { month: string; won: number }[];
+    byCategory: { category: string; total: number; won: number; lost: number }[];
+    activity30d: { emails: number; calls: number; meetings: number; sequences: number };
+    winLossFactors: { factor: string; count: number }[];
+    competitors: { competitor: string; count: number }[];
+    topLeads: { id: number; company: string; status: string; category: string; fleet_size: string; city: string; state: string }[];
+    jobs: { total_jobs: number; total_vehicles: number; aging_90d: number };
+  }>('/analytics'),
+
   // AI Mission Brief
   getMissionBrief: () => authFetch<{ brief: string | null; reason?: string }>('/mission/brief'),
 
   // Win/Loss capture
-  captureWinLoss: (leadId: number, factor: string, notes: string) =>
-    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes }) }),
+  captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),
 
   // SMS outreach
   sendSms: (leadId: number, message: string) =>
