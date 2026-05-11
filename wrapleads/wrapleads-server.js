@@ -1877,7 +1877,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
     const uid = String(req.user.id);
     const today = new Date().toISOString().slice(0, 10);
 
-    const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR] = await Promise.all([
+    const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR, agingR] = await Promise.all([
       // Overdue follow-ups
       pool.query(`
         SELECT id, company, category, email, followup_due_at, last_contacted
@@ -1953,6 +1953,12 @@ app.get('/mission', authMiddleware, async (req, res) => {
           created_at DESC
         LIMIT 12
       `, [uid]),
+      // Aging wraps — installed jobs expiring within 60 days
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM installed_jobs
+        WHERE user_id=$1
+          AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'
+      `, [uid]),
     ]);
 
     const seq = seqR.rows[0];
@@ -1970,6 +1976,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
         pendingEmails: seq.pending_emails,
       },
       wonThisMonth: wonR.rows[0].count,
+      agingWraps: agingR.rows[0].count,
       priorityScore:
         callReadyR.rows.length * 5 +
         overdueR.rows.length * 3 +

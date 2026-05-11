@@ -196,6 +196,7 @@ export const api = {
     needsEmail: { id: number; company: string; category: string; city: string; state: string; contact_title: string | null; estimated_value: number }[];
     sequences: { active: number; pendingEmails: number };
     wonThisMonth: number;
+    agingWraps: number;
     priorityScore: number;
   }>('/mission'),
 

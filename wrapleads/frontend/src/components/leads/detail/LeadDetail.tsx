@@ -6,8 +6,9 @@ import InfoTab from './InfoTab';
 import EmailTab from './EmailTab';
 import NotesTab from './NotesTab';
 import ActivityTab from './ActivityTab';
+import DesignStudioTab from './DesignStudioTab';
 
-type Tab = 'info' | 'email' | 'activity' | 'notes';
+type Tab = 'info' | 'email' | 'activity' | 'notes' | 'design';
 
 export default function LeadDetail() {
   const { leads } = useLeads();
@@ -44,13 +45,13 @@ export default function LeadDetail() {
       </div>
 
       <div className="lead-detail-tabs">
-        {(['info', 'email', 'activity', 'notes'] as Tab[]).map((t) => (
+        {(['info', 'email', 'activity', 'notes', 'design'] as Tab[]).map((t) => (
           <button
             key={t}
             className={`detail-tab ${activeTab === t ? 'active' : ''}`}
             onClick={() => setActiveTab(t)}
           >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'design' ? '✨ Design' : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
@@ -60,6 +61,7 @@ export default function LeadDetail() {
         {activeTab === 'email'    && <EmailTab lead={lead} />}
         {activeTab === 'activity' && <ActivityTab lead={lead} />}
         {activeTab === 'notes'    && <NotesTab lead={lead} />}
+        {activeTab === 'design'   && <DesignStudioTab lead={lead} />}
       </div>
     </aside>
   );

@@ -1576,3 +1576,35 @@
 .content-active-list { display: flex; flex-direction: column; gap: 12px; padding: 0 16px; }
 .content-active-row { display: flex; gap: 12px; align-items: center; padding: 12px; background: var(--bg-elev); border-radius: 10px; }
 .content-active-img { width: 80px; height: 60px; object-fit: cover; border-radius: 6px; }
+
+/* ── Modal aliases (used by JobsView / ContentView inline modals) ─────────── */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(4px); animation: fadeIn 0.15s ease; }
+.modal-box { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; width: 100%; max-height: 90vh; overflow-y: auto; }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 0; }
+.modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: 6px; }
+.modal-close:hover { background: var(--bg-hover); color: var(--text); }
+
+/* ── Design Studio Tab ───────────────────────────────────────────────────── */
+.ds-root { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.ds-intro { font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.5; }
+.ds-no-key { color: #f59e0b; font-weight: 600; }
+.ds-form { display: flex; flex-direction: column; gap: 12px; }
+.ds-color-row { display: flex; align-items: center; gap: 8px; }
+.ds-color-picker { width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 6px; padding: 2px; cursor: pointer; background: none; flex-shrink: 0; }
+.ds-style-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.ds-style-btn { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; font-size: 11px; font-weight: 600; cursor: pointer; color: var(--text-muted); transition: all .15s; }
+.ds-style-btn.active, .ds-style-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ds-progress { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg-elev); border-radius: 8px; }
+.ds-progress-steps { display: flex; flex-direction: column; gap: 4px; }
+.ds-step { font-size: 12px; color: var(--text-muted); }
+.ds-step.active { color: var(--accent); font-weight: 600; }
+.ds-step.done { color: #22c55e; }
+.ds-brief-toggle { display: flex; flex-direction: column; gap: 8px; }
+.ds-brief { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.ds-brief-row { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; }
+.ds-brief-key { font-weight: 700; color: var(--text-muted); min-width: 70px; flex-shrink: 0; }
+.ds-swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; flex-shrink: 0; border: 1px solid var(--border); }
+.ds-result { display: flex; flex-direction: column; gap: 10px; }
+.ds-result-img { width: 100%; border-radius: 10px; border: 1px solid var(--border); }
+.ds-result-actions { display: flex; gap: 8px; }
+.ds-result-note { font-size: 10px; color: var(--text-muted); margin: 0; }

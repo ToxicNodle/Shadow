@@ -583,7 +583,7 @@ export default function MissionView() {
     );
   }
 
-  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth } = data;
+  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth, agingWraps } = data;
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
@@ -866,6 +866,21 @@ export default function MissionView() {
           </section>
         )}
 
+        {/* ── Aging Wraps Alert ── */}
+        {(agingWraps ?? 0) > 0 && (
+          <section className="mission-card" style={{ borderColor: '#f59e0b44' }}>
+            <div className="mission-card-header">
+              <span className="mission-card-icon">🔄</span>
+              <span className="mission-card-title">Wrap Refresh Opportunities</span>
+              <span className="mission-badge mission-badge-amber">{agingWraps}</span>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 12px' }}>
+              {agingWraps} installed wrap{agingWraps !== 1 ? 's are' : ' is'} approaching or past the refresh window. These are re-order opportunities with existing customers.
+            </p>
+            <button className="btn" onClick={() => setMode('jobs')}>View Aging Alerts →</button>
+          </section>
+        )}
+
         {/* ── Stats strip ── */}
         <section className="mission-stats-row">
           <div className="mission-stat-card" onClick={() => goToLeadsFiltered('won')} role="button">
@@ -884,6 +899,12 @@ export default function MissionView() {
             <div className="mission-stat-val mission-stat-purple">{newWithEmail.length}</div>
             <div className="mission-stat-label">new leads w/ email</div>
           </div>
+          {(agingWraps ?? 0) > 0 && (
+            <div className="mission-stat-card" onClick={() => setMode('jobs')} role="button">
+              <div className="mission-stat-val" style={{ color: '#f59e0b' }}>{agingWraps}</div>
+              <div className="mission-stat-label">wraps aging</div>
+            </div>
+          )}
         </section>
 
         {/* ── All clear ── */}
