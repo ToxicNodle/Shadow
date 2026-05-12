@@ -4170,7 +4170,7 @@ app.get('/portal/:token', async (req, res) => {
     const STATUS_STEPS = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won'];
     const currentStepIdx = STATUS_STEPS.indexOf(link.status);
 
-    const ACT_LABELS: Record<string, string> = {
+    const ACT_LABELS = {
       email_sent: 'Email sent', called: 'Call made', meeting_set: 'Meeting scheduled',
       status_changed: 'Status updated', note_added: 'Update',
     };
