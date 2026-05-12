@@ -15,6 +15,8 @@ export default function SettingsModal() {
     showToast: s.showToast,
   }));
   const [local, setLocal] = useState<Settings>(settings);
+  const [quoteLink, setQuoteLink] = useState<string | null>(null);
+  const [quoteLinkCopied, setQuoteLinkCopied] = useState(false);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
   const [samsaraStatus, setSamsaraStatus] = useState<FleetStatus>('idle');
   const [samsaraCount, setSamsaraCount] = useState<number | null>(null);
@@ -316,6 +318,38 @@ export default function SettingsModal() {
           )}
           {motiveStatus === 'fail' && <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700 }}>✗ Connection failed — check key and save first</span>}
         </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">📥 Inbound Quote Form</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Share this link on your website, email signature, or social media. Prospects fill it out → a new lead appears in WrapLeads instantly.
+        </p>
+        {quoteLink ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <code style={{ flex: 1, fontSize: 11, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all', color: 'var(--text-muted)' }}>
+              {quoteLink}
+            </code>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+              onClick={() => { navigator.clipboard.writeText(quoteLink); setQuoteLinkCopied(true); setTimeout(() => setQuoteLinkCopied(false), 2000); }}
+            >
+              {quoteLinkCopied ? '✓ Copied!' : '📋 Copy'}
+            </button>
+          </div>
+        ) : (
+          <button
+            className="btn"
+            style={{ fontSize: 12 }}
+            onClick={async () => {
+              const r = await api.getMyQuoteLink();
+              setQuoteLink(`${window.location.origin}${r.url}`);
+            }}
+          >
+            Get My Quote Link
+          </button>
+        )}
       </div>
 
       <div className="modal-actions">

@@ -1773,3 +1773,31 @@
 .proposal-ready-title { font-size: 13px; font-weight: 700; color: #22c55e; }
 .proposal-ready-url { font-size: 10px; font-family: monospace; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; word-break: break-all; color: var(--text-muted); }
 .proposal-ready-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── Sprint 7: AR Preview Modal ──────────────────────────────────────────── */
+.ar-modal-box { overflow: hidden; }
+.ar-dropzone { border: 2px dashed var(--border); border-radius: 10px; overflow: hidden; cursor: pointer; min-height: 180px; display: flex; align-items: center; justify-content: center; transition: border-color .15s, background .15s; background: var(--bg-elev-2); }
+.ar-dropzone:hover, .ar-dropzone.dragging { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, var(--bg-elev-2)); }
+.ar-dropzone-img { width: 100%; height: 100%; object-fit: cover; display: block; max-height: 220px; }
+.ar-dropzone-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px; text-align: center; }
+.ar-result-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+.ar-result-img { width: 100%; border-radius: 8px; border: 1px solid var(--border); object-fit: contain; max-height: 220px; }
+
+/* ── Sprint 7: Quote Request Form (public) ───────────────────────────────── */
+.qr-root { min-height: 100vh; background: #0f1117; display: flex; align-items: center; justify-content: center; padding: 24px; font-family: system-ui, -apple-system, sans-serif; }
+.qr-card { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 16px; padding: 40px; max-width: 520px; width: 100%; }
+.qr-logo { font-size: 28px; font-weight: 900; color: #fff; margin-bottom: 4px; }
+.qr-logo span { color: #ff6b35; }
+.qr-subtitle { font-size: 14px; color: #8892a4; margin-bottom: 28px; }
+.qr-form { display: flex; flex-direction: column; gap: 14px; }
+.qr-label { font-size: 12px; font-weight: 700; color: #9ca3af; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+.qr-input { background: #0f1117; border: 1px solid #2a2d3a; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 14px; width: 100%; box-sizing: border-box; outline: none; transition: border-color .15s; }
+.qr-input:focus { border-color: #ff6b35; }
+.qr-select { background: #0f1117; border: 1px solid #2a2d3a; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 14px; width: 100%; box-sizing: border-box; }
+.qr-btn { background: #ff6b35; color: #fff; border: none; border-radius: 8px; padding: 14px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; transition: background .15s; margin-top: 4px; }
+.qr-btn:hover { background: #e55a25; }
+.qr-btn:disabled { background: #555; cursor: not-allowed; }
+.qr-success { text-align: center; padding: 24px 0; }
+.qr-success-icon { font-size: 48px; margin-bottom: 12px; }
+.qr-success-title { font-size: 22px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+.qr-success-sub { font-size: 14px; color: #8892a4; }

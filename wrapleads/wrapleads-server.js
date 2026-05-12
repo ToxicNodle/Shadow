@@ -354,8 +354,33 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_proposals_user  ON proposals(user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_proposals_token ON proposals(token)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_proposals_lead  ON proposals(lead_id)`);
+    // Sprint 7: view tracking columns
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS view_count INT DEFAULT 0`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
+  }
+
+  // Sprint 7: quote_requests table — inbound lead capture
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS quote_requests (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        name       TEXT,
+        company    TEXT NOT NULL,
+        email      TEXT,
+        phone      TEXT,
+        vehicle_type TEXT,
+        fleet_size TEXT,
+        message    TEXT,
+        lead_id    BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_qr_user ON quote_requests(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create quote_requests table:', e.message);
   }
 }
 
@@ -4659,6 +4684,8 @@ app.get('/proposals/:token', async (req, res) => {
     `, [req.params.token]);
     if (!rows.length) return res.status(404).send('<h2>Proposal not found or expired.</h2>');
     const p = rows[0];
+    // Track view
+    pool.query(`UPDATE proposals SET view_count=COALESCE(view_count,0)+1, last_viewed_at=NOW() WHERE token=$1`, [req.params.token]).catch(() => {});
     const s = p.settings_json || {};
     const shopName = s.companyName || 'Shadow Graphix';
     const senderName = s.senderName || '';
@@ -4784,6 +4811,147 @@ app.post('/proposals/:token/approve', async (req, res) => {
       });
     }
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Quote Request (inbound lead form) ─────────────────────────────────────────
+
+function getShopToken(userId) {
+  return require('crypto').createHash('sha256').update(String(userId) + 'wrapleads_qr').digest('hex').slice(0, 16);
+}
+
+app.get('/me/quote-link', authMiddleware, (req, res) => {
+  const token = getShopToken(req.user.id);
+  res.json({ token, url: `/quote-request/${token}` });
+});
+
+app.get('/quote-request/:shopToken', async (req, res) => {
+  try {
+    const { shopToken } = req.params;
+    const { rows } = await pool.query(`SELECT id, settings_json FROM users`, []);
+    const user = rows.find((u) => getShopToken(u.id) === shopToken);
+    if (!user) return res.status(404).send('<h2>Page not found.</h2>');
+    const s = user.settings_json || {};
+    const shopName = s.companyName || 'Shadow Graphix';
+    const accent = '#ff6b35';
+
+    res.send(`<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Request a Quote · ${shopName}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:16px;padding:40px;max-width:520px;width:100%}
+.logo{font-size:26px;font-weight:900;color:#fff;margin-bottom:4px}.logo span{color:${accent}}
+.sub{font-size:14px;color:#8892a4;margin-bottom:28px}
+.label{font-size:11px;font-weight:700;color:#9ca3af;margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em;display:block}
+.field{display:flex;flex-direction:column;margin-bottom:14px}
+input,select,textarea{background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;padding:10px 14px;color:#fff;font-size:14px;width:100%;outline:none;transition:border-color .15s;font-family:inherit}
+input:focus,select:focus,textarea:focus{border-color:${accent}}
+select option{background:#1a1d27}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.btn{background:${accent};color:#fff;border:none;border-radius:8px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;width:100%;margin-top:8px;transition:background .15s}
+.btn:hover{background:#e55a25}.btn:disabled{background:#555;cursor:not-allowed}
+.success{text-align:center;padding:16px 0}
+.success-icon{font-size:48px;margin-bottom:12px}
+.success-title{font-size:22px;font-weight:800;color:#fff;margin-bottom:8px}
+.success-sub{font-size:14px;color:#8892a4}
+.err{color:#ef4444;font-size:12px;margin-top:6px}
+</style></head><body>
+<div class="card">
+  <div id="form-view">
+    <div class="logo">${shopName.split(' ')[0]}<span>${shopName.split(' ').slice(1).join(' ') || ' Graphix'}</span></div>
+    <p class="sub">Tell us about your project and we'll get back to you within 24 hours.</p>
+    <form id="qr-form">
+      <div class="row">
+        <div class="field"><label class="label">Your Name *</label><input name="name" required placeholder="Jane Smith" /></div>
+        <div class="field"><label class="label">Company *</label><input name="company" required placeholder="ACME Logistics" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label class="label">Email</label><input name="email" type="email" placeholder="you@company.com" /></div>
+        <div class="field"><label class="label">Phone</label><input name="phone" type="tel" placeholder="(317) 555-0100" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label class="label">Vehicle Type</label>
+          <select name="vehicle_type">
+            <option value="">— Select —</option>
+            <option value="cargo_van">Cargo Van</option>
+            <option value="pickup">Pickup Truck</option>
+            <option value="box_truck">Box Truck</option>
+            <option value="semi">Semi / Hauler</option>
+            <option value="fleet_mixed">Mixed Fleet</option>
+            <option value="car">Car / SUV</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="field"><label class="label">Fleet Size</label><input name="fleet_size" placeholder="e.g. 12 trucks" /></div>
+      </div>
+      <div class="field"><label class="label">Tell us about your project</label>
+        <textarea name="message" rows="3" placeholder="What do you need wrapped? Any deadlines, colors, or design ideas?"></textarea>
+      </div>
+      <div id="form-err" class="err" style="display:none"></div>
+      <button class="btn" type="submit" id="submit-btn">Send My Request →</button>
+    </form>
+  </div>
+  <div id="success-view" class="success" style="display:none">
+    <div class="success-icon">🎉</div>
+    <div class="success-title">Request sent!</div>
+    <p class="success-sub">We received your project details and will reach out within 24 hours.<br>— ${shopName}</p>
+  </div>
+</div>
+<script>
+document.getElementById('qr-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submit-btn');
+  const err = document.getElementById('form-err');
+  btn.disabled = true; btn.textContent = 'Sending…'; err.style.display = 'none';
+  const data = Object.fromEntries(new FormData(e.target));
+  try {
+    const r = await fetch('/quote-request/${shopToken}', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Something went wrong');
+    document.getElementById('form-view').style.display = 'none';
+    document.getElementById('success-view').style.display = 'block';
+  } catch(ex) {
+    err.textContent = ex.message; err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Send My Request →';
+  }
+});
+</script></body></html>`);
+  } catch (e) { res.status(500).send('<h2>Error loading form.</h2>'); }
+});
+
+app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
+  try {
+    const { shopToken } = req.params;
+    const { rows: users } = await pool.query(`SELECT id, settings_json FROM users`);
+    const user = users.find((u) => getShopToken(u.id) === shopToken);
+    if (!user) return res.status(404).json({ error: 'Not found' });
+
+    const { name, company, email, phone, vehicle_type, fleet_size, message } = req.body;
+    if (!company?.trim()) return res.status(400).json({ error: 'Company is required' });
+
+    // Create lead
+    const leadRes = await pool.query(`
+      INSERT INTO leads (user_id, company, contact_name, email, phone, fleet_size, category, status, source, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,'fleet','new','quote_form',$7)
+      RETURNING id
+    `, [String(user.id), company.trim(), name || '', email || '', phone || '', fleet_size || '',
+        [message, vehicle_type ? `Vehicle: ${vehicle_type}` : null].filter(Boolean).join('\n')]);
+
+    const leadId = leadRes.rows[0].id;
+
+    await pool.query(`INSERT INTO quote_requests (user_id,name,company,email,phone,vehicle_type,fleet_size,message,lead_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [String(user.id), name||'', company.trim(), email||'', phone||'', vehicle_type||'', fleet_size||'', message||'', leadId]);
+
+    await createNotification(String(user.id), {
+      type: 'new_lead',
+      title: `📥 New inbound quote request — ${company.trim()}`,
+      body: `${name ? name + ' · ' : ''}${email || phone || 'No contact info'}${vehicle_type ? ' · ' + vehicle_type : ''}`,
+      metadata: { lead_id: leadId },
+    });
+
+    res.json({ ok: true, lead_id: leadId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

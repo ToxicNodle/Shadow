@@ -393,6 +393,7 @@ export const api = {
   getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
+  getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
 
   // Bulk lead update
   bulkUpdateLeads: (leadIds: number[], patch: { status?: string; category?: string }) =>
