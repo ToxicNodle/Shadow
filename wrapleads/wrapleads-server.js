@@ -5863,6 +5863,153 @@ app.get('/admin/devices/:id/log', authMiddleware, async (req, res) => {
   }
 });
 
+// ── Broadcast Email — send one message to many leads at once ─────────────────
+app.post('/leads/broadcast', authMiddleware, subMiddleware, async (req, res) => {
+  const { leadIds, subject, body } = req.body || {};
+  if (!Array.isArray(leadIds) || !leadIds.length || !subject || !body)
+    return res.status(400).json({ error: 'leadIds[], subject, body required' });
+  if (leadIds.length > 100)
+    return res.status(400).json({ error: 'Max 100 leads per broadcast' });
+
+  const uid = String(req.user.id);
+  const resendKey = process.env.RESEND_API_KEY;
+  const baseUrl = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const settings = userR.rows[0]?.settings_json || {};
+  const fromName = settings.senderName || 'WrapLeads';
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+
+  const { rows: leads } = await pool.query(
+    `SELECT id, company, contact_name, email FROM leads WHERE id=ANY($1) AND user_id=$2`,
+    [leadIds, uid]
+  );
+
+  let sent = 0, skipped = 0, errors = 0;
+  for (const lead of leads) {
+    if (!lead.email) { skipped++; continue; }
+    try {
+      const trackToken = require('crypto').randomBytes(16).toString('hex');
+      await pool.query(
+        `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
+        [trackToken, uid, lead.id, subject]
+      );
+      const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
+      const personalBody = body.replace(/\{\{company\}\}/gi, lead.company)
+        .replace(/\{\{name\}\}/gi, lead.contact_name || lead.company);
+      const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">
+${personalBody.replace(/\n/g, '<br>')}
+<br><br>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+<p style="font-size:11px;color:#999;margin:0">${fromName} · <a href="https://wrapleads.io" style="color:#999">WrapLeads</a></p>
+</div><img src="${pixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+
+      if (resendKey) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `${fromName} <${fromEmail}>`,
+            to: lead.contact_name ? `${lead.contact_name} <${lead.email}>` : lead.email,
+            subject,
+            html: htmlBody,
+            text: personalBody,
+          }),
+        });
+      }
+      await logActivity(pool, {
+        leadId: lead.id, userId: uid,
+        type: resendKey ? 'email_sent' : 'email_copied',
+        subject: `[Broadcast] ${subject}`,
+        body: personalBody.slice(0, 500),
+        metadata: { broadcast: true },
+      });
+      sent++;
+    } catch {
+      errors++;
+    }
+  }
+  res.json({ ok: true, sent, skipped, errors });
+});
+
+// ── Mission Live Signals ───────────────────────────────────────────────────────
+app.get('/mission/signals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [emailR, proposalR, replyR, leadR] = await Promise.all([
+      pool.query(`SELECT 'email_opened' AS type, et.subject AS title,
+          l.company, l.id AS lead_id, et.opened_at AS ts
+          FROM email_tracking et JOIN leads l ON l.id = et.lead_id
+          WHERE et.user_id=$1 AND et.opened_at IS NOT NULL
+          ORDER BY et.opened_at DESC LIMIT 8`, [uid]),
+      pool.query(`SELECT 'proposal_viewed' AS type, p.title,
+          l.company, l.id AS lead_id, p.last_viewed_at AS ts
+          FROM proposals p JOIN leads l ON l.id = p.lead_id
+          WHERE p.user_id=$1 AND p.last_viewed_at IS NOT NULL
+          ORDER BY p.last_viewed_at DESC LIMIT 8`, [uid]),
+      pool.query(`SELECT 'reply' AS type, a.subject AS title,
+          l.company, l.id AS lead_id, a.created_at AS ts
+          FROM lead_activities a JOIN leads l ON l.id = a.lead_id
+          WHERE a.user_id=$1 AND a.type='email_reply'
+          ORDER BY a.created_at DESC LIMIT 6`, [uid]),
+      pool.query(`SELECT 'new_lead' AS type, l.company AS title,
+          l.company, l.id AS lead_id, l.created_at AS ts
+          FROM leads l WHERE l.user_id=$1 AND l.created_at > NOW() - INTERVAL '7 days'
+          ORDER BY l.created_at DESC LIMIT 5`, [uid]),
+    ]);
+    const all = [...emailR.rows, ...proposalR.rows, ...replyR.rows, ...leadR.rows]
+      .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+      .slice(0, 20);
+    res.json({ signals: all });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Bid Expiry Worker ─────────────────────────────────────────────────────────
+async function processBidExpiry() {
+  try {
+    const { rows: users } = await pool.query(`SELECT DISTINCT user_id FROM bids WHERE status='tracking' AND bid_due IS NOT NULL`);
+    for (const { user_id } of users) {
+      const { rows: expiring } = await pool.query(
+        `SELECT b.*, l.company, l.email, l.contact_name
+         FROM bids b LEFT JOIN leads l ON l.id = b.lead_id
+         WHERE b.user_id=$1 AND b.status='tracking'
+           AND b.bid_due >= CURRENT_DATE AND b.bid_due <= CURRENT_DATE + INTERVAL '3 days'`,
+        [user_id]
+      );
+      for (const bid of expiring) {
+        const daysLeft = Math.ceil((new Date(bid.bid_due) - Date.now()) / 86_400_000);
+        const already = await pool.query(
+          `SELECT 1 FROM notifications WHERE user_id=$1 AND type='bid_due_soon'
+           AND metadata->>'bid_id' = $2 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
+          [user_id, String(bid.id)]
+        );
+        if (already.rows.length) continue;
+        await createNotification(user_id, {
+          type: 'bid_due_soon',
+          title: `📋 Bid due ${daysLeft === 0 ? 'today' : `in ${daysLeft} day${daysLeft > 1 ? 's' : ''}`} — ${bid.project_name}`,
+          body: `${bid.company || 'Unknown company'}${bid.estimated_value ? ` · Est. $${bid.estimated_value.toLocaleString()}` : ''}`,
+          metadata: { bid_id: bid.id, lead_id: bid.lead_id, days_left: daysLeft },
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[bid-expiry worker]', e.message);
+  }
+}
+
+function startBidExpiryWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 10 && now.getMinutes() === 0) {
+      processBidExpiry();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Bid expiry worker: running (daily alert at 10:00 AM)');
+}
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
@@ -5883,6 +6030,7 @@ app.listen(PORT, async () => {
     startDigestWorker();
     startColdNurtureWorker();
     startReOrderWorker();
+    startBidExpiryWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {

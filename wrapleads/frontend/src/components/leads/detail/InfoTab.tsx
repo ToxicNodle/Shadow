@@ -34,14 +34,37 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   const [factor, setFactor] = useState('');
   const [notes, setNotes] = useState('');
   const [competitor, setCompetitor] = useState('');
+  const [logJob, setLogJob] = useState(false);
+  const [jobForm, setJobForm] = useState({
+    vehicle_type: 'cargo_van_standard',
+    vehicle_count: 1,
+    material: '',
+    install_date: new Date().toISOString().split('T')[0],
+    life_years: 5,
+  });
+
   const mut = useMutation({
-    mutationFn: () => api.captureWinLoss(lead.serverId!, factor || 'other', notes, competitor),
+    mutationFn: async () => {
+      await api.captureWinLoss(lead.serverId!, factor || 'other', notes, competitor);
+      if (logJob) {
+        await api.createJob({
+          company: lead.company,
+          vehicle_type: jobForm.vehicle_type as any,
+          vehicle_count: jobForm.vehicle_count,
+          wrap_category: lead.category,
+          material: jobForm.material || undefined,
+          install_date: jobForm.install_date,
+          life_years: jobForm.life_years,
+          lead_id: lead.serverId,
+        });
+      }
+    },
     onSuccess: onClose,
   });
   const outcome = lead.status === 'won' ? 'Won' : 'Lost';
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-box" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal-box" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <span style={{ fontSize: 22 }}>{outcome === 'Won' ? '🏆' : '📋'}</span>
           <h2 className="modal-title" style={{ margin: 0 }}>Deal {outcome} — What was the factor?</h2>
@@ -71,11 +94,58 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
         <textarea
           className="input"
           placeholder="Any notes? (optional)"
-          rows={3}
+          rows={2}
           style={{ width: '100%', resize: 'vertical', marginBottom: 12 }}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
+
+        {outcome === 'Won' && (
+          <div style={{ background: 'var(--bg-elev-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: logJob ? 10 : 0 }}>
+              <input type="checkbox" checked={logJob} onChange={(e) => setLogJob(e.target.checked)} style={{ accentColor: 'var(--accent)', width: 14, height: 14 }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Log this as a completed job (starts wrap lifecycle tracking)</span>
+            </label>
+            {logJob && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8 }}>
+                  <div className="field-group">
+                    <label className="field-label">Vehicle Type</label>
+                    <select className="input" value={jobForm.vehicle_type} onChange={(e) => setJobForm((s) => ({ ...s, vehicle_type: e.target.value }))}>
+                      <option value="cargo_van_standard">Cargo Van</option>
+                      <option value="cargo_van_high_roof">High-Roof Van</option>
+                      <option value="box_truck_16">16ft Box Truck</option>
+                      <option value="box_truck_24">24ft Box Truck</option>
+                      <option value="semi_full">Semi + Trailer</option>
+                      <option value="pickup_truck">Pickup Truck</option>
+                      <option value="suv_large">Large SUV</option>
+                      <option value="bus_school">Bus</option>
+                      <option value="fleet_mixed">Mixed Fleet</option>
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">Count</label>
+                    <input className="input" type="number" min={1} value={jobForm.vehicle_count}
+                      onChange={(e) => setJobForm((s) => ({ ...s, vehicle_count: parseInt(e.target.value) || 1 }))} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="field-group">
+                    <label className="field-label">Install Date</label>
+                    <input className="input" type="date" value={jobForm.install_date}
+                      onChange={(e) => setJobForm((s) => ({ ...s, install_date: e.target.value }))} />
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">Material (optional)</label>
+                    <input className="input" value={jobForm.material} placeholder="3M 1080…"
+                      onChange={(e) => setJobForm((s) => ({ ...s, material: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn" onClick={onClose}>Skip</button>
           <button
@@ -83,7 +153,7 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
             disabled={mut.isPending}
             onClick={() => mut.mutate()}
           >
-            {mut.isPending ? 'Saving…' : 'Save'}
+            {mut.isPending ? 'Saving…' : logJob ? 'Save + Log Job' : 'Save'}
           </button>
         </div>
       </div>

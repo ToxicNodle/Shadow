@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
@@ -8,6 +8,7 @@ import { scoreLead } from '../../utils/scoring';
 import { api, getToken } from '../../api/client';
 import { STATUSES } from '../../api/types';
 import type { LeadStatus } from '../../api/types';
+import BroadcastModal from '../modals/BroadcastModal';
 
 function downloadCSV() {
   fetch('/leads/export', { headers: { Authorization: `Bearer ${getToken()}` } })
@@ -23,13 +24,15 @@ function downloadCSV() {
 export default function LeadList() {
   const { leads, isLoading } = useLeads();
   const {
-    activeFilter, currentLeadId, setFilter,
+    activeFilter, currentLeadId, setCurrentLeadId, setFilter,
     leadSort, setLeadSort,
     selectedLeadIds, selectAllLeads, clearLeadSelection,
     setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen,
+    pendingOpenLeadServerId, setPendingOpenLeadServerId,
   } = useAppStore((s) => ({
     activeFilter: s.activeFilter,
     currentLeadId: s.currentLeadId,
+    setCurrentLeadId: s.setCurrentLeadId,
     setFilter: s.setFilter,
     leadSort: s.leadSort,
     setLeadSort: s.setLeadSort,
@@ -39,12 +42,25 @@ export default function LeadList() {
     setBulkOutreachOpen: s.setBulkOutreachOpen,
     setCsvImportOpen: s.setCsvImportOpen,
     setPasteImportOpen: s.setPasteImportOpen,
+    pendingOpenLeadServerId: s.pendingOpenLeadServerId,
+    setPendingOpenLeadServerId: s.setPendingOpenLeadServerId,
   }));
 
   const qc = useQueryClient();
   const [hotOnly, setHotOnly] = useState(false);
   const [seqStatus, setSeqStatus] = useState<'idle' | 'running' | 'done'>('idle');
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+
+  // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
+  useEffect(() => {
+    if (!pendingOpenLeadServerId || !leads.length) return;
+    const match = leads.find((l) => l.serverId === pendingOpenLeadServerId);
+    if (match) {
+      setCurrentLeadId(match.id);
+      setPendingOpenLeadServerId(null);
+    }
+  }, [pendingOpenLeadServerId, leads]);
 
   const bulkSeqMut = useMutation({
     mutationFn: (ids: number[]) => api.bulkActivateSequences(ids),
@@ -250,6 +266,13 @@ export default function LeadList() {
           </div>
           <button
             className="btn"
+            style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
+            onClick={() => setBroadcastOpen(true)}
+          >
+            📢 Broadcast
+          </button>
+          <button
+            className="btn"
             style={{ fontSize: 11, background: 'transparent', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
             onClick={clearLeadSelection}
           >
@@ -295,6 +318,14 @@ export default function LeadList() {
             checked={selectedLeadIds.has(lead.id)}
           />
         ))
+      )}
+
+      {broadcastOpen && (
+        <BroadcastModal
+          leads={leads.filter((l) => selectedLeadIds.has(l.id))}
+          onClose={() => setBroadcastOpen(false)}
+          onSent={() => { clearLeadSelection(); setBroadcastOpen(false); }}
+        />
       )}
     </div>
   );

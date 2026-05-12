@@ -439,4 +439,13 @@ export const api = {
     authFetch<{ bid: Bid }>(`/bids/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
   deleteBid: (id: number) =>
     authFetch<{ ok: boolean }>(`/bids/${id}`, { method: 'DELETE' }),
+
+  broadcastEmail: (leadIds: number[], subject: string, body: string) =>
+    authFetch<{ ok: boolean; sent: number; skipped: number; errors: number }>(
+      '/leads/broadcast',
+      { method: 'POST', body: JSON.stringify({ leadIds, subject, body }) }
+    ),
+
+  getMissionSignals: () =>
+    authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
 };

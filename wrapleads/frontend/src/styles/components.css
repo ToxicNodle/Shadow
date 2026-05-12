@@ -1835,3 +1835,19 @@
 .social-post-platform { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
 .social-post-text { font-size: 13px; line-height: 1.55; white-space: pre-wrap; color: var(--text); }
 .social-post-actions { display: flex; gap: 6px; }
+
+/* ── Sprint 10: Broadcast Modal ──────────────────────────────────────────── */
+.broadcast-recipient-strip { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; }
+.broadcast-recipient-count { font-size: 13px; font-weight: 700; }
+.broadcast-recipient-email { font-size: 11px; color: var(--text-muted); }
+.broadcast-result { display: flex; flex-direction: column; align-items: center; padding: 24px 0; text-align: center; }
+
+/* ── Sprint 10: Live Signals Feed ────────────────────────────────────────── */
+.signal-feed { display: flex; flex-direction: column; gap: 2px; }
+.signal-item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: none; border: none; cursor: pointer; text-align: left; width: 100%; transition: background .12s; }
+.signal-item:hover { background: var(--bg-hover); }
+.signal-icon { font-size: 16px; text-align: center; }
+.signal-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.signal-company { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.signal-title { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.signal-time { font-size: 10px; color: var(--text-faint); white-space: nowrap; }
