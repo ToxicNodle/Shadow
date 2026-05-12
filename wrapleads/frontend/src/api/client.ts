@@ -448,4 +448,17 @@ export const api = {
 
   getMissionSignals: () =>
     authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
+
+  // Business card scanner
+  scanBusinessCard: (file: File) => {
+    const form = new FormData();
+    form.append('image', file);
+    const { Authorization } = { Authorization: `Bearer ${getToken()}` };
+    return fetch('/vision/scan-card', { method: 'POST', headers: { Authorization }, body: form })
+      .then((r) => r.json()) as Promise<{ ok: boolean; lead: Partial<import('./types').Lead> }>;
+  },
+
+  // AI pipeline narrative
+  generatePipelineNarrative: () =>
+    authFetch<{ ok: boolean; narrative: string }>('/ai/pipeline-narrative', { method: 'POST', body: '{}' }),
 };

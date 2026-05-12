@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../api/types';
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
+import MaterialCatalogModal from '../modals/MaterialCatalogModal';
 
 // ── Social Post Generator ─────────────────────────────────────────────────────
 
@@ -172,6 +173,7 @@ function JobModal({ job, onClose }: JobModalProps) {
   const isNew = job === 'new';
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social'>('details');
+  const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
     vehicle_type: (isNew ? 'cargo_van_standard' : (job as InstalledJob).vehicle_type) as VehicleType,
@@ -267,9 +269,18 @@ function JobModal({ job, onClose }: JobModalProps) {
             </div>
           </div>
           <div className="field-group">
-            <label className="field-label">Material</label>
+            <label className="field-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              Material
+              <button type="button" className="btn" style={{ fontSize: 10, padding: '2px 8px', marginLeft: 8 }} onClick={() => setMatCatalogOpen(true)}>Browse Catalog</button>
+            </label>
             <input className="input" {...f('material')} placeholder="3M 1080, Avery 900, Arlon 3000…" />
           </div>
+          {matCatalogOpen && (
+            <MaterialCatalogModal
+              onClose={() => setMatCatalogOpen(false)}
+              onSelect={(name) => setForm((s) => ({ ...s, material: name }))}
+            />
+          )}
           <div className="field-group">
             <label className="field-label">Notes</label>
             <textarea className="input" rows={2} {...f('notes')} placeholder="Any notes about the job…" />

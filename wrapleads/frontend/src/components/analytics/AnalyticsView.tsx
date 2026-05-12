@@ -1,7 +1,44 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { CATEGORIES, STATUSES } from '../../api/types';
+
+function PipelineNarrativeCard() {
+  const [narrative, setNarrative] = useState<string | null>(null);
+  const mut = useMutation({
+    mutationFn: () => api.generatePipelineNarrative(),
+    onSuccess: (d) => setNarrative(d.narrative),
+  });
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>AI Pipeline Forecast</div>
+        <button
+          className="btn btn-primary"
+          style={{ fontSize: 11 }}
+          disabled={mut.isPending}
+          onClick={() => mut.mutate()}
+        >
+          {mut.isPending ? 'Analyzing…' : narrative ? '↺ Refresh' : '✨ Generate Forecast'}
+        </button>
+      </div>
+      {!narrative && !mut.isPending && (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+          Claude analyzes your full pipeline and writes a plain-English forecast for the next 30 days — where the money is, what the risks are, and the one move that would have the most impact this week.
+        </p>
+      )}
+      {mut.isPending && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+          <span className="spinner" /> Reading your pipeline…
+        </div>
+      )}
+      {narrative && (
+        <div className="pipeline-narrative">{narrative}</div>
+      )}
+    </div>
+  );
+}
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -291,6 +328,9 @@ export default function AnalyticsView() {
             </div>
           </div>
         )}
+
+        {/* ── AI Pipeline Narrative ── */}
+        <PipelineNarrativeCard />
 
         {/* ── Customer Lifetime Value ── */}
         {topCustomers && topCustomers.length > 0 && (

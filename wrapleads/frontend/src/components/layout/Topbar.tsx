@@ -5,12 +5,14 @@ import { useAppStore } from '../../store/useAppStore';
 import type { AppMode } from '../../store/useAppStore';
 import VisionQuoteModal from '../modals/VisionQuoteModal';
 import ARPreviewModal from '../modals/ARPreviewModal';
+import CardScanModal from '../modals/CardScanModal';
 import NotificationPanel from './NotificationPanel';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
   const [visionOpen, setVisionOpen] = useState(false);
   const [arOpen, setArOpen] = useState(false);
+  const [cardScanOpen, setCardScanOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
@@ -117,6 +119,13 @@ export default function Topbar() {
           </svg>
           AR Preview
         </button>
+        <button className="btn" onClick={() => setCardScanOpen(true)} title="Scan a business card to create a lead instantly">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+            <rect x="2" y="5" width="20" height="14" rx="2" />
+            <line x1="2" y1="10" x2="22" y2="10" />
+          </svg>
+          Card Scan
+        </button>
         <button className="btn" onClick={() => setVisionOpen(true)} title="Vision quote — photograph a vehicle for instant estimate">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <circle cx="12" cy="12" r="3" />
@@ -157,6 +166,7 @@ export default function Topbar() {
 
         {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
         {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} />}
+        {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
         {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>

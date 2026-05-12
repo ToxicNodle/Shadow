@@ -4226,6 +4226,181 @@ app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (re
   }
 });
 
+// ── Business Card Scanner — Claude Vision → instant lead ──────────────────────
+app.post('/vision/scan-card', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    const b64 = req.file.buffer.toString('base64');
+    const result = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 400,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: req.file.mimetype, data: b64 } },
+            { type: 'text', text: `Extract the contact information from this business card. Return JSON only with these exact fields (use empty string if not found):
+{ "company": "", "contactName": "", "contactTitle": "", "email": "", "phone": "", "website": "", "address": "", "city": "", "state": "", "notes": "" }
+For state use the 2-letter abbreviation. For notes include any tagline or services listed on the card.` },
+          ],
+        }],
+      }),
+    });
+    const d = await result.json();
+    const text = d.content?.[0]?.text || '{}';
+    const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+    res.json({ ok: true, lead: parsed });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── AI Pipeline Narrative ─────────────────────────────────────────────────────
+app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  const uid = String(req.user.id);
+  try {
+    const [leadsR, bidsR, wonR, agingR, openR, propR] = await Promise.all([
+      pool.query(
+        `SELECT status, category, company, fleet_size, estimated_value,
+            last_contacted, followup_due_at
+         FROM leads WHERE user_id=$1 AND status NOT IN ('lost','won')
+         ORDER BY CASE status WHEN 'replied' THEN 1 WHEN 'proposal' THEN 2 WHEN 'meeting' THEN 3 WHEN 'contacted' THEN 4 ELSE 5 END
+         LIMIT 30`, [uid]),
+      pool.query(`SELECT project_name, estimated_value, bid_due, status, l.company
+         FROM bids b LEFT JOIN leads l ON l.id=b.lead_id
+         WHERE b.user_id=$1 AND b.status='tracking' ORDER BY bid_due ASC LIMIT 10`, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n, COALESCE(SUM(estimated_value),0)::INT AS v
+         FROM leads WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month',NOW())`, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM installed_jobs WHERE user_id=$1
+         AND (install_date + (life_years||' years')::interval) <= NOW() + INTERVAL '90 days'`, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n, COALESCE(SUM(open_count),0)::INT AS opens
+         FROM email_tracking WHERE user_id=$1 AND created_at > NOW() - INTERVAL '7 days'`, [uid]),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM proposals WHERE user_id=$1 AND view_count > 0 AND last_viewed_at > NOW() - INTERVAL '7 days'`, [uid]),
+    ]);
+
+    const pipeline = leadsR.rows;
+    const pipelineValue = pipeline.reduce((s, l) => s + (l.estimated_value || 0), 0);
+    const hot = pipeline.filter((l) => ['replied','proposal','meeting'].includes(l.status));
+    const bids = bidsR.rows;
+    const bidsValue = bids.reduce((s, b) => s + (b.estimated_value || 0), 0);
+
+    const prompt = `You are a sharp revenue strategist for Shadow Graphix, a vehicle wrap shop in Speedway, Indiana. Analyze this pipeline snapshot and write a 3-paragraph narrative forecast for the next 30 days. Be specific, name real patterns, give concrete advice. Write like you actually understand the wrap business — fleet sales cycles, racing season, bid windows. No bullet points. Pure prose.
+
+CURRENT PIPELINE (${pipeline.length} active leads, ~$${pipelineValue.toLocaleString()} potential):
+Hot leads (replied/proposal/meeting): ${hot.length}
+Categories: ${[...new Set(pipeline.map(l => l.category))].join(', ')}
+Companies: ${hot.slice(0,5).map(l => `${l.company} (${l.status})`).join(', ')}
+
+BIDS TRACKING: ${bids.length} active bids, ~$${bidsValue.toLocaleString()} total
+Upcoming: ${bids.slice(0,3).map(b => `${b.project_name}${b.bid_due ? ' due ' + b.bid_due.toString().split('T')[0] : ''}`).join(', ')}
+
+THIS MONTH: ${wonR.rows[0]?.n ?? 0} wins, $${(wonR.rows[0]?.v ?? 0).toLocaleString()} revenue
+EMAIL SIGNALS (7d): ${openR.rows[0]?.opens ?? 0} opens from ${openR.rows[0]?.n ?? 0} emails, ${propR.rows[0]?.n ?? 0} proposals viewed
+AGING WRAPS: ${agingR.rows[0]?.n ?? 0} jobs approaching refresh window (re-order opportunities)
+
+Write 3 paragraphs:
+1. Where the money is right now (most likely closes in 30 days)
+2. What the biggest risks and gaps are
+3. One specific outreach move that would have the highest impact this week`;
+
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    res.json({ ok: true, narrative: text.trim() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Anniversary Email Worker ─────────────────────────────────────────────────
+async function processAnniversaries() {
+  const resendKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+  try {
+    const { rows: jobs } = await pool.query(
+      `SELECT j.*, l.email, l.contact_name, l.company AS lead_company, u.email AS user_email,
+          u.settings_json AS settings
+       FROM installed_jobs j
+       JOIN leads l ON l.id = j.lead_id
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.lead_id IS NOT NULL
+         AND l.email IS NOT NULL AND l.email != ''
+         AND ABS(EXTRACT(DOY FROM NOW()) - EXTRACT(DOY FROM j.install_date + INTERVAL '1 year')) <= 3
+         AND NOT EXISTS (
+           SELECT 1 FROM lead_activities a
+           WHERE a.lead_id = j.lead_id AND a.type = 'email_sent'
+             AND a.subject LIKE '%anniversary%'
+             AND a.created_at > NOW() - INTERVAL '14 days'
+         )`
+    );
+    for (const job of jobs) {
+      const s = job.settings || {};
+      const fromName = s.senderName || 'Your Wrap Shop';
+      const vehicleLabel = `${job.vehicle_count} vehicle${job.vehicle_count > 1 ? 's' : ''}`;
+      const subject = `Happy 1-Year Anniversary, ${job.company}! 🎉`;
+      const bodyText = `Hi ${job.contact_name || job.company},
+
+It's been one year since we wrapped your ${vehicleLabel}! We hope your ${job.wrap_category === 'fleet' ? 'fleet' : 'wrap'} has been turning heads and generating leads for your business every single day it's on the road.
+
+A few quick wrap care tips to keep your graphics looking sharp:
+- Wash regularly with mild soap and water — avoid automatic car washes with brushes
+- Hand-dry to prevent water spots, especially on matte finishes
+- Avoid gasoline or harsh solvents near edges
+
+Your wrap is now entering its second year of service. With ${job.life_years}-year material, you're in great shape — but if you notice any lifting corners or fading, reach out and we'll get you squared away.
+
+Thinking about a refresh or adding more vehicles to the fleet? We'd love to talk.
+
+${fromName}`;
+
+      if (resendKey) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `${fromName} <${fromEmail}>`,
+            to: job.contact_name ? `${job.contact_name} <${job.email}>` : job.email,
+            subject,
+            text: bodyText,
+          }),
+        });
+      }
+      await logActivity(pool, {
+        leadId: job.lead_id,
+        userId: job.user_id,
+        type: 'email_sent',
+        subject: `[anniversary] ${subject}`,
+        body: bodyText.slice(0, 500),
+        metadata: { job_id: job.id, auto: true, anniversary_year: 1 },
+      });
+      await createNotification(job.user_id, {
+        type: 'new_lead',
+        title: `🎂 1-year anniversary email sent to ${job.company}!`,
+        body: `Wrap care tips + refresh nudge delivered automatically.`,
+        metadata: { lead_id: job.lead_id, job_id: job.id },
+      });
+    }
+  } catch (e) {
+    console.error('[anniversary worker]', e.message);
+  }
+}
+
+function startAnniversaryWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 11 && now.getMinutes() === 0) {
+      processAnniversaries();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Anniversary worker: running (daily check at 11:00 AM)');
+}
+
 // ── Fleet Management Integrations ─────────────────────────────────────────────
 
 app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
@@ -6031,6 +6206,7 @@ app.listen(PORT, async () => {
     startColdNurtureWorker();
     startReOrderWorker();
     startBidExpiryWorker();
+    startAnniversaryWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {
