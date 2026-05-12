@@ -225,10 +225,138 @@ function ARPreviewTab() {
   );
 }
 
+// ── Fleet Quote Tab ───────────────────────────────────────────────────────────
+
+const VEHICLE_OPTIONS = [
+  { key: 'cargo_van_standard',  label: 'Cargo Van (Transit/Sprinter)', sqft: [200, 250] },
+  { key: 'cargo_van_high_roof', label: 'High-Roof Cargo Van',          sqft: [240, 290] },
+  { key: 'box_truck_16',        label: '16ft Box Truck',               sqft: [310, 360] },
+  { key: 'box_truck_24',        label: '24ft Box Truck',               sqft: [420, 480] },
+  { key: 'semi_cab_only',       label: 'Semi Cab (no trailer)',        sqft: [200, 260] },
+  { key: 'semi_full',           label: 'Semi + 53ft Trailer',          sqft: [620, 780] },
+  { key: 'pickup_truck',        label: 'Full-Size Pickup',             sqft: [150, 200] },
+  { key: 'suv_large',           label: 'Large SUV / Crossover',        sqft: [160, 210] },
+  { key: 'sedan',               label: 'Sedan / Compact',              sqft: [100, 145] },
+  { key: 'minivan',             label: 'Minivan / Passenger Van',      sqft: [175, 220] },
+  { key: 'bus_school',          label: 'School / Transit Bus',         sqft: [380, 550] },
+] as const;
+
+const WRAP_TIERS = [
+  { key: 'full',    label: 'Full Wrap',    coverage: 1.0, low: 8, high: 14 },
+  { key: 'partial', label: 'Partial Wrap', coverage: 0.5, low: 8, high: 14 },
+  { key: 'spot',    label: 'Spot / Decal', coverage: 0.2, low: 10, high: 16 },
+] as const;
+
+interface FleetLine { vehicleKey: string; count: number }
+
+function FleetQuoteTab() {
+  const [lines, setLines] = useState<FleetLine[]>([{ vehicleKey: 'cargo_van_standard', count: 1 }]);
+  const [tier, setTier] = useState<'full' | 'partial' | 'spot'>('full');
+  const [copied, setCopied] = useState(false);
+
+  function addLine() {
+    setLines((l) => [...l, { vehicleKey: 'cargo_van_standard', count: 1 }]);
+  }
+  function removeLine(i: number) {
+    setLines((l) => l.filter((_, idx) => idx !== i));
+  }
+  function updateLine(i: number, patch: Partial<FleetLine>) {
+    setLines((l) => l.map((line, idx) => idx === i ? { ...line, ...patch } : line));
+  }
+
+  const selectedTier = WRAP_TIERS.find((t) => t.key === tier)!;
+  const rows = lines.map((line) => {
+    const veh = VEHICLE_OPTIONS.find((v) => v.key === line.vehicleKey) || VEHICLE_OPTIONS[0];
+    const sqftLow = veh.sqft[0] * selectedTier.coverage;
+    const sqftHigh = veh.sqft[1] * selectedTier.coverage;
+    const unitLow = Math.round(sqftLow * selectedTier.low);
+    const unitHigh = Math.round(sqftHigh * selectedTier.high);
+    return {
+      label: veh.label, count: line.count,
+      unitLow, unitHigh,
+      totalLow: unitLow * line.count,
+      totalHigh: unitHigh * line.count,
+    };
+  });
+  const grandLow = rows.reduce((s, r) => s + r.totalLow, 0);
+  const grandHigh = rows.reduce((s, r) => s + r.totalHigh, 0);
+
+  function copyQuote() {
+    const txt = [
+      `Fleet Quote — ${selectedTier.label}`,
+      `${'─'.repeat(44)}`,
+      ...rows.map((r) => `${r.count}× ${r.label.padEnd(28)} ${fmt(r.totalLow)}–${fmt(r.totalHigh)}`),
+      `${'─'.repeat(44)}`,
+      `TOTAL: ${fmt(grandLow)}–${fmt(grandHigh)}`,
+      '',
+      'Includes design. Based on standard material pricing.',
+      'Contact Shadow Graphix for exact quote.',
+    ].join('\n');
+    navigator.clipboard.writeText(txt);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Wrap tier selector */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        {WRAP_TIERS.map((t) => (
+          <button key={t.key} className={`btn${tier === t.key ? ' btn-primary' : ''}`}
+            style={{ fontSize: 12, flex: 1 }} onClick={() => setTier(t.key)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Vehicle lines */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {lines.map((line, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 64px 28px', gap: 6, alignItems: 'center' }}>
+            <select className="select" style={{ fontSize: 12 }} value={line.vehicleKey}
+              onChange={(e) => updateLine(i, { vehicleKey: e.target.value })}>
+              {VEHICLE_OPTIONS.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
+            </select>
+            <input className="input" type="number" min={1} max={999} value={line.count} style={{ fontSize: 12, textAlign: 'center' }}
+              onChange={(e) => updateLine(i, { count: Math.max(1, parseInt(e.target.value) || 1) })} />
+            <button className="btn" style={{ fontSize: 11, padding: '4px 6px', color: 'var(--red)' }}
+              onClick={() => lines.length > 1 && removeLine(i)}>✕</button>
+          </div>
+        ))}
+        <button className="btn" style={{ fontSize: 12, alignSelf: 'flex-start' }} onClick={addLine}>+ Add Vehicle Type</button>
+      </div>
+
+      {/* Quote table */}
+      <div className="fleet-quote-table">
+        <div className="fleet-quote-header">
+          <span>Vehicle</span><span>Qty</span><span>Range</span>
+        </div>
+        {rows.map((r, i) => (
+          <div key={i} className="fleet-quote-row">
+            <span style={{ fontSize: 11 }}>{r.label}</span>
+            <span style={{ fontSize: 11, textAlign: 'center' }}>{r.count}</span>
+            <span style={{ fontSize: 11, textAlign: 'right' }}>{fmt(r.totalLow)}–{fmt(r.totalHigh)}</span>
+          </div>
+        ))}
+        <div className="fleet-quote-total">
+          <span>Fleet Total</span><span /><span>{fmt(grandLow)}–{fmt(grandHigh)}</span>
+        </div>
+      </div>
+
+      <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={copyQuote}>
+        {copied ? '✓ Copied to clipboard!' : '📋 Copy Quote Summary'}
+      </button>
+      <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0, textAlign: 'center' }}>
+        Estimates based on industry-standard sq footage × material pricing. Final quote may vary.
+      </p>
+    </div>
+  );
+}
+
 // ── Modal Shell ───────────────────────────────────────────────────────────────
 
 export default function VisionQuoteModal({ onClose }: Props) {
-  const [tab, setTab] = useState<'quote' | 'ar'>('quote');
+  const [tab, setTab] = useState<'quote' | 'ar' | 'fleet'>('quote');
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -238,13 +366,16 @@ export default function VisionQuoteModal({ onClose }: Props) {
             <button className={`vision-modal-tab ${tab === 'quote' ? 'active' : ''}`} onClick={() => setTab('quote')}>
               📷 Vision Quote
             </button>
+            <button className={`vision-modal-tab ${tab === 'fleet' ? 'active' : ''}`} onClick={() => setTab('fleet')}>
+              🚛 Fleet Quote
+            </button>
             <button className={`vision-modal-tab ${tab === 'ar' ? 'active' : ''}`} onClick={() => setTab('ar')}>
               ✨ AR Preview
             </button>
           </div>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
-        {tab === 'quote' ? <QuoteTab /> : <ARPreviewTab />}
+        {tab === 'quote' ? <QuoteTab /> : tab === 'fleet' ? <FleetQuoteTab /> : <ARPreviewTab />}
       </div>
     </div>
   );

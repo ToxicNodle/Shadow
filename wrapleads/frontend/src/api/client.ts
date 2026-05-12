@@ -397,6 +397,9 @@ export const api = {
   getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
   suggestAction: (leadId: number) =>
     authFetch<{ ok: boolean; suggestion: { action: string; channel: string; urgency: string; reasoning: string } }>(`/leads/${leadId}/suggest`, { method: 'POST', body: '{}' }),
+  generateSocialPost: (jobData: { company: string; vehicle_type: string; vehicle_count: number; wrap_category: string; material?: string; notes?: string }) =>
+    authFetch<{ ok: boolean; posts: { instagram: string; linkedin: string } }>('/ai/social-post', { method: 'POST', body: JSON.stringify(jobData) }),
+  getMyPortfolioLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
 
   // Bulk lead update
   bulkUpdateLeads: (leadIds: number[], patch: { status?: string; category?: string }) =>

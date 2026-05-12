@@ -106,6 +106,25 @@ async function migrateDb() {
     console.warn('[migrate] Could not add followup_due_at column:', e.message);
   }
   try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referred_by TEXT`);
+  } catch (e) { console.warn('[migrate] Could not add referred_by column:', e.message); }
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_tracking (
+        id          BIGSERIAL PRIMARY KEY,
+        token       TEXT NOT NULL UNIQUE,
+        user_id     TEXT NOT NULL,
+        lead_id     BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        subject     TEXT,
+        open_count  INT DEFAULT 0,
+        opened_at   TIMESTAMPTZ,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_track_token ON email_tracking(token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_track_lead  ON email_tracking(lead_id)`);
+  } catch (e) { console.warn('[migrate] Could not create email_tracking table:', e.message); }
+  try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS lead_activities (
         id         BIGSERIAL PRIMARY KEY,
@@ -1609,6 +1628,23 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   }
 
   try {
+    // Create tracking token
+    const trackToken = require('crypto').randomBytes(16).toString('hex');
+    await pool.query(
+      `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
+      [trackToken, uid, id, subject]
+    );
+    const baseUrl = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
+
+    // Build HTML body with tracking pixel
+    const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">
+${body.replace(/\n/g, '<br>')}
+<br><br>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+<p style="font-size:11px;color:#999;margin:0">${fromName} · Powered by <a href="https://wrapleads.io" style="color:#999">WrapLeads</a></p>
+</div><img src="${pixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+
     const resp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
@@ -1616,15 +1652,15 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
         from: `${fromName} <${fromEmail}>`,
         to: toName ? `${toName} <${toEmail}>` : toEmail,
         subject,
+        html: htmlBody,
         text: body,
       }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.message || 'Resend error');
 
-    // Log sent email + update last_contacted + set followup
     await logActivity(pool, { leadId: id, userId: uid, type: 'email_sent',
-      subject, body, metadata: { to: toEmail, toName, resend_id: data.id } });
+      subject, body, metadata: { to: toEmail, toName, resend_id: data.id, track_token: trackToken } });
     await pool.query(
       `UPDATE leads SET last_contacted = CURRENT_DATE,
         followup_due_at = CURRENT_DATE + INTERVAL '3 days',
@@ -1636,6 +1672,40 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Email open tracking pixel (PUBLIC — no auth, called by email client image loader)
+const PIXEL_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+app.get('/track/email/:token', async (req, res) => {
+  res.set({ 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, no-cache, must-revalidate', 'Pragma': 'no-cache' });
+  res.send(PIXEL_GIF);
+  // Fire-and-forget tracking
+  setImmediate(async () => {
+    try {
+      const { rows } = await pool.query(
+        `UPDATE email_tracking SET open_count=COALESCE(open_count,0)+1, opened_at=COALESCE(opened_at,NOW())
+         WHERE token=$1 RETURNING user_id, lead_id, subject, open_count`,
+        [req.params.token]
+      );
+      if (!rows.length) return;
+      const r = rows[0];
+      if (r.open_count === 1) {
+        // First open — notify + advance lead
+        const { rows: leads } = await pool.query(
+          `UPDATE leads SET status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
+           updated_at=NOW() WHERE id=$1 AND user_id=$2 RETURNING company, status`,
+          [r.lead_id, r.user_id]
+        );
+        const company = leads[0]?.company || 'A prospect';
+        await createNotification(r.user_id, {
+          type: 'email_reply',
+          title: `📬 ${company} opened your email!`,
+          body: r.subject ? `"${r.subject}"` : 'They opened your outreach email.',
+          metadata: { lead_id: r.lead_id, track_token: req.params.token },
+        });
+      }
+    } catch { /* ignore */ }
+  });
 });
 
 // Follow-up queue: leads where followup_due_at <= today
@@ -2529,6 +2599,16 @@ async function processEmailQueue() {
         const fromName = s.senderName || 'WrapLeads';
         const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
 
+        // Create tracking token for this drip email
+        const dripTrackToken = require('crypto').randomBytes(16).toString('hex');
+        await pool.query(
+          `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
+          [dripTrackToken, item.user_id, item.lead_id, item.subject]
+        ).catch(() => {});
+        const baseUrl = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+        const dripPixelUrl = `${baseUrl}/track/email/${dripTrackToken}`;
+        const dripHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">${item.body.replace(/\n/g,'<br>')}<br><br><hr style="border:none;border-top:1px solid #eee;margin:20px 0"><p style="font-size:11px;color:#999;margin:0">${fromName}</p></div><img src="${dripPixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+
         const resp = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
@@ -2536,6 +2616,7 @@ async function processEmailQueue() {
             from: `${fromName} <${fromEmail}>`,
             to: item.to_name ? `${item.to_name} <${item.to_email}>` : item.to_email,
             subject: item.subject,
+            html: dripHtml,
             text: item.body,
           }),
         });
@@ -2549,7 +2630,7 @@ async function processEmailQueue() {
         await logActivity(pool, {
           leadId: item.lead_id, userId: item.user_id, type: 'email_sent',
           subject: item.subject, body: item.body,
-          metadata: { to: item.to_email, resend_id: data.id, sequence_day: item.sequence_day, auto: true },
+          metadata: { to: item.to_email, resend_id: data.id, sequence_day: item.sequence_day, auto: true, track_token: dripTrackToken },
         });
 
         // Check if this was the final email in the sequence
@@ -5120,6 +5201,150 @@ app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
     });
 
     res.json({ ok: true, lead_id: leadId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Public Portfolio Page ─────────────────────────────────────────────────────
+
+app.get('/portfolio/:shopToken', async (req, res) => {
+  try {
+    const { shopToken } = req.params;
+    const { rows: users } = await pool.query(`SELECT id, settings_json FROM users`);
+    const user = users.find((u) => getShopToken(u.id) === shopToken);
+    if (!user) return res.status(404).send('<h2>Portfolio not found.</h2>');
+
+    const s = user.settings_json || {};
+    const shopName = s.companyName || 'Shadow Graphix';
+    const accent = '#ff6b35';
+    const phone = s.senderPhone || '';
+    const email = s.senderEmail || '';
+
+    const { rows: jobs } = await pool.query(`
+      SELECT j.id, j.company, j.vehicle_type, j.vehicle_count, j.wrap_category, j.material, j.install_date,
+             array_agg(json_build_object('data', p.image_data, 'type', p.photo_type, 'caption', p.caption) ORDER BY p.created_at) FILTER (WHERE p.id IS NOT NULL) AS photos
+      FROM installed_jobs j
+      LEFT JOIN job_photos p ON p.job_id = j.id
+      WHERE j.user_id = $1
+      GROUP BY j.id
+      ORDER BY j.install_date DESC
+      LIMIT 60
+    `, [String(user.id)]);
+
+    const CATEGORY_NAMES = { fleet: 'Fleet Wraps', racing: 'Racing / Motorsport', dinoc: 'DI-NOC / Architectural', construction: 'Construction Fleet', colorchange: 'Color Change', gc_referral: 'GC / Commercial', reatec: 'Rea Tec Film', other: 'Other' };
+    const VEHICLE_NAMES = { cargo_van: 'Cargo Van', box_truck: 'Box Truck', semi: 'Semi', pickup: 'Pickup Truck', bus: 'Bus', fleet_mixed: 'Mixed Fleet', other: 'Vehicle' };
+
+    const totalJobs = jobs.length;
+    const totalVehicles = jobs.reduce((s, j) => s + (j.vehicle_count || 1), 0);
+    const categories = [...new Set(jobs.map((j) => j.wrap_category).filter(Boolean))];
+
+    const jobCards = jobs.map((j) => {
+      const photos = (j.photos || []).filter((p) => p && p.data);
+      const thumb = photos[0]?.data || null;
+      const catName = CATEGORY_NAMES[j.wrap_category] || j.wrap_category || 'Vehicle Wrap';
+      const vehName = VEHICLE_NAMES[j.vehicle_type] || j.vehicle_type || 'Vehicle';
+      return `
+        <div class="job-card">
+          ${thumb ? `<div class="job-thumb"><img src="${thumb}" alt="${j.company} wrap" loading="lazy"></div>` : `<div class="job-thumb job-thumb-empty"><span>🚗</span></div>`}
+          <div class="job-info">
+            <div class="job-company">${j.company || 'Client'}</div>
+            <div class="job-meta">${j.vehicle_count || 1}× ${vehName} · ${catName}</div>
+            ${j.material ? `<div class="job-material">${j.material}</div>` : ''}
+            <div class="job-date">${j.install_date ? new Date(j.install_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : ''}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const quoteUrl = `/quote-request/${shopToken}`;
+
+    res.send(`<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${shopName} — Our Work</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0}
+.hero{background:linear-gradient(135deg,#1a1d27 0%,#0f1117 100%);padding:60px 24px;text-align:center;border-bottom:1px solid #2a2d3a}
+.logo{font-size:32px;font-weight:900;color:#fff;margin-bottom:8px}
+.logo span{color:${accent}}
+.tagline{font-size:16px;color:#8892a4;margin-bottom:24px}
+.hero-stats{display:flex;gap:32px;justify-content:center;flex-wrap:wrap}
+.stat{text-align:center}
+.stat-n{font-size:36px;font-weight:900;color:${accent}}
+.stat-l{font-size:12px;color:#8892a4;text-transform:uppercase;letter-spacing:.06em}
+.cta-bar{display:flex;gap:12px;justify-content:center;margin-top:28px;flex-wrap:wrap}
+.cta-btn{background:${accent};color:#fff;border:none;border-radius:8px;padding:12px 24px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}
+.cta-secondary{background:transparent;border:1px solid #3a3d4a;color:#e2e8f0;border-radius:8px;padding:12px 24px;font-size:14px;font-weight:600;text-decoration:none;display:inline-block}
+.section{padding:40px 24px;max-width:1200px;margin:0 auto}
+.section-title{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#8892a4;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.job-card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;overflow:hidden;transition:transform .15s,border-color .15s}
+.job-card:hover{transform:translateY(-2px);border-color:${accent}44}
+.job-thumb{height:180px;overflow:hidden;background:#0f1117;display:flex;align-items:center;justify-content:center}
+.job-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.job-thumb-empty{font-size:40px}
+.job-info{padding:14px}
+.job-company{font-weight:700;font-size:14px;margin-bottom:4px}
+.job-meta{font-size:12px;color:#8892a4;margin-bottom:2px}
+.job-material{font-size:11px;color:#6b7280}
+.job-date{font-size:11px;color:#6b7280;margin-top:4px}
+.empty{text-align:center;color:#6b7280;padding:60px 24px;font-size:16px}
+.footer{text-align:center;padding:32px 24px;color:#6b7280;font-size:12px;border-top:1px solid #2a2d3a}
+.footer a{color:${accent};text-decoration:none}
+@media(max-width:600px){.hero{padding:40px 16px}.hero-stats{gap:20px}.stat-n{font-size:28px}}
+</style></head><body>
+<div class="hero">
+  <div class="logo">${shopName.split(' ').slice(0,-1).join(' ')}<span> ${shopName.split(' ').slice(-1)[0]}</span></div>
+  <div class="tagline">Certified 3M &amp; Avery installer · Speedway, Indiana</div>
+  <div class="hero-stats">
+    <div class="stat"><div class="stat-n">${totalJobs}</div><div class="stat-l">Installs</div></div>
+    <div class="stat"><div class="stat-n">${totalVehicles}</div><div class="stat-l">Vehicles Wrapped</div></div>
+    <div class="stat"><div class="stat-n">${categories.length}</div><div class="stat-l">Specialties</div></div>
+  </div>
+  <div class="cta-bar">
+    <a class="cta-btn" href="${quoteUrl}">Get a Free Quote →</a>
+    ${phone ? `<a class="cta-secondary" href="tel:${phone.replace(/\D/g,'')}">${phone}</a>` : ''}
+    ${email ? `<a class="cta-secondary" href="mailto:${email}">${email}</a>` : ''}
+  </div>
+</div>
+<div class="section">
+  <div class="section-title">Recent Work</div>
+  ${jobCards.length ? `<div class="grid">${jobCards}</div>` : '<div class="empty">Work history coming soon — check back after our first logged installs.</div>'}
+</div>
+<div class="footer">
+  &copy; ${new Date().getFullYear()} ${shopName} · All rights reserved<br>
+  <a href="${quoteUrl}">Request a Quote</a>
+  ${phone ? ` · <a href="tel:${phone.replace(/\D/g,'')}">${phone}</a>` : ''}
+</div>
+</body></html>`);
+  } catch (e) { res.status(500).send('<h2>Error loading portfolio.</h2>'); }
+});
+
+// ── AI Social Post Generator ───────────────────────────────────────────────────
+app.post('/ai/social-post', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  try {
+    const { company, vehicle_type, vehicle_count, wrap_category, material, notes } = req.body || {};
+    const VEHICLE_NAMES = { cargo_van: 'cargo van', box_truck: 'box truck', semi: 'semi hauler', pickup: 'pickup truck', bus: 'bus', fleet_mixed: 'mixed fleet', other: 'vehicle' };
+    const CAT_NAMES = { fleet: 'fleet wrap', racing: 'race livery', dinoc: 'DI-NOC architectural film', construction: 'construction fleet wrap', colorchange: 'color change wrap', gc_referral: 'commercial wrap', reatec: 'Rea Tec film', other: 'vehicle wrap' };
+
+    const prompt = `You're writing social media posts for Shadow Graphix, a vehicle wrap and graphics shop in Speedway, Indiana (near Indianapolis Motor Speedway). They're 3M and Avery certified installers.
+
+Just completed job:
+- Client: ${company || 'a local business'}
+- Vehicles: ${vehicle_count || 1}× ${VEHICLE_NAMES[vehicle_type] || vehicle_type || 'vehicle'}
+- Type: ${CAT_NAMES[wrap_category] || wrap_category || 'vehicle wrap'}
+${material ? `- Material: ${material}` : ''}
+${notes ? `- Notes: ${notes}` : ''}
+
+Write two posts. Output JSON only:
+{
+  "instagram": "string — punchy 2-3 sentences, 3-5 relevant hashtags, fire emoji welcome, max 200 chars",
+  "linkedin": "string — professional, 3-4 sentences, no hashtags, focus on business impact and craftsmanship, max 280 chars"
+}`;
+
+    const result = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 500);
+    const parsed = JSON.parse(result.replace(/```json|```/g, '').trim());
+    res.json({ ok: true, posts: parsed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

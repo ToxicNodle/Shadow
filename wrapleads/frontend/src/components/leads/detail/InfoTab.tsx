@@ -427,6 +427,17 @@ export default function InfoTab({ lead }: Props) {
         />
       </div>
 
+      <div className="field-group">
+        <label className="field-label">Referred By</label>
+        <input
+          className="input"
+          value={local.referred_by ?? ''}
+          onChange={(e) => setLocal({ ...local, referred_by: e.target.value })}
+          onBlur={(e) => { if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { referred_by: e.target.value } }); }}
+          placeholder="Who referred this lead? (name or company)"
+        />
+      </div>
+
       <button
         className="btn btn-primary"
         style={{ width: '100%', justifyContent: 'center', padding: '10px', marginTop: 8 }}
