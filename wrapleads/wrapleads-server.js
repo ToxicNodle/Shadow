@@ -1503,6 +1503,11 @@ app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, r
         metadata: { lead_id: lead.id },
       });
     }
+    // Auto-cancel any pending drip sequences for this lead — they replied, stop the drip
+    await pool.query(
+      `UPDATE email_queue SET status='cancelled', updated_at=NOW() WHERE lead_id=$1 AND status='pending'`,
+      [lead.id]
+    ).catch(() => {});
   } catch (e) { console.error('[inbound webhook]', e.message); }
 });
 
@@ -1719,7 +1724,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
     const uid = String(req.user.id);
     const [
       pipelineR, wonTrendR, catWinR, activity30dR,
-      avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR
+      avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR, clvR
     ] = await Promise.all([
       // Pipeline by status
       pool.query(`
@@ -1802,6 +1807,24 @@ app.get('/analytics', authMiddleware, async (req, res) => {
           COUNT(*) FILTER (WHERE (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '90 days')::INT AS aging_90d
         FROM installed_jobs WHERE user_id=$1
       `, [uid]),
+
+      // Customer Lifetime Value — top customers by estimated total revenue
+      pool.query(`
+        SELECT
+          COALESCE(l.company, j.company) AS company,
+          COUNT(DISTINCT l.id) FILTER (WHERE l.status='won')::INT AS won_deals,
+          COUNT(DISTINCT j.id)::INT AS jobs,
+          SUM(j.vehicle_count)::INT AS total_vehicles,
+          COALESCE(SUM(j.vehicle_count), 0) * 3500 +
+            COUNT(DISTINCT l.id) FILTER (WHERE l.status='won') * 4500 AS estimated_clv
+        FROM leads l
+        FULL OUTER JOIN installed_jobs j ON LOWER(j.company) = LOWER(l.company) AND j.user_id = l.user_id
+        WHERE COALESCE(l.user_id, j.user_id) = $1
+          AND (l.status='won' OR j.id IS NOT NULL)
+        GROUP BY COALESCE(l.company, j.company)
+        ORDER BY estimated_clv DESC NULLS LAST
+        LIMIT 8
+      `, [uid]),
     ]);
 
     const byStatus = {};
@@ -1841,6 +1864,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
       competitors: competitorR.rows,
       topLeads: topLeadsR.rows,
       jobs: js,
+      topCustomers: clvR.rows,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2738,6 +2762,76 @@ function startColdNurtureWorker() {
   console.log('· Cold nurture worker: running (daily at 8:00 AM)');
 }
 
+// ── Auto Re-Order Worker ───────────────────────────────────────────────────────
+// Daily at 9:00 AM — detects wraps approaching end of life and auto-creates new leads
+
+async function processReOrders() {
+  try {
+    const { rows: jobs } = await pool.query(`
+      SELECT j.*, u.settings_json
+      FROM installed_jobs j
+      JOIN users u ON u.id = j.user_id::bigint
+      WHERE (j.install_date + (j.life_years || ' years')::interval) BETWEEN NOW() AND NOW() + interval '90 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM leads l
+          WHERE l.user_id = j.user_id
+            AND LOWER(l.company) = LOWER(j.company)
+            AND l.source = 'reorder'
+            AND l.created_at > NOW() - interval '6 months'
+        )
+    `);
+
+    for (const job of jobs) {
+      const daysLeft = Math.ceil(
+        ((new Date(job.install_date).getTime() + job.life_years * 365.25 * 86400000) - Date.now()) / 86400000
+      );
+      try {
+        const { rows: newLead } = await pool.query(`
+          INSERT INTO leads (user_id, company, category, status, source, notes, followup_due_at)
+          VALUES ($1, $2, $3, 'new', 'reorder', $4, CURRENT_DATE)
+          RETURNING id
+        `, [
+          job.user_id,
+          job.company,
+          job.wrap_category || 'fleet',
+          `AUTO RE-ORDER: ${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} installed ${job.install_date?.slice(0, 10)} — ${daysLeft} days until expiry. Material: ${job.material || 'unknown'}.`,
+        ]);
+        const leadId = newLead[0].id;
+
+        await createNotification(job.user_id, {
+          type: 'new_lead',
+          title: `🔄 Re-Order Opportunity — ${job.company}`,
+          body: `${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} expire${daysLeft < 30 ? ' in ' + daysLeft + ' days' : ' in ~' + Math.ceil(daysLeft / 30) + ' months'}. Auto-lead created.`,
+          metadata: { lead_id: leadId, job_id: job.id },
+        });
+
+        await logActivity(pool, {
+          leadId,
+          userId: job.user_id,
+          type: 'note_added',
+          subject: 'Auto Re-Order Lead Created',
+          body: `Wrap lifecycle tracker detected ${job.company} has ${job.vehicle_count} wrap${job.vehicle_count > 1 ? 's' : ''} expiring in ${daysLeft} days.`,
+          metadata: { job_id: job.id, days_left: daysLeft },
+        });
+      } catch (innerErr) { console.error('[reorder]', job.company, innerErr.message); }
+    }
+    if (jobs.length) console.log(`[reorder worker] Created ${jobs.length} re-order leads`);
+  } catch (e) {
+    console.error('[reorder worker]', e.message);
+  }
+}
+
+function startReOrderWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 9 && now.getMinutes() === 0) {
+      processReOrders();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Re-order worker: running (daily at 9:00 AM)');
+}
+
 // ----------------------------------------------------------------------------
 // Boot
 // ----------------------------------------------------------------------------
@@ -2746,6 +2840,46 @@ const banner = `
 ║   WrapLeads.io — Local Server  (v0.4)             ║
 ║   http://localhost:${String(PORT).padEnd(5)}                          ║
 ╚═══════════════════════════════════════════════════╝`;
+
+// ── AI Next Best Action — per-lead coaching ───────────────────────────────────
+app.post('/leads/:id/suggest', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  try {
+    const uid = String(req.user.id);
+    const { rows: leads } = await pool.query(
+      `SELECT l.*, array_agg(json_build_object('type',a.type,'subject',a.subject,'created_at',a.created_at) ORDER BY a.created_at DESC) AS activities
+       FROM leads l
+       LEFT JOIN lead_activities a ON a.lead_id = l.id
+       WHERE l.id=$1 AND l.user_id=$2
+       GROUP BY l.id`,
+      [req.params.id, uid]
+    );
+    if (!leads.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leads[0];
+    const acts = (lead.activities || []).filter(Boolean).slice(0, 8);
+    const daysSinceLast = lead.last_contacted
+      ? Math.ceil((Date.now() - new Date(lead.last_contacted).getTime()) / 86400000)
+      : null;
+
+    const prompt = `You are a veteran B2B sales coach specializing in vehicle wraps and fleet graphics.
+
+Lead: ${lead.company} | Status: ${lead.status} | Score: ${lead.score ?? 'unknown'} | Category: ${lead.category}
+Contact: ${lead.contact_name || 'unknown'} ${lead.email ? '(email on file)' : '(no email)'} ${lead.phone ? '(phone on file)' : ''}
+Last contacted: ${daysSinceLast !== null ? daysSinceLast + ' days ago' : 'never'}
+Fleet size: ${lead.fleet_size || 'unknown'}
+Recent activity: ${acts.length ? acts.map((a) => `${a.type} — ${a.subject}`).join('; ') : 'none logged'}
+Pitch angle: ${lead.pitch_angle || 'not set'}
+Follow-up due: ${lead.followup_due_at || 'not set'}
+
+Give ONE specific, actionable next step for this lead. Be concrete — not "follow up" but exactly what to say or do and why. Output JSON only:
+{ "action": "string (max 120 chars — specific what to do)", "channel": "call|email|text|visit|none", "urgency": "hot|warm|cold", "reasoning": "string (max 80 chars — why this action now)" }`;
+
+    const result = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 300);
+    const parsed = JSON.parse(result.replace(/```json|```/g, '').trim());
+    res.json({ ok: true, suggestion: parsed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ----------------------------------------------------------------------------
 // AI email generation (proxied — users don't need their own API key)
@@ -4663,6 +4797,26 @@ app.get('/proposals', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Proposal view count (for ProposalSection polling)
+app.get('/proposals/:id/views', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT view_count, last_viewed_at FROM proposals WHERE id=$1 AND user_id=$2`,
+      [req.params.id, String(req.user.id)]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = rows[0];
+    let last_viewed_ago = null;
+    if (r.last_viewed_at) {
+      const mins = Math.floor((Date.now() - new Date(r.last_viewed_at).getTime()) / 60000);
+      if (mins < 60) last_viewed_ago = `${mins}m ago`;
+      else if (mins < 1440) last_viewed_ago = `${Math.floor(mins / 60)}h ago`;
+      else last_viewed_ago = `${Math.floor(mins / 1440)}d ago`;
+    }
+    res.json({ view_count: r.view_count ?? 0, last_viewed_ago });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Delete proposal
 app.delete('/proposals/:id', authMiddleware, async (req, res) => {
   try {
@@ -4684,8 +4838,22 @@ app.get('/proposals/:token', async (req, res) => {
     `, [req.params.token]);
     if (!rows.length) return res.status(404).send('<h2>Proposal not found or expired.</h2>');
     const p = rows[0];
-    // Track view
-    pool.query(`UPDATE proposals SET view_count=COALESCE(view_count,0)+1, last_viewed_at=NOW() WHERE token=$1`, [req.params.token]).catch(() => {});
+    // Track view + notify owner (once per unique view session — only when first view or new view since last check)
+    pool.query(`UPDATE proposals SET view_count=COALESCE(view_count,0)+1, last_viewed_at=NOW() WHERE token=$1 RETURNING user_id, view_count, lead_id, title`, [req.params.token])
+      .then(async ({ rows: vRows }) => {
+        if (!vRows.length) return;
+        const vr = vRows[0];
+        // Notify on first view and every 3rd view after that
+        if (vr.view_count === 1 || vr.view_count % 3 === 0) {
+          const viewWord = vr.view_count === 1 ? 'just opened' : `opened ${vr.view_count}x`;
+          await createNotification(String(vr.user_id), {
+            type: 'email_reply',
+            title: `👁 ${p.company || 'A prospect'} ${viewWord} your proposal!`,
+            body: vr.title || 'They\'re reading it right now — great time to follow up.',
+            metadata: { proposal_token: req.params.token, lead_id: vr.lead_id },
+          });
+        }
+      }).catch(() => {});
     const s = p.settings_json || {};
     const shopName = s.companyName || 'Shadow Graphix';
     const senderName = s.senderName || '';
@@ -5489,6 +5657,7 @@ app.listen(PORT, async () => {
     startDripWorker();
     startDigestWorker();
     startColdNurtureWorker();
+    startReOrderWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {

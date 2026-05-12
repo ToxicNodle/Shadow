@@ -74,7 +74,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -286,6 +286,27 @@ export default function AnalyticsView() {
                   </div>
                   <span className={`status-tag ${l.status}`}>{STATUSES[l.status as keyof typeof STATUSES] || l.status}</span>
                   <span className="an-arrow">→</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Customer Lifetime Value ── */}
+        {topCustomers && topCustomers.length > 0 && (
+          <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+            <div className="an-card-title">Customer Lifetime Value</div>
+            <div className="an-clv-grid">
+              {topCustomers.map((c, i) => (
+                <div key={c.company} className="an-clv-row">
+                  <div className="an-clv-rank">#{i + 1}</div>
+                  <div className="an-clv-company">{c.company}</div>
+                  <div className="an-clv-meta">
+                    {c.won_deals > 0 && <span>{c.won_deals} deal{c.won_deals !== 1 ? 's' : ''}</span>}
+                    {c.jobs > 0 && <span>{c.jobs} install{c.jobs !== 1 ? 's' : ''}</span>}
+                    {c.total_vehicles > 0 && <span>{c.total_vehicles} vehicles</span>}
+                  </div>
+                  <div className="an-clv-value">{fmt(c.estimated_clv)}</div>
                 </div>
               ))}
             </div>

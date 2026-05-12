@@ -1801,3 +1801,24 @@
 .qr-success-icon { font-size: 48px; margin-bottom: 12px; }
 .qr-success-title { font-size: 22px; font-weight: 800; color: #fff; margin-bottom: 8px; }
 .qr-success-sub { font-size: 14px; color: #8892a4; }
+
+/* ── Sprint 8: AI Coach Card ─────────────────────────────────────────────── */
+.ai-coach-card { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-top: 14px; }
+.ai-coach-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--bg-elev); border: none; width: 100%; cursor: pointer; text-align: left; }
+.ai-coach-header:hover { background: var(--bg-hover); }
+.ai-coach-icon { font-size: 14px; }
+.ai-coach-title { font-size: 12px; font-weight: 700; flex: 1; }
+.ai-coach-urgency-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ai-coach-chevron { font-size: 9px; color: var(--text-muted); }
+.ai-coach-body { padding: 12px 14px; background: var(--bg-elev-2); display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); }
+.ai-coach-action { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; font-weight: 600; line-height: 1.45; }
+.ai-coach-reason { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.ai-coach-badge { font-size: 9px; font-weight: 800; padding: 2px 8px; border-radius: 4px; color: #fff; text-transform: uppercase; letter-spacing: .05em; }
+
+/* ── Sprint 8: CLV Leaderboard ───────────────────────────────────────────── */
+.an-clv-grid { display: flex; flex-direction: column; gap: 6px; }
+.an-clv-row { display: grid; grid-template-columns: 28px 1fr auto auto; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-elev-2); border-radius: 8px; }
+.an-clv-rank { font-size: 11px; font-weight: 800; color: var(--text-muted); text-align: center; }
+.an-clv-company { font-size: 13px; font-weight: 700; }
+.an-clv-meta { display: flex; gap: 8px; font-size: 10px; color: var(--text-muted); }
+.an-clv-value { font-size: 14px; font-weight: 800; color: var(--accent); min-width: 70px; text-align: right; }

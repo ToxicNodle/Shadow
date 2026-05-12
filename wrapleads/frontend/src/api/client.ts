@@ -394,6 +394,9 @@ export const api = {
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
+  getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
+  suggestAction: (leadId: number) =>
+    authFetch<{ ok: boolean; suggestion: { action: string; channel: string; urgency: string; reasoning: string } }>(`/leads/${leadId}/suggest`, { method: 'POST', body: '{}' }),
 
   // Bulk lead update
   bulkUpdateLeads: (leadIds: number[], patch: { status?: string; category?: string }) =>
@@ -410,6 +413,7 @@ export const api = {
     competitors: { competitor: string; count: number }[];
     topLeads: { id: number; company: string; status: string; category: string; fleet_size: string; city: string; state: string }[];
     jobs: { total_jobs: number; total_vehicles: number; aging_90d: number };
+    topCustomers: { company: string; won_deals: number; jobs: number; total_vehicles: number; estimated_clv: number }[];
   }>('/analytics'),
 
   // AI Mission Brief

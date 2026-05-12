@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Lead, LeadCategory, LeadStatus } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
@@ -91,14 +91,72 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   );
 }
 
+const URGENCY_COLORS: Record<string, string> = { hot: '#ef4444', warm: '#f59e0b', cold: '#6b7280' };
+const CHANNEL_ICONS: Record<string, string> = { call: '📞', email: '✉', text: '💬', visit: '📍', none: '💡' };
+
+function AICoach({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const { data, isFetching, refetch } = useQuery({
+    queryKey: ['ai-suggest', lead.serverId],
+    queryFn: () => api.suggestAction(lead.serverId!),
+    enabled: open && !!lead.serverId,
+    staleTime: 15 * 60_000,
+  });
+
+  const s = data?.suggestion;
+  return (
+    <div className="ai-coach-card">
+      <button
+        className="ai-coach-header"
+        onClick={() => { setOpen((o) => !o); if (!open && !data) refetch(); }}
+      >
+        <span className="ai-coach-icon">🤖</span>
+        <span className="ai-coach-title">AI Coach</span>
+        {s && <span className="ai-coach-urgency-dot" style={{ background: URGENCY_COLORS[s.urgency] }} />}
+        <span className="ai-coach-chevron">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="ai-coach-body">
+          {isFetching ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', fontSize: 12, color: 'var(--text-muted)' }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />Analysing lead history…
+            </div>
+          ) : s ? (
+            <>
+              <div className="ai-coach-action">
+                <span style={{ fontSize: 16 }}>{CHANNEL_ICONS[s.channel] ?? '💡'}</span>
+                <span>{s.action}</span>
+              </div>
+              <div className="ai-coach-reason">{s.reasoning}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                <span className="ai-coach-badge" style={{ background: URGENCY_COLORS[s.urgency] }}>{s.urgency.toUpperCase()}</span>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => refetch()}>↻ Refresh</button>
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>Could not generate suggestion — check API key.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProposalSection({ lead }: { lead: Lead }) {
   const [notes, setNotes] = useState('');
-  const [proposal, setProposal] = useState<{ token: string; title: string } | null>(null);
+  const [proposal, setProposal] = useState<{ token: string; title: string; id: number } | null>(null);
   const [copied, setCopied] = useState(false);
 
   const mut = useMutation({
     mutationFn: () => api.createProposal(lead.serverId!, notes),
-    onSuccess: (data) => setProposal({ token: data.proposal.token, title: data.proposal.title }),
+    onSuccess: (data) => setProposal({ token: data.proposal.token, title: data.proposal.title, id: data.proposal.id }),
+  });
+
+  const { data: viewData } = useQuery({
+    queryKey: ['proposal-views', proposal?.id],
+    queryFn: () => api.getProposalViewCount(proposal!.id),
+    enabled: !!proposal?.id,
+    refetchInterval: 30_000,
   });
 
   const url = proposal ? api.getProposalUrl(proposal.token) : null;
@@ -136,6 +194,11 @@ function ProposalSection({ lead }: { lead: Lead }) {
       ) : (
         <div className="proposal-ready">
           <div className="proposal-ready-title">✓ Proposal ready</div>
+          {viewData && viewData.view_count > 0 && (
+            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
+              👁 Viewed {viewData.view_count}× · Last seen {viewData.last_viewed_ago}
+            </div>
+          )}
           <div className="proposal-ready-url">{url}</div>
           <div className="proposal-ready-actions">
             <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={copy}>
@@ -379,6 +442,7 @@ export default function InfoTab({ lead }: Props) {
         Generate Quote / Proposal
       </button>
 
+      {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <ProposalSection lead={local} />}
 
       {showWinLoss && lead.serverId && (
