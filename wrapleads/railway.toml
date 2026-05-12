@@ -1,6 +1,6 @@
 [build]
-builder = "nixpacks"
-buildCommand = "npm install && cd frontend && npm install && cd .. && npm run build"
+builder = "RAILPACK"
+buildCommand = "cd frontend && npm install && cd .. && npm run build"
 
 [deploy]
 startCommand = "npm start"
