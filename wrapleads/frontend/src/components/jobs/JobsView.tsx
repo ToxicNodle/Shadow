@@ -3,6 +3,80 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../api/types';
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
+import MaterialCatalogModal from '../modals/MaterialCatalogModal';
+
+// ── Social Post Generator ─────────────────────────────────────────────────────
+
+function SocialPostPanel({ job }: { job: InstalledJob }) {
+  const [posts, setPosts] = useState<{ instagram: string; linkedin: string } | null>(null);
+  const [copiedIG, setCopiedIG] = useState(false);
+  const [copiedLI, setCopiedLI] = useState(false);
+
+  const genMut = useMutation({
+    mutationFn: () => api.generateSocialPost({
+      company: job.company,
+      vehicle_type: job.vehicle_type,
+      vehicle_count: job.vehicle_count,
+      wrap_category: job.wrap_category,
+      material: job.material ?? undefined,
+      notes: job.notes ?? undefined,
+    }),
+    onSuccess: (data) => setPosts(data.posts),
+  });
+
+  function copy(text: string, which: 'ig' | 'li') {
+    navigator.clipboard.writeText(text);
+    if (which === 'ig') { setCopiedIG(true); setTimeout(() => setCopiedIG(false), 2000); }
+    else { setCopiedLI(true); setTimeout(() => setCopiedLI(false), 2000); }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+        Generate ready-to-post Instagram and LinkedIn captions for this completed job.
+      </p>
+      {!posts && (
+        <button
+          className="btn btn-primary"
+          style={{ alignSelf: 'flex-start' }}
+          disabled={genMut.isPending}
+          onClick={() => genMut.mutate()}
+        >
+          {genMut.isPending ? 'Generating…' : '✨ Generate Social Posts'}
+        </button>
+      )}
+      {posts && (
+        <>
+          <div className="social-post-card">
+            <div className="social-post-platform">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z"/></svg>
+              Instagram
+            </div>
+            <div className="social-post-text">{posts.instagram}</div>
+            <div className="social-post-actions">
+              <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => copy(posts.instagram, 'ig')}>
+                {copiedIG ? '✓ Copied!' : '📋 Copy'}
+              </button>
+              <button className="btn" style={{ fontSize: 11 }} onClick={() => genMut.mutate()}>↺ Regenerate</button>
+            </div>
+          </div>
+          <div className="social-post-card">
+            <div className="social-post-platform">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+              LinkedIn
+            </div>
+            <div className="social-post-text">{posts.linkedin}</div>
+            <div className="social-post-actions">
+              <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => copy(posts.linkedin, 'li')}>
+                {copiedLI ? '✓ Copied!' : '📋 Copy'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // ── Photo Gallery (inside job modal) ─────────────────────────────────────────
 
@@ -98,7 +172,8 @@ interface JobModalProps {
 function JobModal({ job, onClose }: JobModalProps) {
   const isNew = job === 'new';
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<'details' | 'photos'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social'>('details');
+  const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
     vehicle_type: (isNew ? 'cargo_van_standard' : (job as InstalledJob).vehicle_type) as VehicleType,
@@ -140,11 +215,14 @@ function JobModal({ job, onClose }: JobModalProps) {
           <div className="jobs-tabs" style={{ margin: '0 24px', borderBottom: '1px solid var(--border)' }}>
             <button className={`jobs-tab ${activeTab === 'details' ? 'active' : ''}`} onClick={() => setActiveTab('details')}>Details</button>
             <button className={`jobs-tab ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}>📷 Photos</button>
+            <button className={`jobs-tab ${activeTab === 'social' ? 'active' : ''}`} onClick={() => setActiveTab('social')}>✨ Social</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         {(!isNew && activeTab === 'photos') ? (
           <PhotoGallery jobId={(job as InstalledJob).id} />
+        ) : (!isNew && activeTab === 'social') ? (
+          <SocialPostPanel job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">
@@ -191,9 +269,18 @@ function JobModal({ job, onClose }: JobModalProps) {
             </div>
           </div>
           <div className="field-group">
-            <label className="field-label">Material</label>
+            <label className="field-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              Material
+              <button type="button" className="btn" style={{ fontSize: 10, padding: '2px 8px', marginLeft: 8 }} onClick={() => setMatCatalogOpen(true)}>Browse Catalog</button>
+            </label>
             <input className="input" {...f('material')} placeholder="3M 1080, Avery 900, Arlon 3000…" />
           </div>
+          {matCatalogOpen && (
+            <MaterialCatalogModal
+              onClose={() => setMatCatalogOpen(false)}
+              onSelect={(name) => setForm((s) => ({ ...s, material: name }))}
+            />
+          )}
           <div className="field-group">
             <label className="field-label">Notes</label>
             <textarea className="input" rows={2} {...f('notes')} placeholder="Any notes about the job…" />

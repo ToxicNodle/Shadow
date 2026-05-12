@@ -51,6 +51,10 @@ interface AppStore {
   currentLeadId: string | null;
   setCurrentLeadId: (id: string | null) => void;
 
+  // Pending deep-link from notification (server ID)
+  pendingOpenLeadServerId: number | null;
+  setPendingOpenLeadServerId: (id: number | null) => void;
+
   // Lead list filters
   activeFilter: ActiveFilter;
   setFilter: (patch: Partial<ActiveFilter>) => void;
@@ -152,6 +156,8 @@ export const useAppStore = create<AppStore>()(
       // Current lead
       currentLeadId: null,
       setCurrentLeadId: (id) => set({ currentLeadId: id }),
+      pendingOpenLeadServerId: null,
+      setPendingOpenLeadServerId: (id) => set({ pendingOpenLeadServerId: id }),
 
       // Filters
       activeFilter: DEFAULT_FILTER,

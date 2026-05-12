@@ -1,7 +1,44 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { CATEGORIES, STATUSES } from '../../api/types';
+
+function PipelineNarrativeCard() {
+  const [narrative, setNarrative] = useState<string | null>(null);
+  const mut = useMutation({
+    mutationFn: () => api.generatePipelineNarrative(),
+    onSuccess: (d) => setNarrative(d.narrative),
+  });
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>AI Pipeline Forecast</div>
+        <button
+          className="btn btn-primary"
+          style={{ fontSize: 11 }}
+          disabled={mut.isPending}
+          onClick={() => mut.mutate()}
+        >
+          {mut.isPending ? 'Analyzing…' : narrative ? '↺ Refresh' : '✨ Generate Forecast'}
+        </button>
+      </div>
+      {!narrative && !mut.isPending && (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+          Claude analyzes your full pipeline and writes a plain-English forecast for the next 30 days — where the money is, what the risks are, and the one move that would have the most impact this week.
+        </p>
+      )}
+      {mut.isPending && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+          <span className="spinner" /> Reading your pipeline…
+        </div>
+      )}
+      {narrative && (
+        <div className="pipeline-narrative">{narrative}</div>
+      )}
+    </div>
+  );
+}
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -74,7 +111,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -87,6 +124,18 @@ export default function AnalyticsView() {
   const maxStatus = Math.max(...statusRows.map((r) => r.count), 1);
 
   const totalActivity = activity30d.emails + activity30d.calls + activity30d.meetings + activity30d.sequences;
+
+  // Revenue forecast: pipeline value × estimated close rates by stage
+  const CLOSE_RATES: Record<string, number> = { proposal: 0.60, meeting: 0.35, replied: 0.20, contacted: 0.10, cold: 0.03, new: 0.05 };
+  const REV_PER_LEAD: Record<string, number> = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+  const forecastByStage = statusOrder
+    .filter((s) => CLOSE_RATES[s] && byStatus[s])
+    .map((s) => {
+      const avgRev = byCategory.reduce((sum, c) => sum + (REV_PER_LEAD[c.category] ?? 2500) * c.total, 0) / Math.max(summary.totalLeads, 1);
+      const expected = byStatus[s] * CLOSE_RATES[s] * avgRev;
+      return { stage: s, count: byStatus[s], rate: Math.round(CLOSE_RATES[s] * 100), expected };
+    });
+  const totalForecast = forecastByStage.reduce((sum, r) => sum + r.expected, 0);
 
   return (
     <div className="an-root">
@@ -198,6 +247,27 @@ export default function AnalyticsView() {
           <div className="an-activity-total">{totalActivity} total touchpoints</div>
         </div>
 
+        {/* ── Revenue Forecast ── */}
+        <div className="an-card">
+          <div className="an-card-title">Revenue Forecast</div>
+          <div style={{ marginBottom: 10 }}>
+            <div className="an-stat-value" style={{ color: 'var(--accent)', fontSize: 28 }}>{fmt(totalForecast)}</div>
+            <div className="an-stat-sub">probability-weighted pipeline</div>
+          </div>
+          <div className="an-bar-list">
+            {forecastByStage.map((r) => (
+              <div key={r.stage} className="an-bar-row">
+                <div className="an-bar-label">{STATUSES[r.stage as keyof typeof STATUSES]} ({r.rate}%)</div>
+                <div className="an-bar-track">
+                  <div className="an-bar-fill" style={{ width: `${Math.max(2, (r.expected / totalForecast) * 100)}%`, background: '#6366f1' }} />
+                </div>
+                <div className="an-bar-count">{fmt(r.expected)}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10 }}>Based on avg deal size × close probability by stage</div>
+        </div>
+
         {/* ── Win/Loss Factors ── */}
         {winLossFactors.length > 0 && (
           <div className="an-card">
@@ -253,6 +323,30 @@ export default function AnalyticsView() {
                   </div>
                   <span className={`status-tag ${l.status}`}>{STATUSES[l.status as keyof typeof STATUSES] || l.status}</span>
                   <span className="an-arrow">→</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── AI Pipeline Narrative ── */}
+        <PipelineNarrativeCard />
+
+        {/* ── Customer Lifetime Value ── */}
+        {topCustomers && topCustomers.length > 0 && (
+          <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+            <div className="an-card-title">Customer Lifetime Value</div>
+            <div className="an-clv-grid">
+              {topCustomers.map((c, i) => (
+                <div key={c.company} className="an-clv-row">
+                  <div className="an-clv-rank">#{i + 1}</div>
+                  <div className="an-clv-company">{c.company}</div>
+                  <div className="an-clv-meta">
+                    {c.won_deals > 0 && <span>{c.won_deals} deal{c.won_deals !== 1 ? 's' : ''}</span>}
+                    {c.jobs > 0 && <span>{c.jobs} install{c.jobs !== 1 ? 's' : ''}</span>}
+                    {c.total_vehicles > 0 && <span>{c.total_vehicles} vehicles</span>}
+                  </div>
+                  <div className="an-clv-value">{fmt(c.estimated_clv)}</div>
                 </div>
               ))}
             </div>

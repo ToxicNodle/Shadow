@@ -23,6 +23,7 @@ export interface Lead {
   lastContacted: string;
   followupDueAt?: string | null;
   sourceCompanyId?: number;
+  referred_by?: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -569,6 +569,13 @@ export default function MissionView() {
     enabled: !!data,
   });
 
+  const { data: signalsData } = useQuery({
+    queryKey: ['mission-signals'],
+    queryFn: () => api.getMissionSignals(),
+    staleTime: 60_000,
+    refetchInterval: 90_000,
+  });
+
   function goToLead(_leadId: number) {
     // navigate to leads mode — the lead will be in the list
     setMode('leads');
@@ -926,6 +933,40 @@ export default function MissionView() {
             </div>
           )}
         </section>
+
+        {/* ── Live Signals ── */}
+        {(signalsData?.signals?.length ?? 0) > 0 && (
+          <section className="mission-card">
+            <div className="mission-card-header">
+              <span className="mission-section-label">Live Signals</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Recent engagement from your pipeline</span>
+            </div>
+            <div className="signal-feed">
+              {signalsData!.signals.slice(0, 8).map((s, i) => {
+                const SIGNAL_ICONS: Record<string, string> = {
+                  email_opened: '👁', proposal_viewed: '📄', reply: '✉️', new_lead: '⭐',
+                };
+                const diffMs = Date.now() - new Date(s.ts).getTime();
+                const hrs = Math.floor(diffMs / 3_600_000);
+                const ago = hrs < 1 ? `${Math.floor(diffMs / 60_000)}m ago` : hrs < 24 ? `${hrs}h ago` : `${Math.floor(hrs / 24)}d ago`;
+                return (
+                  <button
+                    key={i}
+                    className="signal-item"
+                    onClick={() => goToLeadsFiltered()}
+                  >
+                    <span className="signal-icon">{SIGNAL_ICONS[s.type] ?? '🔔'}</span>
+                    <div className="signal-body">
+                      <span className="signal-company">{s.company}</span>
+                      <span className="signal-title">{s.title}</span>
+                    </div>
+                    <span className="signal-time">{ago}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* ── All clear ── */}
         {totalActions === 0 && !hasBulkTargets && (

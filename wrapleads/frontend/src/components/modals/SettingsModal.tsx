@@ -15,6 +15,10 @@ export default function SettingsModal() {
     showToast: s.showToast,
   }));
   const [local, setLocal] = useState<Settings>(settings);
+  const [quoteLink, setQuoteLink] = useState<string | null>(null);
+  const [quoteLinkCopied, setQuoteLinkCopied] = useState(false);
+  const [portfolioLink, setPortfolioLink] = useState<string | null>(null);
+  const [portfolioLinkCopied, setPortfolioLinkCopied] = useState(false);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
   const [samsaraStatus, setSamsaraStatus] = useState<FleetStatus>('idle');
   const [samsaraCount, setSamsaraCount] = useState<number | null>(null);
@@ -316,6 +320,73 @@ export default function SettingsModal() {
           )}
           {motiveStatus === 'fail' && <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700 }}>✗ Connection failed — check key and save first</span>}
         </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">📥 Inbound Quote Form</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Share this link on your website, email signature, or social media. Prospects fill it out → a new lead appears in WrapLeads instantly.
+        </p>
+        {quoteLink ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <code style={{ flex: 1, fontSize: 11, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all', color: 'var(--text-muted)' }}>
+              {quoteLink}
+            </code>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+              onClick={() => { navigator.clipboard.writeText(quoteLink); setQuoteLinkCopied(true); setTimeout(() => setQuoteLinkCopied(false), 2000); }}
+            >
+              {quoteLinkCopied ? '✓ Copied!' : '📋 Copy'}
+            </button>
+          </div>
+        ) : (
+          <button
+            className="btn"
+            style={{ fontSize: 12 }}
+            onClick={async () => {
+              const r = await api.getMyQuoteLink();
+              setQuoteLink(`${window.location.origin}${r.url}`);
+            }}
+          >
+            Get My Quote Link
+          </button>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">📸 Public Portfolio</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          A beautiful public page showcasing your completed installs with photos, stats, and a "Get a Quote" button. Share it anywhere — your website, Instagram bio, or after every install.
+        </p>
+        {portfolioLink ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <code style={{ flex: 1, fontSize: 11, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all', color: 'var(--text-muted)' }}>
+              {portfolioLink}
+            </code>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+              onClick={() => { navigator.clipboard.writeText(portfolioLink); setPortfolioLinkCopied(true); setTimeout(() => setPortfolioLinkCopied(false), 2000); }}
+            >
+              {portfolioLinkCopied ? '✓ Copied!' : '📋 Copy'}
+            </button>
+            <a href={portfolioLink} target="_blank" rel="noreferrer" className="btn" style={{ fontSize: 11, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+              Preview
+            </a>
+          </div>
+        ) : (
+          <button
+            className="btn"
+            style={{ fontSize: 12 }}
+            onClick={async () => {
+              const r = await api.getMyPortfolioLink();
+              setPortfolioLink(`${window.location.origin}/portfolio/${r.token}`);
+            }}
+          >
+            Get My Portfolio Link
+          </button>
+        )}
       </div>
 
       <div className="modal-actions">

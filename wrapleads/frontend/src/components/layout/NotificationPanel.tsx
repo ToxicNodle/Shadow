@@ -6,9 +6,13 @@ import type { AppNotification } from '../../api/types';
 const ICONS: Record<string, string> = {
   aging_wrap: '⏰',
   call_completed: '📞',
+  call_initiated: '📲',
   email_reply: '✉️',
   sequence_complete: '🚀',
+  sequence_activated: '🚀',
   bid_due_soon: '📋',
+  new_lead: '⭐',
+  post_call_chain_fired: '💬',
 };
 
 function timeAgo(ts: string) {
@@ -23,7 +27,10 @@ function timeAgo(ts: string) {
 
 export default function NotificationPanel({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
-  const setMode = useAppStore((s) => s.setMode);
+  const { setMode, setPendingOpenLeadServerId } = useAppStore((s) => ({
+    setMode: s.setMode,
+    setPendingOpenLeadServerId: s.setPendingOpenLeadServerId,
+  }));
 
   const { data, isLoading } = useQuery({
     queryKey: ['notifications'],
@@ -50,9 +57,15 @@ export default function NotificationPanel({ onClose }: { onClose: () => void }) 
 
   function handleNotificationClick(n: AppNotification) {
     if (!n.read_at) readMut.mutate(n.id);
-    if (n.type === 'aging_wrap') { setMode('jobs'); onClose(); }
-    if (n.type === 'call_completed') { setMode('leads'); onClose(); }
-    if (n.type === 'bid_due_soon') { setMode('bids'); onClose(); }
+    const meta = n.metadata as Record<string, unknown>;
+    const leadId = typeof meta?.lead_id === 'number' ? meta.lead_id : null;
+    if (n.type === 'aging_wrap') { setMode('jobs'); onClose(); return; }
+    if (n.type === 'bid_due_soon') { setMode('bids'); onClose(); return; }
+    if (leadId) {
+      setPendingOpenLeadServerId(leadId);
+      setMode('leads');
+      onClose();
+    }
   }
 
   return (

@@ -387,6 +387,24 @@ export const api = {
   launchCampaign: (id: string) =>
     authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
 
+  // Proposals (shareable client HTML pages)
+  createProposal: (leadId: number, extraNotes?: string) =>
+    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '' }) }),
+  getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
+  deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
+  getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
+  getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
+  getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
+  suggestAction: (leadId: number) =>
+    authFetch<{ ok: boolean; suggestion: { action: string; channel: string; urgency: string; reasoning: string } }>(`/leads/${leadId}/suggest`, { method: 'POST', body: '{}' }),
+  generateSocialPost: (jobData: { company: string; vehicle_type: string; vehicle_count: number; wrap_category: string; material?: string; notes?: string }) =>
+    authFetch<{ ok: boolean; posts: { instagram: string; linkedin: string } }>('/ai/social-post', { method: 'POST', body: JSON.stringify(jobData) }),
+  getMyPortfolioLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
+
+  // Bulk lead update
+  bulkUpdateLeads: (leadIds: number[], patch: { status?: string; category?: string }) =>
+    authFetch<{ ok: boolean; updated: number }>('/leads/bulk-update', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, patch }) }),
+
   // Analytics Dashboard
   getAnalytics: () => authFetch<{
     summary: { totalLeads: number; won: number; lost: number; winRate: number | null; avgDaysToClose: number | null; pipelineValue: number };
@@ -398,6 +416,7 @@ export const api = {
     competitors: { competitor: string; count: number }[];
     topLeads: { id: number; company: string; status: string; category: string; fleet_size: string; city: string; state: string }[];
     jobs: { total_jobs: number; total_vehicles: number; aging_90d: number };
+    topCustomers: { company: string; won_deals: number; jobs: number; total_vehicles: number; estimated_clv: number }[];
   }>('/analytics'),
 
   // AI Mission Brief
@@ -420,4 +439,26 @@ export const api = {
     authFetch<{ bid: Bid }>(`/bids/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
   deleteBid: (id: number) =>
     authFetch<{ ok: boolean }>(`/bids/${id}`, { method: 'DELETE' }),
+
+  broadcastEmail: (leadIds: number[], subject: string, body: string) =>
+    authFetch<{ ok: boolean; sent: number; skipped: number; errors: number }>(
+      '/leads/broadcast',
+      { method: 'POST', body: JSON.stringify({ leadIds, subject, body }) }
+    ),
+
+  getMissionSignals: () =>
+    authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
+
+  // Business card scanner
+  scanBusinessCard: (file: File) => {
+    const form = new FormData();
+    form.append('image', file);
+    const { Authorization } = { Authorization: `Bearer ${getToken()}` };
+    return fetch('/vision/scan-card', { method: 'POST', headers: { Authorization }, body: form })
+      .then((r) => r.json()) as Promise<{ ok: boolean; lead: Partial<import('./types').Lead> }>;
+  },
+
+  // AI pipeline narrative
+  generatePipelineNarrative: () =>
+    authFetch<{ ok: boolean; narrative: string }>('/ai/pipeline-narrative', { method: 'POST', body: '{}' }),
 };

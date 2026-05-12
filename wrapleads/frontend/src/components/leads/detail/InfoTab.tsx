@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Lead, LeadCategory, LeadStatus } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
@@ -34,14 +34,37 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   const [factor, setFactor] = useState('');
   const [notes, setNotes] = useState('');
   const [competitor, setCompetitor] = useState('');
+  const [logJob, setLogJob] = useState(false);
+  const [jobForm, setJobForm] = useState({
+    vehicle_type: 'cargo_van_standard',
+    vehicle_count: 1,
+    material: '',
+    install_date: new Date().toISOString().split('T')[0],
+    life_years: 5,
+  });
+
   const mut = useMutation({
-    mutationFn: () => api.captureWinLoss(lead.serverId!, factor || 'other', notes, competitor),
+    mutationFn: async () => {
+      await api.captureWinLoss(lead.serverId!, factor || 'other', notes, competitor);
+      if (logJob) {
+        await api.createJob({
+          company: lead.company,
+          vehicle_type: jobForm.vehicle_type as any,
+          vehicle_count: jobForm.vehicle_count,
+          wrap_category: lead.category,
+          material: jobForm.material || undefined,
+          install_date: jobForm.install_date,
+          life_years: jobForm.life_years,
+          lead_id: lead.serverId,
+        });
+      }
+    },
     onSuccess: onClose,
   });
   const outcome = lead.status === 'won' ? 'Won' : 'Lost';
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-box" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal-box" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <span style={{ fontSize: 22 }}>{outcome === 'Won' ? '🏆' : '📋'}</span>
           <h2 className="modal-title" style={{ margin: 0 }}>Deal {outcome} — What was the factor?</h2>
@@ -71,11 +94,58 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
         <textarea
           className="input"
           placeholder="Any notes? (optional)"
-          rows={3}
+          rows={2}
           style={{ width: '100%', resize: 'vertical', marginBottom: 12 }}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
+
+        {outcome === 'Won' && (
+          <div style={{ background: 'var(--bg-elev-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: logJob ? 10 : 0 }}>
+              <input type="checkbox" checked={logJob} onChange={(e) => setLogJob(e.target.checked)} style={{ accentColor: 'var(--accent)', width: 14, height: 14 }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Log this as a completed job (starts wrap lifecycle tracking)</span>
+            </label>
+            {logJob && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8 }}>
+                  <div className="field-group">
+                    <label className="field-label">Vehicle Type</label>
+                    <select className="input" value={jobForm.vehicle_type} onChange={(e) => setJobForm((s) => ({ ...s, vehicle_type: e.target.value }))}>
+                      <option value="cargo_van_standard">Cargo Van</option>
+                      <option value="cargo_van_high_roof">High-Roof Van</option>
+                      <option value="box_truck_16">16ft Box Truck</option>
+                      <option value="box_truck_24">24ft Box Truck</option>
+                      <option value="semi_full">Semi + Trailer</option>
+                      <option value="pickup_truck">Pickup Truck</option>
+                      <option value="suv_large">Large SUV</option>
+                      <option value="bus_school">Bus</option>
+                      <option value="fleet_mixed">Mixed Fleet</option>
+                    </select>
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">Count</label>
+                    <input className="input" type="number" min={1} value={jobForm.vehicle_count}
+                      onChange={(e) => setJobForm((s) => ({ ...s, vehicle_count: parseInt(e.target.value) || 1 }))} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="field-group">
+                    <label className="field-label">Install Date</label>
+                    <input className="input" type="date" value={jobForm.install_date}
+                      onChange={(e) => setJobForm((s) => ({ ...s, install_date: e.target.value }))} />
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">Material (optional)</label>
+                    <input className="input" value={jobForm.material} placeholder="3M 1080…"
+                      onChange={(e) => setJobForm((s) => ({ ...s, material: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn" onClick={onClose}>Skip</button>
           <button
@@ -83,10 +153,136 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
             disabled={mut.isPending}
             onClick={() => mut.mutate()}
           >
-            {mut.isPending ? 'Saving…' : 'Save'}
+            {mut.isPending ? 'Saving…' : logJob ? 'Save + Log Job' : 'Save'}
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const URGENCY_COLORS: Record<string, string> = { hot: '#ef4444', warm: '#f59e0b', cold: '#6b7280' };
+const CHANNEL_ICONS: Record<string, string> = { call: '📞', email: '✉', text: '💬', visit: '📍', none: '💡' };
+
+function AICoach({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const { data, isFetching, refetch } = useQuery({
+    queryKey: ['ai-suggest', lead.serverId],
+    queryFn: () => api.suggestAction(lead.serverId!),
+    enabled: open && !!lead.serverId,
+    staleTime: 15 * 60_000,
+  });
+
+  const s = data?.suggestion;
+  return (
+    <div className="ai-coach-card">
+      <button
+        className="ai-coach-header"
+        onClick={() => { setOpen((o) => !o); if (!open && !data) refetch(); }}
+      >
+        <span className="ai-coach-icon">🤖</span>
+        <span className="ai-coach-title">AI Coach</span>
+        {s && <span className="ai-coach-urgency-dot" style={{ background: URGENCY_COLORS[s.urgency] }} />}
+        <span className="ai-coach-chevron">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="ai-coach-body">
+          {isFetching ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', fontSize: 12, color: 'var(--text-muted)' }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />Analysing lead history…
+            </div>
+          ) : s ? (
+            <>
+              <div className="ai-coach-action">
+                <span style={{ fontSize: 16 }}>{CHANNEL_ICONS[s.channel] ?? '💡'}</span>
+                <span>{s.action}</span>
+              </div>
+              <div className="ai-coach-reason">{s.reasoning}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                <span className="ai-coach-badge" style={{ background: URGENCY_COLORS[s.urgency] }}>{s.urgency.toUpperCase()}</span>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => refetch()}>↻ Refresh</button>
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>Could not generate suggestion — check API key.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProposalSection({ lead }: { lead: Lead }) {
+  const [notes, setNotes] = useState('');
+  const [proposal, setProposal] = useState<{ token: string; title: string; id: number } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const mut = useMutation({
+    mutationFn: () => api.createProposal(lead.serverId!, notes),
+    onSuccess: (data) => setProposal({ token: data.proposal.token, title: data.proposal.title, id: data.proposal.id }),
+  });
+
+  const { data: viewData } = useQuery({
+    queryKey: ['proposal-views', proposal?.id],
+    queryFn: () => api.getProposalViewCount(proposal!.id),
+    enabled: !!proposal?.id,
+    refetchInterval: 30_000,
+  });
+
+  const url = proposal ? api.getProposalUrl(proposal.token) : null;
+
+  function copy() {
+    if (!url) return;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="proposal-section">
+      <div className="proposal-section-title">📄 AI Proposal Writer</div>
+      {!proposal ? (
+        <>
+          <textarea
+            className="input"
+            placeholder="Any extra context for the AI? (optional — vehicle types, specific asks, budget hints…)"
+            rows={2}
+            style={{ width: '100%', resize: 'vertical', marginBottom: 8 }}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+          {mut.isError && <div style={{ color: 'var(--red)', fontSize: 11, marginBottom: 6 }}>{(mut.error as Error).message}</div>}
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', justifyContent: 'center' }}
+            disabled={mut.isPending}
+            onClick={() => mut.mutate()}
+          >
+            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : '✨ Generate Full Proposal'}
+          </button>
+        </>
+      ) : (
+        <div className="proposal-ready">
+          <div className="proposal-ready-title">✓ Proposal ready</div>
+          {viewData && viewData.view_count > 0 && (
+            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
+              👁 Viewed {viewData.view_count}× · Last seen {viewData.last_viewed_ago}
+            </div>
+          )}
+          <div className="proposal-ready-url">{url}</div>
+          <div className="proposal-ready-actions">
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={copy}>
+              {copied ? '✓ Copied!' : '📋 Copy Link'}
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => window.open(url!, '_blank')}>
+              Preview
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setProposal(null)}>
+              New
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -301,6 +497,17 @@ export default function InfoTab({ lead }: Props) {
         />
       </div>
 
+      <div className="field-group">
+        <label className="field-label">Referred By</label>
+        <input
+          className="input"
+          value={local.referred_by ?? ''}
+          onChange={(e) => setLocal({ ...local, referred_by: e.target.value })}
+          onBlur={(e) => { if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { referred_by: e.target.value } }); }}
+          placeholder="Who referred this lead? (name or company)"
+        />
+      </div>
+
       <button
         className="btn btn-primary"
         style={{ width: '100%', justifyContent: 'center', padding: '10px', marginTop: 8 }}
@@ -315,6 +522,9 @@ export default function InfoTab({ lead }: Props) {
         </svg>
         Generate Quote / Proposal
       </button>
+
+      {lead.serverId && <AICoach lead={local} />}
+      {lead.serverId && <ProposalSection lead={local} />}
 
       {showWinLoss && lead.serverId && (
         <WinLossModal lead={local} onClose={() => setShowWinLoss(false)} />
