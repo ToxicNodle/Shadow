@@ -330,6 +330,33 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create notifications table:', e.message);
   }
+
+  // Proposals
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS proposals (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        lead_id      BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        token        TEXT NOT NULL UNIQUE,
+        title        TEXT NOT NULL,
+        intro        TEXT,
+        services     TEXT,
+        pricing_html TEXT,
+        timeline     TEXT,
+        notes        TEXT,
+        status       TEXT NOT NULL DEFAULT 'draft',
+        approved_at  TIMESTAMPTZ,
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_proposals_user  ON proposals(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_proposals_token ON proposals(token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_proposals_lead  ON proposals(lead_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create proposals table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1274,7 +1301,7 @@ function leadRow(row) {
 }
 
 // Days until follow-up is due per status (null = no auto follow-up)
-const FOLLOWUP_DAYS = { contacted: 3, replied: 2, meeting: 5, proposal: 7 };
+const FOLLOWUP_DAYS = { cold: 14, contacted: 3, replied: 1, meeting: 2, proposal: 3 };
 
 async function logActivity(pool, { leadId, userId, type, subject = null, body = null, metadata = {} }) {
   try {
@@ -1377,6 +1404,81 @@ app.delete('/leads/:id', authMiddleware, async (req, res) => {
     await pool.query(`DELETE FROM leads WHERE id=$1 AND user_id=$2`, [id, String(req.user.id)]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Bulk update leads — status, category, or any patchable field
+app.post('/leads/bulk-update', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { lead_ids, patch } = req.body || {};
+    if (!Array.isArray(lead_ids) || !lead_ids.length) return res.status(400).json({ error: 'lead_ids required' });
+    if (!patch || !Object.keys(patch).length) return res.status(400).json({ error: 'patch required' });
+
+    const colMap = { status:'status', category:'category', state:'state' };
+    const sets = []; const params = [uid];
+    for (const [key, col] of Object.entries(colMap)) {
+      if (patch[key] !== undefined) { params.push(patch[key]); sets.push(`${col}=$${params.length}`); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'No valid fields in patch' });
+
+    // Auto followup_due on status change
+    if (patch.status && FOLLOWUP_DAYS[patch.status]) {
+      params.push(FOLLOWUP_DAYS[patch.status]);
+      sets.push(`followup_due_at = CURRENT_DATE + INTERVAL '1 day' * $${params.length}::int`);
+    } else if (patch.status === 'won' || patch.status === 'lost') {
+      sets.push('followup_due_at = NULL');
+    }
+
+    const idPlaceholders = lead_ids.map((_, i) => `$${params.length + i + 1}`).join(',');
+    params.push(...lead_ids);
+
+    const { rowCount } = await pool.query(
+      `UPDATE leads SET ${sets.join(',')}, updated_at=NOW() WHERE user_id=$1 AND id IN (${idPlaceholders})`,
+      params
+    );
+
+    if (patch.status) {
+      for (const lid of lead_ids) {
+        await logActivity(pool, { leadId: lid, userId: uid, type: 'status_changed', metadata: { to: patch.status, bulk: true } }).catch(() => {});
+      }
+    }
+    res.json({ ok: true, updated: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Inbound email reply webhook (Resend forwards inbound to this URL)
+app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, res) => {
+  try {
+    res.json({ ok: true }); // Ack immediately
+
+    const from = (req.body?.from || '').toLowerCase();
+    const subject = req.body?.subject || '';
+    const text = req.body?.text || req.body?.html || '';
+
+    if (!from) return;
+
+    // Match sender to a lead by email address
+    const { rows: leads } = await pool.query(
+      `SELECT id, user_id, company, status FROM leads WHERE LOWER(email)=$1 LIMIT 1`,
+      [from.replace(/.*<|>/g, '').trim()]
+    );
+    if (!leads.length) return;
+    const lead = leads[0];
+    const uid = lead.user_id;
+
+    // Only advance if not already past replied
+    const advanceStatuses = ['new', 'cold', 'contacted'];
+    if (advanceStatuses.includes(lead.status)) {
+      await pool.query(`UPDATE leads SET status='replied', followup_due_at=CURRENT_DATE, updated_at=NOW() WHERE id=$1`, [lead.id]);
+      await logActivity(pool, { leadId: lead.id, userId: uid, type: 'status_changed', subject: `Reply received: ${subject}`, body: text.slice(0, 500), metadata: { inbound: true, from } });
+      await createNotification(uid, {
+        type: 'email_reply',
+        title: `📬 ${lead.company} replied to your email!`,
+        body: subject ? `Subject: ${subject}` : 'Inbound reply received.',
+        metadata: { lead_id: lead.id },
+      });
+    }
+  } catch (e) { console.error('[inbound webhook]', e.message); }
 });
 
 app.post('/leads/sync', authMiddleware, async (req, res) => {
@@ -4444,6 +4546,243 @@ app.post('/portal/:token/feedback', async (req, res) => {
       body: feedback.slice(0, 200),
       metadata: { lead_id: link.lead_id },
     });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================================
+// AI Proposal Writer
+// ============================================================================
+
+// Generate a full proposal for a lead
+app.post('/leads/:id/proposal', authMiddleware, subMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const { extra_notes = '' } = req.body || {};
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const s = settR.rows[0]?.settings_json || {};
+
+    const company = lead.company;
+    const contact = lead.contact_name || 'Team';
+    const category = lead.category;
+    const fleet = lead.fleet_size || '';
+    const pitch = lead.pitch_angle || '';
+    const city = lead.city || '';
+    const state = lead.state || '';
+    const priceLow = parseFloat(s.pricePerSqftLow || '8');
+    const priceHigh = parseFloat(s.pricePerSqftHigh || '14');
+    const shopName = s.companyName || 'Shadow Graphix';
+    const senderName = s.senderName || 'the team';
+    const senderTitle = s.senderTitle || 'Installer / Sales';
+    const portfolio = s.portfolioUrl || '';
+
+    const prompt = `You are writing a professional vehicle wrap proposal for ${shopName}, a certified 3M and Avery wrap installer.
+
+Client: ${company}${city ? `, ${city}, ${state}` : ''}
+Contact: ${contact}
+Category: ${category}
+Fleet size: ${fleet || 'not specified'}
+Pitch angle: ${pitch || 'general wrap inquiry'}
+Extra notes: ${extra_notes || 'none'}
+Price per sq ft: $${priceLow}–$${priceHigh}
+
+Write a complete professional proposal with EXACTLY these 4 JSON sections. Be specific, confident, and persuasive. No fluff. Write as ${shopName}.
+
+Return ONLY valid JSON:
+{
+  "title": "Vehicle Wrap Proposal — ${company}",
+  "intro": "<2 short paragraphs: personalized opening specific to their business + credibility statement for ${shopName}>",
+  "services": "<HTML list items describing exactly what they get based on category '${category}'. Include materials (3M/Avery), warranty, turnaround. Be specific to their fleet/category.>",
+  "pricing_html": "<HTML table with 2-3 pricing tiers (e.g. Full Wrap / Partial / Spot). Use the price range $${priceLow}–$${priceHigh}/sqft. Include estimated total ranges based on fleet size if known.>",
+  "timeline": "<3–4 steps: Design Approval → Print Production → Installation → Delivery. Give realistic day ranges.>"
+}`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 2500);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    } catch {
+      return res.status(500).json({ error: 'AI response parse failed' });
+    }
+
+    const token = require('crypto').randomBytes(20).toString('hex');
+    const { rows } = await pool.query(`
+      INSERT INTO proposals (user_id, lead_id, token, title, intro, services, pricing_html, timeline, notes, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft') RETURNING *
+    `, [uid, leadId, token, parsed.title, parsed.intro, parsed.services, parsed.pricing_html, parsed.timeline, extra_notes]);
+
+    await logActivity(pool, { leadId, userId: uid, type: 'email_generated', subject: `Proposal generated: ${parsed.title}`, metadata: { proposal_token: token } });
+    res.json({ ok: true, proposal: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// List proposals for user
+app.get('/proposals', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(`
+      SELECT p.*, l.company AS lead_company
+      FROM proposals p LEFT JOIN leads l ON l.id=p.lead_id
+      WHERE p.user_id=$1 ORDER BY p.created_at DESC LIMIT 50
+    `, [uid]);
+    res.json({ proposals: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete proposal
+app.delete('/proposals/:id', authMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM proposals WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUBLIC — proposal page (client-facing, no auth)
+app.get('/proposals/:token', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.*, l.company, l.contact_name, l.email, l.city, l.state,
+             u.settings_json
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id
+      JOIN users u ON u.id = p.user_id::bigint
+      WHERE p.token=$1
+    `, [req.params.token]);
+    if (!rows.length) return res.status(404).send('<h2>Proposal not found or expired.</h2>');
+    const p = rows[0];
+    const s = p.settings_json || {};
+    const shopName = s.companyName || 'Shadow Graphix';
+    const senderName = s.senderName || '';
+    const senderEmail = s.senderEmail || '';
+    const senderPhone = s.senderPhone || '';
+    const portfolio = s.portfolioUrl || '';
+    const approved = p.status === 'approved';
+
+    const html = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${p.title}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8f8f8;color:#111;line-height:1.6}
+  .wrap{max-width:760px;margin:0 auto;background:#fff;min-height:100vh;box-shadow:0 0 40px rgba(0,0,0,.08)}
+  .header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;padding:48px 48px 36px}
+  .logo{font-size:22px;font-weight:900;letter-spacing:-.5px;margin-bottom:4px;color:#fff}
+  .tagline{font-size:12px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.1em;margin-bottom:32px}
+  .prop-title{font-size:28px;font-weight:800;line-height:1.2;margin-bottom:8px}
+  .prop-meta{font-size:13px;color:rgba(255,255,255,.6)}
+  .body-wrap{padding:40px 48px}
+  .section{margin-bottom:36px}
+  .section-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#6366f1;margin-bottom:12px;border-bottom:2px solid #6366f122;padding-bottom:6px}
+  .section p{font-size:14px;color:#333;margin-bottom:10px}
+  .section ul,.section ol{padding-left:20px;font-size:14px;color:#333}
+  .section li{margin-bottom:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:#f4f4f8;padding:10px 14px;text-align:left;font-weight:700;color:#555;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  td{padding:10px 14px;border-bottom:1px solid #f0f0f0;color:#333}
+  tr:last-child td{border-bottom:none}
+  .approve-section{background:#f0fdf4;border:2px solid #22c55e;border-radius:12px;padding:28px;text-align:center;margin-top:32px}
+  .approve-title{font-size:18px;font-weight:800;color:#15803d;margin-bottom:8px}
+  .approve-sub{font-size:13px;color:#166534;margin-bottom:20px}
+  .approve-btn{background:#22c55e;color:#fff;border:none;padding:14px 40px;border-radius:8px;font-size:16px;font-weight:700;cursor:pointer;letter-spacing:-.3px}
+  .approve-btn:hover{background:#16a34a}
+  .approved-badge{background:#dcfce7;border:2px solid #22c55e;border-radius:12px;padding:20px;text-align:center;color:#15803d;font-weight:700;font-size:16px}
+  .footer{background:#f8f8f8;padding:24px 48px;border-top:1px solid #eee;font-size:12px;color:#888;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  @media(max-width:600px){.body-wrap,.header,.footer{padding:24px 20px}.prop-title{font-size:22px}}
+  @media print{body{background:#fff}.wrap{box-shadow:none}.approve-section,.approve-btn{display:none}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="header">
+    <div class="logo">${shopName}</div>
+    <div class="tagline">Vehicle Wraps · Fleet Graphics · Architectural Film</div>
+    <div class="prop-title">${p.title}</div>
+    <div class="prop-meta">Prepared for ${p.contact_name || p.company} · ${new Date(p.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+  </div>
+
+  <div class="body-wrap">
+    <div class="section">
+      <div class="section-label">Introduction</div>
+      ${(p.intro || '').split('\n\n').map(par => `<p>${par}</p>`).join('')}
+    </div>
+
+    <div class="section">
+      <div class="section-label">Recommended Services</div>
+      <ul>${p.services || ''}</ul>
+    </div>
+
+    <div class="section">
+      <div class="section-label">Investment</div>
+      ${p.pricing_html || ''}
+    </div>
+
+    <div class="section">
+      <div class="section-label">Project Timeline</div>
+      <ol>${(p.timeline || '').replace(/<li>/g,'<li>').replace(/<\/li>/g,'</li>')}</ol>
+    </div>
+
+    ${portfolio ? `<div class="section"><div class="section-label">Our Work</div><p>View our portfolio: <a href="${portfolio}" target="_blank">${portfolio}</a></p></div>` : ''}
+
+    ${approved
+      ? `<div class="approved-badge">✓ Proposal Approved — Thank you! We will be in touch shortly.</div>`
+      : `<div class="approve-section">
+          <div class="approve-title">Ready to move forward?</div>
+          <div class="approve-sub">Click below to approve this proposal. We'll reach out within 1 business day to schedule your project.</div>
+          <button class="approve-btn" id="approveBtn">✓ Approve This Proposal</button>
+        </div>`}
+  </div>
+
+  <div class="footer">
+    <span>${shopName}${senderName ? ' · ' + senderName : ''}</span>
+    <span>${[senderPhone, senderEmail].filter(Boolean).join(' · ')}</span>
+  </div>
+</div>
+<script>
+const btn = document.getElementById('approveBtn');
+if (btn) {
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; btn.textContent = 'Approving…';
+    const resp = await fetch('/proposals/${req.params.token}/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    if (resp.ok) {
+      btn.closest('.approve-section').innerHTML = '<div class="approved-badge">✓ Approved! We will reach out shortly. Thank you!</div>';
+    } else {
+      btn.textContent = 'Error — try again'; btn.disabled = false;
+    }
+  });
+}
+</script>
+</body></html>`;
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (e) { res.status(500).send('Server error'); }
+});
+
+// PUBLIC — client approves proposal
+app.post('/proposals/:token/approve', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM proposals WHERE token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const p = rows[0];
+    await pool.query(`UPDATE proposals SET status='approved', approved_at=NOW(), updated_at=NOW() WHERE token=$1`, [req.params.token]);
+    if (p.lead_id) {
+      await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [p.lead_id]);
+      const compR = await pool.query('SELECT company FROM leads WHERE id=$1', [p.lead_id]);
+      await logActivity(pool, { leadId: p.lead_id, userId: p.user_id, type: 'status_changed', subject: 'Client approved proposal online' });
+      await createNotification(p.user_id, {
+        type: 'email_reply',
+        title: `🎉 ${compR.rows[0]?.company || 'A client'} approved your proposal!`,
+        body: 'They clicked Approve on the proposal page. Time to seal the deal.',
+        metadata: { proposal_token: req.params.token, lead_id: p.lead_id },
+      });
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

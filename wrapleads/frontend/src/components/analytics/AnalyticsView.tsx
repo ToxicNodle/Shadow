@@ -88,6 +88,18 @@ export default function AnalyticsView() {
 
   const totalActivity = activity30d.emails + activity30d.calls + activity30d.meetings + activity30d.sequences;
 
+  // Revenue forecast: pipeline value × estimated close rates by stage
+  const CLOSE_RATES: Record<string, number> = { proposal: 0.60, meeting: 0.35, replied: 0.20, contacted: 0.10, cold: 0.03, new: 0.05 };
+  const REV_PER_LEAD: Record<string, number> = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+  const forecastByStage = statusOrder
+    .filter((s) => CLOSE_RATES[s] && byStatus[s])
+    .map((s) => {
+      const avgRev = byCategory.reduce((sum, c) => sum + (REV_PER_LEAD[c.category] ?? 2500) * c.total, 0) / Math.max(summary.totalLeads, 1);
+      const expected = byStatus[s] * CLOSE_RATES[s] * avgRev;
+      return { stage: s, count: byStatus[s], rate: Math.round(CLOSE_RATES[s] * 100), expected };
+    });
+  const totalForecast = forecastByStage.reduce((sum, r) => sum + r.expected, 0);
+
   return (
     <div className="an-root">
       <div className="an-header">
@@ -196,6 +208,27 @@ export default function AnalyticsView() {
             </div>
           </div>
           <div className="an-activity-total">{totalActivity} total touchpoints</div>
+        </div>
+
+        {/* ── Revenue Forecast ── */}
+        <div className="an-card">
+          <div className="an-card-title">Revenue Forecast</div>
+          <div style={{ marginBottom: 10 }}>
+            <div className="an-stat-value" style={{ color: 'var(--accent)', fontSize: 28 }}>{fmt(totalForecast)}</div>
+            <div className="an-stat-sub">probability-weighted pipeline</div>
+          </div>
+          <div className="an-bar-list">
+            {forecastByStage.map((r) => (
+              <div key={r.stage} className="an-bar-row">
+                <div className="an-bar-label">{STATUSES[r.stage as keyof typeof STATUSES]} ({r.rate}%)</div>
+                <div className="an-bar-track">
+                  <div className="an-bar-fill" style={{ width: `${Math.max(2, (r.expected / totalForecast) * 100)}%`, background: '#6366f1' }} />
+                </div>
+                <div className="an-bar-count">{fmt(r.expected)}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10 }}>Based on avg deal size × close probability by stage</div>
         </div>
 
         {/* ── Win/Loss Factors ── */}

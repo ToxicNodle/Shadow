@@ -91,6 +91,69 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   );
 }
 
+function ProposalSection({ lead }: { lead: Lead }) {
+  const [notes, setNotes] = useState('');
+  const [proposal, setProposal] = useState<{ token: string; title: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const mut = useMutation({
+    mutationFn: () => api.createProposal(lead.serverId!, notes),
+    onSuccess: (data) => setProposal({ token: data.proposal.token, title: data.proposal.title }),
+  });
+
+  const url = proposal ? api.getProposalUrl(proposal.token) : null;
+
+  function copy() {
+    if (!url) return;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="proposal-section">
+      <div className="proposal-section-title">📄 AI Proposal Writer</div>
+      {!proposal ? (
+        <>
+          <textarea
+            className="input"
+            placeholder="Any extra context for the AI? (optional — vehicle types, specific asks, budget hints…)"
+            rows={2}
+            style={{ width: '100%', resize: 'vertical', marginBottom: 8 }}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+          {mut.isError && <div style={{ color: 'var(--red)', fontSize: 11, marginBottom: 6 }}>{(mut.error as Error).message}</div>}
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', justifyContent: 'center' }}
+            disabled={mut.isPending}
+            onClick={() => mut.mutate()}
+          >
+            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : '✨ Generate Full Proposal'}
+          </button>
+        </>
+      ) : (
+        <div className="proposal-ready">
+          <div className="proposal-ready-title">✓ Proposal ready</div>
+          <div className="proposal-ready-url">{url}</div>
+          <div className="proposal-ready-actions">
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={copy}>
+              {copied ? '✓ Copied!' : '📋 Copy Link'}
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => window.open(url!, '_blank')}>
+              Preview
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setProposal(null)}>
+              New
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SmsModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   const [msg, setMsg] = useState('');
   const mut = useMutation({
@@ -315,6 +378,8 @@ export default function InfoTab({ lead }: Props) {
         </svg>
         Generate Quote / Proposal
       </button>
+
+      {lead.serverId && <ProposalSection lead={local} />}
 
       {showWinLoss && lead.serverId && (
         <WinLossModal lead={local} onClose={() => setShowWinLoss(false)} />

@@ -387,6 +387,17 @@ export const api = {
   launchCampaign: (id: string) =>
     authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
 
+  // Proposals (shareable client HTML pages)
+  createProposal: (leadId: number, extraNotes?: string) =>
+    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '' }) }),
+  getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
+  deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
+  getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
+
+  // Bulk lead update
+  bulkUpdateLeads: (leadIds: number[], patch: { status?: string; category?: string }) =>
+    authFetch<{ ok: boolean; updated: number }>('/leads/bulk-update', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, patch }) }),
+
   // Analytics Dashboard
   getAnalytics: () => authFetch<{
     summary: { totalLeads: number; won: number; lost: number; winRate: number | null; avgDaysToClose: number | null; pipelineValue: number };

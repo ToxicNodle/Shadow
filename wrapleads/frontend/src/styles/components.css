@@ -1765,3 +1765,11 @@
 .score-breakdown-label { font-size: 11px; color: var(--text); }
 .score-breakdown-pts { font-size: 12px; font-weight: 800; }
 .score-breakdown-total { font-size: 12px; font-weight: 800; color: var(--text); text-align: right; margin-top: 6px; }
+
+/* ── Sprint 6: Proposal Section ─────────────────────────────────────────── */
+.proposal-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+.proposal-section-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 10px; }
+.proposal-ready { display: flex; flex-direction: column; gap: 10px; }
+.proposal-ready-title { font-size: 13px; font-weight: 700; color: #22c55e; }
+.proposal-ready-url { font-size: 10px; font-family: monospace; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; word-break: break-all; color: var(--text-muted); }
+.proposal-ready-actions { display: flex; gap: 8px; flex-wrap: wrap; }
