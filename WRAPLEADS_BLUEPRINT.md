@@ -60,9 +60,11 @@ Follow-up emails are written by hand, one at a time, when the salesperson rememb
 | FMCSA-registered fleet operators | 600,000+ carriers | Top 20% (120K+) run 25+ vehicles = core prospect universe |
 | Professional & semi-pro race teams | ~5,000 US teams (IndyCar, IMSA, NHRA, NASCAR, regional) | Racing vertical, highest avg ticket |
 | Architectural film (DI-NOC / Rea Tec) | Commercial renovation market | One hospital/hotel = $50K–$500K job |
-| Programmable surface management (future) | E Ink commercial fleet 3–5 years out | $500/vehicle/year content management SaaS |
+| Programmable surface management | E Ink commercial fleet 3–5 years out | $500/vehicle/year content management SaaS |
+| Dynamic fleet advertising (autonomous MaaS) | Robotaxi market projected $174B by 2045 (IDTechEx) | Software-managed livery API for fleets with no human face |
+| Wrap-as-a-Service (circular economy) | Regulatory tailwind; McKinsey / E-Arc circular film models emerging | Closed-loop material leasing + re-ingestion platform |
 
-The core addressable market today is 15,000–20,000 wrap shops. At 5% penetration and $149/month Professional tier, that is $13.4M–$17.9M ARR. The programmable surface layer is a separate and larger market that WrapLeads is uniquely positioned to serve because the infrastructure is already built.
+The core addressable market today is 15,000–20,000 wrap shops. At 5% penetration and $149/month Professional tier, that is $13.4M–$17.9M ARR. The programmable surface layer is a separate and larger market that WrapLeads is uniquely positioned to serve because the infrastructure is already built. The autonomous MaaS layer ($174B robotaxi market by 2045) is the long-horizon prize — and requires the same software infrastructure WrapLeads is building now.
 
 ---
 
@@ -546,17 +548,17 @@ One WrapLeads login manages multiple shop locations under a single billing relat
 
 ### Wave 2 — 12 to 36 Months: Platform Expansion
 
-**Full E Ink Prism 3 Commercial Rollout**
-The infrastructure is already built and deployed. Devices register, poll for content, receive scheduled images, confirm delivery, and report status. When E Ink Prism 3 vehicles reach commercial scale, WrapLeads is the server they call home on day one. New entrants starting this work in 3 years will be 3 years behind.
+**Full E Ink Prism 3 Commercial Rollout (2028–2030 target)**
+Building on BMW's "Flow" concept prototype, E Ink Prism 3 technology is on track for mainstream commercial adoption by 2035 (Epaperia / ArtInvidis research). WrapLeads's device control plane — already live in production — is the server these devices call home. Fleets will switch from summer branding to holiday campaigns in 30 seconds from a single dashboard. OTA content updates (Antolin) eliminate physical wrap replacement entirely for campaigns. New entrants starting this infrastructure work in 2028 will be years behind.
 
 **Fleet Operator Self-Service Portal**
 Fleet clients log into their own WrapLeads portal, see the full history of every wrap ever installed on their vehicles, view aging alerts for their own fleet, request refresh jobs, and approve design concepts. The shop owns the data; the client gets visibility.
 
-**Solar Film Energy Tracking**
-Flexible photovoltaic films are thin enough to laminate onto vehicle surfaces. A fleet wrap becomes a distributed energy asset. The Wrap Lifecycle Tracker already logs material, install date, and surface area. Adding `watts_generated`, `panel_efficiency`, and `degradation_rate` is a schema migration and a dashboard card — not a new product.
+**Solar "Energy Wrap" Tracking**
+Thin-Film Perovskite Solar Modules are approaching commercial viability for vehicle exteriors (DBusiness / PV Magazine USA). These "peel-and-stick" power layers are projected to provide meaningful range extensions for urban EVs by 2040. The Wrap Lifecycle Tracker already logs material, install date, and surface area. Adding `watts_generated`, `panel_efficiency`, and `degradation_rate` is a schema migration and a dashboard card — not a new product. A wrapped fleet becomes a distributed energy asset with measurable yield per vehicle.
 
-**Thermochromic & Smart Skin Compatibility**
-Surfaces that change color with temperature, opacity with voltage, or repair themselves autonomously require diagnostic tracking. Material type → coating layer specs → environmental response curves → maintenance schedules. The job record is the natural home for this data.
+**Smart Skin Compatibility**
+Nanostructured surfaces that create color through light manipulation (not pigments, similar to biological structural color — Yeswrap research) and self-healing clearcoats with Lotus-Effect self-cleaning properties (Wrapsforless) require diagnostic tracking. Material type → nanocoating specs → environmental response curves → self-repair cycles → maintenance schedules. The job record is the natural home for this data. WrapLeads becomes the diagnostic layer for smart material surfaces.
 
 **White-Label SaaS**
 Wrap shops run WrapLeads under their own brand for their own clients. A shop in Chicago running their fleet clients on a white-labeled "ChicagoFleetOS" is a new ARR line without a new codebase.
@@ -564,52 +566,104 @@ Wrap shops run WrapLeads under their own brand for their own clients. A shop in 
 **Content Marketplace**
 Wrap designers list templates — race livery themes, fleet branding systems, seasonal promotional sets. Shops browse, purchase, and schedule in one click. 20–30% platform take rate. The scheduling engine and content library are already built.
 
+**Wrap-as-a-Service (WaaS) Platform**
+The emerging circular economy model (McKinsey / E-Arc research) positions film materials as leased assets, not purchased ones. Fleet operators pay a monthly fee; at the end of each branding cycle, the film is peeled and returned for 100% recycling into new wrap production — a closed-loop system. WrapLeads manages the install record, the return schedule, the material chain-of-custody, and the recycling audit trail. This is not speculative — it is the regulatory direction EU procurement is moving, and large fleet operators in North America will follow.
+
 ### Wave 3 — 36+ Months: Infrastructure Layer
 
 **Autonomous Fleet Branding API**
-Robotaxi operators, autonomous freight companies, and transit authorities manage fleets of vehicles with no human faces. Branding is how they build public trust and advertise. The fleets are software-managed. Their wrap vendors — and their programmable surface content — will be software-managed too. WrapLeads is the API they call.
+The robotaxi market is projected to reach $174 billion by 2045 (IDTechEx). These fleets — from Waymo to autonomous freight operators to transit authorities — have no human face. Branding is how they build public trust and advertise. Dynamic wraps will enable location-based, targeted advertising that changes as the vehicle travels through different neighborhoods. V2P (vehicle-to-pedestrian) communication graphics will display intent-based safety messages directly on the vehicle's exterior ("Safe to cross," "Yielding") to improve pedestrian safety at intersections (Transfers Magazine / US DOT research). WrapLeads is the software layer that manages all of it — content, scheduling, device status, and compliance logging.
+
+**Robotic Direct-to-Vehicle Printing Integration**
+High-precision robotic inkjet systems — Dürr's "EcoNextJet," Automotive Manufacturing Solutions' "PixelPaint," and Xaar-based architectures — are entering early commercial deployment in OEM and specialty wrap shops. These systems print complex designs directly onto vehicle bodies with zero overspray, eliminating the weight and material waste of traditional vinyl films (Assembly Magazine / Automotive Manufacturing Solutions). AI-designed liveries print in minutes. WrapLeads's Design Studio already generates the design brief and dimensions; the robotic job file export (Wave 1 roadmap) becomes the bridge between the AI quote and the production floor.
 
 **Bio-Material Sustainability Ledger**
-EU Extended Producer Responsibility regulation for synthetic films is advancing. Major enterprise fleet clients are already specifying recyclability and carbon footprint in procurement. The material catalog → job record → sustainability ledger pipeline is three steps. Shops that can produce a sustainability report per wrap job win enterprise contracts that shops without documentation cannot.
+By 2040, the industry is projected to transition from PVC-based films to fully biodegradable polymers and bio-based resins (NIH / Wrapsforless). EU Extended Producer Responsibility regulation for synthetic films is advancing. The material catalog → job record → sustainability ledger pipeline is three steps. Shops that can produce a carbon-per-sqft sustainability report for each wrap job win enterprise fleet contracts that shops without documentation cannot bid for.
 
 **Real-Time WebAR**
 8th Wall or Three.js + a device camera feed → real-time vehicle detection → 3D mesh overlay with wrap texture. Not a photo upload — live, in the prospect's camera, standing in the parking lot. The photo-based AR Preview is the proof of concept. Real-time AR is the product.
 
-**Predictive Material Science**
-Aggregate degradation data from all logged installs across all WrapLeads shops — material × climate × vehicle type × install quality × actual replacement date vs. stated lifespan. The resulting model predicts actual lifespan more accurately than manufacturer specs. Insurers, fleet operators, and material manufacturers all pay for access to this dataset.
-
-**Insurance Integration**
-Wrap condition data has actuarial value. A shop that uses certified materials and logs every install with timestamps and expected lifespans can offer its fleet clients wrap-condition-based insurance pricing. Insurers pay for aggregate degradation data. Shops receive premium discounts for documented install practices.
+**Predictive Material Science Engine**
+Aggregate degradation data from all logged installs across all WrapLeads shops — material × climate × vehicle type × install quality × actual vs. stated lifespan. The model predicts actual lifespan more accurately than manufacturer specifications. Insurers pay for aggregate degradation data. Material manufacturers pay for real-world performance benchmarks. Fleet operators pay for accurate replacement forecasting. This data network effect is only possible because WrapLeads is where installs are logged.
 
 ---
 
-## 9. The Convergence Thesis
+## 9. The Convergence Thesis — The Vehicle Wrap Industry Through 2046
 
-The vehicle wrap industry is at the early edge of a convergence between material science and software-defined surfaces. This is not speculative — the materials exist, the hardware is in early commercial deployment, and the regulatory pressure is accelerating. The missing piece has always been software.
+The vehicle wrap industry is transitioning from a cosmetic aftermarket service into a fundamental component of automotive smart skins, dynamic mobile environments, and autonomous fleet infrastructure. This is not speculative — the materials exist, the hardware is in early commercial deployment, the regulatory pressure is accelerating, and the market projections are measured in hundreds of billions of dollars. The missing piece has always been software.
 
-**Three forces converging simultaneously:**
+WrapLeads is that software. What follows is a structured view of the five technology frontiers converging over the next 20 years — and where WrapLeads sits at each inflection point.
 
-**1. Programmable Surfaces**
-E Ink Prism 3 enables color electronic paper at vehicle scale. A wrapped surface can change appearance on command — color, pattern, sponsor branding — without physically replacing vinyl. A fleet of 50 delivery vans can switch from summer branding to holiday campaign in 30 seconds from a single dashboard. WrapLeads is already that dashboard.
+---
 
-**2. Energy Generation**
-Flexible photovoltaic films are approaching commercial viability for vehicle exteriors. A wrapped fleet truck becomes a distributed energy asset generating measurable watt-hours per day. The wrap lifecycle tracker already knows the material, the surface area, and the install date. Energy yield is another column in that table.
+### Frontier 1 — Programmable Surfaces (2026–2035)
+**From passive film to active electronic skin**
 
-**3. Autonomous Vehicles**
-As autonomous freight, robotaxi, and last-mile delivery scale globally, branding becomes more critical, not less. These vehicles are the public face of their operators — and they have no human face. The fleets are managed by software. Their branding vendors will need to be software-managed too. WrapLeads is already integrated with Samsara and Motive, the two platforms those fleets run on.
+Building on BMW's "Flow" concept — the first demonstration of full-vehicle E Ink at scale — programmable surfaces are moving from luxury prototype to commercial reality. By 2035, e-paper layers integrated into wrap films will enable instantaneous color changes and pattern updates via over-the-air software commands (Epaperia / ArtInvidis research). A fleet of 50 delivery vans switches from summer branding to holiday campaign without a shop visit, a roll of vinyl, or an installer — from a dashboard, in 30 seconds.
 
-| Layer | Status | WrapLeads Role |
-|-------|--------|---------------|
-| Lead acquisition | **Live** | CRM, discovery, AI voice calling |
-| Sales pipeline | **Live** | Bid tracker, AI proposals, AR preview |
-| Install tracking | **Live** | Wrap Lifecycle Tracker |
-| Re-order intelligence | **Live** | Aging alerts, anniversary worker |
-| Active surface management | **Built — hardware pending** | E Ink device control plane |
-| Energy generation | 3–5 years | Solar film module |
-| Sustainability compliance | 2–3 years | Material provenance + carbon ledger |
-| Autonomous fleet branding | 5–10 years | API layer for software-managed livery |
+WrapLeads is already that dashboard. The E Ink device control plane — device registry, heartbeat monitoring, content scheduling engine, OTA push, delivery confirmation log — is live in production today. When the hardware arrives at commercial scale, the software is waiting.
 
-No other platform touches more than two of these layers. WrapLeads is architected to own all of them.
+**The location-based advertising layer:** Dynamic wraps on autonomous and commercial vehicles will allow content to change as vehicles travel through neighborhoods — targeted, location-aware advertising updated in real time. The content scheduling engine (vehicle group × date × time × geographic trigger × priority) is already built for exactly this use case.
+
+---
+
+### Frontier 2 — Energy Generation (2030–2040)
+**Wraps as distributed power stations**
+
+Thin-Film Perovskite Solar Modules are approaching commercial viability for flexible vehicle exteriors (DBusiness / PV Magazine USA). These "peel-and-stick" power layers are projected to provide meaningful EV range extensions for urban commercial fleets by 2040. A fleet wrap becomes a distributed energy asset — every square foot generating measurable watt-hours per day while in service.
+
+WrapLeads's Wrap Lifecycle Tracker already logs: material type, surface area, install date, and expected lifespan for every vehicle in a shop's client fleet. Adding solar yield tracking (`watts_generated`, `panel_efficiency`, `degradation_rate`) requires a schema migration and a dashboard module — not a new product. The data model is already correct. The business model extension is straightforward: energy yield reporting becomes a premium feature that fleet operators pay for directly, independent of the wrap shop.
+
+---
+
+### Frontier 3 — Nanotechnology & Smart Skins (2030–2045)
+**Surfaces that adapt, heal, and clean themselves**
+
+Material science is producing surfaces that manipulate light at the molecular level — creating color through nanostructural geometry rather than pigments, analogous to biological structural coloration (Yeswrap research). These surfaces offer theoretically unlimited color palette without dye degradation. Smart Skin surfaces add real-time self-healing properties (autonomous repair of surface scratches) and Lotus-Effect self-cleaning coatings that maintain surface quality without maintenance (Wrapsforless).
+
+For WrapLeads, smart material surfaces require diagnostic infrastructure: coating layer specifications, environmental response parameters, self-repair cycle logging, surface health assessments. The job record — already capturing material type, install date, and expected lifespan — is the natural home for this data. WrapLeads becomes the diagnostic and compliance layer for smart material surfaces as they enter the commercial fleet market.
+
+---
+
+### Frontier 4 — Robotic Direct-to-Vehicle Production (2028–2038)
+**From hand-applied vinyl to precision-printed surfaces**
+
+High-precision robotic inkjet systems are entering early commercial deployment at OEM facilities and specialized wrap shops. Systems like Dürr's EcoNextJet and PixelPaint architectures print complex designs directly onto vehicle bodies with zero overspray, eliminating the weight penalty and material waste of traditional adhesive films. Generative AI-designed liveries apply in minutes rather than days (Assembly Magazine / Automotive Manufacturing Solutions / Xaar Group).
+
+WrapLeads's AI Design Studio already generates the structured design brief — vehicle type, dimensions, color specs, style parameters, DALL-E rendering prompt. The Vision Quote AI already captures vehicle dimensions from a photograph. Robotic job file export (structured output connecting the AI design brief to robotic printer parameters) is one routing step away from being a live product. The connection from AI quote to production floor closes automatically.
+
+---
+
+### Frontier 5 — Autonomous Fleet Branding (2035–2046)
+**The $174 billion market that needs a software layer**
+
+The global robotaxi market is projected to reach $174 billion by 2045 (IDTechEx). Autonomous freight operators, robotaxi services, and transit authorities are deploying fleets of vehicles with no human face. Branding is how these companies build public trust, generate advertising revenue, and communicate with pedestrians.
+
+V2P (vehicle-to-pedestrian) communication graphics will display real-time intent signals directly on the vehicle exterior — "Safe to cross," "Yielding," "Emergency vehicle approaching" — resolving traffic standoffs and improving pedestrian safety (Transfers Magazine / US DOT). These are dynamic, software-managed signals that update in real time.
+
+Every one of these fleets is software-managed. Their wrap vendors — and their programmable surface content — will be software-managed too. WrapLeads is already integrated with Samsara and Motive, the two dominant fleet telematics platforms those operators run on. The API layer for autonomous fleet branding is not a pivot — it is a natural extension of the infrastructure already deployed.
+
+---
+
+### The Full Stack — Where WrapLeads Sits at Each Layer
+
+| Layer | Industry Timeline | WrapLeads Status |
+|-------|------------------|--------------------|
+| Lead acquisition + CRM | **Now** | **Live** — discovery, AI calling, pipeline |
+| Sales automation | **Now** | **Live** — sequences, proposals, AR preview |
+| Install tracking + re-order | **Now** | **Live** — lifecycle tracker, aging alerts |
+| E Ink content management | 2028–2035 | **Built** — device registry, OTA push, scheduling engine |
+| Location-based ad scheduling | 2028–2035 | **Built** — geo-trigger scheduling already in content engine |
+| Robotic print job export | 2028–2032 | **Roadmap Wave 1** — design brief + dimensions already captured |
+| Solar energy yield tracking | 2030–2040 | **Roadmap Wave 2** — schema extension of existing lifecycle tracker |
+| Smart skin diagnostics | 2030–2045 | **Roadmap Wave 2** — job record already has the data model |
+| WaaS material circulation | 2030–2040 | **Roadmap Wave 2** — chain-of-custody + recycling audit layer |
+| Bio-material sustainability ledger | 2028–2035 | **Roadmap Wave 2** — material catalog → carbon reporting |
+| Autonomous fleet branding API | 2035–2046 | **Roadmap Wave 3** — natural extension of E Ink control plane |
+| V2P communication graphics | 2035–2046 | **Roadmap Wave 3** — real-time content scheduling at vehicle scale |
+| Predictive material science | 2030+ | **Roadmap Wave 3** — data flywheel from all logged installs |
+
+No other platform is present at more than two of these layers. WrapLeads is architected — and already partially deployed — across the full stack.
 
 ---
 
@@ -671,8 +725,10 @@ Large fleets — 100+ vehicles — buy WrapLeads directly to manage their wrap v
 | 5% penetration → ARR | $1.34M–$1.79M | At Professional tier |
 | Wave 2: 1,000 E Ink devices | +$120K–$180K/yr | $10–15/device/mo |
 | Wave 2: 50 fleet direct clients | +$750K–$1M/yr | $1,500–$2,000/mo enterprise |
+| Wave 3: autonomous fleet branding API | TAM $174B by 2045 (IDTechEx) | Per-vehicle content management + V2P compliance layer |
+| Wave 3: WaaS material circulation platform | Regulatory tailwind (EU EPR, McKinsey circular model) | Take rate on film leasing + recycling audit trail |
 
-$1M ARR requires 560 shops — 3–4% of the US market at Professional pricing. That is an achievable target for a vertical SaaS with zero competition and a founder who already has industry relationships.
+$1M ARR requires 560 shops — 3–4% of the US market at Professional pricing. That is an achievable target for a vertical SaaS with zero competition and a founder who already has industry relationships. The Wave 3 autonomous fleet layer represents a total addressable market that dwarfs the wrap shop SaaS — the software infrastructure required to manage programmable surfaces on $174B worth of robotaxi fleets is orders of magnitude larger than CRM software for 20,000 wrap shops.
 
 ---
 
