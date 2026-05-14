@@ -339,6 +339,9 @@ export default function SettingsModal() {
             >
               {quoteLinkCopied ? '✓ Copied!' : '📋 Copy'}
             </button>
+            <a href={quoteLink} target="_blank" rel="noreferrer" className="btn" style={{ fontSize: 11, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+              Preview
+            </a>
           </div>
         ) : (
           <button

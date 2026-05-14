@@ -2268,3 +2268,24 @@
 }
 .onboarding-actions .btn { padding: 11px 18px; font-size: 14px; }
 .onboarding-cta { flex: 1; max-width: 280px; justify-content: center; }
+
+/* Pre-drafted email card in ActivityTab */
+.activity-draft-email {
+  margin-top: 8px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--purple);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.activity-draft-email-body {
+  font-family: var(--body);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}

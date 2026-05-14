@@ -9,6 +9,7 @@ const TYPE_LABELS: Record<ActivityType | string, { icon: string; label: string; 
   email_sent:          { icon: '✉',  label: 'Email sent',         color: '#60a5fa' },
   email_copied:        { icon: '📋', label: 'Email copied',       color: '#94a3b8' },
   email_generated:     { icon: '⚡', label: 'Email drafted',      color: '#c084fc' },
+  draft_email:         { icon: '✍️', label: 'Pre-drafted pitch',  color: '#c084fc' },
   status_changed:      { icon: '◈',  label: 'Status changed',     color: '#fb923c' },
   note_added:          { icon: '📝', label: 'Note added',         color: '#4ade80' },
   called:              { icon: '📞', label: 'Call logged',        color: '#34d399' },
@@ -92,6 +93,7 @@ export default function ActivityTab({ lead }: Props) {
         {activities.map((a: LeadActivity) => {
           const meta = TYPE_LABELS[a.type] ?? { icon: '•', label: a.type, color: 'var(--text-dim)' };
           const statusMeta = a.type === 'status_changed' && a.metadata;
+          const isDraftEmail = a.type === 'draft_email';
           return (
             <div key={a.id} className="activity-item">
               <div className="activity-icon" style={{ color: meta.color, background: meta.color + '18' }}>
@@ -112,7 +114,21 @@ export default function ActivityTab({ lead }: Props) {
                 {a.subject && (
                   <div className="activity-detail" style={{ fontWeight: 600 }}>{a.subject}</div>
                 )}
-                {a.body && (
+                {isDraftEmail && a.body ? (
+                  <div className="activity-draft-email">
+                    <pre className="activity-draft-email-body">{a.body}</pre>
+                    <button
+                      className="btn"
+                      style={{ fontSize: 12, padding: '6px 12px', marginTop: 8 }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(a.body || '');
+                        showToast('Draft copied — paste into your email client');
+                      }}
+                    >
+                      📋 Copy draft to clipboard
+                    </button>
+                  </div>
+                ) : a.body && (
                   <div className="activity-detail activity-body-preview">
                     {a.body.slice(0, 120)}{a.body.length > 120 ? '…' : ''}
                   </div>

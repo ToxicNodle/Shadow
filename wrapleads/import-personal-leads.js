@@ -73,7 +73,7 @@ const PERSONAL_LEADS = [
       + '(3) non-profit pricing with itemized line for the deductible portion.',
     followupToday: true,
     activity: {
-      type: 'note',
+      type: 'note_added',
       subject: 'Warm referral — Gleaners Food Bank (40 vehicles)',
       body:
         'Employee referral: Eric Rowles (erow@gleaners.org) runs operations at Gleaners Food Bank.\n\n'
