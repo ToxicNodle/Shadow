@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { api } from '../../api/client';
+import { useAuth } from '../../hooks/useAuth';
 import type { VisionQuoteResult } from '../../api/types';
 
 interface Props {
@@ -250,6 +251,7 @@ const WRAP_TIERS = [
 interface FleetLine { vehicleKey: string; count: number }
 
 function FleetQuoteTab() {
+  const { user } = useAuth();
   const [lines, setLines] = useState<FleetLine[]>([{ vehicleKey: 'cargo_van_standard', count: 1 }]);
   const [tier, setTier] = useState<'full' | 'partial' | 'spot'>('full');
   const [copied, setCopied] = useState(false);
@@ -290,7 +292,7 @@ function FleetQuoteTab() {
       `TOTAL: ${fmt(grandLow)}–${fmt(grandHigh)}`,
       '',
       'Includes design. Based on standard material pricing.',
-      'Contact Shadow Graphix for exact quote.',
+      `Contact ${user?.companyName || 'us'} for exact quote.`,
     ].join('\n');
     navigator.clipboard.writeText(txt);
     setCopied(true);

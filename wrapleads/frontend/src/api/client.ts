@@ -36,6 +36,16 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
     throw new ApiError(401, 'Session expired');
   }
 
+  if (res.status === 402) {
+    let msg = 'Subscription required';
+    try { const e = await res.json(); msg = e.error ?? msg; } catch {}
+    // Open paywall — lazy require to avoid circular import at module load
+    import('../store/useAppStore').then(({ useAppStore }) => {
+      useAppStore.getState().setPaywallOpen(true);
+    });
+    throw new ApiError(402, msg);
+  }
+
   if (!res.ok) {
     let msg = res.statusText;
     try { const e = await res.json(); msg = e.error ?? e.message ?? msg; } catch {}

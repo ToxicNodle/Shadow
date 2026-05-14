@@ -2,6 +2,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+import { useAuth } from '../../hooks/useAuth';
 import { CATEGORIES, STATUSES } from '../../api/types';
 
 function PipelineNarrativeCard() {
@@ -94,6 +95,7 @@ function BarRow({ label, value, max, color, count }: { label: string; value: num
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const { user } = useAuth();
 
   const { data, isLoading } = useQuery({
     queryKey: ['analytics'],
@@ -142,7 +144,7 @@ export default function AnalyticsView() {
       <div className="an-header">
         <div>
           <h1 className="an-title">Analytics</h1>
-          <p className="an-sub">Pipeline intelligence for Shadow Graphix</p>
+          <p className="an-sub">Pipeline intelligence for {user?.companyName || 'your shop'}</p>
         </div>
         <button className="btn" onClick={() => setMode('mission')}>← Mission</button>
       </div>

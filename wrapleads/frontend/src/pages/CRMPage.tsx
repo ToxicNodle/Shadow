@@ -93,7 +93,6 @@ export default function CRMPage() {
 
   const isTrial =
     user?.subStatus === 'trialing' ||
-    user?.subStatus === 'inactive' ||
     user?.subStatus === 'past_due';
 
   return (

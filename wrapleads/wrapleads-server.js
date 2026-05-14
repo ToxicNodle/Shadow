@@ -856,6 +856,21 @@ app.post('/stripe/webhook', async (req, res) => {
       }
       break;
     }
+
+    case 'invoice.payment_succeeded':
+    case 'invoice.paid': {
+      // Reactivate account once a previously failed payment recovers.
+      const customerId = sub.customer;
+      const r = await pool.query(
+        `UPDATE users SET sub_status = 'active', updated_at = NOW()
+         WHERE stripe_customer_id = $1 AND sub_status = 'past_due'`,
+        [customerId]
+      );
+      if (r.rowCount > 0) {
+        console.log(`[stripe/webhook] payment recovered: customer ${customerId} → active`);
+      }
+      break;
+    }
   }
 
   res.json({ received: true });
@@ -3879,13 +3894,17 @@ app.post('/calls/webhook', async (req, res) => {
         try {
           const { rows: uRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [user_id]);
           const s = uRows[0]?.data || {};
-          const { rows: lRows } = await pool.query('SELECT * FROM leads WHERE id=$1', [lead_id]);
+          const { rows: lRows } = await pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [lead_id, String(user_id)]);
           const lead = lRows[0];
+          if (!lead) {
+            console.warn('[calls/webhook] lead not found for user', { lead_id, user_id });
+            return res.json({ ok: true });
+          }
 
           // 1. Schedule 3-day followup
           await pool.query(
-            `UPDATE leads SET followup_due_at = CURRENT_DATE + INTERVAL '3 days', updated_at=NOW() WHERE id=$1`,
-            [lead_id]
+            `UPDATE leads SET followup_due_at = CURRENT_DATE + INTERVAL '3 days', updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+            [lead_id, String(user_id)]
           );
 
           // 2. Send portfolio email via Resend (reuse existing RESEND_API_KEY pattern)
@@ -5869,7 +5888,13 @@ app.get('/bids/:id/quote', (req, res, next) => {
 
 // ── E Ink Device Infrastructure ──────────────────────────────────────────────
 
-const EINK_PROVISION_SECRET = process.env.EINK_PROVISION_SECRET || 'eink-dev-secret';
+// In production, EINK_PROVISION_SECRET must be set explicitly. In dev we fall
+// back to a known-bad value so local provisioning still works without config.
+const EINK_PROVISION_SECRET = process.env.EINK_PROVISION_SECRET
+  || (process.env.NODE_ENV === 'production' ? null : 'eink-dev-secret');
+if (!EINK_PROVISION_SECRET) {
+  console.warn('[boot] EINK_PROVISION_SECRET not set — /devices/register will reject all requests');
+}
 
 async function deviceAuthMiddleware(req, res, next) {
   const header = req.headers.authorization || '';
@@ -5888,7 +5913,9 @@ async function deviceAuthMiddleware(req, res, next) {
 // Device: first-time registration (uses provision secret, not JWT)
 app.post('/devices/register', async (req, res) => {
   const secret = req.headers['x-provision-secret'] || '';
-  if (secret !== EINK_PROVISION_SECRET) return res.status(403).json({ error: 'Invalid provision secret' });
+  if (!EINK_PROVISION_SECRET || secret !== EINK_PROVISION_SECRET) {
+    return res.status(403).json({ error: 'Invalid provision secret' });
+  }
   const { user_id, serial_number, name, vehicle_group = 'fleet', firmware_version } = req.body;
   if (!user_id || !name) return res.status(400).json({ error: 'user_id and name required' });
   try {
