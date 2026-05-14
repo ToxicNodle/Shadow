@@ -74,6 +74,11 @@ export const api = {
     authFetch<{ ok: boolean }>('/auth/forgot-password', {
       method: 'POST', body: JSON.stringify({ email }),
     }),
+  demoAvailable: () => authFetch<{ available: boolean }>('/auth/demo-available'),
+  demoLogin: () =>
+    authFetch<{ token: string; user: User }>('/auth/demo-login', {
+      method: 'POST', body: '{}',
+    }),
   resetPassword: (token: string, password: string) =>
     authFetch<{ ok: boolean }>('/auth/reset-password', {
       method: 'POST', body: JSON.stringify({ token, password }),

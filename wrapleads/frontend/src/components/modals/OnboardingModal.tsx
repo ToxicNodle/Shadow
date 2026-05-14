@@ -1,91 +1,172 @@
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '../../store/useAppStore';
-import { api } from '../../api/client';
-import { SEED_LEADS } from '../../data/seedLeads';
+import { useAuth } from '../../hooks/useAuth';
 
 interface Props {
   onClose: () => void;
 }
 
+type Step = 1 | 2 | 3;
+
+const TOUR = [
+  {
+    icon: '🎯',
+    title: 'Mission Dashboard',
+    body: 'Your daily action queue. Who to call, who to email, which bids are overdue. The AI Coach tells you the one move that matters most today.',
+  },
+  {
+    icon: '🚛',
+    title: 'Discover — 600K fleet database',
+    body: 'Filter the FMCSA carrier registry by state, fleet size, and wrap-score. Bulk import the sweet spot (25–500 trucks) into your CRM.',
+  },
+  {
+    icon: '✨',
+    title: 'AI Email Sequences',
+    body: 'Open a lead, click Activate Sequence — Claude writes a 3-step drip campaign, schedules sends, and tracks opens. You step in when they reply.',
+  },
+  {
+    icon: '🏆',
+    title: 'Bid Tracker + Jobs',
+    body: 'Kanban for every active bid. After you win, jobs flow into the lifecycle tracker — photos, social posts, anniversary re-engagement. Nothing falls through.',
+  },
+] as const;
+
 export default function OnboardingModal({ onClose }: Props) {
-  const qc = useQueryClient();
-  const { setSettingsOpen, showToast } = useAppStore((s) => ({
+  const { user } = useAuth();
+  const { setSettingsOpen, setMode } = useAppStore((s) => ({
     setSettingsOpen: s.setSettingsOpen,
-    showToast: s.showToast,
+    setMode: s.setMode,
   }));
-  const [step, setStep] = useState<1 | 2>(1);
-  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<Step>(1);
 
-  async function loadSampleLeads() {
-    setLoading(true);
-    try {
-      const result = await api.syncLeads(SEED_LEADS);
-      await qc.invalidateQueries({ queryKey: ['leads'] });
-      showToast(`${result.inserted} sample leads loaded`);
-      setStep(2);
-    } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function openSettings() {
+  function finishToSettings() {
     onClose();
     setSettingsOpen(true);
   }
 
+  function finishToMission() {
+    onClose();
+    setMode('mission');
+  }
+
   return (
     <div className="modal-backdrop">
-      <div className="modal" style={{ maxWidth: 500, textAlign: 'center' }}>
-        {step === 1 ? (
+      <div className="modal onboarding-modal">
+        <div className="onboarding-progress">
+          <div className={`onboarding-dot${step >= 1 ? ' active' : ''}`} />
+          <div className={`onboarding-dot${step >= 2 ? ' active' : ''}`} />
+          <div className={`onboarding-dot${step >= 3 ? ' active' : ''}`} />
+        </div>
+
+        {step === 1 && (
           <>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>👋</div>
-            <div className="modal-title" style={{ textAlign: 'center' }}>
-              Welcome to WrapLeads
-            </div>
-            <p style={{ fontSize: 14, color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: 24 }}>
-              You're all set to start finding wrap clients. We've prepared <strong style={{ color: 'var(--text)' }}>{SEED_LEADS.length} sample leads</strong> — fleet
-              companies, DI-NOC targets, color change prospects, wall graphics clients, and GC referral partners — to show you how the pipeline works.
+            <div className="onboarding-emoji">👋</div>
+            <h2 className="onboarding-h2">
+              Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''}.
+            </h2>
+            <p className="onboarding-sub">
+              Your 14-day trial just unlocked <strong>WrapOS</strong> — the full platform, every feature.
+              We&apos;ve pre-loaded <strong>500+ curated leads</strong> across fleets, design firms,
+              construction, and racing so you can start the day with a real pipeline.
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <button
-                className="btn btn-primary"
-                style={{ justifyContent: 'center', padding: '12px', fontSize: 15 }}
-                onClick={loadSampleLeads}
-                disabled={loading}
-              >
-                {loading ? <><span className="spinner" /> Loading…</> : `📋 Load ${SEED_LEADS.length} Sample Leads`}
-              </button>
-              <button className="btn" style={{ justifyContent: 'center' }} onClick={() => setStep(2)}>
-                Skip — I'll add my own leads
+
+            <div className="onboarding-tiers">
+              <div className="onboarding-tier">
+                <div className="onboarding-tier-name">WrapLeads</div>
+                <div className="onboarding-tier-price">$79<span>/mo</span></div>
+                <div className="onboarding-tier-desc">CRM + Discovery</div>
+              </div>
+              <div className="onboarding-tier onboarding-tier-highlight">
+                <div className="onboarding-tier-name">ShopFlow</div>
+                <div className="onboarding-tier-price">$149<span>/mo</span></div>
+                <div className="onboarding-tier-desc">+ AI Outreach</div>
+              </div>
+              <div className="onboarding-tier">
+                <div className="onboarding-tier-name">WrapOS</div>
+                <div className="onboarding-tier-price">$249<span>/mo</span></div>
+                <div className="onboarding-tier-desc">+ Design + AR</div>
+              </div>
+            </div>
+            <p className="onboarding-footnote">
+              Choose your plan anytime before day 14. No credit card needed to keep exploring.
+            </p>
+
+            <div className="onboarding-actions">
+              <button className="btn btn-primary onboarding-cta" onClick={() => setStep(2)}>
+                Show me how it works →
               </button>
             </div>
           </>
-        ) : (
+        )}
+
+        {step === 2 && (
           <>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>⚙️</div>
-            <div className="modal-title" style={{ textAlign: 'center' }}>
-              One more thing
+            <div className="onboarding-emoji">🗺️</div>
+            <h2 className="onboarding-h2">Four things that make money</h2>
+            <p className="onboarding-sub">
+              Every shop runs a different play. Here&apos;s where the platform pulls weight for you.
+            </p>
+
+            <div className="onboarding-tour">
+              {TOUR.map((t) => (
+                <div key={t.title} className="onboarding-tour-row">
+                  <div className="onboarding-tour-icon">{t.icon}</div>
+                  <div>
+                    <div className="onboarding-tour-title">{t.title}</div>
+                    <div className="onboarding-tour-body">{t.body}</div>
+                  </div>
+                </div>
+              ))}
             </div>
-            <p style={{ fontSize: 14, color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: 8 }}>
-              To get the best AI-generated emails, add your sender details in Settings —
-              your name, company, and email address.
-            </p>
-            <p style={{ fontSize: 13, color: 'var(--text-faint)', lineHeight: 1.5, marginBottom: 24 }}>
-              You can always do this later from the gear icon in the top right.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <button
-                className="btn btn-primary"
-                style={{ justifyContent: 'center', padding: '12px', fontSize: 15 }}
-                onClick={openSettings}
-              >
-                Open Settings
+
+            <div className="onboarding-actions">
+              <button className="btn" onClick={() => setStep(1)}>← Back</button>
+              <button className="btn btn-primary onboarding-cta" onClick={() => setStep(3)}>
+                Next: set up your sender →
               </button>
-              <button className="btn" style={{ justifyContent: 'center' }} onClick={onClose}>
-                I'll do it later
+            </div>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div className="onboarding-emoji">⚙️</div>
+            <h2 className="onboarding-h2">One quick setup before AI emails</h2>
+            <p className="onboarding-sub">
+              Add your sender name + verified email so AI-generated outreach goes out as you,
+              not as the platform. Apollo and Vapi credentials slot in here too.
+            </p>
+
+            <div className="onboarding-setup-grid">
+              <div className="onboarding-setup-item">
+                <div className="onboarding-setup-icon">📧</div>
+                <div className="onboarding-setup-text">
+                  <strong>Sender details</strong>
+                  <span>Your name, company, signature line</span>
+                </div>
+              </div>
+              <div className="onboarding-setup-item">
+                <div className="onboarding-setup-icon">🔑</div>
+                <div className="onboarding-setup-text">
+                  <strong>Apollo API key</strong>
+                  <span>Optional — for contact enrichment</span>
+                </div>
+              </div>
+              <div className="onboarding-setup-item">
+                <div className="onboarding-setup-icon">📞</div>
+                <div className="onboarding-setup-text">
+                  <strong>Vapi calling</strong>
+                  <span>Optional — for AI phone calls</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="onboarding-actions">
+              <button className="btn" onClick={finishToMission}>
+                Skip for now
+              </button>
+              <button className="btn btn-primary onboarding-cta" onClick={finishToSettings}>
+                Open Settings →
               </button>
             </div>
           </>

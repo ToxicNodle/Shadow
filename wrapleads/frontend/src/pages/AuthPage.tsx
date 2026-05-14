@@ -10,11 +10,15 @@ export default function AuthPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const resetToken = searchParams.get('reset');
+  const wantSignup = searchParams.get('signup') === '1';
 
-  const [view, setView] = useState<View>(resetToken ? 'reset' : 'login');
+  const initialView: View = resetToken ? 'reset' : wantSignup ? 'register' : 'login';
+  const [view, setView] = useState<View>(initialView);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [demoAvailable, setDemoAvailable] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
 
   // Login fields
   const [loginEmail, setLoginEmail] = useState('');
@@ -36,6 +40,26 @@ export default function AuthPage() {
   useEffect(() => {
     if (resetToken) setView('reset');
   }, [resetToken]);
+
+  useEffect(() => {
+    api.demoAvailable()
+      .then((r) => setDemoAvailable(r.available))
+      .catch(() => setDemoAvailable(false));
+  }, []);
+
+  async function handleDemo() {
+    setDemoLoading(true);
+    setError('');
+    try {
+      const { token, user } = await api.demoLogin();
+      setToken(token);
+      localStorage.setItem('wl_user', JSON.stringify(user));
+      navigate('/', { replace: true });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Demo unavailable');
+      setDemoLoading(false);
+    }
+  }
 
   function switchView(v: View) {
     setView(v);
@@ -112,12 +136,30 @@ export default function AuthPage() {
 
   return (
     <div className="auth-page">
+      <button
+        type="button"
+        className="auth-back-link"
+        onClick={() => navigate('/welcome')}
+      >
+        ← Back to home
+      </button>
       <div className="auth-card">
         <div className="auth-brand">
           <span className="auth-logo">W</span>
           <span className="auth-brand-name">WrapLeads<span className="auth-brand-io">.io</span></span>
         </div>
         <p className="auth-tagline">Lead discovery for wrap shops</p>
+
+        {demoAvailable && (
+          <button
+            type="button"
+            className="auth-demo-btn"
+            onClick={handleDemo}
+            disabled={demoLoading}
+          >
+            {demoLoading ? 'Loading demo…' : '✨ Try the live demo (no signup)'}
+          </button>
+        )}
 
         {isLoginOrRegister && (
           <div className="auth-tabs">

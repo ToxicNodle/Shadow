@@ -115,6 +115,21 @@ async function migrateDb() {
     console.warn('[migrate] Could not add settings_json column:', e.message);
   }
   try {
+    // shop_token caches the public quote/portfolio URL slug so we can look up
+    // a user by token in O(1) instead of scanning the entire users table.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shop_token TEXT`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_shop_token ON users(shop_token) WHERE shop_token IS NOT NULL`);
+    // Backfill any rows missing a token using the same hash function the runtime uses.
+    await pool.query(`
+      UPDATE users
+      SET shop_token = SUBSTRING(ENCODE(DIGEST(id::text || 'wrapleads_qr', 'sha256'), 'hex') FROM 1 FOR 16)
+      WHERE shop_token IS NULL
+    `);
+  } catch (e) {
+    // pgcrypto may not be available; fall back to runtime-side backfill below
+    console.warn('[migrate] Could not backfill shop_token via SQL (will fall back to runtime):', e.message);
+  }
+  try {
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'wrapleads'`);
   } catch (e) {
     console.warn('[migrate] Could not add plan_tier column:', e.message);
@@ -616,6 +631,30 @@ app.post('/auth/login', async (req, res) => {
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
     console.log(`[auth/login] ${user.email}`);
+    res.json({ token, user: safeUser(user) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Public demo access ────────────────────────────────────────────────────────
+// When DEMO_USER_EMAIL is set, any visitor can spin up a read-only session as
+// that user. Used by the "Try the demo" button on the marketing page so
+// investors don't have to register.
+const DEMO_USER_EMAIL = (process.env.DEMO_USER_EMAIL || '').trim().toLowerCase();
+
+app.get('/auth/demo-available', async (_req, res) => {
+  res.json({ available: !!DEMO_USER_EMAIL });
+});
+
+app.post('/auth/demo-login', async (_req, res) => {
+  if (!DEMO_USER_EMAIL) return res.status(503).json({ error: 'Demo access is not configured' });
+  try {
+    const r = await pool.query('SELECT * FROM users WHERE email = $1', [DEMO_USER_EMAIL]);
+    if (!r.rows.length) return res.status(503).json({ error: 'Demo account not provisioned' });
+    const user = r.rows[0];
+    const token = jwt.sign({ id: user.id, email: user.email, demo: true }, JWT_SECRET, { expiresIn: '24h' });
+    console.log(`[auth/demo-login] new demo session for ${user.email}`);
     res.json({ token, user: safeUser(user) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -5330,16 +5369,52 @@ function getShopToken(userId) {
   return require('crypto').createHash('sha256').update(String(userId) + 'wrapleads_qr').digest('hex').slice(0, 16);
 }
 
-app.get('/me/quote-link', authMiddleware, (req, res) => {
-  const token = getShopToken(req.user.id);
-  res.json({ token, url: `/quote-request/${token}` });
+// Look up a user by their public quote/portfolio token. Uses the indexed
+// shop_token column for O(1) lookups; falls back to a one-time backfill if the
+// column is empty (e.g. older accounts created before the migration).
+async function findUserByShopToken(shopToken) {
+  if (!shopToken || typeof shopToken !== 'string') return null;
+  let { rows } = await pool.query(
+    `SELECT id, settings_json FROM users WHERE shop_token = $1 LIMIT 1`,
+    [shopToken]
+  );
+  if (rows[0]) return rows[0];
+
+  // Backfill: token wasn't persisted yet. Find the matching user once and
+  // cache it forever.
+  const all = await pool.query(`SELECT id, settings_json FROM users WHERE shop_token IS NULL`);
+  for (const u of all.rows) {
+    if (getShopToken(u.id) === shopToken) {
+      await pool.query(`UPDATE users SET shop_token = $1 WHERE id = $2`, [shopToken, u.id]);
+      return u;
+    }
+  }
+  return null;
+}
+
+// Ensure the requesting user has a persisted shop_token. Cheap if already set.
+async function ensureShopToken(userId) {
+  const token = getShopToken(userId);
+  await pool.query(
+    `UPDATE users SET shop_token = $1 WHERE id = $2 AND shop_token IS NULL`,
+    [token, userId]
+  );
+  return token;
+}
+
+app.get('/me/quote-link', authMiddleware, async (req, res) => {
+  try {
+    const token = await ensureShopToken(req.user.id);
+    res.json({ token, url: `/quote-request/${token}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/quote-request/:shopToken', async (req, res) => {
   try {
     const { shopToken } = req.params;
-    const { rows } = await pool.query(`SELECT id, settings_json FROM users`, []);
-    const user = rows.find((u) => getShopToken(u.id) === shopToken);
+    const user = await findUserByShopToken(shopToken);
     if (!user) return res.status(404).send('<h2>Page not found.</h2>');
     const s = user.settings_json || {};
     const shopName = s.companyName || 'Shadow Graphix';
@@ -5434,8 +5509,7 @@ document.getElementById('qr-form').addEventListener('submit', async (e) => {
 app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
   try {
     const { shopToken } = req.params;
-    const { rows: users } = await pool.query(`SELECT id, settings_json FROM users`);
-    const user = users.find((u) => getShopToken(u.id) === shopToken);
+    const user = await findUserByShopToken(shopToken);
     if (!user) return res.status(404).json({ error: 'Not found' });
 
     const { name, company, email, phone, vehicle_type, fleet_size, message } = req.body;
@@ -5470,8 +5544,7 @@ app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
 app.get('/portfolio/:shopToken', async (req, res) => {
   try {
     const { shopToken } = req.params;
-    const { rows: users } = await pool.query(`SELECT id, settings_json FROM users`);
-    const user = users.find((u) => getShopToken(u.id) === shopToken);
+    const user = await findUserByShopToken(shopToken);
     if (!user) return res.status(404).send('<h2>Portfolio not found.</h2>');
 
     const s = user.settings_json || {};
