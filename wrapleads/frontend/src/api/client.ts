@@ -182,7 +182,8 @@ export const api = {
     authFetch<{ ok: boolean }>('/settings', { method: 'PUT', body: JSON.stringify(settings) }),
 
   // Stripe
-  checkout: () => authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: '{}' }),
+  checkout: (tier: import('./types').PlanTier = 'wrapleads') =>
+    authFetch<{ url: string }>('/stripe/checkout', { method: 'POST', body: JSON.stringify({ tier }) }),
   portal: () => authFetch<{ url: string }>('/stripe/portal', { method: 'POST', body: '{}' }),
 
   // Mission dashboard

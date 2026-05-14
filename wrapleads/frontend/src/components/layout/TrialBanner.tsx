@@ -10,12 +10,8 @@ export default function TrialBanner({ user }: Props) {
   const showToast = useAppStore((s) => s.showToast);
 
   async function handleUpgrade() {
-    try {
-      const { url } = await api.checkout();
-      window.location.href = url;
-    } catch (e: unknown) {
-      showToast((e as Error).message, 'error');
-    }
+    // Open paywall modal so user can choose their tier
+    useAppStore.getState().setPaywallOpen(true);
   }
 
   if (user.subStatus === 'past_due') {
@@ -37,7 +33,7 @@ export default function TrialBanner({ user }: Props) {
         Free trial — <strong>{daysLeft} {daysLeft === 1 ? 'day' : 'days'} left</strong>.
         Upgrade to unlock full access.
       </span>
-      <button onClick={handleUpgrade}>Upgrade — $500/mo</button>
+      <button onClick={handleUpgrade}>Choose a plan — from $79/mo</button>
     </div>
   );
 }
