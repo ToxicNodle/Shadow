@@ -36,8 +36,14 @@ CI (`.github/workflows/webpack.yml`) only does `npm install && npx webpack` on N
 
 Key conventions inside `wrapleads-server.js`:
 
-- **Two middlewares gate most routes**: `authMiddleware` (JWT in `Authorization: Bearer`) and `subMiddleware` (Stripe subscription check; allows `trialing`, `active`, `past_due`, or a non-expired `trial_ends_at`). Money/AI endpoints must use both; read-only endpoints typically use `authMiddleware` only. `subMiddleware` is bypassed when `STRIPE_DISABLED=true`.
-- **`migrateDb()` runs on every boot** and is the source of truth for additive schema changes that aren't in `schema.sql` (most newer tables: `email_tracking`, `lead_activities`, `email_queue`, `bids`, `installed_jobs`, `wrap_content`, `content_schedules`, `eink_devices`, `eink_push_log`, `job_photos`, `portal_links`, `notifications`, `proposals`, `quote_requests`, plus columns added via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`). All statements are idempotent. **New tables/columns should be added here, not in `schema.sql`**, unless you're also resetting the dev DB.
+- **Three-tier subscription gating**: Every gated route uses `authMiddleware` plus a tier middleware. The tier hierarchy is `wrapleads` (1) < `shopflow` (2) < `wrapos` (3) — higher tiers include all lower-tier features. Use the right middleware for the route:
+  - `subMiddleware` / `requireTier('wrapleads')` — basic paid tier ($79/mo). Gates lead discovery + enrichment: `/carriers/*`, `/apollo/*`.
+  - `requireShopFlow` — automation tier ($149/mo). Gates AI outreach: `/ai/email`, `/ai/sequence`, `/ai/bulk-email`, `/leads/broadcast`.
+  - `requireWrapOS` — full platform tier ($249/mo). Gates AI design + proposals: `/ai/proposal`, `/ai/design-brief`, `/ai/generate-mockup`, `/leads/:id/proposal`.
+  - During trial (`trial_ends_at` in the future) and any `trialing` status, users get full WrapOS access automatically — the trial sells the top tier.
+  - All tier middleware is bypassed when `STRIPE_DISABLED=true`.
+  - The `plan_tier` column on `users` is the source of truth for a paid subscriber's tier. It's set by the Stripe webhook based on the purchased price ID (`PRICE_TO_TIER` map at the top of the file). `/stripe/checkout` accepts `{ tier }` in the request body and routes to the right `STRIPE_PRICE_ID_*` env var. The legacy single-tier `STRIPE_PRICE_ID` still works as the WrapLeads fallback.
+- **`migrateDb()` runs on every boot** and is the source of truth for additive schema changes that aren't in `schema.sql` (most newer tables: `email_tracking`, `lead_activities`, `email_queue`, `bids`, `installed_jobs`, `wrap_content`, `content_schedules`, `eink_devices`, `eink_push_log`, `job_photos`, `portal_links`, `notifications`, `proposals`, `quote_requests`, plus columns like `users.plan_tier`, `users.settings_json`, `leads.followup_due_at` added via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`). All statements are idempotent. **New tables/columns should be added here, not in `schema.sql`**, unless you're also resetting the dev DB.
 - **Stripe webhook MUST be mounted before `express.json()`** — see lines around 412. It uses `express.raw`. Preserve that ordering.
 - **Background workers are started at boot** from inside `app.listen`: `startDripWorker` (sequence email sends), `startDigestWorker` (daily digests), `startColdNurtureWorker`, `startReOrderWorker`, `startBidExpiryWorker`, `startAnniversaryWorker`, plus `email.startTrialCron`. They poll Postgres on intervals — no external queue.
 - **The SPA fallback (`app.get('*')`) and `express.static('dist')` MUST stay last** so API routes win.
@@ -72,7 +78,7 @@ Key conventions inside `wrapleads-server.js`:
 - **CommonJS on the backend** (`require`/`module.exports`); **ES modules + TS on the frontend** (`type: "module"`). Don't mix.
 - **Inline SQL via `pg.Pool`** is the norm — there is no ORM. Always use parameterized queries (`$1`, `$2`...); never interpolate user input.
 - **All user-scoped queries must filter by `user_id`** (the JWT payload puts the user id at `req.user.id`; the DB column is `TEXT` so always stringify: `String(req.user.id)`). Forgetting this leaks data across tenants.
-- **Env vars** are documented in `wrapleads/.env.example`. Optional integrations (`STRIPE_*`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `APOLLO_API_KEY`, `GOOGLE_PLACES_API_KEY`) all degrade gracefully when missing — preserve that pattern when adding new ones (log a `[name] not configured` line at boot rather than crashing).
+- **Env vars** are documented in `wrapleads/.env.example`. Optional integrations (`STRIPE_*`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `APOLLO_API_KEY`, `GOOGLE_PLACES_API_KEY`) all degrade gracefully when missing — preserve that pattern when adding new ones (log a `[name] not configured` line at boot rather than crashing). Stripe expects three separate price IDs for the three-tier system: `STRIPE_PRICE_ID_WRAPLEADS`, `STRIPE_PRICE_ID_SHOPFLOW`, `STRIPE_PRICE_ID_WRAPOS`. The legacy `STRIPE_PRICE_ID` still works as a single-tier fallback for the WrapLeads tier.
 - **Deployment**: `railway.toml` + `Procfile` target Railway, building the frontend then starting `npm start`.
 
 ## Working notes

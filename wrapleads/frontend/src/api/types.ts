@@ -101,6 +101,8 @@ export interface Carrier {
   already_imported?: boolean;
 }
 
+export type PlanTier = 'wrapleads' | 'shopflow' | 'wrapos';
+
 export interface User {
   id: number;
   email: string;
@@ -110,6 +112,7 @@ export interface User {
   trialEndsAt?: string;
   subPeriodEnd?: string;
   isFirstLogin?: boolean;
+  planTier: PlanTier;
 }
 
 export interface SavedSearch {

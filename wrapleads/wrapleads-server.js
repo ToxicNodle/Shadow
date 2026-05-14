@@ -56,9 +56,23 @@ const JWT_SECRET        = process.env.JWT_SECRET || 'change-me-in-production';
 const TRIAL_DAYS        = parseInt(process.env.TRIAL_DAYS || '14', 10);
 const APP_URL           = process.env.APP_URL || `http://localhost:${PORT}`;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
-const STRIPE_PRICE_ID   = process.env.STRIPE_PRICE_ID || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const STRIPE_DISABLED   = process.env.STRIPE_DISABLED === 'true';
+
+// Three-tier pricing — falls back to legacy STRIPE_PRICE_ID for single-tier setups
+const STRIPE_PRICE_ID_WRAPLEADS = process.env.STRIPE_PRICE_ID_WRAPLEADS || process.env.STRIPE_PRICE_ID || '';
+const STRIPE_PRICE_ID_SHOPFLOW  = process.env.STRIPE_PRICE_ID_SHOPFLOW  || '';
+const STRIPE_PRICE_ID_WRAPOS    = process.env.STRIPE_PRICE_ID_WRAPOS    || '';
+// Legacy alias kept for any code that still references it directly
+const STRIPE_PRICE_ID = STRIPE_PRICE_ID_WRAPLEADS;
+
+// Map Stripe price IDs → internal tier names (populated after price IDs are set)
+const PRICE_TO_TIER = {};
+if (STRIPE_PRICE_ID_WRAPLEADS) PRICE_TO_TIER[STRIPE_PRICE_ID_WRAPLEADS] = 'wrapleads';
+if (STRIPE_PRICE_ID_SHOPFLOW)  PRICE_TO_TIER[STRIPE_PRICE_ID_SHOPFLOW]  = 'shopflow';
+if (STRIPE_PRICE_ID_WRAPOS)    PRICE_TO_TIER[STRIPE_PRICE_ID_WRAPOS]    = 'wrapos';
+
+const TIER_PRICES = { wrapleads: 79, shopflow: 149, wrapos: 249 };
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' }) : null;
 
@@ -99,6 +113,11 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS settings_json JSONB DEFAULT '{}'::jsonb`);
   } catch (e) {
     console.warn('[migrate] Could not add settings_json column:', e.message);
+  }
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'wrapleads'`);
+  } catch (e) {
+    console.warn('[migrate] Could not add plan_tier column:', e.message);
   }
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS followup_due_at DATE`);
@@ -453,35 +472,66 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// Subscription check — requires active or trialing subscription
-async function subMiddleware(req, res, next) {
-  if (STRIPE_DISABLED) return next();
-  try {
-    const r = await pool.query(
-      `SELECT sub_status, trial_ends_at, sub_period_end FROM users WHERE id = $1`,
-      [req.user.id]
-    );
-    if (!r.rows.length) return res.status(401).json({ error: 'User not found' });
-    const { sub_status, trial_ends_at } = r.rows[0];
+// Tier hierarchy — higher rank includes all lower-tier features
+const TIER_RANK = { wrapleads: 1, shopflow: 2, wrapos: 3 };
 
-    // Trial: active if trial_ends_at is in the future and no sub yet
-    if (sub_status === 'inactive' && trial_ends_at && new Date(trial_ends_at) > new Date()) {
-      req.user.subStatus = 'trialing';
-      return next();
-    }
-    if (['trialing', 'active', 'past_due'].includes(sub_status)) {
+// Returns Express middleware that gates a route to users on minTier or higher.
+// During trial, all features are unlocked (trial_tier = 'wrapos').
+function requireTier(minTier) {
+  return async (req, res, next) => {
+    if (STRIPE_DISABLED) return next();
+    try {
+      const r = await pool.query(
+        `SELECT sub_status, trial_ends_at, plan_tier FROM users WHERE id = $1`,
+        [req.user.id]
+      );
+      if (!r.rows.length) return res.status(401).json({ error: 'User not found' });
+      const { sub_status, trial_ends_at, plan_tier } = r.rows[0];
+
+      // Trial: active if trial_ends_at is in the future and status is still inactive
+      const onTrial = sub_status === 'inactive' && trial_ends_at && new Date(trial_ends_at) > new Date();
+      if (onTrial) {
+        req.user.subStatus = 'trialing';
+        req.user.planTier  = 'wrapos'; // trials get full access
+        return next();
+      }
+
+      if (!['trialing', 'active', 'past_due'].includes(sub_status)) {
+        return res.status(402).json({ error: 'Subscription required', sub_status });
+      }
+
+      // Trialing via Stripe (not the trial_ends_at path) also gets full access
+      if (sub_status === 'trialing') {
+        req.user.subStatus = 'trialing';
+        req.user.planTier  = 'wrapos';
+        return next();
+      }
+
+      // Check tier rank for paid subscribers
+      const userRank     = TIER_RANK[plan_tier] || 1;
+      const requiredRank = TIER_RANK[minTier]   || 1;
+      if (userRank < requiredRank) {
+        return res.status(403).json({
+          error:         'Plan upgrade required',
+          required_tier: minTier,
+          current_tier:  plan_tier || 'wrapleads',
+          upgrade_price: TIER_PRICES[minTier],
+        });
+      }
+
       req.user.subStatus = sub_status;
-      return next();
+      req.user.planTier  = plan_tier || 'wrapleads';
+      next();
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
-    return res.status(402).json({
-      error: 'Subscription required',
-      sub_status,
-      checkout_url: `${APP_URL}/login`,
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  };
 }
+
+// Convenience aliases
+const subMiddleware     = requireTier('wrapleads'); // backward-compat default
+const requireShopFlow   = requireTier('shopflow');
+const requireWrapOS     = requireTier('wrapos');
 
 // ----------------------------------------------------------------------------
 // Health
@@ -630,7 +680,7 @@ app.post('/auth/reset-password', async (req, res) => {
 app.get('/auth/me', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, email, name, company_name, sub_status, trial_ends_at, sub_period_end, stripe_customer_id
+      `SELECT id, email, name, company_name, sub_status, trial_ends_at, sub_period_end, stripe_customer_id, plan_tier
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -639,8 +689,12 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     // Resolve effective subscription status
     if (STRIPE_DISABLED) {
       user.sub_status = 'active';
+      user.plan_tier  = user.plan_tier || 'wrapos'; // full access in dev
     } else if (user.sub_status === 'inactive' && user.trial_ends_at && new Date(user.trial_ends_at) > new Date()) {
       user.sub_status = 'trialing';
+      user.plan_tier  = 'wrapos'; // trial gets full access
+    } else if (user.sub_status === 'trialing') {
+      user.plan_tier = 'wrapos'; // Stripe trialing also gets full access
     }
     // First login detection — true when user has no leads yet
     const leadCount = await pool.query('SELECT COUNT(*) FROM leads WHERE user_id = $1', [String(req.user.id)]);
@@ -662,6 +716,7 @@ function safeUser(u) {
     trialEndsAt:  u.trial_ends_at,
     subPeriodEnd: u.sub_period_end,
     isFirstLogin: u.is_first_login ?? false,
+    planTier:     u.plan_tier || 'wrapleads',
   };
 }
 
@@ -670,7 +725,15 @@ function safeUser(u) {
 // ----------------------------------------------------------------------------
 app.post('/stripe/checkout', authMiddleware, async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Stripe is not configured (set STRIPE_SECRET_KEY)' });
-  if (!STRIPE_PRICE_ID) return res.status(503).json({ error: 'STRIPE_PRICE_ID is not set' });
+
+  const { tier = 'wrapleads' } = req.body || {};
+  const priceMap = {
+    wrapleads: STRIPE_PRICE_ID_WRAPLEADS,
+    shopflow:  STRIPE_PRICE_ID_SHOPFLOW,
+    wrapos:    STRIPE_PRICE_ID_WRAPOS,
+  };
+  const priceId = priceMap[tier];
+  if (!priceId) return res.status(400).json({ error: `No Stripe price configured for tier: ${tier}` });
 
   try {
     const userRes = await pool.query('SELECT stripe_customer_id FROM users WHERE id = $1', [req.user.id]);
@@ -680,12 +743,12 @@ app.post('/stripe/checkout', authMiddleware, async (req, res) => {
       mode: 'subscription',
       customer: customerId || undefined,
       customer_email: customerId ? undefined : req.user.email,
-      line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
+      line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${APP_URL}/?subscribed=1`,
       cancel_url: `${APP_URL}/login`,
-      metadata: { user_id: String(req.user.id) },
+      metadata: { user_id: String(req.user.id), plan_tier: tier },
       subscription_data: {
-        metadata: { user_id: String(req.user.id) },
+        metadata: { user_id: String(req.user.id), plan_tier: tier },
       },
     });
     res.json({ url: session.url });
@@ -744,16 +807,20 @@ app.post('/stripe/webhook', async (req, res) => {
     case 'customer.subscription.updated': {
       const userId = sub.metadata?.user_id || await userIdFromCustomer(sub.customer);
       if (userId) {
+        // Determine tier from price ID or metadata
+        const priceId  = sub.items?.data?.[0]?.price?.id;
+        const planTier = PRICE_TO_TIER[priceId] || sub.metadata?.plan_tier || 'wrapleads';
         await pool.query(
           `UPDATE users SET
-            stripe_sub_id = $1,
-            sub_status = $2,
+            stripe_sub_id  = $1,
+            sub_status     = $2,
             sub_period_end = to_timestamp($3),
-            updated_at = NOW()
-          WHERE id = $4`,
-          [sub.id, sub.status, sub.current_period_end, userId]
+            plan_tier      = $4,
+            updated_at     = NOW()
+          WHERE id = $5`,
+          [sub.id, sub.status, sub.current_period_end, planTier, userId]
         );
-        console.log(`[stripe/webhook] ${event.type}: user ${userId} → ${sub.status}`);
+        console.log(`[stripe/webhook] ${event.type}: user ${userId} → ${sub.status} (${planTier})`);
         if (event.type === 'customer.subscription.created' && sub.status === 'active') {
           const ur = await pool.query('SELECT email, name FROM users WHERE id = $1', [userId]);
           if (ur.rows[0]) {
@@ -2965,7 +3032,7 @@ Give ONE specific, actionable next step for this lead. Be concrete — not "foll
 // ----------------------------------------------------------------------------
 // AI email generation (proxied — users don't need their own API key)
 // ----------------------------------------------------------------------------
-app.post('/ai/email', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/ai/email', authMiddleware, requireShopFlow, async (req, res) => {
   const { lead, emailType, tone, settings } = req.body;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'AI email not configured (missing ANTHROPIC_API_KEY)' });
@@ -3051,7 +3118,7 @@ async function claudeHaiku(apiKey, messages, maxTokens = 1500) {
 // ----------------------------------------------------------------------------
 // AI — 3-email follow-up sequence
 // ----------------------------------------------------------------------------
-app.post('/ai/sequence', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/ai/sequence', authMiddleware, requireShopFlow, async (req, res) => {
   const { lead, settings } = req.body;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
@@ -3088,7 +3155,7 @@ Each under 180 words. Return raw JSON only:
 // ----------------------------------------------------------------------------
 // AI — bulk email generation (multiple leads in one call)
 // ----------------------------------------------------------------------------
-app.post('/ai/bulk-email', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/ai/bulk-email', authMiddleware, requireShopFlow, async (req, res) => {
   const { leads, emailType = 'Introduction', tone = 'Professional', settings } = req.body;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
@@ -3124,7 +3191,7 @@ Return raw JSON only — an array matching the same order:
 // ----------------------------------------------------------------------------
 // AI — quote / proposal generator
 // ----------------------------------------------------------------------------
-app.post('/ai/proposal', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/ai/proposal', authMiddleware, requireWrapOS, async (req, res) => {
   const { lead, vehicleCount, wrapType, extraNotes, settings } = req.body;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
@@ -4120,7 +4187,7 @@ app.post('/vision/quote-vehicle', authMiddleware, upload.single('image'), async 
 
 // ── AI Design Generation ──────────────────────────────────────────────────────
 
-app.post('/ai/design-brief', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/ai/design-brief', authMiddleware, requireWrapOS, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
   const { vehicleType, primaryColor, secondaryColor, style, description, companyName } = req.body;
@@ -4156,7 +4223,7 @@ The dall_e_prompt must specify: exact vehicle type, wrap design, colors, finish 
   }
 });
 
-app.post('/ai/generate-mockup', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/ai/generate-mockup', authMiddleware, requireWrapOS, async (req, res) => {
   const { brief } = req.body;
   if (!brief?.dall_e_prompt) return res.status(400).json({ error: 'No design brief provided' });
 
@@ -4970,7 +5037,7 @@ app.post('/portal/:token/feedback', async (req, res) => {
 // ============================================================================
 
 // Generate a full proposal for a lead
-app.post('/leads/:id/proposal', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/leads/:id/proposal', authMiddleware, requireWrapOS, async (req, res) => {
   try {
     const uid = String(req.user.id);
     const leadId = Number(req.params.id);
@@ -6039,7 +6106,7 @@ app.get('/admin/devices/:id/log', authMiddleware, async (req, res) => {
 });
 
 // ── Broadcast Email — send one message to many leads at once ─────────────────
-app.post('/leads/broadcast', authMiddleware, subMiddleware, async (req, res) => {
+app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) => {
   const { leadIds, subject, body } = req.body || {};
   if (!Array.isArray(leadIds) || !leadIds.length || !subject || !body)
     return res.status(400).json({ error: 'leadIds[], subject, body required' });
