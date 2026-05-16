@@ -143,6 +143,12 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referred_by TEXT`);
   } catch (e) { console.warn('[migrate] Could not add referred_by column:', e.message); }
   try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS source TEXT`);
+  } catch (e) { console.warn('[migrate] Could not add source column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'US'`);
+  } catch (e) { console.warn('[migrate] Could not add country column:', e.message); }
+  try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS email_tracking (
         id          BIGSERIAL PRIMARY KEY,
@@ -728,7 +734,7 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     // Resolve effective subscription status
     if (STRIPE_DISABLED) {
       user.sub_status = 'active';
-      user.plan_tier  = user.plan_tier || 'wrapos'; // full access in dev
+      user.plan_tier  = 'wrapos'; // full access in dev — bypass all tier gates
     } else if (user.sub_status === 'inactive' && user.trial_ends_at && new Date(user.trial_ends_at) > new Date()) {
       user.sub_status = 'trialing';
       user.plan_tier  = 'wrapos'; // trial gets full access
@@ -746,16 +752,25 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
 });
 
 function safeUser(u) {
+  // Normalize: inactive + future trial_ends_at = trialing (same logic as /auth/me)
+  let subStatus = u.sub_status;
+  let planTier  = u.plan_tier || 'wrapleads';
+  if (subStatus === 'inactive' && u.trial_ends_at && new Date(u.trial_ends_at) > new Date()) {
+    subStatus = 'trialing';
+    planTier  = 'wrapos'; // trial gets full WrapOS access
+  } else if (subStatus === 'trialing') {
+    planTier = 'wrapos';
+  }
   return {
     id:           u.id,
     email:        u.email,
     name:         u.name,
     companyName:  u.company_name,
-    subStatus:    u.sub_status,
+    subStatus,
     trialEndsAt:  u.trial_ends_at,
     subPeriodEnd: u.sub_period_end,
     isFirstLogin: u.is_first_login ?? false,
-    planTier:     u.plan_tier || 'wrapleads',
+    planTier,
   };
 }
 

@@ -1,19 +1,42 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const API = 'http://localhost:3001';
+
 export default defineConfig({
   plugins: [react()],
   build: { outDir: '../dist', emptyOutDir: true },
   server: {
     port: 5173,
     proxy: {
-      '/auth':     'http://localhost:3001',
-      '/leads':    'http://localhost:3001',
-      '/carriers': 'http://localhost:3001',
-      '/searches': 'http://localhost:3001',
-      '/apollo':   'http://localhost:3001',
-      '/stripe':   'http://localhost:3001',
-      '/ai':       'http://localhost:3001',
+      '/auth':          API,
+      '/leads':         API,
+      '/carriers':      API,
+      '/searches':      API,
+      '/apollo':        API,
+      '/stripe':        API,
+      '/ai':            API,
+      '/bids':          API,
+      '/calls':         API,
+      '/blueprint':     API,
+      '/content':       API,
+      '/devices':       API,
+      '/email-queue':   API,
+      '/integrations':  API,
+      '/jobs':          API,
+      '/me':            API,
+      '/mission':       API,
+      '/notifications': API,
+      '/portal-links':  API,
+      '/portal':        API,
+      '/portfolio':     API,
+      '/proposals':     API,
+      '/quote-request': API,
+      '/track':         API,
+      '/vision':        API,
+      '/webhooks':      API,
+      '/health':        API,
+      '/admin':         API,
     },
   },
 });
