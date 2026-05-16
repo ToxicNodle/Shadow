@@ -94,6 +94,140 @@ async function checkDb() {
 }
 
 async function migrateDb() {
+  // ── Bootstrap: create core tables if this is a fresh database ───────────
+  // These run before any ALTER TABLE so Railway/fresh-Postgres deployments
+  // self-initialize without needing to run schema.sql manually.
+  try { await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');   } catch (_) {}
+  try { await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');  } catch (_) {}
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id                  BIGSERIAL PRIMARY KEY,
+      email               TEXT NOT NULL UNIQUE,
+      password_hash       TEXT NOT NULL,
+      name                TEXT,
+      company_name        TEXT,
+      stripe_customer_id  TEXT UNIQUE,
+      stripe_sub_id       TEXT UNIQUE,
+      sub_status          TEXT NOT NULL DEFAULT 'inactive',
+      sub_period_end      TIMESTAMPTZ,
+      trial_ends_at       TIMESTAMPTZ,
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_email           ON users (email)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users (stripe_customer_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_stripe_sub      ON users (stripe_sub_id)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS companies (
+      id                BIGSERIAL PRIMARY KEY,
+      source            TEXT NOT NULL,
+      source_id         TEXT NOT NULL,
+      name              TEXT NOT NULL,
+      dba_name          TEXT,
+      street            TEXT,
+      city              TEXT,
+      state             TEXT,
+      zip               TEXT,
+      country           TEXT DEFAULT 'US',
+      phone             TEXT,
+      email             TEXT,
+      website           TEXT,
+      fleet_size        INTEGER,
+      drivers           INTEGER,
+      cargo_types       TEXT,
+      industry          TEXT,
+      last_reported     DATE,
+      added_to_registry DATE,
+      raw_data          JSONB,
+      ingested_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (source, source_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_state      ON companies (state)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_fleet_size ON companies (fleet_size DESC NULLS LAST)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_state_fleet ON companies (state, fleet_size DESC NULLS LAST)`);
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_name_trgm ON companies USING gin (name gin_trgm_ops)`); } catch (_) {}
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_dba_trgm  ON companies USING gin (dba_name gin_trgm_ops)`); } catch (_) {}
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_city       ON companies (city)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS imports (
+      id          BIGSERIAL PRIMARY KEY,
+      company_id  BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      user_id     TEXT NOT NULL DEFAULT 'local',
+      imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (company_id, user_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_imports_user ON imports (user_id)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS saved_searches (
+      id           BIGSERIAL PRIMARY KEY,
+      user_id      TEXT NOT NULL DEFAULT 'local',
+      name         TEXT NOT NULL,
+      filters      JSONB NOT NULL,
+      last_checked TIMESTAMPTZ,
+      new_count    INTEGER DEFAULT 0,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches (user_id)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id                BIGSERIAL PRIMARY KEY,
+      user_id           TEXT NOT NULL DEFAULT 'local',
+      client_id         TEXT,
+      company           TEXT NOT NULL,
+      category          TEXT NOT NULL DEFAULT 'fleet',
+      state             TEXT,
+      city              TEXT,
+      country           TEXT DEFAULT 'US',
+      address           TEXT,
+      contact_name      TEXT,
+      contact_title     TEXT,
+      email             TEXT,
+      phone             TEXT,
+      website           TEXT,
+      fleet_size        TEXT,
+      pitch_angle       TEXT,
+      status            TEXT NOT NULL DEFAULT 'cold',
+      notes             TEXT,
+      source            TEXT,
+      last_contacted    DATE,
+      followup_due_at   DATE,
+      referred_by       TEXT,
+      source_company_id BIGINT REFERENCES companies(id) ON DELETE SET NULL,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id, client_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_user    ON leads (user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_status  ON leads (user_id, status)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_updated ON leads (user_id, updated_at DESC)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ingest_runs (
+      id            BIGSERIAL PRIMARY KEY,
+      source        TEXT NOT NULL,
+      file_name     TEXT,
+      rows_read     BIGINT,
+      rows_inserted BIGINT,
+      rows_updated  BIGINT,
+      rows_skipped  BIGINT,
+      started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at   TIMESTAMPTZ,
+      notes         TEXT
+    )
+  `);
+  // ── End bootstrap ────────────────────────────────────────────────────────
+
   // Idempotent schema additions — safe to run on every startup
   try {
     await pool.query(`

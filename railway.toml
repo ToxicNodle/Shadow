@@ -1,0 +1,14 @@
+# Root-level Railway config — points to the actual app in wrapleads/
+# In the Railway dashboard, set "Root Directory" to "wrapleads" to use the
+# wrapleads/railway.toml config directly. This file exists as a fallback.
+
+[build]
+builder = "RAILPACK"
+buildCommand = "cd wrapleads && npm install && npm run build"
+
+[deploy]
+startCommand = "cd wrapleads && node wrapleads-server.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

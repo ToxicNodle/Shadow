@@ -8,7 +8,7 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:frontend\"",
     "dev:server": "node --watch wrapleads-server.js",
     "dev:frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
+    "build": "npm --prefix frontend install && npm --prefix frontend run build",
     "ingest:fmcsa": "node ingest-fmcsa.js",
     "ingest:sos": "node ingest-sos.js",
     "ingest:places": "node ingest-google-places.js",
