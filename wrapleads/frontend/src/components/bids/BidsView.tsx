@@ -239,6 +239,7 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
       <div className="bid-card-header">
         <span className="bid-card-type">{PROJECT_TYPE_LABELS[bid.project_type]}</span>
         <div className="bid-card-actions">
+          <button className="bid-card-btn" onClick={() => api.openQuote(bid.id)} title="Preview Quote">📄</button>
           <button className="bid-card-btn" onClick={() => onEdit(bid)} title="Edit">✎</button>
           <button className="bid-card-btn bid-card-btn-del" onClick={() => onDelete(bid.id)} title="Delete">✕</button>
         </div>

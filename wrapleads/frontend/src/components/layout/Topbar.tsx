@@ -1,12 +1,22 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppStore } from '../../store/useAppStore';
 import type { AppMode } from '../../store/useAppStore';
 import VisionQuoteModal from '../modals/VisionQuoteModal';
+import NotificationPanel from './NotificationPanel';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
   const [visionOpen, setVisionOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const { data: notifData } = useQuery({
+    queryKey: ['notifications'],
+    queryFn: () => import('../../api/client').then((m) => m.api.getNotifications()),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  const unreadCount = notifData?.unread ?? 0;
   const {
     mode, setMode,
     leadView, setLeadView,
@@ -35,7 +45,7 @@ export default function Topbar() {
       </div>
 
       <div className="topbar-mode-switch">
-        {(['mission', 'leads', 'discover', 'pipeline', 'bids', 'jobs', 'content'] as AppMode[]).map((m) => (
+        {(['mission', 'leads', 'discover', 'pipeline', 'bids', 'jobs', 'content', 'analytics'] as AppMode[]).map((m) => (
           <button
             key={m}
             className={`mode-btn ${mode === m ? 'active' : ''}`}
@@ -47,7 +57,8 @@ export default function Topbar() {
               : m === 'pipeline' ? 'Pipeline'
               : m === 'bids' ? 'Bid Tracker'
               : m === 'jobs' ? 'Wrap Lifecycle'
-              : 'Content'}
+              : m === 'content' ? 'Content'
+              : '📊 Analytics'}
           </button>
         ))}
       </div>
@@ -122,6 +133,13 @@ export default function Topbar() {
             Add Lead
           </button>
         )}
+        <button className="btn btn-icon notif-bell-btn" title="Notifications" onClick={() => setNotifOpen((o) => !o)}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+          {unreadCount > 0 && <span className="notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+        </button>
         <button className="btn btn-icon" title="Settings" onClick={() => setSettingsOpen(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="3" />
@@ -130,6 +148,7 @@ export default function Topbar() {
         </button>
 
         {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
+        {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>
           <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0]}</span>

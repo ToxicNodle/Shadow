@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+import ROICalculatorModal from '../modals/ROICalculatorModal';
 
 // ── AI Call Button ────────────────────────────────────────────────────────────
 
@@ -552,12 +553,20 @@ export default function MissionView() {
   const [showEnrich, setShowEnrich] = useState(false);
   const [showProspector, setShowProspector] = useState(false);
   const [showCampaigns, setShowCampaigns] = useState(false);
+  const [showROI, setShowROI] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mission'],
     queryFn: () => api.getMission(),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
+  });
+
+  const { data: briefData } = useQuery({
+    queryKey: ['mission-brief'],
+    queryFn: () => api.getMissionBrief(),
+    staleTime: 60 * 60_000,
+    enabled: !!data,
   });
 
   function goToLead(_leadId: number) {
@@ -583,7 +592,7 @@ export default function MissionView() {
     );
   }
 
-  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth } = data;
+  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth, agingWraps } = data;
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
@@ -613,9 +622,20 @@ export default function MissionView() {
           <button className="btn" onClick={() => { setShowProspector((v) => !v); setShowCampaigns(false); }}>
             🌐 Prospector
           </button>
+          <button className="btn" onClick={() => setShowROI(true)} title="Wrap ROI Calculator">
+            📊 ROI
+          </button>
           <button className="btn" onClick={() => refetch()}>↻ Refresh</button>
         </div>
       </div>
+
+      {/* ── AI Brief ── */}
+      {briefData?.brief && (
+        <div className="mission-brief-bar">
+          <span className="mission-brief-icon">🧠</span>
+          <span className="mission-brief-text">{briefData.brief}</span>
+        </div>
+      )}
 
       <div className="mission-grid">
 
@@ -866,6 +886,21 @@ export default function MissionView() {
           </section>
         )}
 
+        {/* ── Aging Wraps Alert ── */}
+        {(agingWraps ?? 0) > 0 && (
+          <section className="mission-card" style={{ borderColor: '#f59e0b44' }}>
+            <div className="mission-card-header">
+              <span className="mission-card-icon">🔄</span>
+              <span className="mission-card-title">Wrap Refresh Opportunities</span>
+              <span className="mission-badge mission-badge-amber">{agingWraps}</span>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 12px' }}>
+              {agingWraps} installed wrap{agingWraps !== 1 ? 's are' : ' is'} approaching or past the refresh window. These are re-order opportunities with existing customers.
+            </p>
+            <button className="btn" onClick={() => setMode('jobs')}>View Aging Alerts →</button>
+          </section>
+        )}
+
         {/* ── Stats strip ── */}
         <section className="mission-stats-row">
           <div className="mission-stat-card" onClick={() => goToLeadsFiltered('won')} role="button">
@@ -884,6 +919,12 @@ export default function MissionView() {
             <div className="mission-stat-val mission-stat-purple">{newWithEmail.length}</div>
             <div className="mission-stat-label">new leads w/ email</div>
           </div>
+          {(agingWraps ?? 0) > 0 && (
+            <div className="mission-stat-card" onClick={() => setMode('jobs')} role="button">
+              <div className="mission-stat-val" style={{ color: '#f59e0b' }}>{agingWraps}</div>
+              <div className="mission-stat-label">wraps aging</div>
+            </div>
+          )}
         </section>
 
         {/* ── All clear ── */}
@@ -900,6 +941,13 @@ export default function MissionView() {
         )}
 
       </div>
+
+      {showROI && (
+        <ROICalculatorModal
+          onClose={() => setShowROI(false)}
+          companyName={settings.companyName}
+        />
+      )}
     </div>
   );
 }

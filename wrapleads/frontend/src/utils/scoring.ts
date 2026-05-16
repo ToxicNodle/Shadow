@@ -9,30 +9,41 @@ const STATUS_SCORES: Record<string, number> = {
   won: 30, proposal: 25, meeting: 20, replied: 15, contacted: 10, cold: 5, lost: 0,
 };
 
-export function scoreLead(lead: Lead): number {
+export interface ScoreBreakdown {
+  total: number;
+  factors: { label: string; points: number; max: number }[];
+}
+
+export function scoreBreakdown(lead: Lead): ScoreBreakdown {
+  const factors: ScoreBreakdown['factors'] = [];
   let score = 0;
 
-  // Fleet size (up to 30 pts)
   const fleet = parseInt(lead.fleetSize) || 0;
-  if (fleet >= 100) score += 30;
-  else if (fleet >= 50) score += 25;
-  else if (fleet >= 20) score += 18;
-  else if (fleet >= 10) score += 12;
-  else if (fleet >= 5) score += 6;
+  const fleetPts = fleet >= 100 ? 30 : fleet >= 50 ? 25 : fleet >= 20 ? 18 : fleet >= 10 ? 12 : fleet >= 5 ? 6 : 0;
+  score += fleetPts;
+  factors.push({ label: `Fleet Size (${fleet > 0 ? fleet + ' units' : 'unknown'})`, points: fleetPts, max: 30 });
 
-  // Category fit (up to 25 pts)
-  score += CAT_SCORES[lead.category] ?? 10;
+  const catPts = CAT_SCORES[lead.category] ?? 10;
+  score += catPts;
+  factors.push({ label: `Category (${lead.category})`, points: catPts, max: 25 });
 
-  // Pipeline stage (up to 30 pts)
-  score += STATUS_SCORES[lead.status] ?? 5;
+  const statusPts = STATUS_SCORES[lead.status] ?? 5;
+  score += statusPts;
+  factors.push({ label: `Pipeline Stage (${lead.status})`, points: statusPts, max: 30 });
 
-  // Data completeness (up to 15 pts)
-  if (lead.email) score += 6;
-  if (lead.contactName) score += 4;
-  if (lead.phone) score += 3;
-  if (lead.pitchAngle) score += 2;
+  const emailPts = lead.email ? 6 : 0;
+  const namePts = lead.contactName ? 4 : 0;
+  const phonePts = lead.phone ? 3 : 0;
+  const pitchPts = lead.pitchAngle ? 2 : 0;
+  const dataPts = emailPts + namePts + phonePts + pitchPts;
+  score += dataPts;
+  factors.push({ label: `Data Completeness`, points: dataPts, max: 15 });
 
-  return Math.min(score, 100);
+  return { total: Math.min(score, 100), factors };
+}
+
+export function scoreLead(lead: Lead): number {
+  return scoreBreakdown(lead).total;
 }
 
 export type ScoreLabel = 'hot' | 'warm' | 'cool';

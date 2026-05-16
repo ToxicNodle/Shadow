@@ -399,3 +399,75 @@ export interface ContentSchedule {
   notes?: string | null;
   created_at: string;
 }
+
+// ── Client Portal ────────────────────────────────────────────────────────────
+
+export interface PortalLink {
+  id: number;
+  user_id: string;
+  lead_id: number;
+  token: string;
+  label?: string | null;
+  created_at: string;
+}
+
+// ── Job Photos ────────────────────────────────────────────────────────────────
+
+export type JobPhotoType = 'before' | 'after' | 'detail' | 'other';
+
+export interface JobPhoto {
+  id: number;
+  user_id: string;
+  job_id: number;
+  image_data: string;
+  caption?: string | null;
+  photo_type: JobPhotoType;
+  created_at: string;
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export type NotificationType = 'aging_wrap' | 'call_completed' | 'email_reply' | 'sequence_complete' | 'bid_due_soon';
+
+export interface AppNotification {
+  id: number;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  metadata: Record<string, unknown>;
+  read_at: string | null;
+  created_at: string;
+}
+
+// ── E Ink Device Infrastructure ───────────────────────────────────────────────
+
+export interface EinkDevice {
+  id: number;
+  user_id: string;
+  device_token: string;
+  serial_number?: string | null;
+  name: string;
+  vehicle_group: string;
+  lead_id?: number | null;
+  job_id?: number | null;
+  status: 'online' | 'offline' | 'updating' | 'error';
+  current_content_id?: number | null;
+  current_content?: WrapContent | null;
+  last_seen_at?: string | null;
+  last_location?: { lat: number; lng: number; timestamp: string } | null;
+  firmware_version?: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface EinkPushLog {
+  id: number;
+  device_id: number;
+  content_id?: number | null;
+  content?: WrapContent | null;
+  pushed_at: string;
+  acked_at?: string | null;
+  status: 'pending' | 'delivered' | 'failed';
+  error?: string | null;
+}

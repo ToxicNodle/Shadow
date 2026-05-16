@@ -4,6 +4,8 @@ import { api } from '../../api/client';
 import Modal from '../ui/Modal';
 import type { Settings } from '../../api/types';
 
+type FleetStatus = 'idle' | 'testing' | 'ok' | 'fail' | 'importing' | 'imported';
+
 export default function SettingsModal() {
   const { settingsOpen, setSettingsOpen, settings, updateSettings, showToast } = useAppStore((s) => ({
     settingsOpen: s.settingsOpen,
@@ -14,12 +16,66 @@ export default function SettingsModal() {
   }));
   const [local, setLocal] = useState<Settings>(settings);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
+  const [samsaraStatus, setSamsaraStatus] = useState<FleetStatus>('idle');
+  const [samsaraCount, setSamsaraCount] = useState<number | null>(null);
+  const [samsaraImported, setSamsaraImported] = useState<{ imported: number; skipped: number } | null>(null);
+  const [motiveStatus, setMotiveStatus] = useState<FleetStatus>('idle');
+  const [motiveCount, setMotiveCount] = useState<number | null>(null);
+  const [motiveImported, setMotiveImported] = useState<{ imported: number; skipped: number } | null>(null);
 
   if (!settingsOpen) return null;
 
   function handleClose() {
     setSettingsOpen(false);
     setApolloStatus('idle');
+    setSamsaraStatus('idle');
+    setMotiveStatus('idle');
+  }
+
+  async function testSamsara() {
+    setSamsaraStatus('testing');
+    setSamsaraCount(null);
+    try {
+      const r = await api.getSamsaraVehicles();
+      setSamsaraCount(r.count);
+      setSamsaraStatus('ok');
+    } catch {
+      setSamsaraStatus('fail');
+    }
+  }
+
+  async function importSamsara() {
+    setSamsaraStatus('importing');
+    try {
+      const r = await api.importSamsaraVehicles();
+      setSamsaraImported({ imported: r.imported, skipped: r.skipped });
+      setSamsaraStatus('imported');
+    } catch {
+      setSamsaraStatus('fail');
+    }
+  }
+
+  async function testMotive() {
+    setMotiveStatus('testing');
+    setMotiveCount(null);
+    try {
+      const r = await api.getMotiveVehicles();
+      setMotiveCount(r.count);
+      setMotiveStatus('ok');
+    } catch {
+      setMotiveStatus('fail');
+    }
+  }
+
+  async function importMotive() {
+    setMotiveStatus('importing');
+    try {
+      const r = await api.importMotiveVehicles();
+      setMotiveImported({ imported: r.imported, skipped: r.skipped });
+      setMotiveStatus('imported');
+    } catch {
+      setMotiveStatus('fail');
+    }
   }
 
   function handleSave() {
@@ -31,8 +87,8 @@ export default function SettingsModal() {
 
   async function testApollo() {
     try {
-      await api.apolloTest();
-      setApolloStatus('ok');
+      const result = await api.apolloTest();
+      setApolloStatus(result.ok ? 'ok' : 'fail');
     } catch {
       setApolloStatus('fail');
     }
@@ -209,14 +265,56 @@ export default function SettingsModal() {
 
       <div className="settings-section">
         <div className="settings-section-title">Fleet Integrations</div>
-        <p className="settings-help">Connect your fleet management platform to import vehicles directly as leads.</p>
+        <p className="settings-help">Connect Samsara or Motive to pull your fleet roster and import vehicles as leads. Save your API key first, then test and import.</p>
+
         <div className="field-group">
           <label className="field-label">Samsara API Key</label>
           <input className="input" type="password" {...f('samsaraApiKey')} placeholder="samsara_api_…" />
         </div>
-        <div className="field-group">
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn" disabled={samsaraStatus === 'testing'} onClick={testSamsara}>
+            {samsaraStatus === 'testing' ? 'Testing…' : 'Test Samsara'}
+          </button>
+          {samsaraStatus === 'ok' && (
+            <>
+              <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>✓ {samsaraCount} vehicles found</span>
+              <button className="btn btn-primary" disabled={(samsaraStatus as FleetStatus) === 'importing'} onClick={importSamsara}>
+                Import as Leads
+              </button>
+            </>
+          )}
+          {samsaraStatus === 'importing' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Importing…</span>}
+          {samsaraStatus === 'imported' && samsaraImported && (
+            <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>
+              ✓ {samsaraImported.imported} imported, {samsaraImported.skipped} already existed
+            </span>
+          )}
+          {samsaraStatus === 'fail' && <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700 }}>✗ Connection failed — check key and save first</span>}
+        </div>
+
+        <div className="field-group" style={{ marginTop: 16 }}>
           <label className="field-label">Motive (KeepTruckin) API Key</label>
           <input className="input" type="password" {...f('motiveApiKey')} placeholder="Bearer token…" />
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn" disabled={motiveStatus === 'testing'} onClick={testMotive}>
+            {motiveStatus === 'testing' ? 'Testing…' : 'Test Motive'}
+          </button>
+          {motiveStatus === 'ok' && (
+            <>
+              <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>✓ {motiveCount} vehicles found</span>
+              <button className="btn btn-primary" disabled={(motiveStatus as FleetStatus) === 'importing'} onClick={importMotive}>
+                Import as Leads
+              </button>
+            </>
+          )}
+          {motiveStatus === 'importing' && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Importing…</span>}
+          {motiveStatus === 'imported' && motiveImported && (
+            <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 700 }}>
+              ✓ {motiveImported.imported} imported, {motiveImported.skipped} already existed
+            </span>
+          )}
+          {motiveStatus === 'fail' && <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700 }}>✗ Connection failed — check key and save first</span>}
         </div>
       </div>
 
