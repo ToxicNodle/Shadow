@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 import { persist } from 'zustand/middleware';
 import type { LeadCategory, LeadStatus, Settings, Carrier, CarrierSearchParams } from '../api/types';
 import { DEFAULT_SETTINGS } from '../api/types';
@@ -134,7 +135,11 @@ const DEFAULT_CARRIER_STATE: CarrierState = {
   lastQuery: null,
 };
 
-export const useAppStore = create<AppStore>()(
+// createWithEqualityFn (zustand v5 + zustand/traditional) restores the v4
+// default of shallow-comparing selector results. Without this, object-returning
+// selectors `useAppStore((s) => ({ ... }))` return a new ref every render and
+// trigger React's "Maximum update depth exceeded" loop across the app.
+export const useAppStore = createWithEqualityFn<AppStore>()(
   persist(
     (set) => ({
       // Mode
@@ -253,4 +258,5 @@ export const useAppStore = create<AppStore>()(
       partialize: (s) => ({ settings: s.settings, leadView: s.leadView }),
     },
   ),
+  shallow,
 );

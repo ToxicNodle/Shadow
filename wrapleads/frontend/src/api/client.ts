@@ -467,11 +467,18 @@ export const api = {
 
   // Business card scanner
   scanBusinessCard: (file: File) => {
+    const token = getToken();
     const form = new FormData();
     form.append('image', file);
-    const { Authorization } = { Authorization: `Bearer ${getToken()}` };
-    return fetch('/vision/scan-card', { method: 'POST', headers: { Authorization }, body: form })
-      .then((r) => r.json()) as Promise<{ ok: boolean; lead: Partial<import('./types').Lead> }>;
+    return fetch('/vision/scan-card', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Card scan failed');
+      return data as { ok: boolean; lead: Partial<import('./types').Lead> };
+    });
   },
 
   // AI pipeline narrative

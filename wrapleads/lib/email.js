@@ -63,7 +63,7 @@ async function sendWelcome({ to, name, trialEndsAt }) {
   const days = Math.ceil((new Date(trialEndsAt) - Date.now()) / 86400000);
   await send({
     to,
-    subject: 'Welcome to WrapLeads — your 14-day trial has started',
+    subject: `Welcome to WrapLeads — your ${days}-day trial has started`,
     html: base(`
       <h1 style="font-size:24px;font-weight:800;margin:0 0 8px;letter-spacing:-0.02em;">
         Welcome${name ? ', ' + name.split(' ')[0] : ''}! 👋
@@ -103,9 +103,9 @@ async function sendTrialExpiringSoon({ to, name, daysLeft }) {
         After that, you'll need an active subscription to keep accessing your leads, saved searches, and carrier data.
       </p>
       <p style="color:#9aa0aa;font-size:14px;line-height:1.6;margin:0 0 20px;">
-        Subscribe now to keep everything — <strong style="color:#f4f5f7;">$500/month</strong>, cancel any time.
+        Subscribe now to keep everything — plans start at <strong style="color:#f4f5f7;">$79/month</strong>, cancel any time.
       </p>
-      ${btn('Subscribe Now — $500/mo', `${APP_URL}/`)}
+      ${btn('Subscribe Now', `${APP_URL}/`)}
       <p style="color:#5e6470;font-size:12px;margin-top:20px;">
         Your leads, saved searches, and settings are preserved when you subscribe.
       </p>

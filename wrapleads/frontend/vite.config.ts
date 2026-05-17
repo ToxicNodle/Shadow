@@ -13,6 +13,8 @@ export default defineConfig({
       '/leads':         API,
       '/carriers':      API,
       '/searches':      API,
+      '/settings':      API,
+      '/analytics':     API,
       '/apollo':        API,
       '/stripe':        API,
       '/ai':            API,
