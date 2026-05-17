@@ -638,7 +638,7 @@ function requireTier(minTier) {
     try {
       const r = await pool.query(
         `SELECT sub_status, trial_ends_at, plan_tier FROM users WHERE id = $1`,
-        [req.user.id]
+        [String(req.user.id)]
       );
       if (!r.rows.length) return res.status(401).json({ error: 'User not found' });
       const { sub_status, trial_ends_at, plan_tier } = r.rows[0];
@@ -666,7 +666,8 @@ function requireTier(minTier) {
       const userRank     = TIER_RANK[plan_tier] || 1;
       const requiredRank = TIER_RANK[minTier]   || 1;
       if (userRank < requiredRank) {
-        return res.status(403).json({
+        // 402 (not 403) so the frontend authFetch opens the PaywallModal
+        return res.status(402).json({
           error:         'Plan upgrade required',
           required_tier: minTier,
           current_tier:  plan_tier || 'wrapleads',
@@ -861,7 +862,7 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     const r = await pool.query(
       `SELECT id, email, name, company_name, sub_status, trial_ends_at, sub_period_end, stripe_customer_id, plan_tier
        FROM users WHERE id = $1`,
-      [req.user.id]
+      [String(req.user.id)]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
     const user = r.rows[0];
@@ -875,8 +876,13 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
     } else if (user.sub_status === 'trialing') {
       user.plan_tier = 'wrapos'; // Stripe trialing also gets full access
     }
-    // First login detection — true when user has no leads yet
-    const leadCount = await pool.query('SELECT COUNT(*) FROM leads WHERE user_id = $1', [String(req.user.id)]);
+    // First login detection — true until the user creates their first real
+    // lead. Every new account is auto-seeded with curated leads (source=
+    // 'auto_seed'), so a plain COUNT would never be 0; exclude seeded rows.
+    const leadCount = await pool.query(
+      `SELECT COUNT(*) FROM leads WHERE user_id = $1 AND (source IS NULL OR source <> 'auto_seed')`,
+      [String(req.user.id)]
+    );
     user.is_first_login = parseInt(leadCount.rows[0].count, 10) === 0;
 
     res.json({ user: safeUser(user) });
@@ -924,7 +930,7 @@ app.post('/stripe/checkout', authMiddleware, async (req, res) => {
   if (!priceId) return res.status(400).json({ error: `No Stripe price configured for tier: ${tier}` });
 
   try {
-    const userRes = await pool.query('SELECT stripe_customer_id FROM users WHERE id = $1', [req.user.id]);
+    const userRes = await pool.query('SELECT stripe_customer_id FROM users WHERE id = $1', [String(req.user.id)]);
     const customerId = userRes.rows[0]?.stripe_customer_id;
 
     const session = await stripe.checkout.sessions.create({
@@ -948,7 +954,7 @@ app.post('/stripe/checkout', authMiddleware, async (req, res) => {
 app.post('/stripe/portal', authMiddleware, async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
   try {
-    const r = await pool.query('SELECT stripe_customer_id FROM users WHERE id = $1', [req.user.id]);
+    const r = await pool.query('SELECT stripe_customer_id FROM users WHERE id = $1', [String(req.user.id)]);
     const customerId = r.rows[0]?.stripe_customer_id;
     if (!customerId) return res.status(400).json({ error: 'No billing account found. Subscribe first.' });
 
@@ -1090,7 +1096,7 @@ async function resolveApolloKey(req) {
   if (req.body?.apiKey) return String(req.body.apiKey).trim();
   if (ENV_APOLLO_KEY) return ENV_APOLLO_KEY;
   if (req.user?.id) {
-    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [req.user.id]);
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(req.user.id)]);
     return r.rows[0]?.settings_json?.apolloApiKey || null;
   }
   return null;
@@ -1904,7 +1910,7 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
       `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
       [trackToken, uid, id, subject]
     );
-    const baseUrl = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+    const baseUrl = process.env.APP_BASE_URL || APP_URL;
     const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
 
     // Build HTML body with tracking pixel
@@ -2268,7 +2274,7 @@ async function seedSampleCarriers() {
 // ----------------------------------------------------------------------------
 app.get('/settings', authMiddleware, async (req, res) => {
   try {
-    const r = await pool.query('SELECT settings_json FROM users WHERE id = $1', [req.user.id]);
+    const r = await pool.query('SELECT settings_json FROM users WHERE id = $1', [String(req.user.id)]);
     res.json({ settings: r.rows[0]?.settings_json ?? {} });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2276,7 +2282,7 @@ app.get('/settings', authMiddleware, async (req, res) => {
 app.put('/settings', authMiddleware, async (req, res) => {
   try {
     await pool.query('UPDATE users SET settings_json = $1 WHERE id = $2',
-      [req.body || {}, req.user.id]);
+      [req.body || {}, String(req.user.id)]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2875,7 +2881,7 @@ async function processEmailQueue() {
           `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
           [dripTrackToken, item.user_id, item.lead_id, item.subject]
         ).catch(() => {});
-        const baseUrl = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+        const baseUrl = process.env.APP_BASE_URL || APP_URL;
         const dripPixelUrl = `${baseUrl}/track/email/${dripTrackToken}`;
         const dripHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">${item.body.replace(/\n/g,'<br>')}<br><br><hr style="border:none;border-top:1px solid #eee;margin:20px 0"><p style="font-size:11px;color:#999;margin:0">${fromName}</p></div><img src="${dripPixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
 
@@ -3145,7 +3151,7 @@ async function processReOrders() {
           job.user_id,
           job.company,
           job.wrap_category || 'fleet',
-          `AUTO RE-ORDER: ${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} installed ${job.install_date?.slice(0, 10)} — ${daysLeft} days until expiry. Material: ${job.material || 'unknown'}.`,
+          `AUTO RE-ORDER: ${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} installed ${job.install_date ? new Date(job.install_date).toISOString().slice(0, 10) : 'unknown'} — ${daysLeft} days until expiry. Material: ${job.material || 'unknown'}.`,
         ]);
         const leadId = newLead[0].id;
 
@@ -3285,7 +3291,7 @@ Keep the email under 200 words. Use a compelling subject line. Return JSON: {"su
 app.get('/apollo/test', authMiddleware, async (req, res) => {
   let key = req.query.key || req.headers['x-apollo-key'] || ENV_APOLLO_KEY || null;
   if (!key && req.user?.id) {
-    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [req.user.id]);
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(req.user.id)]);
     key = r.rows[0]?.settings_json?.apolloApiKey || null;
   }
   if (!key) return res.json({ ok: false });
@@ -3920,12 +3926,12 @@ const campaignQueues = new Map();
 
 // POST /calls/initiate — trigger an outbound Vapi call for a lead
 app.post('/calls/initiate', authMiddleware, async (req, res) => {
-  const userId = req.user.id;
+  const userId = String(req.user.id);
   const { lead_id, campaign_urgency } = req.body;
   if (!lead_id) return res.status(400).json({ error: 'lead_id required' });
 
   // Load settings
-  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const { rows: sRows } = await pool.query('SELECT settings_json AS data FROM users WHERE id=$1', [userId]);
   const settings = sRows[0]?.data || {};
 
   if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi API key not configured. Add it in Settings.' });
@@ -4080,13 +4086,13 @@ app.post('/calls/webhook', async (req, res) => {
       // Feature 2: Post-call automation chain — fires when prospect showed interest
       if (structured.interested || success === 'true') {
         try {
-          const { rows: uRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [user_id]);
+          const { rows: uRows } = await pool.query('SELECT settings_json AS data FROM users WHERE id=$1', [user_id]);
           const s = uRows[0]?.data || {};
           const { rows: lRows } = await pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [lead_id, String(user_id)]);
           const lead = lRows[0];
           if (!lead) {
             console.warn('[calls/webhook] lead not found for user', { lead_id, user_id });
-            return res.json({ ok: true });
+            return; // response was already ACKed at the top of the handler
           }
 
           // 1. Schedule 3-day followup
@@ -4170,8 +4176,8 @@ ${s.senderPhone || ''}`;
 
 // GET /calls/campaigns — list campaigns with matching lead counts
 app.get('/calls/campaigns', authMiddleware, async (req, res) => {
-  const userId = req.user.id;
-  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const userId = String(req.user.id);
+  const { rows: sRows } = await pool.query('SELECT settings_json AS data FROM users WHERE id=$1', [userId]);
   const settings = sRows[0]?.data || {};
   if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi not configured' });
 
@@ -4198,11 +4204,11 @@ app.get('/calls/campaigns', authMiddleware, async (req, res) => {
 
 // POST /calls/campaigns/:id/launch — queue all calls for a campaign
 app.post('/calls/campaigns/:id/launch', authMiddleware, async (req, res) => {
-  const userId = req.user.id;
+  const userId = String(req.user.id);
   const campaign = CAMPAIGNS.find((c) => c.id === req.params.id);
   if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [userId]);
+  const { rows: sRows } = await pool.query('SELECT settings_json AS data FROM users WHERE id=$1', [userId]);
   const settings = sRows[0]?.data || {};
   if (!settings.vapiApiKey || !settings.vapiPhoneNumberId)
     return res.status(400).json({ error: 'Vapi not configured' });
@@ -4256,7 +4262,7 @@ app.post('/calls/campaigns/:id/launch', authMiddleware, async (req, res) => {
 
 // GET /calls/status/:callId — poll Vapi for live call status
 app.get('/calls/status/:callId', authMiddleware, async (req, res) => {
-  const { rows: sRows } = await pool.query('SELECT data FROM user_settings WHERE user_id=$1', [req.user.id]);
+  const { rows: sRows } = await pool.query('SELECT settings_json AS data FROM users WHERE id=$1', [String(req.user.id)]);
   const settings = sRows[0]?.data || {};
   if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi not configured' });
 
@@ -4274,7 +4280,7 @@ app.get('/calls/status/:callId', authMiddleware, async (req, res) => {
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
 
 app.get('/jobs', authMiddleware, async (req, res) => {
-  const uid = req.user.id;
+  const uid = String(req.user.id);
   const { rows } = await pool.query(
     `SELECT *, EXTRACT(DAY FROM (install_date + (life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
      FROM installed_jobs WHERE user_id = $1 ORDER BY install_date DESC`,
@@ -4284,7 +4290,7 @@ app.get('/jobs', authMiddleware, async (req, res) => {
 });
 
 app.get('/jobs/aging', authMiddleware, async (req, res) => {
-  const uid = req.user.id;
+  const uid = String(req.user.id);
   const { rows } = await pool.query(
     `SELECT *, EXTRACT(DAY FROM (install_date + (life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
      FROM installed_jobs WHERE user_id = $1
@@ -4296,7 +4302,7 @@ app.get('/jobs/aging', authMiddleware, async (req, res) => {
 });
 
 app.post('/jobs', authMiddleware, async (req, res) => {
-  const uid = req.user.id;
+  const uid = String(req.user.id);
   const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
   const { rows } = await pool.query(
     `INSERT INTO installed_jobs (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes)
@@ -4307,7 +4313,7 @@ app.post('/jobs', authMiddleware, async (req, res) => {
 });
 
 app.put('/jobs/:id', authMiddleware, async (req, res) => {
-  const uid = req.user.id;
+  const uid = String(req.user.id);
   const { id } = req.params;
   const { company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
   const { rows } = await pool.query(
@@ -4320,7 +4326,7 @@ app.put('/jobs/:id', authMiddleware, async (req, res) => {
 });
 
 app.delete('/jobs/:id', authMiddleware, async (req, res) => {
-  await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
   res.json({ ok: true });
 });
 
@@ -4375,7 +4381,7 @@ app.post('/vision/quote-vehicle', authMiddleware, upload.single('image'), async 
     const dim = VEHICLE_DIMENSIONS[key];
 
     // Compute quote ranges
-    const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+    const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [String(req.user.id)]);
     const s = settingsRow.rows[0]?.settings_json || {};
     const priceLow  = parseFloat(s.pricePerSqftLow  || '8');
     const priceHigh = parseFloat(s.pricePerSqftHigh || '14');
@@ -4434,7 +4440,7 @@ app.post('/ai/generate-mockup', authMiddleware, requireWrapOS, async (req, res) 
   const { brief } = req.body;
   if (!brief?.dall_e_prompt) return res.status(400).json({ error: 'No design brief provided' });
 
-  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [String(req.user.id)]);
   const s = settingsRow.rows[0]?.settings_json || {};
   const openaiKey = s.openaiApiKey;
   if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key not configured in Settings' });
@@ -4466,7 +4472,7 @@ app.post('/ai/generate-mockup', authMiddleware, requireWrapOS, async (req, res) 
 app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
 
-  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [String(req.user.id)]);
   const s = settingsRow.rows[0]?.settings_json || {};
   const openaiKey = s.openaiApiKey;
   if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key required for AR preview — add it in Settings' });
@@ -4542,16 +4548,17 @@ app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
   try {
     const [leadsR, bidsR, wonR, agingR, openR, propR] = await Promise.all([
       pool.query(
-        `SELECT status, category, company, fleet_size, estimated_value,
+        `SELECT status, category, company, fleet_size,
             last_contacted, followup_due_at
          FROM leads WHERE user_id=$1 AND status NOT IN ('lost','won')
          ORDER BY CASE status WHEN 'replied' THEN 1 WHEN 'proposal' THEN 2 WHEN 'meeting' THEN 3 WHEN 'contacted' THEN 4 ELSE 5 END
          LIMIT 30`, [uid]),
-      pool.query(`SELECT project_name, estimated_value, bid_due, status, l.company
+      pool.query(`SELECT b.project_name, b.estimated_value, b.bid_due, b.status, l.company
          FROM bids b LEFT JOIN leads l ON l.id=b.lead_id
-         WHERE b.user_id=$1 AND b.status='tracking' ORDER BY bid_due ASC LIMIT 10`, [uid]),
-      pool.query(`SELECT COUNT(*)::INT AS n, COALESCE(SUM(estimated_value),0)::INT AS v
-         FROM leads WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month',NOW())`, [uid]),
+         WHERE b.user_id=$1 AND b.status='tracking' ORDER BY b.bid_due ASC LIMIT 10`, [uid]),
+      pool.query(`SELECT category, COUNT(*)::INT AS n
+         FROM leads WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month',NOW())
+         GROUP BY category`, [uid]),
       pool.query(`SELECT COUNT(*)::INT AS n FROM installed_jobs WHERE user_id=$1
          AND (install_date + (life_years||' years')::interval) <= NOW() + INTERVAL '90 days'`, [uid]),
       pool.query(`SELECT COUNT(*)::INT AS n, COALESCE(SUM(open_count),0)::INT AS opens
@@ -4559,8 +4566,12 @@ app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
       pool.query(`SELECT COUNT(*)::INT AS n FROM proposals WHERE user_id=$1 AND view_count > 0 AND last_viewed_at > NOW() - INTERVAL '7 days'`, [uid]),
     ]);
 
+    // leads has no per-row dollar value; estimate from category (mirrors /analytics REV_EST)
+    const REV_EST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500, other: 2500 };
     const pipeline = leadsR.rows;
-    const pipelineValue = pipeline.reduce((s, l) => s + (l.estimated_value || 0), 0);
+    const pipelineValue = pipeline.reduce((s, l) => s + (REV_EST[l.category] ?? 2500), 0);
+    const wonCount = wonR.rows.reduce((s, r) => s + r.n, 0);
+    const wonValue = wonR.rows.reduce((s, r) => s + r.n * (REV_EST[r.category] ?? 2500), 0);
     const hot = pipeline.filter((l) => ['replied','proposal','meeting'].includes(l.status));
     const bids = bidsR.rows;
     const bidsValue = bids.reduce((s, b) => s + (b.estimated_value || 0), 0);
@@ -4575,7 +4586,7 @@ Companies: ${hot.slice(0,5).map(l => `${l.company} (${l.status})`).join(', ')}
 BIDS TRACKING: ${bids.length} active bids, ~$${bidsValue.toLocaleString()} total
 Upcoming: ${bids.slice(0,3).map(b => `${b.project_name}${b.bid_due ? ' due ' + b.bid_due.toString().split('T')[0] : ''}`).join(', ')}
 
-THIS MONTH: ${wonR.rows[0]?.n ?? 0} wins, $${(wonR.rows[0]?.v ?? 0).toLocaleString()} revenue
+THIS MONTH: ${wonCount} wins, $${wonValue.toLocaleString()} revenue
 EMAIL SIGNALS (7d): ${openR.rows[0]?.opens ?? 0} opens from ${openR.rows[0]?.n ?? 0} emails, ${propR.rows[0]?.n ?? 0} proposals viewed
 AGING WRAPS: ${agingR.rows[0]?.n ?? 0} jobs approaching refresh window (re-order opportunities)
 
@@ -4678,7 +4689,7 @@ function startAnniversaryWorker() {
 // ── Fleet Management Integrations ─────────────────────────────────────────────
 
 app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
-  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [String(req.user.id)]);
   const s = settingsRow.rows[0]?.settings_json || {};
   if (!s.samsaraApiKey) return res.status(400).json({ error: 'Samsara API key not configured' });
   try {
@@ -4697,7 +4708,7 @@ app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
 });
 
 app.post('/integrations/samsara/import', authMiddleware, async (req, res) => {
-  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [String(req.user.id)]);
   const s = settingsRow.rows[0]?.settings_json || {};
   if (!s.samsaraApiKey) return res.status(400).json({ error: 'Samsara API key not configured' });
   try {
@@ -4712,11 +4723,11 @@ app.post('/integrations/samsara/import', authMiddleware, async (req, res) => {
     let imported = 0, skipped = 0;
     for (const v of toImport) {
       const clientId = `samsara-${v.id}`;
-      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [req.user.id, clientId]);
+      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [String(req.user.id), clientId]);
       if (existing.rows.length) { skipped++; continue; }
       await pool.query(
         `INSERT INTO leads (user_id, client_id, company, category, notes, status) VALUES ($1,$2,$3,'fleet',$4,'cold')`,
-        [req.user.id, clientId, v.name || `Samsara Vehicle ${v.id}`, `Imported from Samsara. ${v.make || ''} ${v.model || ''} ${v.year || ''}`.trim()]
+        [String(req.user.id), clientId, v.name || `Samsara Vehicle ${v.id}`, `Imported from Samsara. ${v.make || ''} ${v.model || ''} ${v.year || ''}`.trim()]
       );
       imported++;
     }
@@ -4727,7 +4738,7 @@ app.post('/integrations/samsara/import', authMiddleware, async (req, res) => {
 });
 
 app.get('/integrations/motive/vehicles', authMiddleware, async (req, res) => {
-  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [String(req.user.id)]);
   const s = settingsRow.rows[0]?.settings_json || {};
   if (!s.motiveApiKey) return res.status(400).json({ error: 'Motive API key not configured' });
   try {
@@ -4746,7 +4757,7 @@ app.get('/integrations/motive/vehicles', authMiddleware, async (req, res) => {
 });
 
 app.post('/integrations/motive/import', authMiddleware, async (req, res) => {
-  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [String(req.user.id)]);
   const s = settingsRow.rows[0]?.settings_json || {};
   if (!s.motiveApiKey) return res.status(400).json({ error: 'Motive API key not configured' });
   try {
@@ -4762,11 +4773,11 @@ app.post('/integrations/motive/import', authMiddleware, async (req, res) => {
     for (const v of toImport) {
       const vid = String(v.vehicle?.id || Math.random());
       const clientId = `motive-${vid}`;
-      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [req.user.id, clientId]);
+      const existing = await pool.query(`SELECT id FROM leads WHERE user_id=$1 AND client_id=$2`, [String(req.user.id), clientId]);
       if (existing.rows.length) { skipped++; continue; }
       await pool.query(
         `INSERT INTO leads (user_id, client_id, company, category, notes, status) VALUES ($1,$2,$3,'fleet',$4,'cold')`,
-        [req.user.id, clientId, v.vehicle?.number || `Motive Vehicle ${vid}`, `Imported from Motive. ${v.vehicle?.make || ''} ${v.vehicle?.model || ''}`.trim()]
+        [String(req.user.id), clientId, v.vehicle?.number || `Motive Vehicle ${vid}`, `Imported from Motive. ${v.vehicle?.make || ''} ${v.vehicle?.model || ''}`.trim()]
       );
       imported++;
     }
@@ -4779,7 +4790,7 @@ app.post('/integrations/motive/import', authMiddleware, async (req, res) => {
 // ── Dynamic Wrap Content Management ──────────────────────────────────────────
 
 app.get('/content', authMiddleware, async (req, res) => {
-  const { rows } = await pool.query(`SELECT * FROM wrap_content WHERE user_id=$1 ORDER BY created_at DESC`, [req.user.id]);
+  const { rows } = await pool.query(`SELECT * FROM wrap_content WHERE user_id=$1 ORDER BY created_at DESC`, [String(req.user.id)]);
   res.json({ content: rows });
 });
 
@@ -4792,7 +4803,7 @@ app.post('/content', authMiddleware, upload.single('image'), async (req, res) =>
   }
   const { rows } = await pool.query(
     `INSERT INTO wrap_content (user_id, name, image_url, tags) VALUES ($1,$2,$3,$4) RETURNING *`,
-    [req.user.id, name || 'Untitled', imageUrl, parsedTags]
+    [String(req.user.id), name || 'Untitled', imageUrl, parsedTags]
   );
   res.json({ ok: true, content: rows[0] });
 });
@@ -4801,14 +4812,14 @@ app.put('/content/:id', authMiddleware, async (req, res) => {
   const { name, description, tags } = req.body;
   const { rows } = await pool.query(
     `UPDATE wrap_content SET name=COALESCE($1,name), description=COALESCE($2,description), tags=COALESCE($3,tags) WHERE id=$4 AND user_id=$5 RETURNING *`,
-    [name, description, tags, req.params.id, req.user.id]
+    [name, description, tags, req.params.id, String(req.user.id)]
   );
   if (!rows.length) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true, content: rows[0] });
 });
 
 app.delete('/content/:id', authMiddleware, async (req, res) => {
-  await pool.query(`DELETE FROM wrap_content WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  await pool.query(`DELETE FROM wrap_content WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
   res.json({ ok: true });
 });
 
@@ -4817,7 +4828,7 @@ app.get('/content/schedules', authMiddleware, async (req, res) => {
     `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
      LEFT JOIN wrap_content wc ON wc.id = cs.content_id
      WHERE cs.user_id=$1 ORDER BY cs.start_date ASC`,
-    [req.user.id]
+    [String(req.user.id)]
   );
   res.json({ schedules: rows });
 });
@@ -4827,7 +4838,7 @@ app.post('/content/schedules', authMiddleware, async (req, res) => {
   const { rows } = await pool.query(
     `INSERT INTO content_schedules (user_id,content_id,vehicle_group,start_date,end_date,start_time,end_time,geo_trigger,priority,notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [req.user.id, content_id, vehicle_group || 'all', start_date, end_date || null, start_time || null, end_time || null, geo_trigger || null, priority || 0, notes || null]
+    [String(req.user.id), content_id, vehicle_group || 'all', start_date, end_date || null, start_time || null, end_time || null, geo_trigger || null, priority || 0, notes || null]
   );
   res.json({ ok: true, schedule: rows[0] });
 });
@@ -4837,14 +4848,14 @@ app.put('/content/schedules/:id', authMiddleware, async (req, res) => {
   const { rows } = await pool.query(
     `UPDATE content_schedules SET vehicle_group=$1,start_date=$2,end_date=$3,start_time=$4,end_time=$5,geo_trigger=$6,priority=$7,notes=$8
      WHERE id=$9 AND user_id=$10 RETURNING *`,
-    [vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes, req.params.id, req.user.id]
+    [vehicle_group, start_date, end_date, start_time, end_time, geo_trigger, priority, notes, req.params.id, String(req.user.id)]
   );
   if (!rows.length) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true, schedule: rows[0] });
 });
 
 app.delete('/content/schedules/:id', authMiddleware, async (req, res) => {
-  await pool.query(`DELETE FROM content_schedules WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+  await pool.query(`DELETE FROM content_schedules WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
   res.json({ ok: true });
 });
 
@@ -4860,7 +4871,7 @@ app.get('/content/active', authMiddleware, async (req, res) => {
        AND (cs.start_time IS NULL OR cs.start_time <= $3)
        AND (cs.end_time IS NULL OR cs.end_time >= $3)
      ORDER BY cs.priority DESC`,
-    [req.user.id, today, now]
+    [String(req.user.id), today, now]
   );
   res.json({ active: rows });
 });
@@ -4870,7 +4881,7 @@ app.get('/content/export', authMiddleware, async (req, res) => {
     `SELECT cs.*, row_to_json(wc) as content FROM content_schedules cs
      LEFT JOIN wrap_content wc ON wc.id = cs.content_id
      WHERE cs.user_id=$1 ORDER BY cs.start_date ASC, cs.priority DESC`,
-    [req.user.id]
+    [String(req.user.id)]
   );
   res.json({ exported_at: new Date().toISOString(), schedules });
 });
@@ -6244,7 +6255,7 @@ app.get('/admin/devices', authMiddleware, async (req, res) => {
        FROM eink_devices d
        LEFT JOIN wrap_content wc ON wc.id = d.current_content_id
        WHERE d.user_id=$1 ORDER BY d.created_at DESC`,
-      [req.user.id]
+      [String(req.user.id)]
     );
     res.json({ devices: rows });
   } catch (e) {
@@ -6262,7 +6273,7 @@ app.get('/admin/devices/status', authMiddleware, async (req, res) => {
          COUNT(*) FILTER (WHERE status='offline' OR last_seen_at <= NOW() - INTERVAL '5 minutes' OR last_seen_at IS NULL)::int as offline,
          COUNT(*) FILTER (WHERE status='updating')::int as updating
        FROM eink_devices WHERE user_id=$1`,
-      [req.user.id]
+      [String(req.user.id)]
     );
     res.json(rows[0]);
   } catch (e) {
@@ -6279,7 +6290,7 @@ app.post('/admin/devices', authMiddleware, async (req, res) => {
     const { rows } = await pool.query(
       `INSERT INTO eink_devices (user_id, device_token, serial_number, name, vehicle_group, lead_id, job_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [req.user.id, device_token, serial_number || null, name, vehicle_group, lead_id || null, job_id || null]
+      [String(req.user.id), device_token, serial_number || null, name, vehicle_group, lead_id || null, job_id || null]
     );
     res.json({ ok: true, device: { ...rows[0] } });
   } catch (e) {
@@ -6298,7 +6309,7 @@ app.put('/admin/devices/:id', authMiddleware, async (req, res) => {
          lead_id=$3,
          job_id=$4
        WHERE id=$5 AND user_id=$6 RETURNING *`,
-      [name, vehicle_group, lead_id ?? null, job_id ?? null, req.params.id, req.user.id]
+      [name, vehicle_group, lead_id ?? null, job_id ?? null, req.params.id, String(req.user.id)]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Device not found' });
     res.json({ ok: true, device: rows[0] });
@@ -6310,7 +6321,7 @@ app.put('/admin/devices/:id', authMiddleware, async (req, res) => {
 // Admin: delete device
 app.delete('/admin/devices/:id', authMiddleware, async (req, res) => {
   try {
-    await pool.query('DELETE FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]);
+    await pool.query('DELETE FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -6323,7 +6334,7 @@ app.post('/admin/devices/:id/push', authMiddleware, async (req, res) => {
   if (!content_id) return res.status(400).json({ error: 'content_id required' });
   try {
     const { rows: deviceRows } = await pool.query(
-      'SELECT * FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, req.user.id]
+      'SELECT * FROM eink_devices WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]
     );
     if (!deviceRows[0]) return res.status(404).json({ error: 'Device not found' });
     const { rows: logRows } = await pool.query(
@@ -6346,7 +6357,7 @@ app.get('/admin/devices/:id/log', authMiddleware, async (req, res) => {
        WHERE pl.device_id=$1
          AND EXISTS (SELECT 1 FROM eink_devices d WHERE d.id=pl.device_id AND d.user_id=$2)
        ORDER BY pl.pushed_at DESC LIMIT 20`,
-      [req.params.id, req.user.id]
+      [req.params.id, String(req.user.id)]
     );
     res.json({ log: rows });
   } catch (e) {
@@ -6364,7 +6375,7 @@ app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) =
 
   const uid = String(req.user.id);
   const resendKey = process.env.RESEND_API_KEY;
-  const baseUrl = process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+  const baseUrl = process.env.APP_BASE_URL || APP_URL;
 
   const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
   const settings = userR.rows[0]?.settings_json || {};

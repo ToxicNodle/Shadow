@@ -144,7 +144,7 @@ export default function LeadDetail() {
         ))}
       </div>
 
-      <div className="lead-detail-content">
+      <div className="lead-detail-content" key={lead.id}>
         {activeTab === 'info'     && <InfoTab lead={lead} />}
         {activeTab === 'email'    && <EmailTab lead={lead} />}
         {activeTab === 'activity' && <ActivityTab lead={lead} />}
