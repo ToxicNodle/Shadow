@@ -2126,6 +2126,22 @@ app.get('/leads/analytics', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Lead duplicate detection — fuzzy match via pg_trgm similarity
+app.get('/leads/check-duplicate', authMiddleware, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json({ matches: [] });
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company, status, city, state
+       FROM leads WHERE user_id=$1 AND similarity(company, $2) > 0.4
+       ORDER BY similarity(company, $2) DESC LIMIT 4`,
+      [uid, q]
+    );
+    res.json({ matches: rows });
+  } catch { res.json({ matches: [] }); }
+});
+
 // ============================================================================
 // Full Analytics Dashboard — pipeline intelligence
 // ============================================================================
@@ -5472,6 +5488,11 @@ app.post('/leads/:id/quotes', authMiddleware, async (req, res) => {
       [uid, leadId, qNum, title || 'Vehicle Wrap Quote', status || 'draft',
        JSON.stringify(items), subtotal, taxR, taxAmt, disc, total, notes || null, parseInt(valid_days) || 30]
     );
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'quote_created',
+      subject: `Quote created: ${rows[0].quote_number} — $${parseFloat(rows[0].total).toFixed(2)}`,
+      metadata: { quote_id: rows[0].id, total: rows[0].total, quote_number: rows[0].quote_number },
+    });
     res.json({ ok: true, quote: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5480,8 +5501,9 @@ app.put('/quotes/:id', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
     const quoteId = parseInt(req.params.id);
-    const existing = await pool.query('SELECT id FROM shop_quotes WHERE id=$1 AND user_id=$2', [quoteId, uid]);
+    const existing = await pool.query('SELECT id, lead_id, status AS old_status FROM shop_quotes WHERE id=$1 AND user_id=$2', [quoteId, uid]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Quote not found' });
+    const { lead_id: quoteLead, old_status } = existing.rows[0];
     const { title, line_items, tax_rate, discount, notes, valid_days, status } = req.body;
     const items = Array.isArray(line_items) ? line_items : [];
     const subtotal = items.reduce((s, i) => s + (parseFloat(i.total) || 0), 0);
@@ -5500,6 +5522,17 @@ app.put('/quotes/:id', authMiddleware, async (req, res) => {
       [title, JSON.stringify(items), subtotal, taxR, taxAmt, disc, total,
        notes || null, parseInt(valid_days) || 30, status || 'draft', quoteId, uid]
     );
+    const newStatus = status || 'draft';
+    if (newStatus !== old_status && (newStatus === 'sent' || newStatus === 'accepted')) {
+      await logActivity(pool, {
+        leadId: quoteLead, userId: uid,
+        type: newStatus === 'accepted' ? 'quote_accepted' : 'quote_sent',
+        subject: newStatus === 'accepted'
+          ? `Quote accepted! ${rows[0].quote_number} — $${parseFloat(rows[0].total).toFixed(2)}`
+          : `Quote sent to client: ${rows[0].quote_number} — $${parseFloat(rows[0].total).toFixed(2)}`,
+        metadata: { quote_id: rows[0].id, total: rows[0].total, quote_number: rows[0].quote_number },
+      });
+    }
     res.json({ ok: true, quote: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

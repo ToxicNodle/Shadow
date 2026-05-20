@@ -489,6 +489,10 @@ export const api = {
   generatePipelineNarrative: () =>
     authFetch<{ ok: boolean; narrative: string }>('/ai/pipeline-narrative', { method: 'POST', body: '{}' }),
 
+  // Duplicate detection
+  checkDuplicate: (q: string) =>
+    authFetch<{ matches: Array<{ id: number; company: string; status: string; city: string; state: string }> }>(`/leads/check-duplicate?q=${encodeURIComponent(q)}`),
+
   // Quote / Invoice Builder
   getLeadQuotes: (leadId: number) =>
     authFetch<{ quotes: import('./types').ShopQuote[] }>(`/leads/${leadId}/quotes`),

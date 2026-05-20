@@ -53,6 +53,13 @@ export default function LeadRow({ lead, selected, checked }: Props) {
     ? new Date(lead.followupDueAt) < new Date()
     : false;
 
+  const isStale = !['won', 'lost', 'new'].includes(lead.status) && (() => {
+    const now = Date.now();
+    if (lead.lastContacted) return now - new Date(lead.lastContacted).getTime() > 30 * 86400000;
+    if (lead.createdAt) return now - new Date(lead.createdAt).getTime() > 60 * 86400000;
+    return false;
+  })();
+
   return (
     <div
       className={`lead-row ${selected ? 'selected' : ''}${isOverdue ? ' lead-row-overdue' : ''}`}
@@ -101,6 +108,9 @@ export default function LeadRow({ lead, selected, checked }: Props) {
         <span className={`status-tag ${lead.status}`}>{STATUSES[lead.status]}</span>
         {isOverdue && (
           <span className="lead-overdue-dot" title="Follow-up overdue" />
+        )}
+        {isStale && !isOverdue && (
+          <span className="lead-stale-dot" title="No contact in 30+ days" />
         )}
       </div>
 
