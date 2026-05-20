@@ -47,7 +47,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="field-group">
             <label className="field-label">Name</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Summer Promo 2025" />
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Fleet Campaign Q1" />
           </div>
           <div className="field-group">
             <label className="field-label">Tags</label>
