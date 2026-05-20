@@ -4114,3 +4114,18 @@ textarea:focus {
   align-items: center !important;
   color: var(--accent) !important;
 }
+
+/* ── v6: Activity timeline + analytics icon sizing ──────────────────────────── */
+.activity-icon svg {
+  width: 13px !important;
+  height: 13px !important;
+}
+.an-activity-icon svg {
+  width: 18px !important;
+  height: 18px !important;
+}
+.an-activity-icon {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
