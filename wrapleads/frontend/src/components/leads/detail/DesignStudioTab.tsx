@@ -3,6 +3,7 @@ import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 import { VEHICLE_TYPE_LABELS } from '../../../api/types';
 import type { Lead, DesignBrief } from '../../../api/types';
+import ARPreviewModal from '../../modals/ARPreviewModal';
 
 const STYLE_PRESETS = [
   { value: 'bold and modern', label: 'Bold & Modern' },
@@ -41,6 +42,7 @@ export default function DesignStudioTab({ lead }: Props) {
   const [sendDone, setSendDone] = useState(false);
 
   const hasOpenAI = !!settings.openaiApiKey;
+  const [showArPreview, setShowArPreview] = useState(false);
 
   async function generate() {
     setStep('brief');
@@ -105,12 +107,23 @@ export default function DesignStudioTab({ lead }: Props) {
 
   return (
     <div className="ds-root">
-      <p className="ds-intro">
-        Describe the wrap → Claude writes the design brief → DALL-E renders a photorealistic concept.
-        {!hasOpenAI && (
-          <span className="ds-no-key"> Add your OpenAI key in Settings to generate images.</span>
-        )}
-      </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+        <p className="ds-intro" style={{ margin: 0 }}>
+          Describe the wrap → Claude writes the design brief → DALL-E renders a photorealistic concept.
+          {!hasOpenAI && <span className="ds-no-key"> Add your OpenAI key in Settings to generate images.</span>}
+        </p>
+        <button
+          className="btn"
+          style={{ fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}
+          onClick={() => setShowArPreview(true)}
+          title="Upload a real vehicle photo and apply a wrap to it"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5 }}>
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+          AR Preview →
+        </button>
+      </div>
 
       <div className="ds-form">
         <div className="field-group">
@@ -298,6 +311,13 @@ export default function DesignStudioTab({ lead }: Props) {
         <div className="success-box" style={{ marginTop: 12 }}>
           Design brief ready. Add your OpenAI key in Settings to generate the visual concept.
         </div>
+      )}
+
+      {showArPreview && (
+        <ARPreviewModal
+          onClose={() => setShowArPreview(false)}
+          lead={{ id: lead.id, serverId: lead.serverId, company: lead.company, email: lead.email, contactName: lead.contactName, category: lead.category }}
+        />
       )}
     </div>
   );

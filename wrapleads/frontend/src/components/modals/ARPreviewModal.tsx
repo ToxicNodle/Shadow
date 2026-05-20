@@ -1,21 +1,30 @@
 import { useRef, useState, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+import type { Lead } from '../../api/types';
 
 const WRAP_PRESETS = [
-  { value: 'full color-change wrap, matte black finish, clean modern look', label: 'Matte Black' },
-  { value: 'full color-change wrap, gloss white with blue accent stripe, corporate fleet style', label: 'Fleet White/Blue' },
-  { value: 'full color-change wrap, bold orange and black, aggressive commercial brand', label: 'Bold Orange' },
-  { value: 'full color-change wrap, matte army green, tactical offroad look', label: 'Tactical Green' },
-  { value: 'full color-change wrap, chrome silver, luxury premium finish', label: 'Chrome Silver' },
-  { value: 'partial wrap, company logo and contact info on doors and rear, white base vehicle', label: 'Logo/Contact' },
-  { value: 'full color-change wrap, deep navy blue, matte finish, minimal logo placement', label: 'Navy Matte' },
-  { value: 'full color-change wrap, gloss candy apple red, race-inspired livery', label: 'Race Red' },
+  { value: 'full color-change wrap, matte black finish, clean modern look', label: 'Matte Black', cats: ['dinoc','colorchange','design'] },
+  { value: 'full color-change wrap, gloss white with blue accent stripe, corporate fleet style', label: 'Fleet White/Blue', cats: ['fleet','construction'] },
+  { value: 'full color-change wrap, bold orange and black, aggressive commercial brand', label: 'Bold Orange', cats: ['construction','gc_referral','fleet'] },
+  { value: 'full color-change wrap, matte army green, tactical offroad look', label: 'Tactical Green', cats: [] },
+  { value: 'full color-change wrap, chrome silver, luxury premium finish', label: 'Chrome Silver', cats: ['colorchange','dinoc','racing'] },
+  { value: 'partial wrap, company logo and contact info on doors and rear, white base vehicle', label: 'Logo/Contact', cats: ['fleet','gc_referral','construction'] },
+  { value: 'full color-change wrap, deep navy blue, matte finish, minimal logo placement', label: 'Navy Matte', cats: ['dinoc','design'] },
+  { value: 'full color-change wrap, gloss candy apple red, race-inspired livery', label: 'Race Red', cats: ['racing','colorchange'] },
 ];
+
+function sortedPresets(category?: string) {
+  if (!category) return WRAP_PRESETS;
+  const priority = WRAP_PRESETS.filter((p) => p.cats.includes(category));
+  const rest = WRAP_PRESETS.filter((p) => !p.cats.includes(category));
+  return [...priority, ...rest];
+}
 
 interface Props {
   onClose: () => void;
   presetDescription?: string;
+  lead?: Pick<Lead, 'id' | 'serverId' | 'company' | 'email' | 'contactName' | 'category'>;
 }
 
 // ── Before / After comparison slider ─────────────────────────────────────────
@@ -33,7 +42,6 @@ function ComparisonSlider({ original, result }: { original: string; result: stri
   const onMouseDown = useCallback((e: React.MouseEvent) => { dragging.current = true; updatePos(e.clientX); }, []);
   const onMouseMove = useCallback((e: React.MouseEvent) => { if (dragging.current) updatePos(e.clientX); }, []);
   const onMouseUp = useCallback(() => { dragging.current = false; }, []);
-
   const onTouchStart = useCallback((e: React.TouchEvent) => { dragging.current = true; updatePos(e.touches[0].clientX); }, []);
   const onTouchMove = useCallback((e: React.TouchEvent) => { if (dragging.current) updatePos(e.touches[0].clientX); }, []);
   const onTouchEnd = useCallback(() => { dragging.current = false; }, []);
@@ -50,15 +58,10 @@ function ComparisonSlider({ original, result }: { original: string; result: stri
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
     >
-      {/* AI result — full width behind */}
       <img src={result} className="ar-slider-img" alt="AI wrap" draggable={false} />
-
-      {/* Original — clipped to left of slider */}
       <div className="ar-slider-original" style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}>
         <img src={original} className="ar-slider-img" alt="original" draggable={false} />
       </div>
-
-      {/* Divider */}
       <div className="ar-slider-divider" style={{ left: `${pos}%` }}>
         <div className="ar-slider-handle">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -66,22 +69,22 @@ function ComparisonSlider({ original, result }: { original: string; result: stri
           </svg>
         </div>
       </div>
-
-      {/* Labels */}
       <div className="ar-slider-label ar-slider-label-left">ORIGINAL</div>
       <div className="ar-slider-label ar-slider-label-right">AI WRAP</div>
     </div>
   );
 }
 
-export default function ARPreviewModal({ onClose, presetDescription }: Props) {
+export default function ARPreviewModal({ onClose, presetDescription, lead }: Props) {
   const showToast = useAppStore((s) => s.showToast);
   const settings = useAppStore((s) => s.settings);
   const hasOpenAI = !!settings.openaiApiKey;
 
+  const presets = sortedPresets(lead?.category);
+
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [description, setDescription] = useState(presetDescription ?? WRAP_PRESETS[0].value);
+  const [description, setDescription] = useState(presetDescription ?? presets[0].value);
   const [selectedPreset, setSelectedPreset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ image_url: string; original_url: string } | null>(null);
@@ -89,6 +92,14 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
   const [copied, setCopied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dropDragging, setDropDragging] = useState(false);
+
+  // Send to client state
+  const [showSend, setShowSend] = useState(false);
+  const [sendEmail, setSendEmail] = useState(lead?.email || '');
+  const [sendName, setSendName] = useState(lead?.contactName || '');
+  const [sendNote, setSendNote] = useState('');
+  const [sendLoading, setSendLoading] = useState(false);
+  const [sendDone, setSendDone] = useState(false);
 
   function handleFile(f: File) {
     if (!f.type.startsWith('image/')) { showToast('Please upload an image file', 'error'); return; }
@@ -102,7 +113,7 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
 
   function pickPreset(idx: number) {
     setSelectedPreset(idx);
-    setDescription(WRAP_PRESETS[idx].value);
+    setDescription(presets[idx].value);
   }
 
   async function generate() {
@@ -113,10 +124,32 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
     try {
       const res = await api.arPreview(file, description);
       setResult(res);
+      setShowSend(false);
+      setSendDone(false);
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function sendConcept() {
+    if (!result || !sendEmail) return;
+    setSendLoading(true);
+    try {
+      await api.wrapConceptShare({
+        leadId: lead?.serverId ?? lead?.id,
+        imageUrl: result.image_url,
+        recipientEmail: sendEmail,
+        recipientName: sendName || undefined,
+        note: sendNote || undefined,
+      });
+      setSendDone(true);
+      showToast(`Concept sent to ${sendEmail}`);
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'Send failed', 'error');
+    } finally {
+      setSendLoading(false);
     }
   }
 
@@ -137,6 +170,8 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
     setPreview(null);
     setResult(null);
     setError(null);
+    setShowSend(false);
+    setSendDone(false);
   }
 
   return (
@@ -150,14 +185,13 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ width: 22, height: 22, display: 'flex', color: 'var(--accent)' }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
               </svg>
             </span>
             <div>
               <h2 className="modal-title" style={{ margin: 0 }}>AR Wrap Preview</h2>
               <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
-                {result ? 'Drag the slider to compare before & after' : 'Upload any vehicle photo → see your wrap applied instantly'}
+                {lead ? `Wrap concept for ${lead.company}` : result ? 'Drag the slider to compare before & after' : 'Upload any vehicle photo → see your wrap applied instantly'}
               </p>
             </div>
           </div>
@@ -175,16 +209,26 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
           {result && preview ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <ComparisonSlider original={preview} result={result.image_url} />
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button className="btn btn-primary" style={{ fontSize: 11, flex: 1 }} onClick={() => download(result.image_url, 'wrap-concept.png')}>
+
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button className="btn btn-primary" style={{ fontSize: 11, flex: 1, minWidth: 90 }} onClick={() => download(result.image_url, 'wrap-concept.png')}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5 }}>
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
                   Download
                 </button>
-                <button className="btn" style={{ fontSize: 11, flex: 1 }} onClick={copyImageUrl}>
+                <button className="btn" style={{ fontSize: 11, flex: 1, minWidth: 90 }} onClick={copyImageUrl}>
                   {copied ? '✓ Copied!' : '🔗 Copy Link'}
                 </button>
+                {lead && (
+                  <button
+                    className="btn"
+                    style={{ fontSize: 11, flex: 1, minWidth: 110, color: showSend ? 'var(--text-faint)' : undefined }}
+                    onClick={() => { setShowSend((v) => !v); setSendDone(false); }}
+                  >
+                    {showSend ? '✕ Cancel' : `✉ Send to ${lead.company}`}
+                  </button>
+                )}
                 <button className="btn" style={{ fontSize: 11 }} onClick={() => setResult(null)}>
                   Try Another Style
                 </button>
@@ -192,6 +236,45 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
                   New Photo
                 </button>
               </div>
+
+              {/* Send to Client panel */}
+              {showSend && lead && (
+                <div className="ds-send-panel">
+                  {sendDone ? (
+                    <div className="success-box" style={{ fontSize: 13 }}>
+                      Concept sent to {sendEmail} and logged to {lead.company}&apos;s activity.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                        Email wrap concept to client
+                      </div>
+                      <div className="field-row" style={{ marginBottom: 8 }}>
+                        <div className="field-group">
+                          <label className="field-label" style={{ fontSize: 11 }}>Client email</label>
+                          <input className="input" style={{ fontSize: 12 }} type="email" placeholder="client@company.com"
+                            value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} required />
+                        </div>
+                        <div className="field-group">
+                          <label className="field-label" style={{ fontSize: 11 }}>Contact name</label>
+                          <input className="input" style={{ fontSize: 12 }} placeholder="Alex Smith"
+                            value={sendName} onChange={(e) => setSendName(e.target.value)} />
+                        </div>
+                      </div>
+                      <div className="field-group" style={{ marginBottom: 8 }}>
+                        <label className="field-label" style={{ fontSize: 11 }}>Personal note (optional)</label>
+                        <textarea className="input" rows={2} style={{ fontSize: 12, resize: 'vertical' }}
+                          placeholder="Here's a quick concept based on what we discussed…"
+                          value={sendNote} onChange={(e) => setSendNote(e.target.value)} />
+                      </div>
+                      <button className="btn btn-primary" style={{ fontSize: 12 }}
+                        disabled={!sendEmail || sendLoading} onClick={sendConcept}>
+                        {sendLoading ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Sending…</> : 'Send Concept →'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             /* Upload zone */
@@ -217,7 +300,8 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>or click to browse — JPEG/PNG, max 10 MB</span>
                   </div>
                 )}
-                <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+                <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
               </div>
               {preview && (
                 <button className="btn" style={{ fontSize: 11, alignSelf: 'flex-start' }} onClick={resetPhoto}>
@@ -227,11 +311,18 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
             </div>
           )}
 
-          {/* Wrap style presets */}
+          {/* Wrap style presets — category-sorted when lead is provided */}
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.05em' }}>Wrap Style Preset</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Wrap Style</div>
+              {lead?.category && (
+                <div style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 600, background: 'rgba(99,102,241,0.12)', borderRadius: 4, padding: '1px 6px' }}>
+                  Sorted for {lead.category}
+                </div>
+              )}
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-              {WRAP_PRESETS.map((p, i) => (
+              {presets.map((p, i) => (
                 <button
                   key={i}
                   className={`btn${selectedPreset === i ? ' btn-primary' : ''}`}
