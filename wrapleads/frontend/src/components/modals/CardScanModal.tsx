@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import type { Lead } from '../../api/types';
+import type { Lead, LeadStatus } from '../../api/types';
 
 interface Props {
   onClose: () => void;
@@ -20,13 +20,13 @@ export default function CardScanModal({ onClose }: Props) {
     onSuccess: (data) => {
       if (data.ok && data.lead) {
         setScanned(data.lead);
-        setForm({ ...data.lead, category: (data.lead as any).category || 'fleet', status: 'cold' as any });
+        setForm({ ...data.lead, category: data.lead.category || 'fleet', status: 'cold' as LeadStatus });
       }
     },
   });
 
   const saveMut = useMutation({
-    mutationFn: () => api.createLead(form as any),
+    mutationFn: () => api.createLead(form),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['leads'] });
       setSaved(true);
@@ -53,14 +53,16 @@ export default function CardScanModal({ onClose }: Props) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title">📇 Business Card Scanner</h2>
+          <h2 className="modal-title">Business Card Scanner</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
           {saved ? (
             <div style={{ textAlign: 'center', padding: '32px 0' }}>
-              <div style={{ fontSize: 36, marginBottom: 12 }}>✅</div>
+              <div style={{ marginBottom: 12, color: 'var(--green)' }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="40" height="40"><circle cx="12" cy="12" r="10"/><polyline points="16 8 10 14 7 11"/></svg>
+              </div>
               <p style={{ fontWeight: 700, margin: 0 }}>Lead created from card!</p>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>{form.company}</p>
             </div>
@@ -79,7 +81,7 @@ export default function CardScanModal({ onClose }: Props) {
                   <img src={preview} alt="Card preview" className="card-scan-preview" />
                 ) : (
                   <div className="card-scan-placeholder">
-                    <span style={{ fontSize: 40 }}>📇</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: 40, height: 40, color: 'var(--text-faint)' }}><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/><line x1="6" y1="18" x2="8" y2="18"/></svg>
                     <span>Drop card photo here or tap to choose</span>
                     <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>JPEG or PNG · max 10MB</span>
                   </div>
