@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
@@ -107,6 +107,23 @@ export default function LeadDetail() {
   const [activeTab, setActiveTab] = useState<Tab>('info');
 
   const lead = leads.find((l) => l.id === currentLeadId);
+
+  useEffect(() => {
+    if (!lead) return;
+    const TAB_KEYS: Record<string, Tab> = {
+      i: 'info', e: 'email', q: 'quotes', a: 'activity', n: 'notes', d: 'design',
+    };
+    function onKey(ev: KeyboardEvent) {
+      const tag = (ev.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (ev.key === 'Escape') { setCurrentLeadId(null); return; }
+      const next = TAB_KEYS[ev.key.toLowerCase()];
+      if (next) { ev.preventDefault(); setActiveTab(next); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lead, setCurrentLeadId]);
 
   if (!lead) {
     return <div className="lead-detail-panel closed" />;

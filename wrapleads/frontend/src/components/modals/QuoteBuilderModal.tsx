@@ -34,13 +34,14 @@ interface Props {
   quote?: ShopQuote;
   onClose: () => void;
   onSaved: () => void;
+  onAccepted?: () => void;
 }
 
 function fmt(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose, onSaved }: Props) {
+export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose, onSaved, onAccepted }: Props) {
   const qc = useQueryClient();
   const isEdit = !!quote;
 
@@ -97,6 +98,7 @@ export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose,
       qc.invalidateQueries({ queryKey: ['quotes', leadId] });
       showToast(isEdit ? 'Quote updated' : 'Quote created');
       onSaved();
+      if (s === 'accepted') onAccepted?.();
       onClose();
     } catch (e: unknown) {
       showToast((e as Error).message || 'Save failed', 'error');
