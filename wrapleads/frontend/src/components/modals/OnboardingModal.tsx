@@ -65,31 +65,25 @@ export default function OnboardingModal({ onClose }: Props) {
               Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''}.
             </h2>
             <p className="onboarding-sub">
-              Your 14-day trial just unlocked <strong>WrapOS</strong> — the full platform, every feature.
+              You have full access to <strong>every feature</strong> — no credit card, no limits.
               We&apos;ve pre-loaded <strong>500+ curated leads</strong> across fleets, design firms,
-              construction, and racing so you can start the day with a real pipeline.
+              construction, and racing so you start with a real pipeline, not an empty screen.
             </p>
 
             <div className="onboarding-tiers">
               <div className="onboarding-tier">
-                <div className="onboarding-tier-name">WrapLeads</div>
-                <div className="onboarding-tier-price">$79<span>/mo</span></div>
-                <div className="onboarding-tier-desc">CRM + Discovery</div>
+                <div className="onboarding-tier-name">🚛 Discover</div>
+                <div className="onboarding-tier-desc">600K FMCSA carriers, searchable by state + fleet size</div>
               </div>
               <div className="onboarding-tier onboarding-tier-highlight">
-                <div className="onboarding-tier-name">ShopFlow</div>
-                <div className="onboarding-tier-price">$149<span>/mo</span></div>
-                <div className="onboarding-tier-desc">+ AI Outreach</div>
+                <div className="onboarding-tier-name">✨ AI Outreach</div>
+                <div className="onboarding-tier-desc">3-step email sequences written and sent by Claude</div>
               </div>
               <div className="onboarding-tier">
-                <div className="onboarding-tier-name">WrapOS</div>
-                <div className="onboarding-tier-price">$249<span>/mo</span></div>
-                <div className="onboarding-tier-desc">+ Design + AR</div>
+                <div className="onboarding-tier-name">🏆 Full CRM</div>
+                <div className="onboarding-tier-desc">Pipeline, bids, jobs, analytics, and AR preview</div>
               </div>
             </div>
-            <p className="onboarding-footnote">
-              Choose your plan anytime before day 14. No credit card needed to keep exploring.
-            </p>
 
             <div className="onboarding-actions">
               <button className="btn btn-primary onboarding-cta" onClick={() => setStep(2)}>
@@ -133,8 +127,8 @@ export default function OnboardingModal({ onClose }: Props) {
             <div className="onboarding-emoji">⚙️</div>
             <h2 className="onboarding-h2">One quick setup before AI emails</h2>
             <p className="onboarding-sub">
-              Add your sender name + verified email so AI-generated outreach goes out as you,
-              not as the platform. Apollo and Vapi credentials slot in here too.
+              Add your sender name and email so AI-generated outreach goes out as you,
+              not as the platform. One minute of setup, then you&apos;re running.
             </p>
 
             <div className="onboarding-setup-grid">
@@ -149,14 +143,14 @@ export default function OnboardingModal({ onClose }: Props) {
                 <div className="onboarding-setup-icon">🔑</div>
                 <div className="onboarding-setup-text">
                   <strong>Apollo API key</strong>
-                  <span>Optional — for contact enrichment</span>
+                  <span>Optional — unlock contact enrichment</span>
                 </div>
               </div>
               <div className="onboarding-setup-item">
-                <div className="onboarding-setup-icon">📞</div>
+                <div className="onboarding-setup-icon">🏢</div>
                 <div className="onboarding-setup-text">
-                  <strong>Vapi calling</strong>
-                  <span>Optional — for AI phone calls</span>
+                  <strong>Company name</strong>
+                  <span>Shows in analytics + email headers</span>
                 </div>
               </div>
             </div>
