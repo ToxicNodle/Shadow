@@ -106,9 +106,35 @@ export default function AnalyticsView() {
 
   if (isLoading || !data) {
     return (
-      <div className="pv-loading">
-        <span className="spinner spinner-lg" />
-        <span>Loading analytics…</span>
+      <div className="an-root">
+        <div className="an-header">
+          <div>
+            <div className="skeleton" style={{ height: 28, width: 120, marginBottom: 6 }} />
+            <div className="skeleton" style={{ height: 14, width: 240 }} />
+          </div>
+        </div>
+        <div className="an-stat-strip">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className="an-stat-card">
+              <div className="skeleton" style={{ height: 11, width: '70%', marginBottom: 8 }} />
+              <div className="skeleton" style={{ height: 28, width: '50%' }} />
+            </div>
+          ))}
+        </div>
+        <div className="an-grid">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="an-card">
+              <div className="skeleton" style={{ height: 14, width: '40%', marginBottom: 16 }} />
+              {Array.from({ length: 5 }).map((_, j) => (
+                <div key={j} className="an-bar-row" style={{ marginBottom: 10 }}>
+                  <div className="skeleton" style={{ height: 11, width: '30%' }} />
+                  <div className="skeleton" style={{ flex: 1, height: 6, borderRadius: 3, margin: '0 12px' }} />
+                  <div className="skeleton" style={{ height: 11, width: 28 }} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
