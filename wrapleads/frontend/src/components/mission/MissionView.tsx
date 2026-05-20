@@ -4,7 +4,13 @@ import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useLeads } from '../../hooks/useLeads';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
+import { winProbability } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
+
+const REV_EST: Record<string, number> = {
+  fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+  colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500,
+};
 
 // ── AI Call Button ────────────────────────────────────────────────────────────
 
@@ -740,6 +746,24 @@ export default function MissionView() {
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
+  // Expected pipeline value: sum(winProbability × deal size) across all active leads
+  const expectedPipeline = useMemo(() => {
+    return leads
+      .filter((l) => !['won', 'lost'].includes(l.status))
+      .reduce((sum, l) => sum + (winProbability(l) / 100) * (REV_EST[l.category] ?? 2500), 0);
+  }, [leads]);
+
+  // Bids due today or tomorrow
+  const bidsDueSoon = useMemo(() => {
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + 2); cutoff.setHours(23, 59, 59);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return bidsThisWeek.filter((b: { bid_due?: string }) => {
+      if (!b.bid_due) return false;
+      const d = new Date(b.bid_due);
+      return d >= today && d <= cutoff;
+    });
+  }, [bidsThisWeek]);
+
   return (
     <div className="mission-root">
       {/* ── Header ── */}
@@ -756,7 +780,12 @@ export default function MissionView() {
               : `${totalActions} action${totalActions !== 1 ? 's' : ''} need your attention`}
           </h1>
           <p className="mission-sub">
-            {sequences.active} active drip sequences · {sequences.pendingEmails} emails queued · {wonThisMonth} won this month
+            {sequences.active} active sequences · {sequences.pendingEmails} emails queued · {wonThisMonth} won this month
+            {expectedPipeline > 0 && (
+              <span style={{ color: 'var(--accent)', fontWeight: 700 }}>
+                {' '}· {fmt(Math.round(expectedPipeline))} expected
+              </span>
+            )}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -794,6 +823,29 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Bids Due Today / Tomorrow ── */}
+      {bidsDueSoon.length > 0 && (
+        <div style={{
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+          borderRadius: 10, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" strokeWidth="3"/>
+          </svg>
+          <div style={{ flex: 1 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#ef4444' }}>
+              {bidsDueSoon.length} bid{bidsDueSoon.length !== 1 ? 's' : ''} due within 48 hours
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
+              {(bidsDueSoon as { project_name: string }[]).map((b) => b.project_name).join(' · ')}
+            </span>
+          </div>
+          <button className="btn" style={{ fontSize: 11, flexShrink: 0, color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }} onClick={() => setMode('bids')}>
+            View Bids →
+          </button>
+        </div>
+      )}
 
       <div className="mission-grid">
 
