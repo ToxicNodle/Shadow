@@ -49,9 +49,13 @@ export default function LeadRow({ lead, selected, checked }: Props) {
     }
   }
 
+  const isOverdue = lead.followupDueAt
+    ? new Date(lead.followupDueAt) < new Date()
+    : false;
+
   return (
     <div
-      className={`lead-row ${selected ? 'selected' : ''}`}
+      className={`lead-row ${selected ? 'selected' : ''}${isOverdue ? ' lead-row-overdue' : ''}`}
       onClick={() => setCurrentLeadId(lead.id)}
     >
       {/* Checkbox */}
@@ -93,8 +97,11 @@ export default function LeadRow({ lead, selected, checked }: Props) {
 
       <div className="lead-fleet">{lead.fleetSize || '—'}</div>
 
-      <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span className={`status-tag ${lead.status}`}>{STATUSES[lead.status]}</span>
+        {isOverdue && (
+          <span className="lead-overdue-dot" title="Follow-up overdue" />
+        )}
       </div>
 
       <div className="lead-email" title={lead.email}>{lead.email || '—'}</div>

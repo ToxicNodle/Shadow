@@ -4261,3 +4261,11 @@ textarea:focus {
 .add-lead-btn { display: flex !important; align-items: center !important; gap: 4px !important; }
 .discover-empty-icon { width: 48px; height: 48px; color: var(--text-faint); margin: 0 auto 12px; }
 .discover-empty-icon svg { width: 48px; height: 48px; }
+
+/* v14 — lead row overdue indicator */
+.lead-row-overdue { border-left: 2px solid var(--red) !important; }
+.lead-overdue-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+
+/* v15 — lead-list empty state icon */
+.lead-list-empty-icon { width: 52px; height: 52px; color: var(--text-faint); margin: 0 auto 12px; }
+.lead-list-empty-icon svg { width: 52px; height: 52px; }
