@@ -195,7 +195,7 @@ export default function SettingsModal() {
               style={{ flex: 1, fontFamily: 'monospace' }}
             />
           </div>
-          <p className="settings-help" style={{ marginTop: 4 }}>Used on your public portfolio page as the headline and button color.</p>
+          <p className="settings-help" style={{ marginTop: 4 }}>Themes the entire app — navigation highlights, buttons, and your public portfolio page.</p>
         </div>
       </div>
 

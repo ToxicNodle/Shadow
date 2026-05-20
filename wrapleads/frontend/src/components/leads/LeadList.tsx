@@ -94,7 +94,7 @@ export default function LeadList() {
       if (leadSort === 'score') return scoreLead(b) - scoreLead(a);
       if (leadSort === 'company') return a.company.localeCompare(b.company);
       if (leadSort === 'status') {
-        const order = ['won', 'proposal', 'meeting', 'replied', 'contacted', 'cold', 'lost'];
+        const order = ['won', 'proposal', 'meeting', 'replied', 'contacted', 'cold', 'new', 'lost'];
         return order.indexOf(a.status) - order.indexOf(b.status);
       }
       if (leadSort === 'lastContacted') {

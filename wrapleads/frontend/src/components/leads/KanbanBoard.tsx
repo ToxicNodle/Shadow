@@ -5,12 +5,13 @@ import { scoreLead, scoreLabel } from '../../utils/scoring';
 import type { Lead, LeadStatus } from '../../api/types';
 
 const COLUMNS: { key: LeadStatus; label: string; color: string }[] = [
+  { key: 'new',       label: 'New',        color: 'var(--text-muted)' },
   { key: 'cold',      label: 'Cold',       color: 'var(--text-faint)' },
   { key: 'contacted', label: 'Contacted',  color: 'var(--blue)' },
   { key: 'replied',   label: 'Replied',    color: 'var(--purple)' },
   { key: 'meeting',   label: 'Meeting',    color: 'var(--yellow)' },
   { key: 'proposal',  label: 'Proposal',   color: 'var(--accent)' },
-  { key: 'won',       label: 'Won ✓',      color: 'var(--green)' },
+  { key: 'won',       label: 'Won',        color: 'var(--green)' },
   { key: 'lost',      label: 'Lost',       color: 'var(--red)' },
 ];
 
