@@ -29,7 +29,7 @@ function DropZone({ onFile, accept, label }: { onFile: (f: File) => void; accept
     >
       <input ref={ref} type="file" accept={accept} style={{ display: 'none' }}
         onChange={(e) => handle(e.target.files?.[0])} capture="environment" />
-      <div className="vision-dropzone-icon">📷</div>
+      <div className="vision-dropzone-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
       <p className="vision-dropzone-label">{label}</p>
       <p className="vision-dropzone-sub">Tap to take photo or upload JPEG / PNG</p>
     </div>
@@ -83,7 +83,7 @@ function QuoteTab() {
 
       {file && !result && (
         <button className="btn btn-primary" disabled={loading} onClick={analyze} style={{ alignSelf: 'flex-start' }}>
-          {loading ? 'Analyzing vehicle…' : '🔍 Get Quote'}
+          {loading ? 'Analyzing vehicle…' : 'Get Quote'}
         </button>
       )}
 
@@ -194,7 +194,7 @@ function ARPreviewTab() {
               placeholder="e.g. Full matte black wrap with chrome delete and Shadow Graphix logo on both doors…" />
           </div>
           <button className="btn btn-primary" disabled={loading} onClick={generate}>
-            {loading ? 'Generating preview…' : '✨ Generate Wrap Preview'}
+            {loading ? 'Generating preview…' : 'Generate Wrap Preview'}
           </button>
         </>
       )}
@@ -346,7 +346,7 @@ function FleetQuoteTab() {
       </div>
 
       <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={copyQuote}>
-        {copied ? '✓ Copied to clipboard!' : '📋 Copy Quote Summary'}
+        {copied ? '✓ Copied to clipboard!' : 'Copy Quote Summary'}
       </button>
       <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0, textAlign: 'center' }}>
         Estimates based on industry-standard sq footage × material pricing. Final quote may vary.
@@ -366,13 +366,13 @@ export default function VisionQuoteModal({ onClose }: Props) {
         <div className="modal-header">
           <div style={{ display: 'flex', gap: 0 }}>
             <button className={`vision-modal-tab ${tab === 'quote' ? 'active' : ''}`} onClick={() => setTab('quote')}>
-              📷 Vision Quote
+              Vision Quote
             </button>
             <button className={`vision-modal-tab ${tab === 'fleet' ? 'active' : ''}`} onClick={() => setTab('fleet')}>
-              🚛 Fleet Quote
+              Fleet Quote
             </button>
             <button className={`vision-modal-tab ${tab === 'ar' ? 'active' : ''}`} onClick={() => setTab('ar')}>
-              ✨ AR Preview
+              AR Preview
             </button>
           </div>
           <button className="modal-close" onClick={onClose}>✕</button>

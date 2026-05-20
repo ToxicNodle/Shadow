@@ -100,7 +100,7 @@ export default function ApolloModal() {
       </p>
 
       <button className="apollo-find-btn" onClick={search} disabled={loading}>
-        {loading ? <><span className="spinner" /> Searching…</> : '🔍 Search Apollo'}
+        {loading ? <><span className="spinner" /> Searching…</> : 'Search Apollo'}
       </button>
 
       {searched && candidates.length === 0 && (

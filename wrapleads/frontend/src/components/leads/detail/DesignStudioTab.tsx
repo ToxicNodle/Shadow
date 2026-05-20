@@ -146,7 +146,7 @@ export default function DesignStudioTab({ lead }: Props) {
           {step === 'brief' ? '✦ Writing design brief…'
             : step === 'mockup' ? '✦ Rendering concept…'
             : step === 'done' ? '↻ Regenerate'
-            : '✨ Generate Concept'}
+            : 'Generate Concept'}
         </button>
       </div>
 

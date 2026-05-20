@@ -170,7 +170,7 @@ export default function ProposalModal() {
             onClick={generate}
             disabled={loading || selectedServices.length === 0}
           >
-            {loading ? <><span className="spinner" /> Writing proposal…</> : '📄 Generate Proposal'}
+            {loading ? <><span className="spinner" /> Writing proposal…</> : 'Generate Proposal'}
           </button>
 
           {/* Result */}

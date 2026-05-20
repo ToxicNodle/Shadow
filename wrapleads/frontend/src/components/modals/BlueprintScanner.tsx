@@ -141,7 +141,7 @@ export default function BlueprintScanner({ onClose }: Props) {
           >
             {scanning
               ? <><span className="spinner" /> Scanning with Claude…</>
-              : '🔍 Scan for Wrap Opportunities'}
+              : 'Scan for Wrap Opportunities'}
           </button>
         )}
 
@@ -224,7 +224,7 @@ export default function BlueprintScanner({ onClose }: Props) {
               </>
             ) : (
               <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
+                <div style={{ width: 32, height: 32, margin: '0 auto 8px', color: 'var(--text-faint)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
                 <div style={{ fontWeight: 600, marginBottom: 6 }}>No wrap opportunities found</div>
                 <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
                   This document doesn't appear to contain DI-NOC, architectural film, or vehicle wrap specifications.

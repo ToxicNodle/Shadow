@@ -499,7 +499,7 @@ function DeviceGrid({ contentList }: { contentList: WrapContent[] }) {
       {isLoading && <div className="pv-loading"><span className="spinner" /></div>}
       {!isLoading && devices.length === 0 && (
         <div className="jobs-empty">
-          <div className="jobs-empty-icon">📡</div>
+          <div className="jobs-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{width:36,height:36}}><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M10.54 17.09a6 6 0 0 1 2.92 0"/><line x1="12" y1="21" x2="12" y2="21"/></svg></div>
           <p>No E Ink devices registered yet.</p>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
             Register a device to start pushing dynamic content to programmable vehicle surfaces.
@@ -519,7 +519,7 @@ function DeviceGrid({ contentList }: { contentList: WrapContent[] }) {
               <div className="device-card-thumb">
                 {d.current_content?.image_url
                   ? <img src={d.current_content.image_url} alt="" />
-                  : <span className="device-card-thumb-empty">📡</span>}
+                  : <span className="device-card-thumb-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{width:20,height:20}}><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M10.54 17.09a6 6 0 0 1 2.92 0"/><line x1="12" y1="21" x2="12" y2="21"/></svg></span>}
               </div>
               <div className="device-card-body">
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -727,7 +727,7 @@ export default function ContentView() {
           {loadingSchedules && <div className="pv-loading"><span className="spinner" /></div>}
           {!loadingSchedules && scheduleList.length === 0 && (
             <div className="jobs-empty">
-              <div className="jobs-empty-icon">📅</div>
+              <div className="jobs-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{width:36,height:36}}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
               <p>No schedules yet.</p>
               {contentList.length === 0
                 ? <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Upload content first, then create a schedule.</p>
@@ -763,7 +763,7 @@ export default function ContentView() {
         <div style={{ padding: '16px 0' }}>
           {(activeData?.active?.length ?? 0) === 0 ? (
             <div className="jobs-empty">
-              <div className="jobs-empty-icon">📺</div>
+              <div className="jobs-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{width:36,height:36}}><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg></div>
               <p>Nothing scheduled for right now.</p>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Schedules activate based on date, time, and geographic rules.</p>
             </div>
