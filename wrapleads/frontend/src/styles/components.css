@@ -4789,6 +4789,38 @@ textarea:focus {
   line-height: 1;
 }
 
+/* ── Kanban hot-lead treatment ──────────────────────────────────────────────── */
+.kanban-card-hot {
+  border-color: rgba(239,68,68,0.35);
+  box-shadow: 0 0 0 1px rgba(239,68,68,0.15), 0 2px 8px rgba(239,68,68,0.08);
+}
+.kanban-hot-chip {
+  font-size: 9px;
+  font-weight: 800;
+  background: rgba(239,68,68,0.12);
+  color: #ef4444;
+  border-radius: 99px;
+  padding: 1px 6px;
+  letter-spacing: 0.03em;
+}
+.kanban-next-action {
+  font-size: 10px;
+  color: var(--accent);
+  margin-top: 3px;
+  font-weight: 600;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+/* ── Score breakdown popover (kanban variant — opens upward to avoid clipping) ── */
+.kanban-score-pop {
+  top: auto;
+  bottom: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  z-index: 120;
+}
+
 /* ── Pipeline sparkline hero card ─────────────────────────────────────────── */
 .pv-sparkline-hero {
   display: flex;
