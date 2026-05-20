@@ -48,7 +48,7 @@ function AutoCallButton({ leadId, phone }: { leadId: number; phone: string | nul
   }
 
   if (!phone) return (
-    <span className="mission-call-no-phone">No phone #</span>
+    <span className="mission-call-no-phone">No phone number on file</span>
   );
 
   const labels: Record<CallState, string> = {
@@ -304,8 +304,12 @@ interface ProspectorPanelProps {
 }
 
 function ProspectorPanel({ apolloKey, onClose, onImported }: ProspectorPanelProps) {
+  const settings = useAppStore((s) => s.settings);
+  const defaultLocation = settings.city && settings.state
+    ? `${settings.city}, ${settings.state}`
+    : settings.city || settings.state || '';
   const [industry, setIndustry] = useState(PROSPECT_INDUSTRIES[0]);
-  const [location, setLocation] = useState('Indianapolis, Indiana');
+  const [location, setLocation] = useState(defaultLocation);
   const [limit, setLimit] = useState(25);
   const [prospects, setProspects] = useState<{ name: string; title: string; company: string; city: string; state: string; email?: string; domain?: string }[]>([]);
   const [imported, setImported] = useState<Set<number>>(new Set());
