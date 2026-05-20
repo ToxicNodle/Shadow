@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../api/client';
 import { showToast } from '../../../utils/toast';
 import QuoteBuilderModal from '../../modals/QuoteBuilderModal';
+import { useLeads } from '../../../hooks/useLeads';
 import type { Lead } from '../../../api/types';
 import type { ShopQuote, QuoteStatus } from '../../../api/types';
 
@@ -34,9 +35,11 @@ interface Props { lead: Lead; }
 
 export default function QuotesTab({ lead }: Props) {
   const qc = useQueryClient();
+  const { updateLead } = useLeads();
   const leadId = lead.serverId!;
   const [showBuilder, setShowBuilder] = useState(false);
   const [editQuote, setEditQuote] = useState<ShopQuote | undefined>(undefined);
+  const [suggestWon, setSuggestWon] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['quotes', leadId],
@@ -65,12 +68,48 @@ export default function QuotesTab({ lead }: Props) {
     setShowBuilder(true);
   }
 
+  function handleAccepted() {
+    if (lead.status !== 'won') setSuggestWon(true);
+  }
+
+  function markWon() {
+    if (!lead.serverId) return;
+    updateLead({ serverId: lead.serverId, patch: { status: 'won' } });
+    setSuggestWon(false);
+    showToast('Lead marked as Won!');
+  }
+
   if (!leadId) {
     return <p style={{ color: 'var(--text-muted)', fontSize: 13, padding: '20px 0' }}>Save this lead first to create quotes.</p>;
   }
 
   return (
     <div style={{ padding: '4px 0' }}>
+      {/* Won suggestion banner */}
+      {suggestWon && (
+        <div className="won-suggest-banner">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+            <span style={{ fontSize: 20 }}>🏆</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>Quote accepted!</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Ready to mark <strong>{lead.company}</strong> as Won?</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12, background: '#10b981', border: '1px solid #10b981' }}
+              onClick={markWon}
+            >
+              Yes, Mark Won →
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setSuggestWon(false)}>
+              Later
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           {quotes.length} quote{quotes.length !== 1 ? 's' : ''}
@@ -148,6 +187,7 @@ export default function QuotesTab({ lead }: Props) {
           quote={editQuote}
           onClose={() => setShowBuilder(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['quotes', leadId] })}
+          onAccepted={handleAccepted}
         />
       )}
     </div>

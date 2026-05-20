@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Lead, LeadCategory, LeadStatus, VehicleType } from '../../../api/types';
@@ -6,6 +6,108 @@ import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
+
+// --------------- Confetti ---------------
+function ConfettiCanvas({ active }: { active: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const colors = ['#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#ec4899', '#fbbf24'];
+    type P = { x: number; y: number; vx: number; vy: number; color: string; w: number; h: number; rot: number; rs: number };
+    const particles: P[] = Array.from({ length: 140 }, () => ({
+      x: Math.random() * canvas.width,
+      y: -10 - Math.random() * canvas.height * 0.25,
+      vx: (Math.random() - 0.5) * 5,
+      vy: 1.5 + Math.random() * 4,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      w: 7 + Math.random() * 9,
+      h: 4 + Math.random() * 5,
+      rot: Math.random() * 360,
+      rs: (Math.random() - 0.5) * 9,
+    }));
+
+    let raf: number;
+    let t = 0;
+    function draw() {
+      ctx.clearRect(0, 0, canvas!.width, canvas!.height);
+      t++;
+      let alive = 0;
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.07;
+        p.rot += p.rs;
+        if (p.y > canvas!.height + 20) continue;
+        alive++;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rot * Math.PI) / 180);
+        ctx.globalAlpha = Math.max(0, 1 - t / 210);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+      if (alive > 0 && t < 220) raf = requestAnimationFrame(draw);
+      else ctx.clearRect(0, 0, canvas!.width, canvas!.height);
+    }
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [active]);
+
+  if (!active) return null;
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 9999 }}
+    />
+  );
+}
+
+// --------------- Completeness ---------------
+const COMPLETENESS_FIELDS: (keyof Lead)[] = ['email', 'phone', 'contactName', 'fleetSize', 'city', 'state', 'website', 'pitchAngle'];
+const COMPLETENESS_LABELS: Partial<Record<keyof Lead, string>> = {
+  email: 'Email', phone: 'Phone', contactName: 'Contact Name',
+  fleetSize: 'Fleet Size', city: 'City', state: 'State', website: 'Website', pitchAngle: 'Pitch Angle',
+};
+
+function CompletenessBar({ lead }: { lead: Lead }) {
+  const filled = COMPLETENESS_FIELDS.filter((f) => {
+    const v = lead[f];
+    return v !== undefined && v !== null && String(v).trim() !== '';
+  }).length;
+  const pct = Math.round((filled / COMPLETENESS_FIELDS.length) * 100);
+  const missing = COMPLETENESS_FIELDS.filter((f) => {
+    const v = lead[f];
+    return !v || String(v).trim() === '';
+  }).map((f) => COMPLETENESS_LABELS[f]);
+  const color = pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444';
+
+  return (
+    <div className="completeness-bar-wrap">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Profile completeness
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 700, color }}>{pct}%</span>
+      </div>
+      <div className="completeness-track">
+        <div className="completeness-fill" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      {missing.length > 0 && pct < 100 && (
+        <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 4 }}>
+          Missing: {missing.join(', ')}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Props {
   lead: Lead;
@@ -350,12 +452,17 @@ export default function InfoTab({ lead }: Props) {
   const [showWinLoss, setShowWinLoss] = useState(false);
   const [showSms, setShowSms] = useState(false);
   const [prevStatus, setPrevStatus] = useState<LeadStatus>(lead.status);
+  const [confettiActive, setConfettiActive] = useState(false);
 
   function patch(field: keyof Lead, value: string) {
     const updated = { ...local, [field]: value };
     setLocal(updated);
     if (field === 'status' && (value === 'won' || value === 'lost') && value !== prevStatus) {
       setPrevStatus(value as LeadStatus);
+      if (value === 'won') {
+        setConfettiActive(true);
+        setTimeout(() => setConfettiActive(false), 4500);
+      }
       setTimeout(() => setShowWinLoss(true), 300);
     }
     if (lead.serverId) {
@@ -365,6 +472,9 @@ export default function InfoTab({ lead }: Props) {
 
   return (
     <div>
+      <ConfettiCanvas active={confettiActive} />
+      <CompletenessBar lead={local} />
+      <div style={{ height: 12 }} />
       <div className="field-row">
         <div className="field-group">
           <label className="field-label">Category</label>
