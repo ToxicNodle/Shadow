@@ -7,7 +7,7 @@ import CarrierTable from './CarrierTable';
 import SavedChips from './SavedChips';
 
 export default function DiscoverPage() {
-  const { data: stats } = useCarrierStats();
+  const { data: stats, isLoading: statsLoading } = useCarrierStats();
   const qc = useQueryClient();
   const { selectedCarrierIds, clearSelectedCarrierIds, showToast, setMode } = useAppStore((s) => ({
     selectedCarrierIds: s.selectedCarrierIds,
@@ -19,17 +19,21 @@ export default function DiscoverPage() {
   async function bulkImport() {
     const ids = Array.from(selectedCarrierIds);
     let success = 0;
+    let failed = 0;
     for (const id of ids) {
       try {
         await api.importCarrier(id);
         success++;
       } catch {
-        // continue
+        failed++;
       }
     }
     clearSelectedCarrierIds();
     qc.invalidateQueries({ queryKey: ['leads'] });
-    showToast(`${success} carrier${success !== 1 ? 's' : ''} added to My Leads`);
+    const msg = failed > 0
+      ? `${success} added · ${failed} already in your CRM`
+      : `${success} carrier${success !== 1 ? 's' : ''} added to My Leads`;
+    showToast(msg);
     if (success > 0) setMode('leads');
   }
 
@@ -37,19 +41,27 @@ export default function DiscoverPage() {
     <div style={{ padding: '20px 24px', flex: 1, overflow: 'auto' }}>
       <div className="discover-stats">
         <div className="discover-stat-card">
-          <div className="discover-stat-value">{stats?.total?.toLocaleString() ?? '—'}</div>
+          {statsLoading
+            ? <div className="skeleton" style={{ height: 28, width: 80, marginBottom: 6 }} />
+            : <div className="discover-stat-value">{stats?.total?.toLocaleString() ?? '—'}</div>}
           <div className="discover-stat-label">Total Carriers</div>
         </div>
         <div className="discover-stat-card">
-          <div className="discover-stat-value">{stats?.sweet_spot?.toLocaleString() ?? '—'}</div>
+          {statsLoading
+            ? <div className="skeleton" style={{ height: 28, width: 64, marginBottom: 6 }} />
+            : <div className="discover-stat-value">{stats?.sweet_spot?.toLocaleString() ?? '—'}</div>}
           <div className="discover-stat-label">Sweet Spot (25–500 units)</div>
         </div>
         <div className="discover-stat-card">
-          <div className="discover-stat-value">{stats?.states ?? '—'}</div>
+          {statsLoading
+            ? <div className="skeleton" style={{ height: 28, width: 36, marginBottom: 6 }} />
+            : <div className="discover-stat-value">{stats?.states ?? '—'}</div>}
           <div className="discover-stat-label">States</div>
         </div>
         <div className="discover-stat-card">
-          <div className="discover-stat-value">{stats?.total_units?.toLocaleString() ?? '—'}</div>
+          {statsLoading
+            ? <div className="skeleton" style={{ height: 28, width: 72, marginBottom: 6 }} />
+            : <div className="discover-stat-value">{stats?.total_units?.toLocaleString() ?? '—'}</div>}
           <div className="discover-stat-label">Total Units</div>
         </div>
       </div>
