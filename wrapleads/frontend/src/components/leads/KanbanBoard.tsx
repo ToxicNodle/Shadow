@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
-import { scoreLead, scoreLabel, scoreBreakdown, SCORE_COLORS } from '../../utils/scoring';
+import { scoreLead, scoreLabel, scoreBreakdown, SCORE_COLORS, winProbability, winProbabilityColor } from '../../utils/scoring';
 import type { Lead, LeadStatus } from '../../api/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -175,6 +175,8 @@ export default function KanbanBoard() {
                 const isDragging = dragLead === lead.id;
                 const hint = nextAction(lead, days);
                 const isHot = lbl === 'hot';
+                const prob = !['won', 'lost'].includes(lead.status) ? winProbability(lead) : null;
+                const probColor = prob !== null ? winProbabilityColor(prob) : null;
 
                 return (
                   <div
@@ -208,6 +210,11 @@ export default function KanbanBoard() {
                       <span className="kanban-cat-dot" style={{ background: CATEGORY_COLORS[lead.category] ?? '#6b7280' }} title={lead.category} />
                       {lead.fleetSize && (
                         <span className="kanban-fleet">{lead.fleetSize}v</span>
+                      )}
+                      {prob !== null && (
+                        <span className="kanban-prob" style={{ color: probColor ?? undefined }} title={`${prob}% close probability`}>
+                          {prob}%
+                        </span>
                       )}
                       <div style={{ display: 'flex', gap: 4, marginLeft: 'auto', alignItems: 'center' }}>
                         {lead.email && <span className="kanban-data-icon" title="Has email">@</span>}

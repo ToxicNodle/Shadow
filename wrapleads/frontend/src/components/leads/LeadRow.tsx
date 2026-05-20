@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Lead } from '../../api/types';
 import { CATEGORIES, STATUSES } from '../../api/types';
 import { useAppStore } from '../../store/useAppStore';
-import { scoreBreakdown, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
+import { scoreBreakdown, scoreLabel, SCORE_COLORS, winProbability, winProbabilityColor } from '../../utils/scoring';
 
 const CAT_COLORS: Record<string, string> = {
   fleet: '#3b82f6',
@@ -34,6 +34,8 @@ export default function LeadRow({ lead, selected, checked }: Props) {
   const score = breakdown.total;
   const label = scoreLabel(score);
   const color = SCORE_COLORS[label];
+  const prob = !['won', 'lost'].includes(lead.status) ? winProbability(lead) : null;
+  const probColor = prob !== null ? winProbabilityColor(prob) : undefined;
 
   const catColor = CAT_COLORS[lead.category] ?? '#6b7280';
   const initials = lead.company
@@ -121,6 +123,17 @@ export default function LeadRow({ lead, selected, checked }: Props) {
           {CATEGORIES[lead.category]}
         </div>
         <div className="lead-date">{fmt(lead.lastContacted)}</div>
+      </div>
+
+      {/* Win probability */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {prob !== null ? (
+          <span style={{ fontSize: 11, fontWeight: 700, color: probColor }} title={`${prob}% close probability`}>
+            {prob}%
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>—</span>
+        )}
       </div>
 
       {/* Score badge with breakdown popover */}
