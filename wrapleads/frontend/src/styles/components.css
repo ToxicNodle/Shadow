@@ -4244,3 +4244,20 @@ textarea:focus {
 .landing-art-row { display: flex !important; align-items: center !important; gap: 8px !important; }
 .vision-dropzone-icon { display: flex !important; align-items: center !important; justify-content: center !important; }
 .vision-dropzone-icon svg { width: 32px !important; height: 32px !important; color: var(--text-faint) !important; }
+
+/* v13 — carrier row score meter + enhanced columns */
+.carrier-row { grid-template-columns: 32px 2.5fr 0.8fr 1fr 0.8fr 1.1fr 90px !important; }
+.carrier-cell-name { display: flex; flex-direction: column; gap: 2px; }
+.carrier-dba { font-size: 11px; color: var(--text-faint); }
+.carrier-dot { font-size: 10px; color: var(--text-faint); font-family: var(--mono); }
+.carrier-score-cell { display: flex; flex-direction: column; gap: 4px; }
+.carrier-score-meter { display: flex; align-items: center; gap: 6px; }
+.carrier-score-bar-track { width: 40px; height: 4px; background: var(--bg-input); border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+.carrier-score-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.carrier-score-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.carrier-stale { font-size: 10px; color: var(--text-faint); }
+.carrier-phone-link { color: var(--text-dim); text-decoration: none; font-family: var(--mono); font-size: 12px; }
+.carrier-phone-link:hover { color: var(--accent); }
+.add-lead-btn { display: flex !important; align-items: center !important; gap: 4px !important; }
+.discover-empty-icon { width: 48px; height: 48px; color: var(--text-faint); margin: 0 auto 12px; }
+.discover-empty-icon svg { width: 48px; height: 48px; }

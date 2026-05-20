@@ -44,8 +44,13 @@ export default function CarrierTable() {
   if (results.length === 0 && !loading) {
     return (
       <div className="discover-empty">
-        <div className="big">Run a search to find carriers</div>
-        <p>Filter by state, fleet size, or company name above.</p>
+        <div className="discover-empty-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </div>
+        <div className="big">Search the carrier database</div>
+        <p>Filter by state, fleet size, or company name — then hit Search or pick a preset above.</p>
       </div>
     );
   }
@@ -56,6 +61,7 @@ export default function CarrierTable() {
         <input type="checkbox" className="carrier-cb" checked={allChecked} onChange={toggleAll} />
         <span>Carrier</span>
         <span>Fleet</span>
+        <span>Score</span>
         <span>Location</span>
         <span>Phone</span>
         <span>Action</span>
