@@ -57,7 +57,8 @@ const TRIAL_DAYS        = parseInt(process.env.TRIAL_DAYS || '14', 10);
 const APP_URL           = process.env.APP_URL || `http://localhost:${PORT}`;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
-const STRIPE_DISABLED   = process.env.STRIPE_DISABLED === 'true';
+// Default: disabled (free). Enable payments by setting STRIPE_DISABLED=false in env.
+const STRIPE_DISABLED   = process.env.STRIPE_DISABLED !== 'false';
 
 // Three-tier pricing — falls back to legacy STRIPE_PRICE_ID for single-tier setups
 const STRIPE_PRICE_ID_WRAPLEADS = process.env.STRIPE_PRICE_ID_WRAPLEADS || process.env.STRIPE_PRICE_ID || '';
