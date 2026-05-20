@@ -191,7 +191,7 @@ function ARPreviewTab() {
           <div className="field-group">
             <label className="field-label">Custom Description (overrides preset)</label>
             <textarea className="input" rows={2} value={custom} onChange={(e) => setCustom(e.target.value)}
-              placeholder="e.g. Full matte black wrap with chrome delete and Shadow Graphix logo on both doors…" />
+              placeholder="e.g. Full matte black wrap with chrome delete and Apex Wraps logo on both doors…" />
           </div>
           <button className="btn btn-primary" disabled={loading} onClick={generate}>
             {loading ? 'Generating preview…' : 'Generate Wrap Preview'}

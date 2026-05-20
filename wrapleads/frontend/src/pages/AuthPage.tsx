@@ -241,7 +241,7 @@ export default function AuthPage() {
                   type="text"
                   value={regCompany}
                   onChange={(e) => setRegCompany(e.target.value)}
-                  placeholder="Shadow Graphix"
+                  placeholder="Apex Wraps"
                   required
                 />
               </div>
