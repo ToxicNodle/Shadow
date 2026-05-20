@@ -5748,9 +5748,15 @@ app.get('/portfolio/:shopToken', async (req, res) => {
 
     const s = user.settings_json || {};
     const shopName = s.companyName || 'our shop';
-    const accent = '#ff6b35';
+    const accent = s.accentColor || '#ff6b35';
     const phone = s.senderPhone || '';
     const email = s.senderEmail || '';
+    const locationLine = s.city && s.state ? `${s.city}, ${s.state}` : s.state || null;
+    const taglineText = s.companyTagline
+      ? s.companyTagline
+      : locationLine
+      ? `Certified wrap installer · ${locationLine}`
+      : 'Professional vehicle wraps &amp; graphics';
 
     const { rows: jobs } = await pool.query(`
       SELECT j.id, j.company, j.vehicle_type, j.vehicle_count, j.wrap_category, j.material, j.install_date,
@@ -5826,7 +5832,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </style></head><body>
 <div class="hero">
   <div class="logo">${shopName.split(' ').slice(0,-1).join(' ')}<span> ${shopName.split(' ').slice(-1)[0]}</span></div>
-  <div class="tagline">Certified 3M &amp; Avery installer · Speedway, Indiana</div>
+  <div class="tagline">${taglineText}</div>
   <div class="hero-stats">
     <div class="stat"><div class="stat-n">${totalJobs}</div><div class="stat-l">Installs</div></div>
     <div class="stat"><div class="stat-n">${totalVehicles}</div><div class="stat-l">Vehicles Wrapped</div></div>
