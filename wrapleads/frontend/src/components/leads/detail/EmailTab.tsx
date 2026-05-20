@@ -261,7 +261,7 @@ export default function EmailTab({ lead }: Props) {
               transition: 'all 0.15s',
             }}
           >
-            {m === 'single' ? '✉ Single' : m === 'sequence' ? '📅 Sequence' : '📋 Templates'}
+            {m === 'single' ? 'Single' : m === 'sequence' ? 'Sequence' : 'Templates'}
           </button>
         ))}
       </div>
@@ -345,7 +345,7 @@ export default function EmailTab({ lead }: Props) {
       <button className="generate-btn" onClick={generate} disabled={loading}>
         {loading
           ? <><span className="spinner" /> {tabMode === 'sequence' ? 'Building sequence…' : 'Generating…'}</>
-          : tabMode === 'sequence' ? '📅 Generate 3-Email Sequence' : '⚡ Generate Email'}
+          : tabMode === 'sequence' ? 'Generate 3-Email Sequence' : 'Generate Email'}
       </button>
 
       {tabMode === 'sequence' && lead.email && (
@@ -408,7 +408,7 @@ export default function EmailTab({ lead }: Props) {
             {lead.email && (
               <>
                 <button className="btn btn-primary" onClick={sendEmail} disabled={sending}>
-                  {sending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 5 }} />Sending…</> : '⚡ Send Email'}
+                  {sending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 5 }} />Sending…</> : 'Send Email'}
                 </button>
                 <button className="btn" onClick={openMailTo} title="Open in your email client">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>

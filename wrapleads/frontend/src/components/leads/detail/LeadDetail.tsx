@@ -139,7 +139,7 @@ export default function LeadDetail() {
             className={`detail-tab ${activeTab === t ? 'active' : ''}`}
             onClick={() => setActiveTab(t)}
           >
-            {t === 'design' ? '✨ Design' : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'design' ? 'Design Studio' : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
