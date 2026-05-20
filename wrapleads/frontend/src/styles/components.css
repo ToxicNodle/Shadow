@@ -2289,3 +2289,377 @@
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PREMIUM DESIGN OVERRIDES — "Obsidian & Ember"
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Nav Rail ──────────────────────────────────────────────────────────────── */
+.nav-rail {
+  width: 60px;
+  flex-shrink: 0;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0 16px;
+  overflow-y: auto;
+  overflow-x: visible;
+  z-index: 5;
+}
+
+.nav-rail-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.nav-item {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-faint);
+  background: none;
+  border: 1px solid transparent;
+  padding: 0;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.nav-item:hover {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  border-color: var(--border-soft);
+}
+
+.nav-item.active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: rgba(244, 85, 28, 0.2);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: 25%;
+  bottom: 25%;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 0 3px 3px 0;
+}
+
+.nav-item-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-item-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Tooltip */
+.nav-item::after {
+  content: attr(data-label);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+  z-index: 100;
+}
+
+.nav-item:hover::after {
+  opacity: 1;
+}
+
+/* ── Topbar — glass + cleaner ──────────────────────────────────────────────── */
+.topbar {
+  background: rgba(14, 16, 24, 0.85) !important;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07) !important;
+  height: 52px !important;
+}
+
+.topbar-logo {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%) !important;
+  box-shadow: 0 2px 10px var(--accent-glow) !important;
+}
+
+.topbar-name {
+  font-size: 16px !important;
+  letter-spacing: -0.025em !important;
+}
+
+/* ── Buttons — premium gradient + glow ────────────────────────────────────── */
+.btn {
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em;
+}
+
+.btn:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #f4551c 0%, #c73d10 100%) !important;
+  border-color: rgba(244, 85, 28, 0.45) !important;
+  box-shadow: 0 1px 4px rgba(244, 85, 28, 0.35), inset 0 1px 0 rgba(255,255,255,0.12) !important;
+  font-weight: 600 !important;
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #ff6433 0%, #f4551c 100%) !important;
+  box-shadow: 0 4px 16px rgba(244, 85, 28, 0.45) !important;
+  transform: translateY(-1px);
+  border-color: rgba(244, 85, 28, 0.6) !important;
+}
+
+.btn-primary:disabled {
+  transform: none !important;
+  box-shadow: none !important;
+  opacity: 0.55 !important;
+}
+
+/* ── Inputs — refined focus glow ──────────────────────────────────────────── */
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(244, 85, 28, 0.1) !important;
+  outline: none;
+}
+
+/* ── Modal — glass depth ──────────────────────────────────────────────────── */
+.modal-backdrop {
+  background: rgba(0, 0, 0, 0.75) !important;
+  backdrop-filter: blur(14px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%) !important;
+}
+
+.modal {
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), var(--shadow-lg) !important;
+  border-radius: var(--radius-xl) !important;
+}
+
+.modal-overlay {
+  backdrop-filter: blur(14px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%) !important;
+}
+
+/* ── Auth card — glow + refined border ────────────────────────────────────── */
+.auth-page {
+  background: var(--bg);
+  background-image:
+    radial-gradient(ellipse 60% 50% at 50% 0%, rgba(244, 85, 28, 0.08) 0%, transparent 70%),
+    radial-gradient(ellipse 80% 40% at 5% 0%, rgba(244, 85, 28, 0.05) 0%, transparent 100%),
+    radial-gradient(ellipse 60% 50% at 95% 100%, rgba(96, 165, 250, 0.04) 0%, transparent 100%);
+}
+
+.auth-card {
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 4px 32px rgba(0, 0, 0, 0.6),
+    0 0 80px rgba(244, 85, 28, 0.07) !important;
+  border-radius: var(--radius-xl) !important;
+}
+
+.auth-logo {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%) !important;
+  box-shadow: 0 4px 16px var(--accent-glow) !important;
+}
+
+.auth-tabs {
+  border-radius: 9px !important;
+}
+
+.auth-tab.active {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* ── Lead rows — accent left border on hover ──────────────────────────────── */
+.lead-row {
+  border-left: 2px solid transparent !important;
+  transition: background 0.1s, border-color 0.12s !important;
+}
+
+.lead-row:hover {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-left-color: rgba(244, 85, 28, 0.4) !important;
+}
+
+.lead-row.selected {
+  background: rgba(244, 85, 28, 0.05) !important;
+  border-left-color: var(--accent) !important;
+}
+
+/* ── Sidebar filter pills ─────────────────────────────────────────────────── */
+.filter-pill {
+  border-radius: 7px !important;
+  font-size: 12px !important;
+}
+
+.filter-pill.active {
+  background: var(--accent-subtle) !important;
+  color: var(--accent) !important;
+  border-left: 2px solid var(--accent) !important;
+}
+
+/* ── Kanban cards — richer hover ──────────────────────────────────────────── */
+.kanban-card {
+  border-radius: 9px !important;
+  transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s !important;
+}
+
+.kanban-card:hover {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255,255,255,0.06) !important;
+}
+
+/* ── Mission / Bid / Pipeline cards ───────────────────────────────────────── */
+.mission-card,
+.bid-card,
+.pv-card,
+.an-card {
+  border: 1px solid var(--border) !important;
+  transition: border-color 0.15s, box-shadow 0.15s !important;
+}
+
+.mission-card:hover,
+.bid-card:hover,
+.an-card:hover {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+}
+
+.mission-stat-card:hover {
+  border-color: rgba(244, 85, 28, 0.3) !important;
+  box-shadow: 0 0 0 1px rgba(244, 85, 28, 0.1) !important;
+}
+
+/* ── Status tags — slightly more refined ──────────────────────────────────── */
+.status-tag {
+  border-radius: 6px !important;
+  font-size: 10px !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* ── Generate / primary action buttons ─────────────────────────────────────── */
+.generate-btn {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%) !important;
+  box-shadow: 0 2px 12px var(--accent-glow) !important;
+  border-radius: 9px !important;
+}
+
+.generate-btn:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 24px var(--accent-glow) !important;
+}
+
+/* ── Paywall modal — premium feel ────────────────────────────────────────── */
+.paywall-card {
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: var(--shadow-lg) !important;
+  border-radius: 20px !important;
+}
+
+.paywall-btn {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dim) 100%) !important;
+  box-shadow: 0 2px 12px var(--accent-glow) !important;
+  border-radius: 10px !important;
+}
+
+.paywall-btn:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 24px var(--accent-glow) !important;
+}
+
+/* ── Command palette ──────────────────────────────────────────────────────── */
+.cmd-panel {
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.04) !important;
+  border-radius: 14px !important;
+}
+
+.cmd-backdrop {
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+}
+
+/* ── Detail tab underline ────────────────────────────────────────────────── */
+.detail-tab.active {
+  font-weight: 600 !important;
+}
+
+/* ── Toast — refined ─────────────────────────────────────────────────────── */
+.toast {
+  border-radius: 9px !important;
+  border-left-width: 3px !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* ── Discovery stats cards ────────────────────────────────────────────────── */
+.discover-stat-card {
+  border-radius: 10px !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* ── PipelineStats bar ───────────────────────────────────────────────────── */
+.pipeline-stats {
+  background: var(--bg-elev) !important;
+  border-bottom: 1px solid var(--border-soft) !important;
+}
+
+/* ── Chip selector ───────────────────────────────────────────────────────── */
+.chip.active {
+  box-shadow: 0 0 0 1px var(--accent) !important;
+}
+
+/* ── Landing page hero card — subtle glass ───────────────────────────────── */
+.landing-art-card {
+  background: rgba(20, 23, 32, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+/* ── Bulk action bar ─────────────────────────────────────────────────────── */
+.bulk-action-bar {
+  border-radius: 12px !important;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6) !important;
+}
+
+/* ── Onboarding modal ────────────────────────────────────────────────────── */
+.onboarding-modal {
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
