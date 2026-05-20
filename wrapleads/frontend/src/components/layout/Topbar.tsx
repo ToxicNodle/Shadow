@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppStore } from '../../store/useAppStore';
-import type { AppMode } from '../../store/useAppStore';
 import VisionQuoteModal from '../modals/VisionQuoteModal';
 import ARPreviewModal from '../modals/ARPreviewModal';
 import CardScanModal from '../modals/CardScanModal';
@@ -22,13 +21,12 @@ export default function Topbar() {
   });
   const unreadCount = notifData?.unread ?? 0;
   const {
-    mode, setMode,
+    mode,
     leadView, setLeadView,
     setCommandPaletteOpen,
     setAddLeadOpen, setSettingsOpen, setBlueprintOpen,
   } = useAppStore((s) => ({
     mode: s.mode,
-    setMode: s.setMode,
     leadView: s.leadView,
     setLeadView: s.setLeadView,
     setCommandPaletteOpen: s.setCommandPaletteOpen,
@@ -46,25 +44,6 @@ export default function Topbar() {
       <div className="topbar-brand">
         <div className="topbar-logo">W</div>
         <span className="topbar-name">WrapLeads<span>.io</span></span>
-      </div>
-
-      <div className="topbar-mode-switch">
-        {(['mission', 'leads', 'discover', 'pipeline', 'bids', 'jobs', 'content', 'analytics'] as AppMode[]).map((m) => (
-          <button
-            key={m}
-            className={`mode-btn ${mode === m ? 'active' : ''}`}
-            onClick={() => setMode(m)}
-          >
-            {m === 'mission' ? "Today's Mission"
-              : m === 'leads' ? 'My Leads'
-              : m === 'discover' ? 'Discover'
-              : m === 'pipeline' ? 'Pipeline'
-              : m === 'bids' ? 'Bid Tracker'
-              : m === 'jobs' ? 'Wrap Lifecycle'
-              : m === 'content' ? 'Content'
-              : '📊 Analytics'}
-          </button>
-        ))}
       </div>
 
       <div className="topbar-spacer" />

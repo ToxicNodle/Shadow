@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useAppStore } from '../store/useAppStore';
 import { api } from '../api/client';
 import Topbar from '../components/layout/Topbar';
+import NavRail from '../components/layout/NavRail';
 import Sidebar from '../components/layout/Sidebar';
 import TrialBanner from '../components/layout/TrialBanner';
 import PipelineStats from '../components/layout/PipelineStats';
@@ -101,6 +102,7 @@ export default function CRMPage() {
       <Topbar />
       {mode === 'leads' && <PipelineStats />}
       <div className="crm-body">
+        <NavRail />
         {mode === 'leads' && leadView === 'list' && <Sidebar />}
         <main className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}`}>
           {mode === 'leads'

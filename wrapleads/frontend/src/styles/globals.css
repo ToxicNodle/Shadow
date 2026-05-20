@@ -1,34 +1,64 @@
 /* WrapLeads global CSS — design tokens, resets, fonts */
 
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700;12..96,800&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 :root {
-  --bg: #0a0b0d;
-  --bg-elev: #14161a;
-  --bg-elev-2: #1c1f25;
-  --border: #2a2e36;
-  --border-soft: #1f2229;
-  --text: #f4f5f7;
-  --text-dim: #9aa0aa;
-  --text-faint: #5e6470;
-  --text-muted: #7a8490;
-  --accent: #ff6b35;
-  --accent-dim: #c4451f;
-  --accent-glow: rgba(255, 107, 53, 0.18);
-  --green: #4ade80;
-  --yellow: #facc15;
-  --blue: #60a5fa;
-  --red: #f87171;
-  --purple: #c084fc;
+  /* ── Surfaces ──────────────────────────────────── */
+  --bg:        #0e1018;   /* page background — slate-navy */
+  --bg-elev:   #141720;   /* first elevation: panels, cards */
+  --bg-elev-2: #1c2030;   /* second elevation: inputs, nested */
+  --bg-card:   #161a26;   /* hero cards */
+  --bg-base:   #0e1018;   /* alias for bg */
+  --bg-hover:  rgba(255, 255, 255, 0.04);
+  --bg-active: rgba(255, 255, 255, 0.07);
 
-  --display: 'Bricolage Grotesque', -apple-system, sans-serif;
-  --body: 'DM Sans', -apple-system, sans-serif;
-  --mono: 'JetBrains Mono', monospace;
+  /* ── Borders ───────────────────────────────────── */
+  --border:        rgba(255, 255, 255, 0.08);
+  --border-soft:   rgba(255, 255, 255, 0.05);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-faint:  rgba(255, 255, 255, 0.04);
+
+  /* ── Text ──────────────────────────────────────── */
+  --text:       #edf0f9;  /* primary — slight blue-white */
+  --text-dim:   #8892aa;  /* secondary */
+  --text-faint: #4e5672;  /* tertiary / disabled */
+  --text-muted: #6b7898;  /* between dim and faint */
+  --text-primary: #edf0f9;
+
+  /* ── Accent — Ember Orange ─────────────────────── */
+  --accent:        #f4551c;
+  --accent-dim:    #c73d10;
+  --accent-glow:   rgba(244, 85, 28, 0.22);
+  --accent-subtle: rgba(244, 85, 28, 0.08);
+
+  /* ── Semantic ──────────────────────────────────── */
+  --green:  #22d374;
+  --yellow: #f5a623;
+  --blue:   #60a5fa;
+  --red:    #f87171;
+  --purple: #a78bfa;
+
+  /* ── Typography ────────────────────────────────── */
+  --display: 'Bricolage Grotesque', -apple-system, system-ui, sans-serif;
+  --body:    'DM Sans', -apple-system, system-ui, sans-serif;
+  --mono:    'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  /* ── Radii ─────────────────────────────────────── */
+  --radius:    8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* ── Shadows ───────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.3);
+  --shadow-lg: 0 20px 60px rgba(0,0,0,0.7), 0 8px 24px rgba(0,0,0,0.4);
+  --shadow-glow: 0 0 40px rgba(244, 85, 28, 0.08);
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+/* ── Reset ───────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html, body, #root {
-  height: 100%;
-}
+html, body, #root { height: 100%; }
 
 body {
   font-family: var(--body);
@@ -37,15 +67,20 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background-image:
-    radial-gradient(circle at 15% 0%, rgba(255, 107, 53, 0.06), transparent 50%),
-    radial-gradient(circle at 85% 100%, rgba(96, 165, 250, 0.04), transparent 50%);
+    radial-gradient(ellipse 80% 40% at 5% 0%, rgba(244, 85, 28, 0.07) 0%, transparent 100%),
+    radial-gradient(ellipse 60% 50% at 95% 100%, rgba(96, 165, 250, 0.05) 0%, transparent 100%);
 }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: #3a3f4a; }
+/* ── Scrollbar ───────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* ── Animations ──────────────────────────────────── */
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes fadeIn  { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@keyframes pulse   { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
