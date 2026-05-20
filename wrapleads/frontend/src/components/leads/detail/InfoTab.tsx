@@ -665,6 +665,72 @@ export default function InfoTab({ lead }: Props) {
         />
       </div>
 
+      {/* ── Follow-up + Last Contacted ── */}
+      <div className="field-row">
+        <div className="field-group">
+          <label className="field-label">Follow-up Date</label>
+          <div style={{ display: 'flex', gap: 5 }}>
+            <input
+              className="input"
+              type="date"
+              value={local.followupDueAt?.slice(0, 10) ?? ''}
+              onChange={(e) => {
+                const val = e.target.value || null;
+                setLocal({ ...local, followupDueAt: val });
+                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { followup_due_at: val } });
+              }}
+              style={{ flex: 1, fontSize: 12 }}
+            />
+            {/* Snooze quick-buttons */}
+            {[3, 7, 14].map((days) => (
+              <button
+                key={days}
+                className="btn"
+                style={{ fontSize: 10, padding: '4px 7px', flexShrink: 0 }}
+                title={`Snooze ${days} days`}
+                onClick={() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + days);
+                  const val = d.toISOString().slice(0, 10);
+                  setLocal({ ...local, followupDueAt: val });
+                  if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { followup_due_at: val } });
+                }}
+              >
+                +{days}d
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Last Contacted</label>
+          <div style={{ display: 'flex', gap: 5 }}>
+            <input
+              className="input"
+              type="date"
+              value={local.lastContacted?.slice(0, 10) ?? ''}
+              onChange={(e) => {
+                const val = e.target.value || '';
+                setLocal({ ...local, lastContacted: val });
+                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { last_contacted: val } });
+              }}
+              style={{ flex: 1, fontSize: 12 }}
+            />
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 10, padding: '4px 9px', flexShrink: 0 }}
+              title="Mark as contacted today"
+              onClick={() => {
+                const today = new Date().toISOString().slice(0, 10);
+                setLocal({ ...local, lastContacted: today });
+                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { last_contacted: today } });
+              }}
+            >
+              Today
+            </button>
+          </div>
+        </div>
+      </div>
+
       <button
         className="btn btn-primary"
         style={{ width: '100%', justifyContent: 'center', padding: '10px', marginTop: 8 }}
