@@ -5659,13 +5659,14 @@ select option{background:#1a1d27}
         <div class="field"><label class="label">Vehicle Type</label>
           <select name="vehicle_type">
             <option value="">— Select —</option>
-            <option value="cargo_van">Cargo Van</option>
-            <option value="pickup">Pickup Truck</option>
-            <option value="box_truck">Box Truck</option>
-            <option value="semi">Semi / Hauler</option>
-            <option value="fleet_mixed">Mixed Fleet</option>
-            <option value="car">Car / SUV</option>
-            <option value="other">Other</option>
+            <option value="cargo_van_standard">Cargo Van</option>
+            <option value="cargo_van_high_roof">Cargo Van (High Roof)</option>
+            <option value="pickup_truck">Pickup Truck</option>
+            <option value="suv_large">SUV / Large Vehicle</option>
+            <option value="box_truck_16">Box Truck (16ft)</option>
+            <option value="box_truck_24">Box Truck (24ft)</option>
+            <option value="semi_full">Semi / Hauler</option>
+            <option value="other">Other / Mixed Fleet</option>
           </select>
         </div>
         <div class="field"><label class="label">Fleet Size</label><input name="fleet_size" placeholder="e.g. 12 trucks" /></div>
@@ -5770,7 +5771,7 @@ app.get('/portfolio/:shopToken', async (req, res) => {
     `, [String(user.id)]);
 
     const CATEGORY_NAMES = { fleet: 'Fleet Wraps', racing: 'Racing / Motorsport', dinoc: 'DI-NOC / Architectural', construction: 'Construction Fleet', colorchange: 'Color Change', gc_referral: 'GC / Commercial', reatec: 'Rea Tec Film', other: 'Other' };
-    const VEHICLE_NAMES = { cargo_van: 'Cargo Van', box_truck: 'Box Truck', semi: 'Semi', pickup: 'Pickup Truck', bus: 'Bus', fleet_mixed: 'Mixed Fleet', other: 'Vehicle' };
+    const VEHICLE_NAMES = { cargo_van_standard: 'Cargo Van', cargo_van_high_roof: 'Cargo Van (High Roof)', box_truck_16: '16ft Box Truck', box_truck_24: '24ft Box Truck', semi_cab_only: 'Semi (Cab)', semi_full: 'Semi (Full)', pickup_truck: 'Pickup Truck', suv_large: 'SUV', sedan: 'Sedan', minivan: 'Minivan', bus_school: 'Bus', flatbed: 'Flatbed', other: 'Vehicle' };
 
     const totalJobs = jobs.length;
     const totalVehicles = jobs.reduce((s, j) => s + (j.vehicle_count || 1), 0);
@@ -5783,7 +5784,7 @@ app.get('/portfolio/:shopToken', async (req, res) => {
       const vehName = VEHICLE_NAMES[j.vehicle_type] || j.vehicle_type || 'Vehicle';
       return `
         <div class="job-card">
-          ${thumb ? `<div class="job-thumb"><img src="${thumb}" alt="${j.company} wrap" loading="lazy"></div>` : `<div class="job-thumb job-thumb-empty"><span>🚗</span></div>`}
+          ${thumb ? `<div class="job-thumb"><img src="${thumb}" alt="${j.company} wrap" loading="lazy"></div>` : `<div class="job-thumb job-thumb-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" style="opacity:0.3"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`}
           <div class="job-info">
             <div class="job-company">${j.company || 'Client'}</div>
             <div class="job-meta">${j.vehicle_count || 1}× ${vehName} · ${catName}</div>
@@ -5819,7 +5820,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .job-card:hover{transform:translateY(-2px);border-color:${accent}44}
 .job-thumb{height:180px;overflow:hidden;background:#0f1117;display:flex;align-items:center;justify-content:center}
 .job-thumb img{width:100%;height:100%;object-fit:cover;display:block}
-.job-thumb-empty{font-size:40px}
+.job-thumb-empty{display:flex;align-items:center;justify-content:center;color:#4a5568}
 .job-info{padding:14px}
 .job-company{font-weight:700;font-size:14px;margin-bottom:4px}
 .job-meta{font-size:12px;color:#8892a4;margin-bottom:2px}
