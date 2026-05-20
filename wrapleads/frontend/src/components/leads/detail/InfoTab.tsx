@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { Lead, LeadCategory, LeadStatus } from '../../../api/types';
+import type { Lead, LeadCategory, LeadStatus, VehicleType } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
@@ -50,7 +50,7 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
       if (logJob) {
         await api.createJob({
           company: lead.company,
-          vehicle_type: jobForm.vehicle_type as any,
+          vehicle_type: jobForm.vehicle_type as VehicleType,
           vehicle_count: jobForm.vehicle_count,
           wrap_category: lead.category,
           material: jobForm.material || undefined,
@@ -126,7 +126,7 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
                       <option value="pickup_truck">Pickup Truck</option>
                       <option value="suv_large">Large SUV</option>
                       <option value="bus_school">Bus</option>
-                      <option value="fleet_mixed">Mixed Fleet</option>
+                      <option value="other">Mixed / Other</option>
                     </select>
                   </div>
                   <div className="field-group">
@@ -152,6 +152,11 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
           </div>
         )}
 
+        {mut.isError && (
+          <div className="error-box" style={{ marginBottom: 8 }}>
+            Could not save — check your connection and try again.
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn" onClick={onClose}>Skip</button>
           <button
