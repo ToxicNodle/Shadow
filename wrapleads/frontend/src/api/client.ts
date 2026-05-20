@@ -214,6 +214,7 @@ export const api = {
     wonThisMonth: number;
     agingWraps: number;
     priorityScore: number;
+    stuckDeals: { id: number; company: string; status: string; category: string; city: string; state: string; email: string; days_stale: number; last_contacted: string | null }[];
   }>('/mission'),
 
   // Bulk sequence activation
@@ -439,6 +440,7 @@ export const api = {
     topCustomers: { company: string; won_deals: number; jobs: number; total_vehicles: number; estimated_clv: number }[];
     emailPerf: { opens7d: number; totalTracked: number; openRatePct: number; leadsOpened: number };
     quoteRevenue: { totalQuotes: number; acceptedCount: number; acceptedValue: number; sentCount: number; sentValue: number; draftCount: number; pipelineValue: number };
+    velocity: { stage: string; avg_days: number; sample: number }[];
   }>('/analytics'),
 
   // AI Mission Brief

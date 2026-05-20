@@ -2152,7 +2152,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
     const [
       pipelineR, wonTrendR, catWinR, activity30dR,
       avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR, clvR,
-      emailPerfR, quoteRevR
+      emailPerfR, quoteRevR, velocityR
     ] = await Promise.all([
       // Pipeline by status
       pool.query(`
@@ -2264,6 +2264,20 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         FROM email_tracking WHERE user_id=$1
       `, [uid]),
 
+      // Pipeline velocity — avg days from lead creation to reaching each stage
+      pool.query(`
+        SELECT
+          la.metadata->>'to' AS stage,
+          ROUND(AVG(EXTRACT(EPOCH FROM (la.created_at - l.created_at)) / 86400))::INT AS avg_days,
+          COUNT(DISTINCT la.lead_id)::INT AS sample
+        FROM lead_activities la
+        JOIN leads l ON l.id = la.lead_id
+        WHERE la.user_id=$1 AND la.type='status_changed'
+          AND la.metadata->>'to' IN ('contacted','replied','meeting','proposal','won')
+        GROUP BY la.metadata->>'to'
+        ORDER BY avg_days
+      `, [uid]),
+
       // Quote revenue intelligence
       pool.query(`
         SELECT
@@ -2322,6 +2336,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         openRatePct: emailPerfR.rows[0]?.open_rate_pct ?? 0,
         leadsOpened: emailPerfR.rows[0]?.leads_opened ?? 0,
       },
+      velocity: velocityR.rows,
       quoteRevenue: {
         totalQuotes: quoteRevR.rows[0]?.total_quotes ?? 0,
         acceptedCount: quoteRevR.rows[0]?.accepted_count ?? 0,
@@ -2802,7 +2817,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
     const uid = String(req.user.id);
     const today = new Date().toISOString().slice(0, 10);
 
-    const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR, agingR] = await Promise.all([
+    const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR, agingR, stuckR] = await Promise.all([
       // Overdue follow-ups
       pool.query(`
         SELECT id, company, category, email, followup_due_at, last_contacted
@@ -2884,6 +2899,23 @@ app.get('/mission', authMiddleware, async (req, res) => {
         WHERE user_id=$1
           AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'
       `, [uid]),
+
+      // Stuck deals — in an active stage for 14+ days with no recent activity
+      pool.query(`
+        SELECT l.id, l.company, l.status, l.category, l.city, l.state, l.email,
+               EXTRACT(EPOCH FROM (NOW() - l.updated_at))::INT / 86400 AS days_stale,
+               l.last_contacted
+        FROM leads l
+        WHERE l.user_id=$1
+          AND l.status IN ('proposal', 'meeting', 'replied')
+          AND l.updated_at < NOW() - INTERVAL '14 days'
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_activities la
+            WHERE la.lead_id = l.id AND la.created_at > NOW() - INTERVAL '14 days'
+          )
+        ORDER BY l.updated_at ASC
+        LIMIT 8
+      `, [uid]),
     ]);
 
     const seq = seqR.rows[0];
@@ -2900,6 +2932,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
       sequences: { active: seq.active, pendingEmails: seq.pending_emails },
       wonThisMonth: wonR.rows[0].count,
       agingWraps: agingCount,
+      stuckDeals: stuckR.rows,
       priorityScore:
         callReadyR.rows.length * 5 +
         overdueR.rows.length * 3 +
