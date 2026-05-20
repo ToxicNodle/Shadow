@@ -239,7 +239,9 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
       <div className="bid-card-header">
         <span className="bid-card-type">{PROJECT_TYPE_LABELS[bid.project_type]}</span>
         <div className="bid-card-actions">
-          <button className="bid-card-btn" onClick={() => api.openQuote(bid.id)} title="Preview Quote">📄</button>
+          <button className="bid-card-btn" onClick={() => api.openQuote(bid.id)} title="Preview Quote">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </button>
           <button className="bid-card-btn" onClick={() => onEdit(bid)} title="Edit">✎</button>
           <button className="bid-card-btn bid-card-btn-del" onClick={() => onDelete(bid.id)} title="Delete">✕</button>
         </div>
@@ -249,12 +251,12 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
 
       {bid.gc_name && (
         <div className="bid-card-meta">
-          <span className="bid-meta-icon">🏗</span> {bid.gc_name}
+          <span className="bid-meta-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg></span> {bid.gc_name}
         </div>
       )}
       {bid.architect && (
         <div className="bid-card-meta">
-          <span className="bid-meta-icon">📐</span> {bid.architect}
+          <span className="bid-meta-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></span> {bid.architect}
         </div>
       )}
       {bid.source_platform && (

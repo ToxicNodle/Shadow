@@ -4217,3 +4217,10 @@ textarea:focus {
   opacity: 0.5 !important;
   cursor: not-allowed !important;
 }
+
+/* v9 — notif panel SVG icons */
+.notif-icon { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-muted); }
+.notif-icon svg { width: 16px !important; height: 16px !important; flex-shrink: 0; }
+.notif-empty-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; color: var(--text-faint); }
+.notif-empty-icon svg { width: 32px !important; height: 32px !important; }
+.notif-row.unread .notif-icon { color: var(--accent); }
