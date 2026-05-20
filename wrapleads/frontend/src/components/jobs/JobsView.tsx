@@ -42,7 +42,7 @@ function SocialPostPanel({ job }: { job: InstalledJob }) {
           disabled={genMut.isPending}
           onClick={() => genMut.mutate()}
         >
-          {genMut.isPending ? 'Generating…' : '✨ Generate Social Posts'}
+          {genMut.isPending ? 'Generating…' : 'Generate Social Posts'}
         </button>
       )}
       {posts && (
@@ -55,7 +55,7 @@ function SocialPostPanel({ job }: { job: InstalledJob }) {
             <div className="social-post-text">{posts.instagram}</div>
             <div className="social-post-actions">
               <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => copy(posts.instagram, 'ig')}>
-                {copiedIG ? '✓ Copied!' : '📋 Copy'}
+                {copiedIG ? '✓ Copied!' : 'Copy'}
               </button>
               <button className="btn" style={{ fontSize: 11 }} onClick={() => genMut.mutate()}>↺ Regenerate</button>
             </div>
@@ -68,7 +68,7 @@ function SocialPostPanel({ job }: { job: InstalledJob }) {
             <div className="social-post-text">{posts.linkedin}</div>
             <div className="social-post-actions">
               <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => copy(posts.linkedin, 'li')}>
-                {copiedLI ? '✓ Copied!' : '📋 Copy'}
+                {copiedLI ? '✓ Copied!' : 'Copy'}
               </button>
             </div>
           </div>
@@ -214,8 +214,8 @@ function JobModal({ job, onClose }: JobModalProps) {
         {!isNew && (
           <div className="jobs-tabs" style={{ margin: '0 24px', borderBottom: '1px solid var(--border)' }}>
             <button className={`jobs-tab ${activeTab === 'details' ? 'active' : ''}`} onClick={() => setActiveTab('details')}>Details</button>
-            <button className={`jobs-tab ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}>📷 Photos</button>
-            <button className={`jobs-tab ${activeTab === 'social' ? 'active' : ''}`} onClick={() => setActiveTab('social')}>✨ Social</button>
+            <button className={`jobs-tab ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}>Photos</button>
+            <button className={`jobs-tab ${activeTab === 'social' ? 'active' : ''}`} onClick={() => setActiveTab('social')}>Social Posts</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
