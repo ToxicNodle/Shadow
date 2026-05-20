@@ -151,7 +151,7 @@ export default function BlueprintScanner({ onClose }: Props) {
             {result.hasOpportunity ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <span style={{ fontSize: 18 }}>✅</span>
+                  <span style={{ color: 'var(--green)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><polyline points="16 8 10 14 7 11"/></svg></span>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 14 }}>Opportunity Found</div>
                     <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>

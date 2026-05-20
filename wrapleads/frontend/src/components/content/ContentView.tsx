@@ -43,7 +43,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
             {preview
               ? <img src={preview} alt="preview" style={{ maxHeight: 200, borderRadius: 6, objectFit: 'contain' }} />
-              : <><div className="vision-dropzone-icon">🖼</div><p className="vision-dropzone-label">Click to upload image</p></>}
+              : <><div className="vision-dropzone-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="32" height="32"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div><p className="vision-dropzone-label">Click to upload image</p></>}
           </div>
           <div className="field-group">
             <label className="field-label">Name</label>
@@ -307,7 +307,7 @@ function PushModal({ device, contentList, onClose }: { device: EinkDevice; conte
                 >
                   {c.image_url
                     ? <img src={c.image_url} alt={c.name} className="content-card-img" />
-                    : <div className="content-card-placeholder">🖼</div>}
+                    : <div className="content-card-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="24" height="24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>}
                   <div className="content-card-body">
                     <span className="content-card-name">{c.name}</span>
                   </div>
@@ -411,7 +411,7 @@ function DeviceDetail({ device, onClose, onPush, onDelete }: {
             <div className="push-log-thumb">
               {entry.content?.image_url
                 ? <img src={entry.content.image_url} alt="" />
-                : <span style={{ fontSize: 14 }}>🖼</span>}
+                : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>}
             </div>
             <div className="push-log-info">
               <span className="push-log-name">{entry.content?.name ?? `Content #${entry.content_id}`}</span>
@@ -701,7 +701,7 @@ export default function ContentView() {
               <div key={c.id} className="content-card">
                 {c.image_url
                   ? <img src={c.image_url} alt={c.name} className="content-card-img" />
-                  : <div className="content-card-placeholder">🖼</div>}
+                  : <div className="content-card-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="24" height="24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>}
                 <div className="content-card-body">
                   <span className="content-card-name">{c.name}</span>
                   <div className="content-card-tags">
@@ -739,7 +739,7 @@ export default function ContentView() {
                 <div className="content-sched-thumb">
                   {s.content?.image_url
                     ? <img src={s.content.image_url} alt="" className="content-sched-img" />
-                    : <div className="content-sched-placeholder">🖼</div>}
+                    : <div className="content-sched-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>}
                 </div>
                 <div className="content-sched-info">
                   <span className="content-sched-name">{s.content?.name ?? `Content #${s.content_id}`}</span>

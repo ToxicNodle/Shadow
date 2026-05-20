@@ -213,7 +213,9 @@ export default function CSVImportModal() {
 
         {done && (
           <div style={{ textAlign: 'center', padding: '32px 0' }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+            <div style={{ marginBottom: 12, color: 'var(--green)' }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="40" height="40"><circle cx="12" cy="12" r="10"/><polyline points="16 8 10 14 7 11"/></svg>
+            </div>
             <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Import Complete!</div>
             <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 20 }}>
               <strong>{done.inserted}</strong> leads imported
