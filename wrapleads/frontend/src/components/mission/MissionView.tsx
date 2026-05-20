@@ -609,7 +609,7 @@ export default function MissionView() {
     );
   }
 
-  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth, agingWraps } = data;
+  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth, agingWraps, stuckDeals } = data;
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
@@ -923,6 +923,44 @@ export default function MissionView() {
               {agingWraps} installed wrap{agingWraps !== 1 ? 's are' : ' is'} approaching or past the refresh window. These are re-order opportunities with existing customers.
             </p>
             <button className="btn" onClick={() => setMode('jobs')}>View Aging Alerts →</button>
+          </section>
+        )}
+
+        {/* ── Stuck Deals ── */}
+        {(stuckDeals ?? []).length > 0 && (
+          <section className="mission-card" style={{ borderColor: '#ef444440' }}>
+            <div className="mission-card-header">
+              <span className="mission-card-icon" style={{ color: '#ef4444' }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+              </span>
+              <span className="mission-card-title">Stuck Deals — No Activity in 14+ Days</span>
+              <span className="mission-badge mission-badge-red">{stuckDeals!.length}</span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 10px', lineHeight: 1.5 }}>
+              These deals are in active stages but haven't moved. Each day of silence reduces close probability.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {stuckDeals!.map((deal) => (
+                <div
+                  key={deal.id}
+                  className="mission-item"
+                  onClick={() => goToLead(deal.id)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <div className="mission-item-main">
+                    <span className="mission-item-company">{deal.company}</span>
+                    <span className={`status-tag ${deal.status}`} style={{ fontSize: 10, marginLeft: 6 }}>{deal.status}</span>
+                  </div>
+                  <div className="mission-item-meta">
+                    {deal.days_stale}d no activity · {deal.category}
+                    {deal.city && deal.state ? ` · ${deal.city}, ${deal.state}` : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
           </section>
         )}
 

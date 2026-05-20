@@ -139,7 +139,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -296,6 +296,50 @@ export default function AnalyticsView() {
             ))}
           </div>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10 }}>Based on avg deal size × close probability by stage</div>
+        </div>
+
+        {/* ── Pipeline Funnel + Conversion Rates ── */}
+        <div className="an-card">
+          <div className="an-card-title">Pipeline Funnel</div>
+          {(() => {
+            const FUNNEL_STAGES = ['cold', 'contacted', 'replied', 'meeting', 'proposal', 'won'] as const;
+            const STAGE_COLORS: Record<string, string> = {
+              cold: '#6b7280', contacted: '#3b82f6', replied: '#8b5cf6',
+              meeting: '#f59e0b', proposal: '#ff6b35', won: '#22c55e',
+            };
+            const counts = FUNNEL_STAGES.map((s) => ({ stage: s, count: byStatus[s] ?? 0 }));
+            const maxCount = Math.max(...counts.map((c) => c.count), 1);
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {counts.map((row, i) => {
+                  const next = counts[i + 1];
+                  const convRate = next && row.count > 0 ? Math.round((next.count / row.count) * 100) : null;
+                  const vel = velocity?.find((v) => v.stage === row.stage);
+                  return (
+                    <div key={row.stage}>
+                      <div className="an-bar-row" style={{ alignItems: 'center' }}>
+                        <div className="an-bar-label" style={{ color: STAGE_COLORS[row.stage], fontWeight: 600, minWidth: 72 }}>
+                          {STATUSES[row.stage as keyof typeof STATUSES] || row.stage}
+                        </div>
+                        <div className="an-bar-track">
+                          <div className="an-bar-fill" style={{ width: `${Math.max(2, (row.count / maxCount) * 100)}%`, background: STAGE_COLORS[row.stage] }} />
+                        </div>
+                        <div className="an-bar-count" style={{ minWidth: 60 }}>{row.count}</div>
+                        {vel && vel.avg_days > 0 && (
+                          <div style={{ fontSize: 10, color: 'var(--text-faint)', minWidth: 54, textAlign: 'right' }}>{vel.avg_days}d avg</div>
+                        )}
+                      </div>
+                      {convRate !== null && (
+                        <div style={{ fontSize: 10, color: convRate >= 40 ? '#22c55e' : convRate >= 20 ? '#f59e0b' : '#ef4444', textAlign: 'center', marginTop: 2, letterSpacing: '0.03em' }}>
+                          ↓ {convRate}% advance
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
 
         {/* ── Win/Loss Factors ── */}
