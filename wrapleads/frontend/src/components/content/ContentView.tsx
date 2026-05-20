@@ -672,10 +672,29 @@ export default function ContentView() {
           </div>
           {loadingContent && <div className="pv-loading"><span className="spinner" /></div>}
           {!loadingContent && filtered.length === 0 && (
-            <div className="jobs-empty">
-              <div className="jobs-empty-icon">🖼</div>
-              <p>No content yet.</p>
-              <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowUpload(true)}>Upload your first design</button>
+            <div className="empty-state">
+              <div className="empty-state-icon">
+                <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="6" y="6" width="52" height="38" rx="5" stroke="currentColor" strokeWidth="1.5" opacity="0.3"/>
+                  <rect x="6" y="6" width="52" height="38" rx="5" fill="currentColor" opacity="0.07"/>
+                  <circle cx="18" cy="22" r="6" stroke="currentColor" strokeWidth="1.5" opacity="0.5"/>
+                  <path d="M6 34 L20 22 L30 30 L40 20 L58 34" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.7"/>
+                  <rect x="20" y="48" width="24" height="3" rx="1.5" fill="currentColor" opacity="0.2"/>
+                  <rect x="28" y="44" width="8" height="8" rx="1" fill="currentColor" opacity="0.15"/>
+                  <line x1="14" y1="58" x2="50" y2="58" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.15"/>
+                </svg>
+              </div>
+              <h3 className="empty-state-title">No designs in library</h3>
+              <p className="empty-state-sub">
+                Upload wrap designs, seasonal promos, and brand graphics to schedule
+                across your E Ink vehicle display network and track performance.
+              </p>
+              <div className="empty-state-actions">
+                <button className="btn btn-primary" onClick={() => setShowUpload(true)}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
+                  Upload First Design
+                </button>
+              </div>
             </div>
           )}
           <div className="content-grid">
