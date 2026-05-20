@@ -4,6 +4,19 @@ import { CATEGORIES, STATUSES } from '../../api/types';
 import { useAppStore } from '../../store/useAppStore';
 import { scoreBreakdown, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 
+const CAT_COLORS: Record<string, string> = {
+  fleet: '#3b82f6',
+  racing: '#ef4444',
+  gc_referral: '#f59e0b',
+  construction: '#f97316',
+  dinoc: '#8b5cf6',
+  reatec: '#a855f7',
+  colorchange: '#ec4899',
+  wallgraphics: '#14b8a6',
+  design: '#06b6d4',
+  other: '#6b7280',
+};
+
 interface Props {
   lead: Lead;
   selected: boolean;
@@ -21,6 +34,11 @@ export default function LeadRow({ lead, selected, checked }: Props) {
   const score = breakdown.total;
   const label = scoreLabel(score);
   const color = SCORE_COLORS[label];
+
+  const catColor = CAT_COLORS[lead.category] ?? '#6b7280';
+  const initials = lead.company
+    ? lead.company.replace(/[^A-Za-z0-9 ]/g, '').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()
+    : '?';
 
   function fmt(date: string) {
     if (!date) return '—';
@@ -47,11 +65,25 @@ export default function LeadRow({ lead, selected, checked }: Props) {
         />
       </div>
 
-      <div>
-        <div className="lead-company">{lead.company}</div>
-        <div className="lead-contact">
-          {lead.contactName || <span style={{ color: 'var(--text-faint)' }}>No contact</span>}
-          {lead.contactTitle ? ` · ${lead.contactTitle}` : ''}
+      {/* Company avatar + name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        <div
+          className="lead-avatar"
+          style={{
+            background: `${catColor}1a`,
+            color: catColor,
+            border: `1px solid ${catColor}33`,
+            flexShrink: 0,
+          }}
+        >
+          {initials}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div className="lead-company">{lead.company}</div>
+          <div className="lead-contact">
+            {lead.contactName || <span style={{ color: 'var(--text-faint)' }}>No contact</span>}
+            {lead.contactTitle ? ` · ${lead.contactTitle}` : ''}
+          </div>
         </div>
       </div>
 
@@ -77,12 +109,8 @@ export default function LeadRow({ lead, selected, checked }: Props) {
       {/* Score badge with breakdown popover */}
       <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
         <div
-          style={{
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            background: `${color}22`, color, borderRadius: 4,
-            fontSize: 11, fontWeight: 700, padding: '2px 6px', minWidth: 28,
-            cursor: 'pointer',
-          }}
+          className="score-badge"
+          style={{ background: `${color}1a`, color, border: `1px solid ${color}33` }}
           onMouseEnter={() => setShowBreakdown(true)}
           onMouseLeave={() => setShowBreakdown(false)}
           onClick={(e) => { e.stopPropagation(); setShowBreakdown((v) => !v); }}
