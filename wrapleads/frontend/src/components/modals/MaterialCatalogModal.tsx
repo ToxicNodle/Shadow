@@ -50,7 +50,13 @@ export default function MaterialCatalogModal({ onClose, onSelect }: Props) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" style={{ maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header" style={{ flexShrink: 0 }}>
-          <h2 className="modal-title">🗂 Material Catalog</h2>
+          <h2 className="modal-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16" style={{ marginRight: 8, verticalAlign: 'middle' }}>
+              <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+              <line x1="7" y1="15" x2="11" y2="15"/><line x1="7" y1="18" x2="9" y2="18"/>
+            </svg>
+            Material Catalog
+          </h2>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
