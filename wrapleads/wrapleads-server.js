@@ -2151,7 +2151,8 @@ app.get('/analytics', authMiddleware, async (req, res) => {
     const uid = String(req.user.id);
     const [
       pipelineR, wonTrendR, catWinR, activity30dR,
-      avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR, clvR
+      avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR, clvR,
+      emailPerfR, quoteRevR
     ] = await Promise.all([
       // Pipeline by status
       pool.query(`
@@ -2252,6 +2253,29 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         ORDER BY estimated_clv DESC NULLS LAST
         LIMIT 8
       `, [uid]),
+
+      // Email tracking performance
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE open_count > 0 AND opened_at >= NOW() - INTERVAL '7 days')::INT AS opens_7d,
+          COUNT(*)::INT AS total_tracked,
+          CASE WHEN COUNT(*) > 0 THEN ROUND(100.0 * COUNT(*) FILTER (WHERE open_count > 0) / COUNT(*)) ELSE 0 END::INT AS open_rate_pct,
+          COUNT(DISTINCT lead_id) FILTER (WHERE open_count > 0)::INT AS leads_opened
+        FROM email_tracking WHERE user_id=$1
+      `, [uid]),
+
+      // Quote revenue intelligence
+      pool.query(`
+        SELECT
+          COUNT(*)::INT AS total_quotes,
+          COUNT(*) FILTER (WHERE status='accepted')::INT AS accepted_count,
+          COALESCE(SUM(total) FILTER (WHERE status='accepted'), 0) AS accepted_value,
+          COUNT(*) FILTER (WHERE status='sent')::INT AS sent_count,
+          COALESCE(SUM(total) FILTER (WHERE status='sent'), 0) AS sent_value,
+          COUNT(*) FILTER (WHERE status='draft')::INT AS draft_count,
+          COALESCE(SUM(total) FILTER (WHERE status IN ('sent','accepted')), 0) AS pipeline_value
+        FROM shop_quotes WHERE user_id=$1
+      `, [uid]),
     ]);
 
     const byStatus = {};
@@ -2292,6 +2316,21 @@ app.get('/analytics', authMiddleware, async (req, res) => {
       topLeads: topLeadsR.rows,
       jobs: js,
       topCustomers: clvR.rows,
+      emailPerf: {
+        opens7d: emailPerfR.rows[0]?.opens_7d ?? 0,
+        totalTracked: emailPerfR.rows[0]?.total_tracked ?? 0,
+        openRatePct: emailPerfR.rows[0]?.open_rate_pct ?? 0,
+        leadsOpened: emailPerfR.rows[0]?.leads_opened ?? 0,
+      },
+      quoteRevenue: {
+        totalQuotes: quoteRevR.rows[0]?.total_quotes ?? 0,
+        acceptedCount: quoteRevR.rows[0]?.accepted_count ?? 0,
+        acceptedValue: parseFloat(quoteRevR.rows[0]?.accepted_value ?? '0'),
+        sentCount: quoteRevR.rows[0]?.sent_count ?? 0,
+        sentValue: parseFloat(quoteRevR.rows[0]?.sent_value ?? '0'),
+        draftCount: quoteRevR.rows[0]?.draft_count ?? 0,
+        pipelineValue: parseFloat(quoteRevR.rows[0]?.pipeline_value ?? '0'),
+      },
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

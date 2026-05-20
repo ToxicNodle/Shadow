@@ -139,7 +139,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -178,9 +178,11 @@ export default function AnalyticsView() {
       {/* ── Summary Strip ── */}
       <div className="an-stat-strip">
         <StatCard label="Total Leads" value={summary.totalLeads} />
-        <StatCard label="Pipeline Value" value={fmt(summary.pipelineValue)} sub="estimated" accent="var(--accent)" />
+        <StatCard label="Quote Revenue" value={quoteRevenue.acceptedValue > 0 ? fmt(quoteRevenue.acceptedValue) : '—'} sub={quoteRevenue.acceptedCount > 0 ? `${quoteRevenue.acceptedCount} accepted` : 'no accepted quotes yet'} accent="#10b981" />
+        <StatCard label="Quotes in Pipeline" value={quoteRevenue.sentValue > 0 ? fmt(quoteRevenue.sentValue) : '—'} sub={`${quoteRevenue.sentCount} awaiting reply`} accent="var(--accent)" />
         <StatCard label="Won This Year" value={summary.won} accent="#22c55e" />
         <StatCard label="Win Rate" value={summary.winRate !== null ? `${summary.winRate}%` : '—'} sub="won / (won+lost)" accent={summary.winRate && summary.winRate >= 30 ? '#22c55e' : '#f59e0b'} />
+        <StatCard label="Email Open Rate" value={emailPerf.totalTracked > 0 ? `${emailPerf.openRatePct}%` : '—'} sub={emailPerf.totalTracked > 0 ? `${emailPerf.totalTracked} tracked` : 'send tracked emails to see'} accent={emailPerf.openRatePct >= 30 ? '#22c55e' : emailPerf.openRatePct > 0 ? '#f59e0b' : undefined} />
         <StatCard label="Avg Days to Close" value={summary.avgDaysToClose !== null ? `${summary.avgDaysToClose}d` : '—'} />
         <StatCard label="Installs Tracked" value={jobs.total_jobs} sub={`${jobs.total_vehicles ?? 0} vehicles`} />
         <StatCard label="Aging Wraps" value={jobs.aging_90d} sub="< 90 days" accent={jobs.aging_90d > 0 ? '#f59e0b' : undefined} />
@@ -353,6 +355,70 @@ export default function AnalyticsView() {
                   <span className="an-arrow">→</span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Email Intelligence ── */}
+        <div className="an-card">
+          <div className="an-card-title">Email Intelligence</div>
+          {emailPerf.totalTracked === 0 ? (
+            <div className="an-empty">Send tracked emails to see open rates and engagement metrics here.</div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div className="an-stat-value" style={{ fontSize: 28, color: emailPerf.openRatePct >= 30 ? '#22c55e' : '#f59e0b' }}>
+                    {emailPerf.openRatePct}%
+                  </div>
+                  <div className="an-stat-sub">open rate</div>
+                </div>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div className="an-stat-value" style={{ fontSize: 28, color: 'var(--accent)' }}>{emailPerf.opens7d}</div>
+                  <div className="an-stat-sub">opens this week</div>
+                </div>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div className="an-stat-value" style={{ fontSize: 28, color: 'var(--text)' }}>{emailPerf.leadsOpened}</div>
+                  <div className="an-stat-sub">leads engaged</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {emailPerf.totalTracked} emails with open tracking · Industry avg open rate is ~22%
+                {emailPerf.openRatePct >= 30
+                  ? ' — your outreach is performing above average.'
+                  : emailPerf.openRatePct > 0
+                    ? ' — try subject line A/B testing to improve.'
+                    : '.'}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Quote Revenue Intelligence ── */}
+        {quoteRevenue.totalQuotes > 0 && (
+          <div className="an-card">
+            <div className="an-card-title">Quote Revenue Breakdown</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                { label: 'Accepted', count: quoteRevenue.acceptedCount, value: quoteRevenue.acceptedValue, color: '#10b981' },
+                { label: 'Awaiting reply', count: quoteRevenue.sentCount, value: quoteRevenue.sentValue, color: 'var(--accent)' },
+                { label: 'Drafts', count: quoteRevenue.draftCount, value: 0, color: 'var(--text-muted)' },
+              ].filter((r) => r.count > 0).map((r) => (
+                <div key={r.label} className="an-bar-row">
+                  <div className="an-bar-label" style={{ color: r.color, fontWeight: 600 }}>{r.label}</div>
+                  <div className="an-bar-track">
+                    <div className="an-bar-fill" style={{
+                      width: `${quoteRevenue.totalQuotes > 0 ? Math.max(4, (r.count / quoteRevenue.totalQuotes) * 100) : 0}%`,
+                      background: r.color,
+                    }} />
+                  </div>
+                  <div className="an-bar-count">{r.count} quote{r.count !== 1 ? 's' : ''}{r.value > 0 ? ` · ${fmt(r.value)}` : ''}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+              <span style={{ color: 'var(--text-muted)' }}>Confirmed revenue</span>
+              <span style={{ fontWeight: 800, color: '#10b981', fontSize: 15 }}>{fmt(quoteRevenue.acceptedValue)}</span>
             </div>
           </div>
         )}

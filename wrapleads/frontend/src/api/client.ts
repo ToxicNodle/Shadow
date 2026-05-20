@@ -437,6 +437,8 @@ export const api = {
     topLeads: { id: number; company: string; status: string; category: string; fleet_size: string; city: string; state: string }[];
     jobs: { total_jobs: number; total_vehicles: number; aging_90d: number };
     topCustomers: { company: string; won_deals: number; jobs: number; total_vehicles: number; estimated_clv: number }[];
+    emailPerf: { opens7d: number; totalTracked: number; openRatePct: number; leadsOpened: number };
+    quoteRevenue: { totalQuotes: number; acceptedCount: number; acceptedValue: number; sentCount: number; sentValue: number; draftCount: number; pipelineValue: number };
   }>('/analytics'),
 
   // AI Mission Brief
