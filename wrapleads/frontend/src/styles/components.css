@@ -4224,3 +4224,11 @@ textarea:focus {
 .notif-empty-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; color: var(--text-faint); }
 .notif-empty-icon svg { width: 32px !important; height: 32px !important; }
 .notif-row.unread .notif-icon { color: var(--accent); }
+
+/* v10 — command palette SVG icons */
+.cmd-icon { display: flex !important; align-items: center !important; justify-content: center !important; }
+.cmd-icon svg { width: 14px !important; height: 14px !important; flex-shrink: 0; }
+
+/* v11 — ai-coach icon SVG sizing */
+.ai-coach-icon { display: flex !important; align-items: center !important; width: 16px !important; height: 16px !important; color: var(--accent) !important; }
+.ai-coach-icon svg { width: 14px !important; height: 14px !important; }
