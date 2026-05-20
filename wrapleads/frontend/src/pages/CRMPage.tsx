@@ -98,6 +98,21 @@ export default function CRMPage() {
     }).catch(() => {});
   }, [updateSettings]);
 
+  // Apply user's brand accent color to the app CSS variables
+  const accentColor = useAppStore((s) => s.settings.accentColor);
+  useEffect(() => {
+    if (!accentColor || !/^#[0-9a-f]{6}$/i.test(accentColor)) return;
+    const r = parseInt(accentColor.slice(1, 3), 16);
+    const g = parseInt(accentColor.slice(3, 5), 16);
+    const b = parseInt(accentColor.slice(5, 7), 16);
+    const dim = `#${Math.round(r * 0.8).toString(16).padStart(2, '0')}${Math.round(g * 0.8).toString(16).padStart(2, '0')}${Math.round(b * 0.8).toString(16).padStart(2, '0')}`;
+    const root = document.documentElement;
+    root.style.setProperty('--accent', accentColor);
+    root.style.setProperty('--accent-dim', dim);
+    root.style.setProperty('--accent-glow', `rgba(${r},${g},${b},0.22)`);
+    root.style.setProperty('--accent-subtle', `rgba(${r},${g},${b},0.08)`);
+  }, [accentColor]);
+
   if (isLoading) {
     return (
       <div className="loading" style={{ height: '100vh' }}>
