@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppStore } from '../../store/useAppStore';
+import { api } from '../../api/client';
 import VisionQuoteModal from '../modals/VisionQuoteModal';
 import ARPreviewModal from '../modals/ARPreviewModal';
 import CardScanModal from '../modals/CardScanModal';
@@ -15,7 +16,7 @@ export default function Topbar() {
   const [notifOpen, setNotifOpen] = useState(false);
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
-    queryFn: () => import('../../api/client').then((m) => m.api.getNotifications()),
+    queryFn: () => api.getNotifications(),
     staleTime: 60_000,
     refetchInterval: 60_000,
   });
@@ -154,7 +155,7 @@ export default function Topbar() {
         {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>
-          <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0]}</span>
+          <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0] ?? ''}</span>
           <button
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginLeft: 2 }}
             title="Sign out"
