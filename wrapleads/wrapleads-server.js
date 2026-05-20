@@ -2502,6 +2502,127 @@ app.get('/leads/export', authMiddleware, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// ── CSV Import ────────────────────────────────────────────────────────────────
+// POST /leads/import-csv  (multipart, field: "file")
+// Parses the uploaded CSV, maps columns by header name, inserts leads,
+// skips duplicates by company name per user. Returns { imported, skipped, errors }.
+
+function parseCSV(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const rows = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const cells = [];
+    let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') {
+        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if (c === ',' && !inQ) {
+        cells.push(cur.trim()); cur = '';
+      } else {
+        cur += c;
+      }
+    }
+    cells.push(cur.trim());
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function normalizeHeader(h) {
+  return h.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+const CSV_FIELD_MAP = {
+  company: ['company', 'companyname', 'business', 'name', 'businessname', 'organization'],
+  contact_name: ['contactname', 'contact', 'fullname', 'firstname', 'lastname', 'person'],
+  contact_title: ['title', 'contacttitle', 'jobtitle', 'position', 'role'],
+  email: ['email', 'emailaddress', 'mail'],
+  phone: ['phone', 'phonenumber', 'telephone', 'mobile', 'cell'],
+  city: ['city', 'town'],
+  state: ['state', 'province', 'region'],
+  website: ['website', 'url', 'web', 'domain'],
+  fleet_size: ['fleetsize', 'fleet', 'vehicles', 'trucks', 'units', 'truckcount', 'vehiclecount'],
+  category: ['category', 'type', 'leadtype', 'industry', 'segment'],
+  status: ['status', 'leadstatus', 'stage'],
+  notes: ['notes', 'note', 'description', 'comments', 'comment', 'details'],
+  pitch_angle: ['pitchangle', 'pitch', 'pitchnotes'],
+};
+
+const VALID_CATEGORIES = ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing'];
+const VALID_STATUSES = ['new','cold','contacted','replied','meeting','proposal','won','lost'];
+
+app.post('/leads/import-csv', authMiddleware, upload.single('file'), async (req, res) => {
+  const uid = String(req.user.id);
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const text = req.file.buffer.toString('utf-8');
+  const rows = parseCSV(text);
+  if (rows.length < 2) return res.status(400).json({ error: 'CSV must have a header row and at least one data row' });
+
+  const headers = rows[0].map(normalizeHeader);
+
+  // Build column index → field mapping
+  const colMap = {};
+  for (const [field, aliases] of Object.entries(CSV_FIELD_MAP)) {
+    for (let i = 0; i < headers.length; i++) {
+      if (aliases.includes(headers[i])) { colMap[i] = field; break; }
+    }
+  }
+
+  if (!Object.values(colMap).includes('company')) {
+    return res.status(400).json({ error: 'Could not find a Company column. Ensure your CSV has a "Company" header.' });
+  }
+
+  let imported = 0; let skipped = 0; let errors = 0;
+  const crypto = require('crypto');
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.every((c) => !c)) continue; // blank row
+    const field = (f) => {
+      const idx = Object.entries(colMap).find(([, v]) => v === f)?.[0];
+      return idx !== undefined ? (row[parseInt(idx)] ?? '').trim() : '';
+    };
+
+    const company = field('company');
+    if (!company) { skipped++; continue; }
+
+    const rawCategory = field('category').toLowerCase().replace(/\s+/g, '');
+    const category = VALID_CATEGORIES.find((c) => rawCategory.includes(c) || c.includes(rawCategory)) ?? 'fleet';
+    const rawStatus = field('status').toLowerCase().replace(/\s+/g, '');
+    const status = VALID_STATUSES.find((s) => rawStatus === s) ?? 'new';
+
+    const clientId = crypto.randomUUID();
+    try {
+      const r = await pool.query(`
+        INSERT INTO leads (user_id, client_id, company, contact_name, contact_title, email, phone,
+          city, state, website, fleet_size, category, status, notes, pitch_angle, source)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'csv_import')
+        ON CONFLICT (user_id, client_id) DO NOTHING
+        RETURNING id
+      `, [
+        uid, clientId, company,
+        field('contact_name') || null, field('contact_title') || null,
+        field('email') || null, field('phone') || null,
+        field('city') || null, field('state') || null,
+        field('website') || null, field('fleet_size') || null,
+        category, status,
+        field('notes') || null, field('pitch_angle') || null,
+      ]);
+      if (r.rows.length) imported++;
+      else skipped++;
+    } catch (e) {
+      errors++;
+      console.warn(`[csv-import] Row ${i}: ${e.message}`);
+    }
+  }
+
+  res.json({ ok: true, imported, skipped, errors, total: rows.length - 1 });
+});
+
 // Drip engine — activate a 3-email sequence for a lead
 // ----------------------------------------------------------------------------
 app.post('/leads/:id/activate-sequence', authMiddleware, async (req, res) => {

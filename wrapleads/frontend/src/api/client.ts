@@ -96,6 +96,20 @@ export const api = {
     authFetch<{ inserted: number; failed: number }>('/leads/sync', {
       method: 'POST', body: JSON.stringify({ leads }),
     }),
+  importLeadsCSV: (file: File) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('file', file);
+    return fetch('/leads/import-csv', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Import failed');
+      return data as { ok: boolean; imported: number; skipped: number; errors: number; total: number };
+    });
+  },
 
   // Lead activities
   getActivities: (serverId: number) =>
