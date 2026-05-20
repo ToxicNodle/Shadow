@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { useAppStore } from '../../store/useAppStore';
 import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../api/types';
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
 import MaterialCatalogModal from '../modals/MaterialCatalogModal';
@@ -331,6 +332,7 @@ export default function JobsView() {
   const [tab, setTab] = useState<'all' | 'aging'>('all');
   const [modal, setModal] = useState<InstalledJob | 'new' | null>(null);
   const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
 
   const { data: allData, isLoading: loadingAll } = useQuery({
     queryKey: ['jobs'],
@@ -351,13 +353,18 @@ export default function JobsView() {
 
   async function reEngage(job: InstalledJob) {
     if (!job.lead_id) return;
-    await api.logActivity(job.lead_id, {
-      type: 'note_added',
-      subject: 'Wrap Refresh Reminder',
-      body: `Wrap installed ${job.install_date.split('T')[0]} on ${job.vehicle_count} ${VEHICLE_TYPE_LABELS[job.vehicle_type as VehicleType] ?? job.vehicle_type}(s) is approaching refresh window (${job.life_years} year lifespan). Follow up about renewal.`,
-    });
-    await api.updateLead(job.lead_id, { followupDueAt: new Date().toISOString().split('T')[0] } as any);
-    qc.invalidateQueries({ queryKey: ['leads'] });
+    try {
+      await api.logActivity(job.lead_id, {
+        type: 'note_added',
+        subject: 'Wrap Refresh Reminder',
+        body: `Wrap installed ${job.install_date.split('T')[0]} on ${job.vehicle_count} ${VEHICLE_TYPE_LABELS[job.vehicle_type as VehicleType] ?? job.vehicle_type}(s) is approaching refresh window (${job.life_years} year lifespan). Follow up about renewal.`,
+      });
+      await api.updateLead(job.lead_id, { followupDueAt: new Date().toISOString().split('T')[0] } as any);
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast(`${job.company} queued for follow-up`, 'success');
+    } catch {
+      showToast('Failed to queue re-engagement', 'error');
+    }
   }
 
   return (

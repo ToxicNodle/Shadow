@@ -104,7 +104,7 @@ export default function CRMPage() {
       <div className="crm-body">
         <NavRail />
         {mode === 'leads' && leadView === 'list' && <Sidebar />}
-        <main key={`${mode}-${leadView}`} className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}`}>
+        <main key={`${mode}-${leadView}`} className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}${mode === 'analytics' ? ' analytics-main' : ''}`}>
           {mode === 'leads'
             ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
             : mode === 'pipeline'
