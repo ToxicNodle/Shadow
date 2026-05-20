@@ -167,7 +167,9 @@ export default function PipelineView() {
           <div className="pv-actions">
             {overdue > 0 && (
               <button className="pv-action-btn pv-action-warn" onClick={() => goToLeads('contacted')}>
-                <span className="pv-action-icon">⚠</span>
+                <span className="pv-action-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </span>
                 <div>
                   <div className="pv-action-title">{overdue} overdue follow-ups</div>
                   <div className="pv-action-sub">Contacted 14+ days ago, no reply</div>
@@ -175,24 +177,30 @@ export default function PipelineView() {
               </button>
             )}
             <button className="pv-action-btn" onClick={() => goToLeads('new')}>
-              <span className="pv-action-icon">📋</span>
+              <span className="pv-action-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8.01" y2="14" strokeWidth="3"/><line x1="12" y1="14" x2="12.01" y2="14" strokeWidth="3"/><line x1="16" y1="14" x2="16.01" y2="14" strokeWidth="3"/></svg>
+              </span>
               <div>
                 <div className="pv-action-title">{byStatus.new ?? 0} untouched leads</div>
                 <div className="pv-action-sub">Ready to activate drip sequences</div>
               </div>
             </button>
             <button className="pv-action-btn" onClick={() => goToLeads('replied')}>
-              <span className="pv-action-icon">💬</span>
+              <span className="pv-action-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </span>
               <div>
                 <div className="pv-action-title">{byStatus.replied ?? 0} leads replied</div>
                 <div className="pv-action-sub">Upgrade to proposal stage</div>
               </div>
             </button>
             <button className="pv-action-btn pv-action-primary" onClick={() => setMode('discover')}>
-              <span className="pv-action-icon">🔍</span>
+              <span className="pv-action-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </span>
               <div>
                 <div className="pv-action-title">Find more leads</div>
-                <div className="pv-action-sub">Browse 500+ AIA firms in Discover</div>
+                <div className="pv-action-sub">Search 600K carriers in Discover</div>
               </div>
             </button>
           </div>

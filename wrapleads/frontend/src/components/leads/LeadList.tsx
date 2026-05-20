@@ -191,24 +191,17 @@ export default function LeadList() {
           Export CSV
         </button>
 
-        <span className="lead-count-badge">{filtered.length} / {leads.length}</span>
-      </div>
-
-      {/* Hot filter toggle */}
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
         <button
           className={`btn ${hotOnly ? 'btn-primary' : ''}`}
-          style={{ fontSize: 11, padding: '3px 10px' }}
+          style={{ fontSize: 12, padding: '4px 10px', gap: 5 }}
           onClick={() => setHotOnly((h) => !h)}
           title="Show only hot leads (score ≥ 65)"
         >
-          🔥 Hot Only
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2c0 6-6 8-6 14a6 6 0 0 0 12 0c0-6-6-8-6-14z"/><path d="M12 12c0 3-2 4-2 7a2 2 0 0 0 4 0c0-3-2-4-2-7z"/></svg>
+          Hot
         </button>
-        {hotOnly && (
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            {filtered.length} hot lead{filtered.length !== 1 ? 's' : ''}
-          </span>
-        )}
+
+        <span className="lead-count-badge">{filtered.length} / {leads.length}</span>
       </div>
 
       {/* Bulk selection toolbar */}
@@ -221,10 +214,11 @@ export default function LeadList() {
           <span style={{ fontWeight: 600 }}>{selCount} selected</span>
           <button
             className="btn"
-            style={{ fontSize: 11, background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', padding: '3px 10px' }}
+            style={{ fontSize: 11, background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
             onClick={() => setBulkOutreachOpen(true)}
           >
-            ⚡ Bulk Email
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            Bulk Email
           </button>
           <button
             className="btn"
@@ -235,7 +229,7 @@ export default function LeadList() {
               if (ids.length) bulkSeqMut.mutate(ids);
             }}
           >
-            {seqStatus === 'running' ? 'Activating…' : seqStatus === 'done' ? '✓ Done' : '📧 Activate Sequences'}
+            {seqStatus === 'running' ? 'Activating…' : seqStatus === 'done' ? '✓ Done' : 'Activate Sequences'}
           </button>
           <div style={{ position: 'relative' }}>
             <button
@@ -243,7 +237,7 @@ export default function LeadList() {
               style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
               onClick={() => setBulkStatusOpen((o) => !o)}
             >
-              🔄 Move to Stage
+              Move Stage ↓
             </button>
             {bulkStatusOpen && (
               <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 50, minWidth: 160, boxShadow: '0 8px 24px rgba(0,0,0,.3)' }}>
@@ -269,7 +263,8 @@ export default function LeadList() {
             style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
             onClick={() => setBroadcastOpen(true)}
           >
-            📢 Broadcast
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
+            Broadcast
           </button>
           <button
             className="btn"
