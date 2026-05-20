@@ -61,13 +61,13 @@ const BUILT_IN_TEMPLATES: EmailTemplate[] = [
     label: 'Racing / Event Livery',
     tag: 'Racing',
     subject: `Race livery for your upcoming season — {{company}}`,
-    body: `Hi {{contactName}},\n\nWe're right here in Speedway, Indiana — steps from the Speedway — and we specialize in race liveries, hauler wraps, pit equipment graphics, and garage branding for IndyCar, IMSA, and NHRA teams.\n\nWith your season coming up, I wanted to reach out about your livery needs. We handle contingency requirements, sponsor placement specs, and tight race-weekend timelines.\n\nWould love to put together a concept for your team.\n\nBest,\n{{senderName}}\n{{companyName}}`,
+    body: `Hi {{contactName}},\n\nWe're based in {{location}} and specialize in race liveries, hauler wraps, pit equipment graphics, and garage branding for professional and amateur race teams.\n\nWith your season coming up, I wanted to reach out about your livery needs. We handle contingency requirements, sponsor placement specs, and tight race-weekend timelines.\n\nWould love to put together a concept for your team.\n\nBest,\n{{senderName}}\n{{companyName}}`,
   },
   {
     label: 'GC Referral Partner',
     tag: 'Referral',
     subject: `Partnership opportunity — graphics for your subs`,
-    body: `Hi {{contactName}},\n\nWe work with several GCs across Indiana as their preferred graphics vendor — fleet trucks for their subcontractors, branded signage, site graphics, and more.\n\nI'd love to offer your subs preferred pricing in exchange for referrals. It's a simple program — when a sub needs wraps, you send them to us, they get a discount, and we handle everything.\n\nWould you be open to a quick chat about how this works?\n\nBest,\n{{senderName}}\n{{companyName}}`,
+    body: `Hi {{contactName}},\n\nWe work with several GCs across {{state}} as their preferred graphics vendor — fleet trucks for their subcontractors, branded signage, site graphics, and more.\n\nI'd love to offer your subs preferred pricing in exchange for referrals. It's a simple program — when a sub needs wraps, you send them to us, they get a discount, and we handle everything.\n\nWould you be open to a quick chat about how this works?\n\nBest,\n{{senderName}}\n{{companyName}}`,
   },
   {
     label: 'DI-NOC Surface Refresh',
@@ -124,13 +124,18 @@ export default function EmailTab({ lead }: Props) {
   const [copiedTpl, setCopiedTpl] = useState<number | null>(null);
 
   function fillTemplate(tpl: EmailTemplate) {
+    const location = settings.city && settings.state
+      ? `${settings.city}, ${settings.state}`
+      : settings.city || settings.state || 'our area';
     const fill = (s: string) => s
       .replace(/\{\{contactName\}\}/g, lead.contactName || lead.company)
       .replace(/\{\{company\}\}/g, lead.company)
       .replace(/\{\{senderName\}\}/g, settings.senderName || 'Your Name')
       .replace(/\{\{companyName\}\}/g, settings.companyName || 'our shop')
       .replace(/\{\{portfolioUrl\}\}/g, settings.portfolioUrl || 'our website')
-      .replace(/\{\{vehicleType\}\}/g, lead.fleetSize ? `a ${lead.fleetSize}-unit fleet` : 'your vehicles');
+      .replace(/\{\{vehicleType\}\}/g, lead.fleetSize ? `a ${lead.fleetSize}-unit fleet` : 'your vehicles')
+      .replace(/\{\{location\}\}/g, location)
+      .replace(/\{\{state\}\}/g, settings.state || 'our area');
     return { subject: fill(tpl.subject), body: fill(tpl.body) };
   }
 
