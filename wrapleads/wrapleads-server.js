@@ -576,6 +576,36 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create quote_requests table:', e.message);
   }
+
+  // Quote Builder — structured line-item quotes per lead
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS shop_quotes (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        lead_id      BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        quote_number TEXT,
+        title        TEXT NOT NULL DEFAULT 'Vehicle Wrap Quote',
+        status       TEXT NOT NULL DEFAULT 'draft',
+        line_items   JSONB NOT NULL DEFAULT '[]',
+        subtotal     NUMERIC(10,2) NOT NULL DEFAULT 0,
+        tax_rate     NUMERIC(5,2)  NOT NULL DEFAULT 0,
+        tax_amount   NUMERIC(10,2) NOT NULL DEFAULT 0,
+        discount     NUMERIC(10,2) NOT NULL DEFAULT 0,
+        total        NUMERIC(10,2) NOT NULL DEFAULT 0,
+        notes        TEXT,
+        valid_days   INT NOT NULL DEFAULT 30,
+        sent_at      TIMESTAMPTZ,
+        accepted_at  TIMESTAMPTZ,
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sq_user ON shop_quotes(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sq_lead ON shop_quotes(lead_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create shop_quotes table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -5401,6 +5431,83 @@ app.get('/proposals/:id/views', authMiddleware, async (req, res) => {
 app.delete('/proposals/:id', authMiddleware, async (req, res) => {
   try {
     await pool.query('DELETE FROM proposals WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Quote / Invoice Builder ────────────────────────────────────────────────
+
+app.get('/leads/:id/quotes', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id);
+    const leadCheck = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!leadCheck.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const { rows } = await pool.query(
+      'SELECT * FROM shop_quotes WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC',
+      [leadId, uid]
+    );
+    res.json({ quotes: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/quotes', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id);
+    const leadCheck = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!leadCheck.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const { title, line_items, tax_rate, discount, notes, valid_days, status } = req.body;
+    const items = Array.isArray(line_items) ? line_items : [];
+    const subtotal = items.reduce((s, i) => s + (parseFloat(i.total) || 0), 0);
+    const taxR = parseFloat(tax_rate) || 0;
+    const disc = parseFloat(discount) || 0;
+    const taxAmt = Math.round(subtotal * taxR) / 100;
+    const total = subtotal + taxAmt - disc;
+    const countR = await pool.query('SELECT COUNT(*)::INT AS n FROM shop_quotes WHERE user_id=$1', [uid]);
+    const qNum = `Q-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${String(countR.rows[0].n + 1).padStart(3,'0')}`;
+    const { rows } = await pool.query(
+      `INSERT INTO shop_quotes (user_id, lead_id, quote_number, title, status, line_items, subtotal, tax_rate, tax_amount, discount, total, notes, valid_days)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [uid, leadId, qNum, title || 'Vehicle Wrap Quote', status || 'draft',
+       JSON.stringify(items), subtotal, taxR, taxAmt, disc, total, notes || null, parseInt(valid_days) || 30]
+    );
+    res.json({ ok: true, quote: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/quotes/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const quoteId = parseInt(req.params.id);
+    const existing = await pool.query('SELECT id FROM shop_quotes WHERE id=$1 AND user_id=$2', [quoteId, uid]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Quote not found' });
+    const { title, line_items, tax_rate, discount, notes, valid_days, status } = req.body;
+    const items = Array.isArray(line_items) ? line_items : [];
+    const subtotal = items.reduce((s, i) => s + (parseFloat(i.total) || 0), 0);
+    const taxR = parseFloat(tax_rate) || 0;
+    const disc = parseFloat(discount) || 0;
+    const taxAmt = Math.round(subtotal * taxR) / 100;
+    const total = subtotal + taxAmt - disc;
+    const { rows } = await pool.query(
+      `UPDATE shop_quotes SET
+        title=$1, line_items=$2::jsonb, subtotal=$3, tax_rate=$4, tax_amount=$5,
+        discount=$6, total=$7, notes=$8, valid_days=$9, status=$10,
+        sent_at=CASE WHEN $10='sent' AND sent_at IS NULL THEN NOW() ELSE sent_at END,
+        accepted_at=CASE WHEN $10='accepted' AND accepted_at IS NULL THEN NOW() ELSE accepted_at END,
+        updated_at=NOW()
+       WHERE id=$11 AND user_id=$12 RETURNING *`,
+      [title, JSON.stringify(items), subtotal, taxR, taxAmt, disc, total,
+       notes || null, parseInt(valid_days) || 30, status || 'draft', quoteId, uid]
+    );
+    res.json({ ok: true, quote: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/quotes/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    await pool.query('DELETE FROM shop_quotes WHERE id=$1 AND user_id=$2', [parseInt(req.params.id), uid]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

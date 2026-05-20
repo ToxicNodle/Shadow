@@ -488,4 +488,14 @@ export const api = {
   // AI pipeline narrative
   generatePipelineNarrative: () =>
     authFetch<{ ok: boolean; narrative: string }>('/ai/pipeline-narrative', { method: 'POST', body: '{}' }),
+
+  // Quote / Invoice Builder
+  getLeadQuotes: (leadId: number) =>
+    authFetch<{ quotes: import('./types').ShopQuote[] }>(`/leads/${leadId}/quotes`),
+  createQuote: (leadId: number, data: object) =>
+    authFetch<{ ok: boolean; quote: import('./types').ShopQuote }>(`/leads/${leadId}/quotes`, { method: 'POST', body: JSON.stringify(data) }),
+  updateQuote: (id: number, data: object) =>
+    authFetch<{ ok: boolean; quote: import('./types').ShopQuote }>(`/quotes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteQuote: (id: number) =>
+    authFetch<{ ok: boolean }>(`/quotes/${id}`, { method: 'DELETE' }),
 };

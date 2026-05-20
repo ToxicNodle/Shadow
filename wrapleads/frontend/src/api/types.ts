@@ -481,3 +481,34 @@ export interface EinkPushLog {
   status: 'pending' | 'delivered' | 'failed';
   error?: string | null;
 }
+
+export interface QuoteLineItem {
+  id: string;
+  description: string;
+  qty: number;
+  unit: string;
+  unitPrice: number;
+  total: number;
+}
+
+export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'invoiced';
+
+export interface ShopQuote {
+  id: number;
+  lead_id: number;
+  quote_number: string;
+  title: string;
+  status: QuoteStatus;
+  line_items: QuoteLineItem[];
+  subtotal: number;
+  tax_rate: number;
+  tax_amount: number;
+  discount: number;
+  total: number;
+  notes: string | null;
+  valid_days: number;
+  sent_at: string | null;
+  accepted_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

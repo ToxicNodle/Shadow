@@ -4366,3 +4366,120 @@ textarea:focus {
   color: var(--text-muted);
   letter-spacing: 0;
 }
+
+/* ── Quote Builder ──────────────────────────────────────────────────────────── */
+.qb-title-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+.qb-title-input::placeholder { color: var(--text-faint); }
+
+.qb-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.qb-thead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-elev-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.qb-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.qb-row:last-child { border-bottom: none; }
+.qb-row:hover { background: var(--bg-hover); }
+.qb-desc { flex: 1; }
+.qb-col-xs { width: 24px; flex-shrink: 0; }
+.qb-col-sm { width: 56px; flex-shrink: 0; }
+.qb-col-md { width: 100px; flex-shrink: 0; }
+.qb-total-cell {
+  width: 100px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.qb-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.qb-remove-btn:hover:not(:disabled) { color: var(--red); background: rgba(239,68,68,.1); }
+.qb-remove-btn:disabled { opacity: 0.3; cursor: default; }
+.qb-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+.qb-add-btn:hover { background: var(--bg-hover); }
+
+.qb-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+.qb-totals-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.qb-totals-row > span:last-child { min-width: 100px; text-align: right; font-weight: 500; color: var(--text); }
+.qb-totals-final {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text);
+  border-top: 2px solid var(--border);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.qb-totals-final > span:last-child { color: var(--accent); }
+
+/* Quote cards in QuotesTab */
+.quote-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.quote-card:hover { border-color: var(--accent); background: var(--bg-hover); }

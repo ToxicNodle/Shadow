@@ -9,8 +9,9 @@ import EmailTab from './EmailTab';
 import NotesTab from './NotesTab';
 import ActivityTab from './ActivityTab';
 import DesignStudioTab from './DesignStudioTab';
+import QuotesTab from './QuotesTab';
 
-type Tab = 'info' | 'email' | 'activity' | 'notes' | 'design';
+type Tab = 'info' | 'email' | 'quotes' | 'activity' | 'notes' | 'design';
 
 function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
   const qc = useQueryClient();
@@ -133,7 +134,7 @@ export default function LeadDetail() {
       </div>
 
       <div className="lead-detail-tabs">
-        {(['info', 'email', 'activity', 'notes', 'design'] as Tab[]).map((t) => (
+        {(['info', 'email', 'quotes', 'activity', 'notes', 'design'] as Tab[]).map((t) => (
           <button
             key={t}
             className={`detail-tab ${activeTab === t ? 'active' : ''}`}
@@ -147,6 +148,7 @@ export default function LeadDetail() {
       <div className="lead-detail-content" key={lead.id}>
         {activeTab === 'info'     && <InfoTab lead={lead} />}
         {activeTab === 'email'    && <EmailTab lead={lead} />}
+        {activeTab === 'quotes'   && <QuotesTab lead={lead} />}
         {activeTab === 'activity' && <ActivityTab lead={lead} />}
         {activeTab === 'notes'    && <NotesTab lead={lead} />}
         {activeTab === 'design'   && <DesignStudioTab lead={lead} />}
