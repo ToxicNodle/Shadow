@@ -3665,3 +3665,306 @@ textarea:focus {
   border-radius: 14px !important;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   EMPTY STATES  ·  Centered, illustrated, action-forward
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 80px 40px;
+  max-width: 480px;
+  margin: 0 auto;
+  gap: 0;
+}
+
+.empty-state-sm {
+  padding: 48px 32px;
+}
+
+.empty-state-icon {
+  width: 72px;
+  height: 72px;
+  color: var(--accent);
+  margin-bottom: 22px;
+  opacity: 0.85;
+}
+
+.empty-state-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.empty-state-title {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.3px;
+  margin-bottom: 10px;
+}
+
+.empty-state-sub {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 360px;
+  margin-bottom: 26px;
+}
+
+.empty-state-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Ensure empty state spans full kanban width */
+.bids-root .empty-state {
+  width: 100%;
+  max-width: 520px;
+  margin: 40px auto;
+}
+
+/* ── Jobs empty v2 (replaces jobs-empty) ─────────────────────────────────────── */
+.jobs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 60px 32px;
+  color: var(--text-faint);
+}
+
+.jobs-empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
+
+/* ── Mission view — improved hero numbers ────────────────────────────────────── */
+.mission-stat-num {
+  font-family: var(--display) !important;
+  font-size: 32px !important;
+  font-weight: 800 !important;
+  letter-spacing: -1px !important;
+  line-height: 1 !important;
+}
+
+.mission-date {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--text-faint) !important;
+  margin-bottom: 6px !important;
+}
+
+.mission-headline {
+  font-family: var(--display) !important;
+  font-size: 28px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.5px !important;
+  line-height: 1.15 !important;
+  color: var(--text) !important;
+}
+
+/* ── Bids view v2 ────────────────────────────────────────────────────────────── */
+.bids-root {
+  background: var(--bg) !important;
+}
+
+.bids-title {
+  font-family: var(--display) !important;
+  font-size: 26px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.5px !important;
+}
+
+.bids-stat-val {
+  font-family: var(--display) !important;
+  font-size: 24px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.5px !important;
+}
+
+.bids-stat {
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 12px !important;
+  background: var(--bg-elev) !important;
+  transition: border-color 0.15s !important;
+}
+
+.bids-stat:hover {
+  border-color: var(--border) !important;
+}
+
+.bid-column {
+  background: var(--bg-elev) !important;
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 12px !important;
+}
+
+.bid-col-header {
+  border-top-width: 2px !important;
+  border-top-style: solid !important;
+  border-radius: 12px 12px 0 0 !important;
+}
+
+/* ── Jobs view v2 ────────────────────────────────────────────────────────────── */
+.jobs-root {
+  background: var(--bg) !important;
+}
+
+.jobs-title {
+  font-family: var(--display) !important;
+  font-size: 26px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.5px !important;
+}
+
+.jobs-row {
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 10px !important;
+  background: var(--bg-elev) !important;
+  transition: border-color 0.15s, transform 0.12s !important;
+  cursor: pointer !important;
+}
+
+.jobs-row:hover {
+  border-color: var(--border) !important;
+  transform: translateX(2px) !important;
+}
+
+.jobs-expiry-badge {
+  border-radius: 999px !important;
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  padding: 3px 10px !important;
+}
+
+/* ── Content view v2 ─────────────────────────────────────────────────────────── */
+.content-card {
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 12px !important;
+  background: var(--bg-elev) !important;
+  transition: border-color 0.15s, box-shadow 0.15s !important;
+  overflow: hidden !important;
+}
+
+.content-card:hover {
+  border-color: var(--border) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
+}
+
+.content-tag-btn {
+  border-radius: 6px !important;
+  transition: all 0.12s !important;
+}
+
+.content-tag-btn.active {
+  background: rgba(244, 85, 28, 0.1) !important;
+  border-color: rgba(244, 85, 28, 0.25) !important;
+  color: var(--accent) !important;
+}
+
+/* ── Discover view v2 ────────────────────────────────────────────────────────── */
+.discover-stat-card {
+  transition: border-color 0.15s, transform 0.12s !important;
+}
+
+.discover-stat-card:hover {
+  border-color: rgba(244, 85, 28, 0.2) !important;
+  transform: translateY(-1px) !important;
+}
+
+.discover-stat-num {
+  font-family: var(--display) !important;
+  font-size: 32px !important;
+  font-weight: 800 !important;
+  letter-spacing: -1px !important;
+  color: var(--text) !important;
+}
+
+/* ── Lead detail panel v2 ────────────────────────────────────────────────────── */
+.detail-panel {
+  border-left: 1px solid var(--border-soft) !important;
+  background: var(--bg-elev) !important;
+}
+
+.detail-tab {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  padding: 0 2px !important;
+  transition: color 0.12s !important;
+}
+
+.detail-tab.active {
+  color: var(--text) !important;
+  font-weight: 600 !important;
+}
+
+/* ── Score breakdown popover v2 ───────────────────────────────────────────────── */
+.score-breakdown-pop {
+  background: var(--bg-elev-2) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6) !important;
+  min-width: 180px !important;
+}
+
+/* ── View toggle (list/kanban) ────────────────────────────────────────────────── */
+.view-toggle {
+  display: flex !important;
+  background: var(--bg-elev-2) !important;
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 8px !important;
+  padding: 2px !important;
+  gap: 1px !important;
+}
+
+.view-btn {
+  width: 28px !important;
+  height: 26px !important;
+  border-radius: 6px !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--text-faint) !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.12s !important;
+}
+
+.view-btn:hover {
+  background: var(--bg-hover) !important;
+  color: var(--text-dim) !important;
+}
+
+.view-btn.active {
+  background: var(--bg-elev) !important;
+  color: var(--accent) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3) !important;
+}
+
+/* ── Notification bell ────────────────────────────────────────────────────────── */
+.notif-badge {
+  background: var(--accent) !important;
+  border-radius: 999px !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  min-width: 14px !important;
+  height: 14px !important;
+  line-height: 14px !important;
+  text-align: center !important;
+  padding: 0 3px !important;
+  box-shadow: 0 0 6px rgba(244, 85, 28, 0.5) !important;
+}
+

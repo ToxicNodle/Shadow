@@ -401,12 +401,43 @@ export default function JobsView() {
       )}
 
       {!isLoading && jobs.length === 0 && (
-        <div className="jobs-empty">
-          {tab === 'aging'
-            ? <><div className="jobs-empty-icon">✅</div><p>No wraps expiring in the next 90 days.</p></>
-            : <><div className="jobs-empty-icon">📋</div><p>No jobs logged yet.</p><p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Log your first completed install to start tracking the wrap lifecycle.</p></>
-          }
-        </div>
+        tab === 'aging' ? (
+          <div className="empty-state empty-state-sm">
+            <div className="empty-state-icon" style={{ color: 'var(--green)' }}>
+              <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="32" cy="32" r="24" stroke="currentColor" strokeWidth="2" opacity="0.3"/>
+                <path d="M20 32l8 8 16-16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <h3 className="empty-state-title">All clear — no aging wraps</h3>
+            <p className="empty-state-sub">No vehicles are expiring in the next 90 days. Check back when installs approach their end-of-life.</p>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="6" y="28" width="52" height="22" rx="6" stroke="currentColor" strokeWidth="1.5" opacity="0.4"/>
+                <rect x="10" y="22" width="44" height="10" rx="4" fill="currentColor" opacity="0.15" stroke="currentColor" strokeWidth="1.5"/>
+                <circle cx="16" cy="50" r="5" stroke="currentColor" strokeWidth="1.5" fill="currentColor" opacity="0.2"/>
+                <circle cx="48" cy="50" r="5" stroke="currentColor" strokeWidth="1.5" fill="currentColor" opacity="0.2"/>
+                <path d="M10 32h44" stroke="currentColor" strokeWidth="1" opacity="0.3" strokeDasharray="3 3"/>
+                <path d="M28 16 L32 10 L36 16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6"/>
+                <line x1="32" y1="10" x2="32" y2="22" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.6"/>
+              </svg>
+            </div>
+            <h3 className="empty-state-title">Start tracking your installs</h3>
+            <p className="empty-state-sub">
+              Log completed vehicle wraps to track their lifecycle — get aging alerts before wraps expire,
+              auto-generate social posts, and trigger re-engagement campaigns at exactly the right time.
+            </p>
+            <div className="empty-state-actions">
+              <button className="btn btn-primary" onClick={() => setModal('new')}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
+                Log First Install
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       {!isLoading && jobs.length > 0 && (
