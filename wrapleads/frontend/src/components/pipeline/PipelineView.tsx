@@ -63,9 +63,30 @@ export default function PipelineView() {
 
   if (isLoading || !data) {
     return (
-      <div className="pv-loading">
-        <span className="spinner spinner-lg" />
-        <span>Loading pipeline data…</span>
+      <div className="pv-root">
+        <div className="pv-hero">
+          {[140, 100, 80, 100, 120].map((w, i) => (
+            <div key={i} className="pv-hero-card" style={{ gap: 8 }}>
+              <div className="skeleton" style={{ height: 36, width: w, borderRadius: 6 }} />
+              <div className="skeleton" style={{ height: 10, width: 90 }} />
+              <div className="skeleton" style={{ height: 9, width: 70, opacity: 0.5 }} />
+            </div>
+          ))}
+        </div>
+        <div className="pv-grid">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="pv-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="skeleton" style={{ height: 11, width: 100 }} />
+              {[80, 60, 45, 70, 55].map((w, j) => (
+                <div key={j} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div className="skeleton" style={{ height: 9, width: 70, flexShrink: 0 }} />
+                  <div className="skeleton" style={{ height: 8, flex: 1, maxWidth: `${w}%` }} />
+                  <div className="skeleton" style={{ height: 9, width: 30 }} />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
