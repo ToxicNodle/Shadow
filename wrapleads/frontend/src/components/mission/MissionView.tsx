@@ -130,7 +130,9 @@ function BulkActivatePanel({ leads, onDone }: BulkPanelProps) {
   if (result) {
     return (
       <div className="mission-bulk-result">
-        <div className="mission-bulk-result-icon">🚀</div>
+        <div className="mission-bulk-result-icon" style={{ color: 'var(--accent)' }}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </div>
         <div className="mission-bulk-result-text">
           <strong>{result.queued} drip sequences activated.</strong>
           {result.failed > 0 && ` (${result.failed} skipped — no email on file)`}
@@ -172,7 +174,7 @@ function BulkActivatePanel({ leads, onDone }: BulkPanelProps) {
           disabled={selected.size === 0 || mut.isPending}
           onClick={() => mut.mutate()}
         >
-          {mut.isPending ? `Activating ${selected.size}…` : `🚀 Activate ${selected.size} Sequences`}
+          {mut.isPending ? `Activating ${selected.size}…` : `Activate ${selected.size} Sequences`}
         </button>
       </div>
     </div>
@@ -216,7 +218,9 @@ function EnrichPanel({ leads, apolloKey, onDone }: EnrichPanelProps) {
   if (result) {
     return (
       <div className="mission-bulk-result">
-        <div className="mission-bulk-result-icon">✅</div>
+        <div className="mission-bulk-result-icon" style={{ color: '#22c55e' }}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
         <div className="mission-bulk-result-text">
           <strong>{result.enriched} leads enriched with email.</strong>
           {result.sequencesActivated > 0 && ` ${result.sequencesActivated} drip sequences auto-activated.`}
@@ -267,7 +271,7 @@ function EnrichPanel({ leads, apolloKey, onDone }: EnrichPanelProps) {
         >
           {mut.isPending
             ? `Searching Apollo… (${selected.size} leads)`
-            : `🔍 Enrich ${selected.size} Leads`}
+            : `Enrich ${selected.size} Leads`}
         </button>
       </div>
       {mut.isError && (
@@ -346,7 +350,7 @@ function ProspectorPanel({ apolloKey, onClose, onImported }: ProspectorPanelProp
   return (
     <div className="mission-prospector">
       <div className="mission-prospector-header">
-        <span className="mission-prospector-title">🌐 Apollo Prospector — Find New Leads</span>
+        <span className="mission-prospector-title">Apollo Prospector — Find New Leads</span>
         <button className="mission-action-btn" onClick={onClose}>✕ Close</button>
       </div>
       <div className="mission-prospector-form">
@@ -477,7 +481,7 @@ function CampaignPanel({ onClose }: CampaignPanelProps) {
   return (
     <div className="mission-campaign-panel">
       <div className="mission-prospector-header">
-        <span className="mission-prospector-title">📅 Seasonal Campaign Blasts</span>
+        <span className="mission-prospector-title">Seasonal Campaign Blasts</span>
         <button className="mission-action-btn" onClick={onClose}>✕ Close</button>
       </div>
       <p className="mission-campaign-desc">
@@ -517,7 +521,7 @@ function CampaignPanel({ onClose }: CampaignPanelProps) {
                       disabled={isLaunching || c.leadCount === 0}
                       onClick={() => setConfirming(c)}
                     >
-                      {isLaunching ? 'Launching…' : c.leadCount === 0 ? 'No matches' : '🚀 Launch'}
+                      {isLaunching ? 'Launching…' : c.leadCount === 0 ? 'No matches' : 'Launch'}
                     </button>
                   )}
                 </div>
@@ -611,7 +615,7 @@ export default function MissionView() {
           <div className="mission-date">{today()}</div>
           <h1 className="mission-title">
             {totalActions === 0 && newWithEmail.length === 0 && !needsEmail?.length
-              ? "You're all caught up 🏆"
+              ? "You're all caught up"
               : (callReady?.length ?? 0) > 0
               ? `${callReady!.length} lead${callReady!.length !== 1 ? 's' : ''} ready for your call`
               : totalActions === 0
@@ -623,23 +627,29 @@ export default function MissionView() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => { setShowCampaigns((v) => !v); setShowProspector(false); }}>
-            📅 Campaigns
+          <button className="btn mission-header-btn" onClick={() => { setShowCampaigns((v) => !v); setShowProspector(false); }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Campaigns
           </button>
-          <button className="btn" onClick={() => { setShowProspector((v) => !v); setShowCampaigns(false); }}>
-            🌐 Prospector
+          <button className="btn mission-header-btn" onClick={() => { setShowProspector((v) => !v); setShowCampaigns(false); }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Prospector
           </button>
-          <button className="btn" onClick={() => setShowROI(true)} title="Wrap ROI Calculator">
-            📊 ROI
+          <button className="btn mission-header-btn" onClick={() => setShowROI(true)} title="Wrap ROI Calculator">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            ROI
           </button>
-          <button className="btn" onClick={() => refetch()}>↻ Refresh</button>
+          <button className="btn mission-header-btn" onClick={() => refetch()}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh
+          </button>
         </div>
       </div>
 
       {/* ── AI Brief ── */}
       {briefData?.brief && (
         <div className="mission-brief-bar">
-          <span className="mission-brief-icon">🧠</span>
+          <span className="mission-brief-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17" strokeWidth="3"/><circle cx="12" cy="12" r="10"/></svg></span>
           <span className="mission-brief-text">{briefData.brief}</span>
         </div>
       )}
@@ -650,7 +660,7 @@ export default function MissionView() {
         {(callReady?.length ?? 0) > 0 && (
           <section className="mission-card mission-card-call" style={{ gridColumn: '1 / -1' }}>
             <div className="mission-card-header">
-              <span className="mission-card-icon">📞</span>
+              <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg></span>
               <span className="mission-card-title">Ready for Your Call — Sequence Complete</span>
               <span className="mission-badge mission-badge-green">{callReady!.length}</span>
             </div>
@@ -677,7 +687,8 @@ export default function MissionView() {
                     <div className="mission-call-actions">
                       {l.phone ? (
                         <a href={`tel:${l.phone}`} className="mission-call-btn mission-call-btn-primary">
-                          📞 Call Now
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg>
+                          Call Now
                         </a>
                       ) : (
                         <button className="mission-call-btn" onClick={() => goToLead(l.id)}>
@@ -699,7 +710,7 @@ export default function MissionView() {
         {overdue.length > 0 && (
           <section className="mission-card mission-card-urgent">
             <div className="mission-card-header">
-              <span className="mission-card-icon">⚠</span>
+              <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
               <span className="mission-card-title">Overdue Follow-ups</span>
               <span className="mission-badge mission-badge-red">{overdue.length}</span>
             </div>
@@ -731,7 +742,7 @@ export default function MissionView() {
         {replied.length > 0 && (
           <section className="mission-card mission-card-hot">
             <div className="mission-card-header">
-              <span className="mission-card-icon">💬</span>
+              <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
               <span className="mission-card-title">Replied — Send Proposals</span>
               <span className="mission-badge mission-badge-amber">{replied.length}</span>
             </div>
@@ -758,7 +769,7 @@ export default function MissionView() {
         {bidsThisWeek.length > 0 && (
           <section className="mission-card mission-card-deadline">
             <div className="mission-card-header">
-              <span className="mission-card-icon">🏗</span>
+              <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg></span>
               <span className="mission-card-title">Bids Due This Week</span>
               <span className="mission-badge mission-badge-blue">{bidsThisWeek.length}</span>
             </div>
@@ -791,7 +802,7 @@ export default function MissionView() {
         {hasBulkTargets && !showBulk && (
           <section className="mission-card mission-card-activate">
             <div className="mission-card-header">
-              <span className="mission-card-icon">🚀</span>
+              <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
               <span className="mission-card-title">Ready to Activate</span>
               <span className="mission-badge mission-badge-purple">{newWithEmail.length}</span>
             </div>
@@ -808,7 +819,8 @@ export default function MissionView() {
               )}
             </div>
             <button className="btn btn-primary mission-activate-btn" onClick={() => setShowBulk(true)}>
-              🚀 Activate {newWithEmail.length} Sequences Now
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              Activate {newWithEmail.length} Sequences
             </button>
           </section>
         )}
@@ -826,7 +838,7 @@ export default function MissionView() {
         {(needsEmail?.length ?? 0) > 0 && !showBulk && !showEnrich && (
           <section className="mission-card mission-card-enrich">
             <div className="mission-card-header">
-              <span className="mission-card-icon">🔍</span>
+              <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></span>
               <span className="mission-card-title">Needs Email — Can't Sequence Yet</span>
               <span className="mission-badge" style={{ background: '#6b7280' }}>{needsEmail!.length}</span>
             </div>
@@ -855,7 +867,7 @@ export default function MissionView() {
             </div>
             <div className="mission-card-footer-actions">
               <button className="btn btn-primary" onClick={() => setShowEnrich(true)}>
-                ⚡ Auto-Enrich All via Apollo
+                Auto-Enrich via Apollo
               </button>
               <button className="mission-card-footer-btn" onClick={() => goToLeadsFiltered('new')}>
                 View all new leads →
@@ -897,7 +909,7 @@ export default function MissionView() {
         {(agingWraps ?? 0) > 0 && (
           <section className="mission-card" style={{ borderColor: '#f59e0b44' }}>
             <div className="mission-card-header">
-              <span className="mission-card-icon">🔄</span>
+              <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span>
               <span className="mission-card-title">Wrap Refresh Opportunities</span>
               <span className="mission-badge mission-badge-amber">{agingWraps}</span>
             </div>
@@ -944,7 +956,7 @@ export default function MissionView() {
             <div className="signal-feed">
               {signalsData!.signals.slice(0, 8).map((s, i) => {
                 const SIGNAL_ICONS: Record<string, string> = {
-                  email_opened: '👁', proposal_viewed: '📄', reply: '✉️', new_lead: '⭐',
+                  email_opened: 'eye', proposal_viewed: 'doc', reply: 'mail', new_lead: 'star',
                 };
                 const diffMs = Date.now() - new Date(s.ts).getTime();
                 const hrs = Math.floor(diffMs / 3_600_000);
@@ -955,7 +967,13 @@ export default function MissionView() {
                     className="signal-item"
                     onClick={() => goToLeadsFiltered()}
                   >
-                    <span className="signal-icon">{SIGNAL_ICONS[s.type] ?? '🔔'}</span>
+                    <span className="signal-icon">
+                      {SIGNAL_ICONS[s.type] === 'eye' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>}
+                      {SIGNAL_ICONS[s.type] === 'doc' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>}
+                      {SIGNAL_ICONS[s.type] === 'mail' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>}
+                      {SIGNAL_ICONS[s.type] === 'star' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>}
+                      {!SIGNAL_ICONS[s.type] && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>}
+                    </span>
                     <div className="signal-body">
                       <span className="signal-company">{s.company}</span>
                       <span className="signal-title">{s.title}</span>
@@ -971,7 +989,9 @@ export default function MissionView() {
         {/* ── All clear ── */}
         {totalActions === 0 && !hasBulkTargets && (
           <section className="mission-card mission-all-clear">
-            <div className="mission-all-clear-icon">🏆</div>
+            <div className="mission-all-clear-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
             <h2 className="mission-all-clear-title">Pipeline is clean.</h2>
             <p className="mission-all-clear-sub">No overdue follow-ups, no pending bids, no unworked leads.</p>
             <div className="mission-all-clear-actions">
