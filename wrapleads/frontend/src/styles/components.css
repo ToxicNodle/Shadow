@@ -146,6 +146,7 @@
   font-size: 11px; font-weight: 600; padding: 3px 9px;
   border-radius: 999px; text-transform: uppercase; letter-spacing: 0.08em;
 }
+.status-tag.new       { background: rgba(156,163,175,0.18); color: #9ca3af; }
 .status-tag.cold      { background: rgba(94,100,112,0.25); color: var(--text-faint); }
 .status-tag.contacted { background: rgba(96,165,250,0.15); color: var(--blue); }
 .status-tag.replied   { background: rgba(192,132,252,0.15); color: var(--purple); }
