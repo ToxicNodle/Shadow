@@ -544,6 +544,33 @@ export default function BidsView() {
           <span className="spinner spinner-lg" />
           <span>Loading bids…</span>
         </div>
+      ) : bids.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-icon">
+            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="8" y="16" width="14" height="36" rx="3" fill="currentColor" opacity="0.15" stroke="currentColor" strokeWidth="1.5"/>
+              <rect x="25" y="24" width="14" height="28" rx="3" fill="currentColor" opacity="0.25" stroke="currentColor" strokeWidth="1.5"/>
+              <rect x="42" y="10" width="14" height="42" rx="3" fill="currentColor" opacity="0.4" stroke="currentColor" strokeWidth="1.5"/>
+              <circle cx="15" cy="13" r="4" fill="currentColor" opacity="0.6"/>
+              <circle cx="32" cy="21" r="4" fill="currentColor" opacity="0.6"/>
+              <circle cx="49" cy="7" r="4" fill="currentColor"/>
+            </svg>
+          </div>
+          <h3 className="empty-state-title">No bids tracked yet</h3>
+          <p className="empty-state-sub">
+            Track GC bid opportunities from discovery through award — BuildingConnected,
+            iSqFt, PlanHub, SAM.gov, and more. Log a bid to start building your pipeline.
+          </p>
+          <div className="empty-state-actions">
+            <button className="btn btn-primary" onClick={() => setModalBid('new')}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
+              Log Your First Bid
+            </button>
+            <button className="btn" onClick={() => setTab('guide')}>
+              Browse Platforms →
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="bid-board">
           {COLUMNS.map((col) => (
