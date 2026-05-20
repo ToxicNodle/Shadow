@@ -83,8 +83,50 @@ export default function FilterRow() {
     setIndustries((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
   }
 
+  const PRESETS = [
+    { label: 'Sweet Spot', minFleet: '25', maxFleet: '500', states: [], industries: [], query: '' },
+    { label: 'Small Fleets', minFleet: '5', maxFleet: '25', states: [], industries: [], query: '' },
+    { label: 'Large Fleets', minFleet: '500', maxFleet: '', states: [], industries: [], query: '' },
+    { label: 'TX Fleets', minFleet: '25', maxFleet: '500', states: ['TX'], industries: [], query: '' },
+    { label: 'CA Fleets', minFleet: '25', maxFleet: '500', states: ['CA'], industries: [], query: '' },
+    { label: 'FL Fleets', minFleet: '25', maxFleet: '500', states: ['FL'], industries: [], query: '' },
+    { label: 'Construction', minFleet: '', maxFleet: '', states: [], industries: ['construction_fleet'], query: '' },
+    { label: 'GC / Contractors', minFleet: '', maxFleet: '', states: [], industries: ['construction_general'], query: '' },
+  ] as const;
+
+  function applyPreset(p: typeof PRESETS[number]) {
+    setStates([...p.states]);
+    setIndustries([...p.industries]);
+    setMinFleet(p.minFleet);
+    setMaxFleet(p.maxFleet);
+    setQuery(p.query);
+    setCarrierOffset(0);
+    searchMutation.mutate({
+      states: p.states.length ? [...p.states] : null,
+      industries: p.industries.length ? [...p.industries] : null,
+      minFleet: p.minFleet ? Number(p.minFleet) : null,
+      maxFleet: p.maxFleet ? Number(p.maxFleet) : null,
+      query: p.query || undefined,
+      limit: 25,
+      offset: 0,
+    });
+  }
+
   return (
     <div>
+      <div className="discover-presets">
+        {PRESETS.map((p) => (
+          <button
+            key={p.label}
+            className="discover-preset-btn"
+            onClick={() => applyPreset(p)}
+            disabled={searchMutation.isPending}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
       <div className="filter-row">
         <div className="field-group">
           <label className="field-label">State(s)</label>

@@ -4184,3 +4184,36 @@ textarea:focus {
   align-items: center !important;
   gap: 5px !important;
 }
+
+/* ── v8: Discover quick presets bar ─────────────────────────────────────────── */
+.discover-presets {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  margin-bottom: 14px !important;
+}
+
+.discover-preset-btn {
+  padding: 5px 12px !important;
+  border-radius: 20px !important;
+  border: 1px solid var(--border-soft) !important;
+  background: var(--bg-elev) !important;
+  color: var(--text-dim) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  transition: all 0.12s !important;
+  font-family: var(--body) !important;
+  white-space: nowrap !important;
+}
+
+.discover-preset-btn:hover {
+  background: var(--bg-hover) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.discover-preset-btn:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
