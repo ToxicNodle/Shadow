@@ -586,12 +586,7 @@ const app = express();
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '4mb' }));
 
-// Rate limiting
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
-const apiLimiter  = rateLimit({ windowMs: 60 * 1000,       max: 120, standardHeaders: true, legacyHeaders: false });
-app.use('/auth', authLimiter);
-app.use('/api',  apiLimiter);
-
+// CORS first so 429 / 5xx responses still carry the headers the browser needs.
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -599,6 +594,45 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+
+// Trust the Railway/PaaS proxy so express-rate-limit keys on the real client IP
+// rather than the proxy's IP (otherwise every request shares a single bucket).
+app.set('trust proxy', 1);
+
+// Stricter brute-force guard on the auth surface. /auth/me is excluded — the
+// SPA polls it on every mount/focus refetch and it's just a token introspection.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === '/me',
+});
+app.use('/auth', authLimiter);
+
+// Generous global limiter. Inbound webhooks (Stripe/Vapi/Resend) and the
+// public token-based pages a client can land on without a JWT are exempted —
+// rate-limiting either would either let attackers DoS via webhook spam or
+// break the client portal entirely.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => {
+    const p = req.path;
+    if (p.startsWith('/stripe/webhook')) return true;
+    if (p.startsWith('/calls/webhook'))  return true;
+    if (p.startsWith('/webhooks/'))      return true;
+    if (p.startsWith('/track/'))         return true;
+    if (p.startsWith('/portal/'))        return true;
+    if (p.startsWith('/portfolio/'))     return true;
+    if (p.startsWith('/quote-request/')) return true;
+    if (p === '/health' || p === '/test') return true;
+    return false;
+  },
+});
+app.use(apiLimiter);
 
 // Static serving is handled AFTER all API routes (see bottom of file)
 
@@ -6517,6 +6551,14 @@ app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
+
+// Refuse to boot in production with the default JWT secret — that value is
+// publicly visible in the repo, so any token signed with it is forgeable.
+if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'change-me-in-production') {
+  console.error('[boot] FATAL: JWT_SECRET is not set in production (or is still the default placeholder).');
+  console.error('[boot] Generate one with:  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
+  process.exit(1);
+}
 
 app.listen(PORT, async () => {
   console.log(banner);
