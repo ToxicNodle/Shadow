@@ -19,7 +19,7 @@ function CrmFallback() {
   return (
     <div className="loading" style={{ height: '100vh' }}>
       <span className="spinner spinner-lg" />
-      <span>Loading WrapLeads…</span>
+      <span>Loading…</span>
     </div>
   );
 }
