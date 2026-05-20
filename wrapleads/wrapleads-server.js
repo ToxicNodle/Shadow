@@ -4053,8 +4053,14 @@ app.get('/calls/status/:callId', authMiddleware, async (req, res) => {
   const settings = sRows[0]?.data || {};
   if (!settings.vapiApiKey) return res.status(400).json({ error: 'Vapi not configured' });
 
+  const callId = req.params.callId;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(callId)) {
+    return res.status(400).json({ error: 'Invalid callId' });
+  }
+
   try {
-    const vapiRes = await fetch(`${VAPI_BASE}/call/${req.params.callId}`, {
+    const vapiUrl = `${VAPI_BASE}/call/${encodeURIComponent(callId)}`;
+    const vapiRes = await fetch(vapiUrl, {
       headers: { 'Authorization': `Bearer ${settings.vapiApiKey}` },
     });
     const data = await vapiRes.json();
