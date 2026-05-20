@@ -4144,7 +4144,7 @@ app.post('/calls/webhook', async (req, res) => {
 Thanks for taking my call today — great speaking with you about ${company}'s graphics needs.
 
 As promised, here's a look at some of our recent work:
-${s.portfolioUrl || 'https://shadowgraphix.com/portfolio'}
+${s.portfolioUrl || '[see our portfolio — link in bio]'}
 
 We specialize in:
 • Race hauler wraps ($15K–$35K full wrap)
@@ -6149,7 +6149,7 @@ app.get('/bids/:id/quote', (req, res, next) => {
   </div>
 
   <div class="footer">
-    <span class="footer-note">Quote valid for 30 days · Questions? ${s.senderEmail || 'contact@shadowgraphix.com'}</span>
+    <span class="footer-note">Quote valid for 30 days · Questions? ${s.senderEmail || 'hello@yourshop.com'}</span>
     <span class="footer-ref">REF: BID-${String(bid.id).padStart(4,'0')}</span>
   </div>
 </div>
