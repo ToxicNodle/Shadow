@@ -157,7 +157,7 @@ export default function AuthPage() {
             onClick={handleDemo}
             disabled={demoLoading}
           >
-            {demoLoading ? 'Loading demo…' : '✨ Try the live demo (no signup)'}
+            {demoLoading ? 'Loading demo…' : 'Explore the live demo →'}
           </button>
         )}
 

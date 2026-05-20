@@ -35,7 +35,7 @@ export default function PipelineStats() {
         title="Show hot leads (score 65+)"
       >
         <span className="ps-num hot">{hotCount}</span>
-        <span className="ps-label">🔥 hot</span>
+        <span className="ps-label">hot</span>
       </button>
 
       <div className="pipeline-stat-sep" />
@@ -69,7 +69,7 @@ export default function PipelineStats() {
             title={`${overdue} leads contacted or replied but no follow-up in 14+ days`}
           >
             <span className="ps-num red">{overdue}</span>
-            <span className="ps-label">⚠ overdue</span>
+            <span className="ps-label">overdue</span>
           </button>
         </>
       )}
