@@ -128,7 +128,7 @@ export default function PasteImportModal() {
             className="paste-textarea"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={`Example:\n\nIndianapolis Property Management Companies\n\nBirge & Held — Taggart Birge (CEO), Matt Dills (VP Property Mgmt) · 317-841-9900\nCushman & Wakefield — Jon Owens (Managing Dir) · 317-639-0515\nCRE Consultants — David Ciechanowicz (Founder) · 317-870-3920`}
+            placeholder={`Example:\n\nLocal Property Management Companies\n\nAcme Property Group — Jane Smith (CEO), Bob Jones (VP Property Mgmt) · 555-841-9900\nPremier Commercial — Mike Davis (Managing Dir) · 555-639-0515\nCity Realty Partners — Sarah Lee (Founder) · 555-870-3920`}
             disabled={stage === 'loading'}
             autoFocus
           />
