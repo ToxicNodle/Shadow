@@ -4296,3 +4296,51 @@ textarea:focus {
 
 /* v17 — animated stat counter (PipelineView) */
 .pv-hero-value { transition: color 0.2s; }
+
+/* v18 — improved toast (slide-in, icon, dismiss btn) */
+@keyframes toastIn  { from { transform: translateX(calc(100% + 24px)); opacity: 0; } to  { transform: translateX(0); opacity: 1; } }
+@keyframes toastOut { from { transform: translateX(0); opacity: 1; } to  { transform: translateX(calc(100% + 24px)); opacity: 0; } }
+.toast-v2 {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 11px 14px !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-elev-2) !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,.45) !important;
+  font-size: 13px !important;
+  color: var(--text) !important;
+  z-index: 9000 !important;
+  pointer-events: auto !important;
+  max-width: 360px !important;
+  min-width: 200px !important;
+}
+.toast-v2.toast-in  { animation: toastIn 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards !important; }
+.toast-v2.toast-out { animation: toastOut 0.18s ease-in forwards !important; }
+.toast-v2.success .toast-icon { color: var(--green) !important; }
+.toast-v2.error   .toast-icon { color: var(--red) !important; }
+.toast-v2.info    .toast-icon { color: var(--blue) !important; }
+.toast-v2.success { border-left: 3px solid var(--green) !important; }
+.toast-v2.error   { border-left: 3px solid var(--red) !important; }
+.toast-v2.info    { border-left: 3px solid var(--blue) !important; }
+.toast-icon { display: flex !important; flex-shrink: 0 !important; }
+.toast-msg  { flex: 1 !important; line-height: 1.4 !important; }
+.toast-dismiss {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 20px !important;
+  height: 20px !important;
+  border: none !important;
+  background: none !important;
+  color: var(--text-faint) !important;
+  cursor: pointer !important;
+  border-radius: 4px !important;
+  flex-shrink: 0 !important;
+  padding: 0 !important;
+}
+.toast-dismiss:hover { background: var(--bg-hover) !important; color: var(--text) !important; }
