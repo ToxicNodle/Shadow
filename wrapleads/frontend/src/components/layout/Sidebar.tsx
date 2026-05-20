@@ -10,6 +10,28 @@ const CATEGORY_ORDER: LeadCategory[] = [
 ];
 const STATUS_ORDER: LeadStatus[] = ['cold', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'];
 
+const CAT_COLORS: Record<string, string> = {
+  fleet: '#3b82f6',
+  racing: '#ef4444',
+  gc_referral: '#f59e0b',
+  construction: '#f97316',
+  dinoc: '#8b5cf6',
+  reatec: '#a855f7',
+  colorchange: '#ec4899',
+  wallgraphics: '#14b8a6',
+  design: '#06b6d4',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  cold: '#6b7280',
+  contacted: '#3b82f6',
+  replied: '#0ea5e9',
+  meeting: '#a855f7',
+  proposal: '#f59e0b',
+  won: '#22c55e',
+  lost: '#ef4444',
+};
+
 export default function Sidebar() {
   const { leads } = useLeads();
   const { activeFilter, setFilter } = useAppStore((s) => ({
@@ -35,16 +57,15 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       {followupCount > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="sidebar-section-title" style={{ color: 'var(--red, #ef4444)' }}>⚠ Follow-up Due</div>
+        <div style={{ marginBottom: 8 }}>
+          <div className="sidebar-section-title" style={{ color: 'var(--red)' }}>Follow-up Due</div>
           <button
             className={`filter-pill ${activeFilter.followupDue ? 'active' : ''}`}
-            style={{ background: activeFilter.followupDue ? 'rgba(239,68,68,0.15)' : undefined,
-                     borderColor: activeFilter.followupDue ? 'rgba(239,68,68,0.4)' : undefined }}
             onClick={() => setFilter({ followupDue: !activeFilter.followupDue })}
           >
-            Past-due follow-ups
-            <span className="filter-pill-count" style={{ background: '#ef4444', color: '#fff' }}>
+            <span className="filter-dot" style={{ background: '#ef4444' }} />
+            Past-due
+            <span className="filter-pill-count" style={activeFilter.followupDue ? { background: 'rgba(239,68,68,0.2)', color: '#f87171' } : {}}>
               {followupCount}
             </span>
           </button>
@@ -57,18 +78,25 @@ export default function Sidebar() {
           className={`filter-pill ${activeFilter.category === 'all' ? 'active' : ''}`}
           onClick={() => setFilter({ category: 'all' })}
         >
-          All <span className="filter-pill-count">{leads.length}</span>
+          <span className="filter-dot" style={{ background: 'var(--text-faint)' }} />
+          All
+          <span className="filter-pill-count">{leads.length}</span>
         </button>
-        {CATEGORY_ORDER.map((cat) => (
-          <button
-            key={cat}
-            className={`filter-pill ${activeFilter.category === cat ? 'active' : ''}`}
-            onClick={() => setFilter({ category: cat })}
-          >
-            {CATEGORIES[cat]}
-            <span className="filter-pill-count">{countCategory(cat)}</span>
-          </button>
-        ))}
+        {CATEGORY_ORDER.map((cat) => {
+          const count = countCategory(cat);
+          if (!count) return null;
+          return (
+            <button
+              key={cat}
+              className={`filter-pill ${activeFilter.category === cat ? 'active' : ''}`}
+              onClick={() => setFilter({ category: cat })}
+            >
+              <span className="filter-dot" style={{ background: CAT_COLORS[cat] ?? 'var(--text-faint)' }} />
+              {CATEGORIES[cat]}
+              <span className="filter-pill-count">{count}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div>
@@ -77,18 +105,25 @@ export default function Sidebar() {
           className={`filter-pill ${activeFilter.status === 'all' ? 'active' : ''}`}
           onClick={() => setFilter({ status: 'all' })}
         >
-          All <span className="filter-pill-count">{leads.length}</span>
+          <span className="filter-dot" style={{ background: 'var(--text-faint)' }} />
+          All
+          <span className="filter-pill-count">{leads.length}</span>
         </button>
-        {STATUS_ORDER.map((st) => (
-          <button
-            key={st}
-            className={`filter-pill ${activeFilter.status === st ? 'active' : ''}`}
-            onClick={() => setFilter({ status: st })}
-          >
-            {STATUSES[st]}
-            <span className="filter-pill-count">{countStatus(st)}</span>
-          </button>
-        ))}
+        {STATUS_ORDER.map((st) => {
+          const count = countStatus(st);
+          if (!count) return null;
+          return (
+            <button
+              key={st}
+              className={`filter-pill ${activeFilter.status === st ? 'active' : ''}`}
+              onClick={() => setFilter({ status: st })}
+            >
+              <span className="filter-dot" style={{ background: STATUS_COLORS[st] ?? 'var(--text-faint)' }} />
+              {STATUSES[st]}
+              <span className="filter-pill-count">{count}</span>
+            </button>
+          );
+        })}
       </div>
     </aside>
   );
