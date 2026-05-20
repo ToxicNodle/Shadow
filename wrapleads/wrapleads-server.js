@@ -1194,7 +1194,7 @@ const APOLLO_TITLES = {
 // Shared: generate 3-email drip and insert into queue for a single lead
 async function generateAndQueueSequence(leadId, userId, lead, settings, anthropicKey, tone = 'Professional') {
   const prompt = `You are a sales expert for a vehicle wrap and architectural film installation company.
-Company: ${settings.companyName || 'Shadow Graphix'}
+Company: ${settings.companyName || 'our shop'}
 Sender: ${settings.senderName || 'the team'}, ${settings.senderTitle || 'Installer / Sales'}
 Services: ${settings.companyServices || 'fleet wraps, DI-NOC, color-change wraps, wall graphics'}
 
@@ -2591,7 +2591,7 @@ app.post('/leads/bulk-activate-sequences', authMiddleware, async (req, res) => {
       if (!lead.email) { failed++; results.push({ id, status: 'skipped', reason: 'no email' }); continue; }
 
       const s = lead.settings_json || {};
-      const prompt = `You are a B2B sales copywriter for ${s.companyName || 'Shadow Graphix'}, a vehicle wrap and architectural film company in Speedway, Indiana (next to Indianapolis Motor Speedway).
+      const prompt = `You are a B2B sales copywriter for ${s.companyName || 'our shop'}, a vehicle wrap and architectural film company.
 
 Write a 3-email drip sequence for this lead:
 Company: ${lead.company}
@@ -3115,7 +3115,7 @@ async function processColdLeads() {
       try {
         const s = lead.settings_json || {};
         const senderName = s.senderName || 'the team';
-        const companyName = s.companyName || 'Shadow Graphix';
+        const companyName = s.companyName || 'our shop';
         const prompt = `Write a short, natural re-engagement email (under 100 words) to ${lead.contact_name || 'the team'} at ${lead.company}. Category: ${lead.category}. This is a cold lead we haven't contacted in 60+ days. Be warm, not pushy. No subject line — just the body. Sign off as ${senderName} at ${companyName}.`;
         const body = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 300);
 
@@ -4156,16 +4156,16 @@ I'll put together a preliminary quote based on what we discussed and send it ove
 
 Looking forward to working together,
 ${s.senderName || 'Alex'}
-Shadow Graphix | Speedway, IN
+${s.companyName || s.senderName || 'Our Shop'}
 ${s.senderPhone || ''}`;
 
             await fetch('https://api.resend.com/emails', {
               method: 'POST',
               headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                from: `${s.senderName || 'Shadow Graphix'} <${s.senderEmail}>`,
+                from: `${s.senderName || s.companyName || 'WrapOS'} <${s.senderEmail}>`,
                 to: toEmail,
-                subject: `Great talking with you — Shadow Graphix portfolio`,
+                subject: `Great talking with you — ${s.companyName || 'our shop'} portfolio`,
                 text: emailBody,
               }),
             }).catch((e) => console.error('Post-call email error:', e.message));
@@ -4174,7 +4174,7 @@ ${s.senderPhone || ''}`;
           // 3. Send SMS via Twilio
           if (lead.phone && s.twilioAccountSid && s.twilioAuthToken && s.twilioFromNumber) {
             const toNum = lead.phone.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1');
-            const smsBody = `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''}, this is ${s.senderName || 'Alex'} from Shadow Graphix — great talking with you! Here's our portfolio: ${s.portfolioUrl || 'https://shadowgraphix.com'} — we'll have a quote to you within 24 hours.`;
+            const smsBody = `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''}, this is ${s.senderName || 'your rep'} from ${s.companyName || 'our shop'} — great talking with you! Here's our portfolio: ${s.portfolioUrl || ''} — we'll have a quote to you within 24 hours.`;
             const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
             const form = new URLSearchParams({ To: toNum, From: s.twilioFromNumber, Body: smsBody });
             await fetch(twilioUrl, {
@@ -4581,6 +4581,10 @@ app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
   if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
   const uid = String(req.user.id);
   try {
+    const settingsR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+    const shopSettings = settingsR.rows[0]?.settings_json || {};
+    const shopName = shopSettings.companyName || 'your shop';
+
     const [leadsR, bidsR, wonR, agingR, openR, propR] = await Promise.all([
       pool.query(
         `SELECT status, category, company, fleet_size,
@@ -4611,7 +4615,7 @@ app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
     const bids = bidsR.rows;
     const bidsValue = bids.reduce((s, b) => s + (b.estimated_value || 0), 0);
 
-    const prompt = `You are a sharp revenue strategist for Shadow Graphix, a vehicle wrap shop in Speedway, Indiana. Analyze this pipeline snapshot and write a 3-paragraph narrative forecast for the next 30 days. Be specific, name real patterns, give concrete advice. Write like you actually understand the wrap business — fleet sales cycles, racing season, bid windows. No bullet points. Pure prose.
+    const prompt = `You are a sharp revenue strategist for ${shopName}, a vehicle wrap shop. Analyze this pipeline snapshot and write a 3-paragraph narrative forecast for the next 30 days. Be specific, name real patterns, give concrete advice. Write like you actually understand the wrap business — fleet sales cycles, racing season, bid windows. No bullet points. Pure prose.
 
 CURRENT PIPELINE (${pipeline.length} active leads, ~$${pipelineValue.toLocaleString()} potential):
 Hot leads (replied/proposal/meeting): ${hot.length}
@@ -5091,7 +5095,7 @@ app.get('/portal/:token', async (req, res) => {
 <div class="hero">
   <div class="hero-inner">
     <div>
-      <div class="brand-name">${s.companyName || 'Shadow Graphix'}<span>.</span></div>
+      <div class="brand-name">${s.companyName || 'our shop'}<span>.</span></div>
       <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps & Fleet Graphics'}</div>
     </div>
     <span class="portal-badge">CLIENT PORTAL</span>
@@ -5205,7 +5209,7 @@ app.get('/portal/:token', async (req, res) => {
       <div class="contact-row">
         <div class="contact-avatar">${(s.senderName || 'S').charAt(0).toUpperCase()}</div>
         <div class="contact-info">
-          <span class="contact-name">${s.senderName || s.companyName || 'Shadow Graphix'}</span>
+          <span class="contact-name">${s.senderName || s.companyName || 'our shop'}</span>
           <span class="contact-detail">${s.senderTitle || ''}</span>
           ${s.senderEmail ? `<a href="mailto:${s.senderEmail}" class="contact-detail">${s.senderEmail}</a>` : ''}
           ${s.senderPhone ? `<span class="contact-detail">${s.senderPhone}</span>` : ''}
@@ -5216,7 +5220,7 @@ app.get('/portal/:token', async (req, res) => {
 
 </div>
 
-<div class="footer">Powered by WrapLeads · ${s.companyName || 'Shadow Graphix'}</div>
+<div class="footer">Powered by WrapLeads · ${s.companyName || 'our shop'}</div>
 
 <script>
   async function submitApproval(e) {
@@ -5315,7 +5319,7 @@ app.post('/leads/:id/proposal', authMiddleware, requireWrapOS, async (req, res) 
     const state = lead.state || '';
     const priceLow = parseFloat(s.pricePerSqftLow || '8');
     const priceHigh = parseFloat(s.pricePerSqftHigh || '14');
-    const shopName = s.companyName || 'Shadow Graphix';
+    const shopName = s.companyName || 'our shop';
     const senderName = s.senderName || 'the team';
     const senderTitle = s.senderTitle || 'Installer / Sales';
     const portfolio = s.portfolioUrl || '';
@@ -5431,7 +5435,7 @@ app.get('/proposals/:token', async (req, res) => {
         }
       }).catch(() => {});
     const s = p.settings_json || {};
-    const shopName = s.companyName || 'Shadow Graphix';
+    const shopName = s.companyName || 'our shop';
     const senderName = s.senderName || '';
     const senderEmail = s.senderEmail || '';
     const senderPhone = s.senderPhone || '';
@@ -5612,7 +5616,7 @@ app.get('/quote-request/:shopToken', async (req, res) => {
     const user = await findUserByShopToken(shopToken);
     if (!user) return res.status(404).send('<h2>Page not found.</h2>');
     const s = user.settings_json || {};
-    const shopName = s.companyName || 'Shadow Graphix';
+    const shopName = s.companyName || 'our shop';
     const accent = '#ff6b35';
 
     res.send(`<!DOCTYPE html><html lang="en"><head>
@@ -5743,7 +5747,7 @@ app.get('/portfolio/:shopToken', async (req, res) => {
     if (!user) return res.status(404).send('<h2>Portfolio not found.</h2>');
 
     const s = user.settings_json || {};
-    const shopName = s.companyName || 'Shadow Graphix';
+    const shopName = s.companyName || 'our shop';
     const accent = '#ff6b35';
     const phone = s.senderPhone || '';
     const email = s.senderEmail || '';
@@ -5853,10 +5857,13 @@ app.post('/ai/social-post', authMiddleware, async (req, res) => {
   if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
   try {
     const { company, vehicle_type, vehicle_count, wrap_category, material, notes } = req.body || {};
+    const settingsR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(req.user.id)]);
+    const shopSettings = settingsR.rows[0]?.settings_json || {};
+    const shopName = shopSettings.companyName || 'our shop';
     const VEHICLE_NAMES = { cargo_van: 'cargo van', box_truck: 'box truck', semi: 'semi hauler', pickup: 'pickup truck', bus: 'bus', fleet_mixed: 'mixed fleet', other: 'vehicle' };
     const CAT_NAMES = { fleet: 'fleet wrap', racing: 'race livery', dinoc: 'DI-NOC architectural film', construction: 'construction fleet wrap', colorchange: 'color change wrap', gc_referral: 'commercial wrap', reatec: 'Rea Tec film', other: 'vehicle wrap' };
 
-    const prompt = `You're writing social media posts for Shadow Graphix, a vehicle wrap and graphics shop in Speedway, Indiana (near Indianapolis Motor Speedway). They're 3M and Avery certified installers.
+    const prompt = `You're writing social media posts for ${shopName}, a vehicle wrap and graphics shop.
 
 Just completed job:
 - Client: ${company || 'a local business'}
@@ -6038,7 +6045,7 @@ app.get('/bids/:id/quote', (req, res, next) => {
 <div class="page">
   <div class="header">
     <div class="brand">
-      <div class="brand-name">${s.companyName || 'Shadow Graphix'}<span>.</span></div>
+      <div class="brand-name">${s.companyName || 'our shop'}<span>.</span></div>
       <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps &amp; Fleet Graphics'}</div>
       <div class="quote-label">Quote Proposal</div>
     </div>
@@ -6123,7 +6130,7 @@ app.get('/bids/:id/quote', (req, res, next) => {
       <div class="sig-grid">
         <div class="sig-box">
           <div class="sig-label">Authorized by</div>
-          <div class="sig-name">${s.companyName || 'Shadow Graphix'}</div>
+          <div class="sig-name">${s.companyName || 'our shop'}</div>
           <div class="sig-date">${s.senderName || ''} · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
         </div>
         <div class="sig-box">
