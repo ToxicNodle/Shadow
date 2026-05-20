@@ -12,6 +12,7 @@ import KanbanBoard from '../components/leads/KanbanBoard';
 import LeadDetail from '../components/leads/detail/LeadDetail';
 import DiscoverPage from '../components/discover/DiscoverPage';
 import CommandPalette from '../components/ui/CommandPalette';
+import ShortcutsModal from '../components/ui/ShortcutsModal';
 import PasteImportModal from '../components/modals/PasteImportModal';
 import AddLeadModal from '../components/modals/AddLeadModal';
 import SettingsModal from '../components/modals/SettingsModal';
@@ -52,6 +53,7 @@ export default function CRMPage() {
     setCommandPaletteOpen: s.setCommandPaletteOpen,
   }));
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -78,10 +80,11 @@ export default function CRMPage() {
         setCommandPaletteOpen(true);
         return;
       }
-      // digit shortcuts (no modifier, not in an input/textarea/select)
+      // digit + ? shortcuts (no modifier, not in an input/textarea/select)
       const tag = (e.target as HTMLElement).tagName;
       if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey &&
           tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        if (e.key === '?') { e.preventDefault(); setShowShortcuts((v) => !v); return; }
         const dest = MODE_KEYS[e.key];
         if (dest) { e.preventDefault(); setMode(dest); }
       }
@@ -165,6 +168,7 @@ export default function CRMPage() {
       {csvImportOpen && <CSVImportModal />}
       {proposalOpen && <ProposalModal />}
       {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
+      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <PasteImportModal />
       <Toast />
     </div>
