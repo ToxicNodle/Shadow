@@ -139,7 +139,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals, atRisk } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -241,6 +241,47 @@ export default function AnalyticsView() {
             ))}
           </div>
         </div>
+
+        {/* ── Revenue at Risk ── */}
+        {atRisk && atRisk.length > 0 && (() => {
+          const REV_EST: Record<string, number> = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500, other: 2500 };
+          const totalAtRisk = atRisk.reduce((sum, r) => sum + (REV_EST[r.category] ?? 2500), 0);
+          return (
+            <div className="an-card" style={{ border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.04)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', boxShadow: '0 0 6px #ef4444', flexShrink: 0 }} />
+                <div className="an-card-title" style={{ margin: 0, color: '#ef4444' }}>Revenue at Risk</div>
+                <div style={{ marginLeft: 'auto', fontSize: 18, fontWeight: 900, color: '#ef4444' }}>{fmt(totalAtRisk)}</div>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
+                {atRisk.length} deal{atRisk.length !== 1 ? 's' : ''} in active stages with no activity in 14+ days — at risk of going cold.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {atRisk.map((r) => (
+                  <div
+                    key={r.id}
+                    className="an-top-lead-row"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => { setCurrentLeadId(String(r.id)); setMode('leads'); }}
+                  >
+                    <div className="an-top-lead-company">{r.company}</div>
+                    <div className="an-top-lead-meta">
+                      {CATEGORIES[r.category as keyof typeof CATEGORIES] || r.category}
+                      {r.fleetSize ? ` · ${r.fleetSize} units` : ''}
+                    </div>
+                    <span className={`status-tag ${r.status}`}>{STATUSES[r.status as keyof typeof STATUSES] || r.status}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: r.daysStale >= 30 ? '#ef4444' : '#f59e0b', marginLeft: 'auto', flexShrink: 0 }}>
+                      {r.daysStale}d silent
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-faint)' }}>
+                Click any row to open the lead and send a follow-up.
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Won Trend ── */}
         <div className="an-card">
