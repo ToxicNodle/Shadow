@@ -323,7 +323,7 @@ export default function SettingsModal() {
       </div>
 
       <div className="settings-section">
-        <div className="settings-section-title">📥 Inbound Quote Form</div>
+        <div className="settings-section-title">Inbound Quote Form</div>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
           Share this link on your website, email signature, or social media. Prospects fill it out → a new lead appears in WrapLeads instantly.
         </p>
