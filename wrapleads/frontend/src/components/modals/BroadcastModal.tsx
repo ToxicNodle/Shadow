@@ -13,6 +13,7 @@ export default function BroadcastModal({ leads, onClose, onSent }: Props) {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [result, setResult] = useState<{ sent: number; skipped: number; errors: number } | null>(null);
+  const [sendError, setSendError] = useState('');
 
   const withEmail = leads.filter((l) => l.email);
 
@@ -26,13 +27,14 @@ export default function BroadcastModal({ leads, onClose, onSent }: Props) {
       setResult(data);
       setTimeout(onSent, 2500);
     },
+    onError: (e: Error) => setSendError(e.message || 'Broadcast failed — check your Resend API key in Settings.'),
   });
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" style={{ maxWidth: 540 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title">📢 Broadcast Email</h2>
+          <h2 className="modal-title">Broadcast Email</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -45,7 +47,9 @@ export default function BroadcastModal({ leads, onClose, onSent }: Props) {
 
           {result ? (
             <div className="broadcast-result">
-              <span style={{ fontSize: 28 }}>✅</span>
+              <div style={{ color: 'var(--green)' }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="32" height="32"><circle cx="12" cy="12" r="10"/><polyline points="16 8 10 14 7 11"/></svg>
+              </div>
               <p style={{ fontWeight: 700, margin: '8px 0 4px' }}>Broadcast sent!</p>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
                 {result.sent} sent · {result.skipped} skipped (no email) · {result.errors} errors
@@ -75,6 +79,7 @@ export default function BroadcastModal({ leads, onClose, onSent }: Props) {
                   placeholder={`Hi {{name}},\n\nJust wanted to reach out to {{company}} about an upcoming promotion…`}
                 />
               </div>
+              {sendError && <div className="error-box">{sendError}</div>}
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button className="btn" onClick={onClose}>Cancel</button>
                 <button
