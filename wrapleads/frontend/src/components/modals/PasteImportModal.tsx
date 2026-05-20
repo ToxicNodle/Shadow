@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import type { ParsedContact, LeadCategory } from '../../api/types';
 import { CATEGORIES } from '../../api/types';
@@ -32,7 +31,6 @@ export default function PasteImportModal() {
     setPasteImportOpen: s.setPasteImportOpen,
     showToast: s.showToast,
   }));
-  const { createLead } = useLeads();
   const qc = useQueryClient();
 
   const [stage, setStage] = useState<Stage>('paste');
@@ -82,10 +80,11 @@ export default function PasteImportModal() {
     setStage('importing');
     setImportProgress(0);
     const now = new Date().toISOString();
+    let success = 0;
     for (let i = 0; i < toImport.length; i++) {
       const d = toImport[i];
-      await new Promise<void>((resolve) => {
-        createLead({
+      try {
+        await api.createLead({
           company: d.company, category: d.category, status: 'cold',
           contactName: d.contactName ?? '', contactTitle: d.contactTitle ?? '',
           phone: d.phone ?? '', email: d.email ?? '',
@@ -94,15 +93,15 @@ export default function PasteImportModal() {
           address: '', website: '', notes: '',
           lastContacted: '', createdAt: now, updatedAt: now,
         });
-        setTimeout(resolve, 80);
-      });
+        success++;
+      } catch {
+        // skip individual failures — final toast shows actual count
+      }
       setImportProgress(i + 1);
     }
-    setTimeout(() => {
-      qc.invalidateQueries({ queryKey: ['leads'] });
-      showToast(`${toImport.length} lead${toImport.length !== 1 ? 's' : ''} imported`);
-      handleClose();
-    }, 200);
+    qc.invalidateQueries({ queryKey: ['leads'] });
+    showToast(`${success} lead${success !== 1 ? 's' : ''} imported`);
+    handleClose();
   }
 
   const includedCount = drafts.filter((d) => d.included).length;

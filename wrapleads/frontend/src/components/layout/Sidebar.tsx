@@ -8,7 +8,7 @@ import { api } from '../../api/client';
 const CATEGORY_ORDER: LeadCategory[] = [
   'racing', 'fleet', 'colorchange', 'dinoc', 'reatec', 'wallgraphics', 'design', 'construction', 'gc_referral',
 ];
-const STATUS_ORDER: LeadStatus[] = ['cold', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'];
+const STATUS_ORDER: LeadStatus[] = ['new', 'cold', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'];
 
 const CAT_COLORS: Record<string, string> = {
   fleet: '#3b82f6',
@@ -23,6 +23,7 @@ const CAT_COLORS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  new:  '#9ca3af',
   cold: '#6b7280',
   contacted: '#3b82f6',
   replied: '#0ea5e9',

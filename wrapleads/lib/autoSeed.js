@@ -23,7 +23,7 @@ try {
 // Status distribution for seeded leads — spreads the pipeline so demos look
 // real instead of every lead sitting in 'new'. Sums to 100.
 const STATUS_DISTRIBUTION = [
-  { status: 'new',       weight: 40 },
+  { status: 'cold',      weight: 40 },
   { status: 'contacted', weight: 25 },
   { status: 'replied',   weight: 15 },
   { status: 'meeting',   weight: 8  },
@@ -35,7 +35,7 @@ const STATUS_DISTRIBUTION = [
 // Deterministic status assignment by hashing the client_id. Same lead always
 // gets the same status across users, so the demo is consistent.
 function pickStatus(clientId) {
-  if (!clientId) return 'new';
+  if (!clientId) return 'cold';
   let h = 0;
   for (let i = 0; i < clientId.length; i++) {
     h = ((h << 5) - h + clientId.charCodeAt(i)) | 0;
@@ -46,7 +46,7 @@ function pickStatus(clientId) {
     cum += weight;
     if (bucket < cum) return status;
   }
-  return 'new';
+  return 'cold';
 }
 
 /**
@@ -71,7 +71,7 @@ async function autoSeedUser(userId, pool) {
       const clientId = lead.clientId || lead.client_id;
       const status = pickStatus(clientId);
       // For touched leads, stamp last_contacted so the activity timeline isn't empty.
-      const lastContacted = status === 'new' ? null : new Date(Date.now() - (Math.abs(clientId?.length || 0) % 30) * 86400000);
+      const lastContacted = status === 'cold' ? null : new Date(Date.now() - (Math.abs(clientId?.length || 0) % 30) * 86400000);
       // Set followup_due_at for active leads so the Mission view shows real overdue items.
       const offsetDays = FOLLOWUP_OFFSET_DAYS[status];
       const followupDueAt = offsetDays !== undefined
