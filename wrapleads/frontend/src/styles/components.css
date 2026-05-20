@@ -396,7 +396,8 @@
 /* === CRM Shell Layout === */
 .crm-layout { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .crm-body { display: flex; flex: 1; overflow: hidden; }
-.crm-main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+.crm-main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; animation: viewIn 0.18s ease-out; }
+@keyframes viewIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
 /* === Topbar === */
 .topbar {
