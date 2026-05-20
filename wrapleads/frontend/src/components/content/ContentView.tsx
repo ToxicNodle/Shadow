@@ -168,7 +168,7 @@ function ScheduleModal({ schedule, contentList, onClose }: {
             <label className="field-label">Geographic Trigger (optional)</label>
             <input className="input" value={form.geo_trigger}
               onChange={(e) => setForm((s) => ({ ...s, geo_trigger: e.target.value }))}
-              placeholder="e.g. Indianapolis, IN within 50 miles" />
+              placeholder="e.g. Chicago, IL within 50 miles" />
           </div>
           <div className="field-group">
             <label className="field-label">Notes</label>
