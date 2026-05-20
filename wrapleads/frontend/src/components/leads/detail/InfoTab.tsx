@@ -6,6 +6,7 @@ import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
+import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 
 // --------------- Confetti ---------------
 function ConfettiCanvas({ active }: { active: boolean }) {
@@ -470,11 +471,40 @@ export default function InfoTab({ lead }: Props) {
     }
   }
 
+  const prob = winProbability(local);
+  const probColor = winProbabilityColor(prob);
+
   return (
     <div>
       <ConfettiCanvas active={confettiActive} />
-      <CompletenessBar lead={local} />
-      <div style={{ height: 12 }} />
+
+      {/* Win Probability + Completeness row */}
+      {!['won', 'lost'].includes(local.status) && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', marginBottom: 12 }}>
+          <div style={{
+            flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center',
+            justifyContent: 'center', padding: '10px 16px',
+            background: `${probColor}12`, border: `1px solid ${probColor}30`,
+            borderRadius: 10, minWidth: 88,
+          }}>
+            <div style={{ fontSize: 26, fontWeight: 900, color: probColor, lineHeight: 1 }}>{prob}%</div>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: probColor, marginTop: 3, opacity: 0.8 }}>
+              close prob
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <CompletenessBar lead={local} />
+          </div>
+        </div>
+      )}
+
+      {['won', 'lost'].includes(local.status) && (
+        <>
+          <CompletenessBar lead={local} />
+          <div style={{ height: 12 }} />
+        </>
+      )}
+      <div style={{ height: 4 }} />
       <div className="field-row">
         <div className="field-group">
           <label className="field-label">Category</label>

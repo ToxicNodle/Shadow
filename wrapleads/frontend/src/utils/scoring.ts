@@ -59,3 +59,47 @@ export const SCORE_COLORS: Record<ScoreLabel, string> = {
   warm: '#f59e0b',
   cool: '#64748b',
 };
+
+// Stage base close probability (0–1)
+const STAGE_PROB: Record<string, number> = {
+  won: 1.0, proposal: 0.55, meeting: 0.35, replied: 0.22,
+  contacted: 0.12, cold: 0.06, new: 0.04, lost: 0.0,
+};
+
+export function winProbability(lead: Lead): number {
+  let p = STAGE_PROB[lead.status] ?? 0.05;
+
+  // Score bonus/penalty
+  const score = scoreLead(lead);
+  if (score >= 65) p += 0.06;
+  else if (score >= 35) p += 0.02;
+  else p -= 0.02;
+
+  // Data completeness bonus
+  if (lead.email) p += 0.03;
+  if (lead.phone) p += 0.02;
+
+  // Fleet size bonus (larger deal → more committed buyer)
+  const fleet = parseInt(lead.fleetSize || '0') || 0;
+  if (fleet >= 25) p += 0.05;
+  else if (fleet >= 10) p += 0.02;
+
+  // Recency penalty
+  if (lead.lastContacted) {
+    const days = Math.floor((Date.now() - new Date(lead.lastContacted).getTime()) / 86_400_000);
+    if (days > 30) p -= 0.08;
+    else if (days > 14) p -= 0.04;
+  }
+
+  // Clamp: never show 100% for active leads, never below 1%
+  if (lead.status === 'won') return 100;
+  if (lead.status === 'lost') return 0;
+  return Math.round(Math.max(1, Math.min(94, p * 100)));
+}
+
+export function winProbabilityColor(prob: number): string {
+  if (prob >= 50) return '#10b981';
+  if (prob >= 25) return '#f59e0b';
+  if (prob >= 10) return '#94a3b8';
+  return '#64748b';
+}

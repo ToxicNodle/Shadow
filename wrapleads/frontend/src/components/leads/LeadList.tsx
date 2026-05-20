@@ -123,6 +123,7 @@ export default function LeadList() {
           <span>Status</span>
           <span>Email</span>
           <span>Category / Last</span>
+          <span>Win %</span>
           <span>Score</span>
           <span />
         </div>
