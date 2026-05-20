@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+import { useLeads } from '../../hooks/useLeads';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -552,6 +553,74 @@ function CampaignPanel({ onClose }: CampaignPanelProps) {
   );
 }
 
+// ── Seasonal Demand Radar ─────────────────────────────────────────────────────
+
+// Peak months (0=Jan…11=Dec) for each wrap category in the US market
+const SEASONAL: Record<string, { peak: number[]; label: string }> = {
+  construction: { peak: [2,3,4,5,6,7,8],      label: 'Construction season' },
+  fleet:        { peak: [1,2,3,8,9,10],         label: 'Fleet refresh cycles' },
+  gc_referral:  { peak: [1,2,3,4,8,9,10],       label: 'GC contract season' },
+  colorchange:  { peak: [3,4,5,8,9],            label: 'Color-change demand' },
+  racing:       { peak: [2,3,4,5,8,9,10],       label: 'Race season' },
+  dinoc:        { peak: [0,1,2,9,10,11],         label: 'Interior film installs' },
+  reatec:       { peak: [0,1,2,9,10,11],         label: 'Interior film installs' },
+  wallgraphics: { peak: [0,1,2,8,9,10,11],      label: 'Office refresh budgets' },
+  design:       { peak: [1,2,3,8,9,10],          label: 'Brand launches' },
+};
+
+function SeasonalRadar({ leads }: { leads: { category: string; status: string }[] }) {
+  const month = new Date().getMonth();
+  const alerts = useMemo(() => {
+    return Object.entries(SEASONAL)
+      .filter(([, info]) => info.peak.includes(month))
+      .map(([cat, info]) => {
+        const total = leads.filter((l) => l.category === cat && !['won','lost'].includes(l.status)).length;
+        return { cat, label: info.label, total };
+      })
+      .filter((a) => a.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 3);
+  }, [leads, month]);
+
+  if (alerts.length === 0) return null;
+
+  const monthName = new Date().toLocaleString('default', { month: 'long' });
+
+  return (
+    <section className="mission-card" style={{ borderColor: 'rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.04)' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-icon" style={{ color: 'var(--accent)' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </span>
+        <span className="mission-card-title">{monthName} Demand Radar</span>
+        <span style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 700, background: 'rgba(99,102,241,0.12)', padding: '2px 8px', borderRadius: 99 }}>
+          Peak Season
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 10px', lineHeight: 1.5 }}>
+        These categories are in peak demand this month — push them now while buyers have budget.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {alerts.map((a) => (
+          <div key={a.cat} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: 'var(--bg-elev)', borderRadius: 8 }}>
+            <span style={{ fontSize: 18 }}>
+              {a.cat === 'construction' ? '🏗️' : a.cat === 'fleet' ? '🚛' : a.cat === 'gc_referral' ? '🤝' : a.cat === 'colorchange' ? '🎨' : a.cat === 'racing' ? '🏎️' : a.cat === 'dinoc' || a.cat === 'reatec' ? '🏠' : a.cat === 'wallgraphics' ? '🖼️' : '✦'}
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{a.label}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.total} active {a.cat.replace('_', ' ')} leads in pipeline</div>
+            </div>
+            <span style={{ fontSize: 20, fontWeight: 900, color: 'var(--accent)', minWidth: 28, textAlign: 'right' }}>{a.total}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ── Revenue Goal Bar ─────────────────────────────────────────────────────────
 
 function RevenueGoalBar({ revenue, wonCount, goal, onSetGoal }: {
@@ -610,6 +679,7 @@ export default function MissionView() {
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
   const setQuickOpenTab = useAppStore((s) => s.setQuickOpenTab);
   const settings = useAppStore((s) => s.settings);
+  const { leads } = useLeads();
   const [showBulk, setShowBulk] = useState(false);
   const [showEnrich, setShowEnrich] = useState(false);
   const [showProspector, setShowProspector] = useState(false);
@@ -1066,6 +1136,9 @@ export default function MissionView() {
             </div>
           )}
         </section>
+
+        {/* ── Seasonal Demand Radar ── */}
+        <SeasonalRadar leads={leads} />
 
         {/* ── Live Signals ── */}
         {(signalsData?.signals?.length ?? 0) > 0 && (

@@ -1747,7 +1747,8 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
 
   const colMap = { company:'company', category:'category', state:'state', city:'city', address:'address',
     contactName:'contact_name', contactTitle:'contact_title', email:'email', phone:'phone', website:'website',
-    fleetSize:'fleet_size', pitchAngle:'pitch_angle', status:'status', notes:'notes', lastContacted:'last_contacted' };
+    fleetSize:'fleet_size', pitchAngle:'pitch_angle', status:'status', notes:'notes', lastContacted:'last_contacted',
+    last_contacted:'last_contacted', followup_due_at:'followup_due_at', referred_by:'referred_by' };
   const sets = []; const params = [];
   for (const [key, col] of Object.entries(colMap)) {
     if (d[key] !== undefined) { params.push(d[key]||null); sets.push(`${col}=$${params.length}`); }
