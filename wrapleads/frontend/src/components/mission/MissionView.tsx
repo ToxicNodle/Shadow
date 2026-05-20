@@ -608,6 +608,7 @@ export default function MissionView() {
   const setMode = useAppStore((s) => s.setMode);
   const setFilter = useAppStore((s) => s.setFilter);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const setQuickOpenTab = useAppStore((s) => s.setQuickOpenTab);
   const settings = useAppStore((s) => s.settings);
   const [showBulk, setShowBulk] = useState(false);
   const [showEnrich, setShowEnrich] = useState(false);
@@ -637,6 +638,12 @@ export default function MissionView() {
   });
 
   function goToLead(leadId: number) {
+    setMode('leads');
+    setCurrentLeadId(String(leadId));
+  }
+
+  function goToLeadEmail(leadId: number) {
+    setQuickOpenTab('email');
     setMode('leads');
     setCurrentLeadId(String(leadId));
   }
@@ -1008,14 +1015,26 @@ export default function MissionView() {
                   onClick={() => goToLead(deal.id)}
                   style={{ cursor: 'pointer' }}
                 >
-                  <div className="mission-item-main">
-                    <span className="mission-item-company">{deal.company}</span>
-                    <span className={`status-tag ${deal.status}`} style={{ fontSize: 10, marginLeft: 6 }}>{deal.status}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="mission-item-main">
+                      <span className="mission-item-company">{deal.company}</span>
+                      <span className={`status-tag ${deal.status}`} style={{ fontSize: 10, marginLeft: 6 }}>{deal.status}</span>
+                    </div>
+                    <div className="mission-item-meta">
+                      {deal.days_stale}d no activity · {deal.category}
+                      {deal.city && deal.state ? ` · ${deal.city}, ${deal.state}` : ''}
+                    </div>
                   </div>
-                  <div className="mission-item-meta">
-                    {deal.days_stale}d no activity · {deal.category}
-                    {deal.city && deal.state ? ` · ${deal.city}, ${deal.state}` : ''}
-                  </div>
+                  {deal.email && (
+                    <button
+                      className="btn"
+                      style={{ fontSize: 11, padding: '3px 10px', flexShrink: 0, color: 'var(--accent)', border: '1px solid rgba(99,102,241,0.3)' }}
+                      title="Compose re-engagement email"
+                      onClick={(e) => { e.stopPropagation(); goToLeadEmail(deal.id); }}
+                    >
+                      Email Now →
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1067,7 +1086,7 @@ export default function MissionView() {
                   <button
                     key={i}
                     className="signal-item"
-                    onClick={() => goToLeadsFiltered()}
+                    onClick={() => s.lead_id ? goToLead(s.lead_id) : goToLeadsFiltered()}
                   >
                     <span className="signal-icon">
                       {SIGNAL_ICONS[s.type] === 'eye' && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>}

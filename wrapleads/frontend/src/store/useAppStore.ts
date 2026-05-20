@@ -52,6 +52,10 @@ interface AppStore {
   currentLeadId: string | null;
   setCurrentLeadId: (id: string | null) => void;
 
+  // Quick-open a specific tab when navigating to a lead
+  quickOpenTab: 'info' | 'email' | 'quotes' | 'activity' | 'notes' | 'design' | null;
+  setQuickOpenTab: (tab: 'info' | 'email' | 'quotes' | 'activity' | 'notes' | 'design' | null) => void;
+
   // Pending deep-link from notification (server ID)
   pendingOpenLeadServerId: number | null;
   setPendingOpenLeadServerId: (id: number | null) => void;
@@ -161,6 +165,8 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       // Current lead
       currentLeadId: null,
       setCurrentLeadId: (id) => set({ currentLeadId: id }),
+      quickOpenTab: null,
+      setQuickOpenTab: (tab) => set({ quickOpenTab: tab }),
       pendingOpenLeadServerId: null,
       setPendingOpenLeadServerId: (id) => set({ pendingOpenLeadServerId: id }),
 
