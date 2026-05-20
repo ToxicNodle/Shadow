@@ -443,6 +443,7 @@ export const api = {
     quoteRevenue: { totalQuotes: number; acceptedCount: number; acceptedValue: number; sentCount: number; sentValue: number; draftCount: number; pipelineValue: number };
     velocity: { stage: string; avg_days: number; sample: number }[];
     byState: { state: string; count: number }[];
+    referrals: { referred_by: string; referrals: number; won: number; active: number }[];
   }>('/analytics'),
 
   // AI Mission Brief

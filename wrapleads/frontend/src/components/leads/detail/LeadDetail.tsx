@@ -100,13 +100,22 @@ function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
 
 export default function LeadDetail() {
   const { leads } = useLeads();
-  const { currentLeadId, setCurrentLeadId } = useAppStore((s) => ({
+  const { currentLeadId, setCurrentLeadId, quickOpenTab, setQuickOpenTab } = useAppStore((s) => ({
     currentLeadId: s.currentLeadId,
     setCurrentLeadId: s.setCurrentLeadId,
+    quickOpenTab: s.quickOpenTab,
+    setQuickOpenTab: s.setQuickOpenTab,
   }));
   const [activeTab, setActiveTab] = useState<Tab>('info');
 
   const lead = leads.find((l) => l.id === currentLeadId);
+
+  // Consume quickOpenTab when a lead opens (e.g. from Mission "Email Now" shortcut)
+  useEffect(() => {
+    if (!lead || !quickOpenTab) return;
+    setActiveTab(quickOpenTab);
+    setQuickOpenTab(null);
+  }, [lead?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!lead) return;

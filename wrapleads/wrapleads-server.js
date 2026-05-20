@@ -2152,7 +2152,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
     const [
       pipelineR, wonTrendR, catWinR, activity30dR,
       avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR, clvR,
-      emailPerfR, quoteRevR, velocityR, byStateR
+      emailPerfR, quoteRevR, velocityR, byStateR, referralR
     ] = await Promise.all([
       // Pipeline by status
       pool.query(`
@@ -2297,6 +2297,20 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         FROM leads WHERE user_id=$1 AND state IS NOT NULL AND state != ''
         GROUP BY state ORDER BY count DESC LIMIT 20
       `, [uid]),
+
+      // Referral source analytics
+      pool.query(`
+        SELECT
+          referred_by,
+          COUNT(*)::INT AS referrals,
+          COUNT(*) FILTER (WHERE status='won')::INT AS won,
+          COUNT(*) FILTER (WHERE status IN ('proposal','meeting','replied'))::INT AS active
+        FROM leads
+        WHERE user_id=$1 AND referred_by IS NOT NULL AND referred_by != ''
+        GROUP BY referred_by
+        ORDER BY referrals DESC
+        LIMIT 10
+      `, [uid]),
     ]);
 
     const byStatus = {};
@@ -2345,6 +2359,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
       },
       velocity: velocityR.rows,
       byState: byStateR.rows,
+      referrals: referralR.rows,
       quoteRevenue: {
         totalQuotes: quoteRevR.rows[0]?.total_quotes ?? 0,
         acceptedCount: quoteRevR.rows[0]?.accepted_count ?? 0,
