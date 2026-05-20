@@ -33,6 +33,7 @@ export default defineConfig({
       '/portal':        API,
       '/portfolio':     API,
       '/proposals':     API,
+      '/quotes':        API,
       '/quote-request': API,
       '/track':         API,
       '/vision':        API,
