@@ -310,6 +310,8 @@ export const api = {
     authFetch<{ ok: boolean; brief: DesignBrief }>('/ai/design-brief', { method: 'POST', body: JSON.stringify(params) }),
   generateMockup: (brief: DesignBrief) =>
     authFetch<MockupResult>('/ai/generate-mockup', { method: 'POST', body: JSON.stringify({ brief }) }),
+  wrapConceptShare: (params: { leadId?: number | string; imageUrl: string; recipientEmail: string; recipientName?: string; subject?: string; note?: string }) =>
+    authFetch<{ ok: boolean; trackToken: string }>('/ai/wrap-concept-share', { method: 'POST', body: JSON.stringify(params) }),
 
   // Fleet Management Integrations
   getSamsaraVehicles: () => authFetch<{ ok: boolean; vehicles: FleetVehicle[]; count: number }>('/integrations/samsara/vehicles'),

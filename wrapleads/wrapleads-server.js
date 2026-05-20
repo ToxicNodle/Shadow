@@ -2314,6 +2314,21 @@ app.get('/analytics', authMiddleware, async (req, res) => {
       `, [uid]),
     ]);
 
+    // Revenue at risk — active leads (proposal/meeting/replied) with no activity in 14+ days
+    const atRiskR = await pool.query(`
+      SELECT l.id, l.company, l.status, l.category, l.fleet_size,
+             MAX(la.created_at) AS last_activity,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - MAX(la.created_at))) / 86400)::INT AS days_stale
+        FROM leads l
+        LEFT JOIN lead_activities la ON la.lead_id = l.id AND la.user_id = l.user_id
+       WHERE l.user_id = $1
+         AND l.status IN ('proposal', 'meeting', 'replied')
+       GROUP BY l.id, l.company, l.status, l.category, l.fleet_size
+      HAVING MAX(la.created_at) < NOW() - INTERVAL '14 days' OR MAX(la.created_at) IS NULL
+       ORDER BY days_stale DESC NULLS FIRST
+       LIMIT 8
+    `, [uid]);
+
     const byStatus = {};
     let totalLeads = 0;
     pipelineR.rows.forEach((r) => { byStatus[r.status] = r.count; totalLeads += r.count; });
@@ -2361,6 +2376,14 @@ app.get('/analytics', authMiddleware, async (req, res) => {
       velocity: velocityR.rows,
       byState: byStateR.rows,
       referrals: referralR.rows,
+      atRisk: atRiskR.rows.map((r) => ({
+        id: r.id,
+        company: r.company,
+        status: r.status,
+        category: r.category,
+        fleetSize: r.fleet_size,
+        daysStale: r.days_stale ?? 99,
+      })),
       quoteRevenue: {
         totalQuotes: quoteRevR.rows[0]?.total_quotes ?? 0,
         acceptedCount: quoteRevR.rows[0]?.accepted_count ?? 0,
@@ -6130,6 +6153,114 @@ Write two posts. Output JSON only:
     const parsed = JSON.parse(result.replace(/```json|```/g, '').trim());
     res.json({ ok: true, posts: parsed });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Wrap Concept Share (Design Studio → email to client) ─────────────────────
+
+app.post('/ai/wrap-concept-share', authMiddleware, requireShopFlow, async (req, res) => {
+  const uid = String(req.user.id);
+  const { leadId, imageUrl, recipientEmail, recipientName, subject: subjectOverride, note } = req.body || {};
+  if (!imageUrl || !recipientEmail) return res.status(400).json({ error: 'imageUrl and recipientEmail required' });
+
+  try {
+    const settingsR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'your wrap shop';
+    const senderName = s.senderName || shopName;
+    const senderEmail = s.senderEmail || '';
+    const baseUrl = process.env.APP_BASE_URL || APP_URL;
+
+    // Create email tracking pixel
+    const trackToken = require('crypto').randomBytes(16).toString('hex');
+    const subject = subjectOverride || `Your wrap concept is ready — ${shopName}`;
+    if (leadId) {
+      await pool.query(
+        `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
+        [trackToken, uid, leadId, subject]
+      );
+    }
+    const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
+
+    // Quote form link (fall back to APP_URL if no shop token yet)
+    let quoteUrl = baseUrl;
+    try {
+      const shopR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+      const tok = shopR.rows[0]?.settings_json?.shopToken;
+      if (tok) quoteUrl = `${baseUrl}/quote-request/${tok}`;
+    } catch { /* best-effort */ }
+
+    const greeting = recipientName ? `Hi ${recipientName.split(' ')[0]},` : 'Hi there,';
+    const noteBlock = note ? `<p style="color:#c8cdd6;font-size:14px;line-height:1.7;margin:0 0 20px;font-style:italic;">${note.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>` : '';
+    const pixelImg = `<img src="${pixelUrl}" width="1" height="1" style="display:none" />`;
+
+    const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0a0b0d;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#f4f5f7;">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:40px auto;padding:0 20px;">
+<tr><td>
+  <div style="margin-bottom:24px;">
+    <span style="display:inline-block;background:#ff6b35;border-radius:8px;padding:8px 14px;font-weight:900;font-size:18px;color:#fff;letter-spacing:-0.02em;">W</span>
+    <span style="font-size:20px;font-weight:800;letter-spacing:-0.02em;margin-left:8px;color:#f4f5f7;">${shopName}<span style="color:#ff6b35;"> · Wrap Concept</span></span>
+  </div>
+  <div style="background:#14161a;border:1px solid #2a2e36;border-radius:12px;padding:32px;">
+    <p style="color:#9aa0aa;font-size:15px;margin:0 0 4px;">${greeting}</p>
+    <h1 style="font-size:22px;font-weight:800;margin:0 0 16px;letter-spacing:-0.02em;color:#f4f5f7;">
+      Your wrap concept is ready.
+    </h1>
+    ${noteBlock}
+    <p style="color:#9aa0aa;font-size:14px;line-height:1.6;margin:0 0 20px;">
+      We put together an AI-generated concept to show you what your vehicle could look like.
+      Take a look below — this is just the starting point. We can refine colors, layout, and branding to match exactly what you have in mind.
+    </p>
+    <div style="border-radius:10px;overflow:hidden;margin:0 0 24px;border:1px solid #2a2e36;">
+      <img src="${imageUrl}" alt="Wrap concept" style="width:100%;display:block;" />
+    </div>
+    <a href="${quoteUrl}" style="display:inline-block;background:#ff6b35;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:700;font-size:15px;margin:0 0 20px;">
+      Get a Quote →
+    </a>
+    <p style="color:#5e6470;font-size:12px;margin:0;line-height:1.5;">
+      This is an AI-generated concept — final wrap design will be refined based on your exact vehicle and branding.<br>
+      Ready to move forward? Reply to this email or click the button above.
+    </p>
+  </div>
+  <p style="font-size:12px;color:#5e6470;margin-top:16px;text-align:center;">
+    Sent by ${senderName}${senderEmail ? ' · <a href="mailto:' + senderEmail + '" style="color:#ff6b35;text-decoration:none;">' + senderEmail + '</a>' : ''}
+  </p>
+</td></tr>
+</table>
+${pixelImg}
+</body>
+</html>`;
+
+    const resendKey = process.env.RESEND_API_KEY;
+    if (resendKey) {
+      const { Resend } = require('resend');
+      const r = new Resend(resendKey);
+      const from = senderEmail ? `${senderName} <${senderEmail}>` : `${shopName} <noreply@wrapleads.io>`;
+      const { error: resendErr } = await r.emails.send({ from, to: recipientEmail, subject, html });
+      if (resendErr) console.error('[wrap-concept-share] Resend error:', resendErr);
+      else console.log(`[wrap-concept-share] Concept sent to ${recipientEmail}`);
+    } else {
+      console.log(`[wrap-concept-share] (no-op) Would send concept to ${recipientEmail}`);
+    }
+
+    if (leadId) {
+      await logActivity(pool, {
+        leadId: Number(leadId),
+        userId: uid,
+        type: 'email_sent',
+        subject: `Wrap concept shared: ${subject}`,
+        body: `AI wrap concept emailed to ${recipientName || recipientEmail}${note ? '\n\nNote: ' + note : ''}`,
+        metadata: { image_url: imageUrl, recipient_email: recipientEmail, track_token: trackToken },
+      });
+    }
+
+    res.json({ ok: true, trackToken });
+  } catch (e) {
+    console.error('[wrap-concept-share]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Notifications ─────────────────────────────────────────────────────────────

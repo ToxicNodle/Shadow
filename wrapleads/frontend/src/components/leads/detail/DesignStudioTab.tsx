@@ -32,6 +32,14 @@ export default function DesignStudioTab({ lead }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showBrief, setShowBrief] = useState(false);
 
+  // Send to client state
+  const [showSend, setShowSend] = useState(false);
+  const [sendEmail, setSendEmail] = useState((lead as any).contactEmail || (lead as any).contact_email || '');
+  const [sendName, setSendName] = useState((lead as any).contactName || (lead as any).contact_name || '');
+  const [sendNote, setSendNote] = useState('');
+  const [sendLoading, setSendLoading] = useState(false);
+  const [sendDone, setSendDone] = useState(false);
+
   const hasOpenAI = !!settings.openaiApiKey;
 
   async function generate() {
@@ -72,6 +80,26 @@ export default function DesignStudioTab({ lead }: Props) {
     } catch (e: any) {
       setError(e.message);
       setStep('error');
+    }
+  }
+
+  async function sendConcept() {
+    if (!imageUrl || !sendEmail) return;
+    setSendLoading(true);
+    try {
+      await api.wrapConceptShare({
+        leadId: lead.serverId,
+        imageUrl,
+        recipientEmail: sendEmail,
+        recipientName: sendName || undefined,
+        note: sendNote || undefined,
+      });
+      setSendDone(true);
+      showToast(`Concept sent to ${sendEmail}`);
+    } catch (e: any) {
+      showToast(e.message || 'Send failed', 'error');
+    } finally {
+      setSendLoading(false);
     }
   }
 
@@ -197,8 +225,71 @@ export default function DesignStudioTab({ lead }: Props) {
           <img src={imageUrl} alt="AI wrap concept" className="ds-result-img" />
           <div className="ds-result-actions">
             <a href={imageUrl} download="wrap-concept.png" className="btn btn-primary">⬇ Download</a>
+            <button className="btn" onClick={() => { setShowSend((v) => !v); setSendDone(false); }}>
+              {showSend ? '✕ Cancel' : `✉ Send to ${lead.company}`}
+            </button>
             <button className="btn" onClick={generate}>↻ Regenerate</button>
           </div>
+
+          {showSend && (
+            <div className="ds-send-panel">
+              {sendDone ? (
+                <div className="success-box" style={{ fontSize: 13 }}>
+                  Concept sent to {sendEmail} and logged to this lead&apos;s activity.
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                    Email wrap concept to client
+                  </div>
+                  <div className="field-row" style={{ marginBottom: 8 }}>
+                    <div className="field-group">
+                      <label className="field-label" style={{ fontSize: 11 }}>Client email</label>
+                      <input
+                        className="input"
+                        style={{ fontSize: 12 }}
+                        type="email"
+                        placeholder="client@company.com"
+                        value={sendEmail}
+                        onChange={(e) => setSendEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label className="field-label" style={{ fontSize: 11 }}>Contact name</label>
+                      <input
+                        className="input"
+                        style={{ fontSize: 12 }}
+                        placeholder="Alex Smith"
+                        value={sendName}
+                        onChange={(e) => setSendName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="field-group" style={{ marginBottom: 8 }}>
+                    <label className="field-label" style={{ fontSize: 11 }}>Personal note (optional)</label>
+                    <textarea
+                      className="input"
+                      rows={2}
+                      style={{ fontSize: 12, resize: 'vertical' }}
+                      placeholder="Here's a quick concept based on what we discussed…"
+                      value={sendNote}
+                      onChange={(e) => setSendNote(e.target.value)}
+                    />
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: 12 }}
+                    disabled={!sendEmail || sendLoading}
+                    onClick={sendConcept}
+                  >
+                    {sendLoading ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Sending…</> : 'Send Concept →'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           <p className="ds-result-note">AI-generated concept. Final design will vary based on exact vehicle dimensions and branding files.</p>
         </div>
       )}
