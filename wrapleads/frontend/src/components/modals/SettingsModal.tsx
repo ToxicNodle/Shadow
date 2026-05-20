@@ -284,6 +284,15 @@ export default function SettingsModal() {
       </div>
 
       <div className="settings-section">
+        <div className="settings-section-title">Revenue Goal</div>
+        <p className="settings-help">Set your monthly closed revenue target. Displayed as a progress bar on your Mission Dashboard.</p>
+        <div className="field-group">
+          <label className="field-label">Monthly Revenue Goal ($)</label>
+          <input className="input" type="number" min={0} {...f('monthlyRevenueGoal')} placeholder="10000" />
+        </div>
+      </div>
+
+      <div className="settings-section">
         <div className="settings-section-title">Vision Quote — Pricing</div>
         <p className="settings-help">Override the default sq footage pricing used in instant vehicle quotes.</p>
         <div className="field-row">

@@ -552,6 +552,56 @@ function CampaignPanel({ onClose }: CampaignPanelProps) {
   );
 }
 
+// ── Revenue Goal Bar ─────────────────────────────────────────────────────────
+
+function RevenueGoalBar({ revenue, wonCount, goal, onSetGoal }: {
+  revenue: number;
+  wonCount: number;
+  goal: number;
+  onSetGoal: () => void;
+}) {
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft = daysInMonth - now.getDate();
+  const monthName = now.toLocaleString('default', { month: 'long' });
+  const pct = goal > 0 ? Math.min(100, Math.round((revenue / goal) * 100)) : 0;
+  const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#f59e0b' : '#6366f1';
+  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+  return (
+    <div className="revenue-goal-bar">
+      <div className="revenue-goal-left">
+        <span className="revenue-goal-month">{monthName}</span>
+        <span className="revenue-goal-days">{daysLeft}d left</span>
+      </div>
+      <div className="revenue-goal-center">
+        {goal > 0 ? (
+          <>
+            <div className="revenue-goal-track">
+              <div className="revenue-goal-fill" style={{ width: `${pct}%`, background: color }} />
+            </div>
+            <div className="revenue-goal-labels">
+              <span style={{ color }}>
+                {fmt(revenue)} closed
+                {pct >= 100 && ' 🎯'}
+              </span>
+              <span style={{ color: 'var(--text-muted)' }}>goal: {fmt(goal)}</span>
+            </div>
+          </>
+        ) : (
+          <button className="btn revenue-goal-set-btn" onClick={onSetGoal}>
+            Set monthly revenue goal →
+          </button>
+        )}
+      </div>
+      <div className="revenue-goal-right">
+        <span className="revenue-goal-won-count">{wonCount}</span>
+        <span className="revenue-goal-won-label">won</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Main MissionView ──────────────────────────────────────────────────────────
 
 export default function MissionView() {
@@ -609,7 +659,7 @@ export default function MissionView() {
     );
   }
 
-  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth, agingWraps, stuckDeals } = data;
+  const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth, wonThisMonthRevenue, agingWraps, stuckDeals } = data;
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
@@ -659,6 +709,14 @@ export default function MissionView() {
           <span className="mission-brief-text">{briefData.brief}</span>
         </div>
       )}
+
+      {/* ── Revenue Goal Bar ── */}
+      <RevenueGoalBar
+        revenue={wonThisMonthRevenue ?? 0}
+        wonCount={wonThisMonth}
+        goal={parseFloat(settings.monthlyRevenueGoal || '0')}
+        onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
+      />
 
       <div className="mission-grid">
 

@@ -156,6 +156,7 @@ export interface Settings {
   samsaraApiKey: string;
   motiveApiKey: string;
   accentColor: string;
+  monthlyRevenueGoal: string;
 }
 
 export interface CarrierSearchParams {
@@ -278,6 +279,7 @@ export const DEFAULT_SETTINGS: Settings = {
   samsaraApiKey: '',
   motiveApiKey: '',
   accentColor: '',
+  monthlyRevenueGoal: '',
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
