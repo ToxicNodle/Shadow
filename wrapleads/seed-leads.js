@@ -1,6 +1,6 @@
 /**
  * WrapLeads — Vetted Lead Seeder
- * Seeds 58 hand-researched B2B leads for Shadow Graphix across Fleet/Logistics,
+ * Seeds 58 hand-researched B2B leads across Fleet/Logistics,
  * Interior Design/Architecture (DI-NOC), and Construction categories.
  * Covers IN, OH, KY, MI, IL.
  *
@@ -210,7 +210,7 @@ const LEADS = [
     website: 'rowlanddesign.com',
     contactName: 'Eric Rowland',
     contactTitle: 'Principal',
-    pitchAngle: 'Hospitality and commercial interior portfolio + environmental graphics practice — Shadow Graphix as wide-format/install partner for brand-environment projects.',
+    pitchAngle: 'Hospitality and commercial interior portfolio + environmental graphics practice — pitch as wide-format/install partner for brand-environment projects.',
   },
   {
     id: 'vetted-019',
@@ -375,7 +375,7 @@ const LEADS = [
     website: 'bafcorp.com',
     contactName: 'Barbara Fleming',
     contactTitle: 'Owner',
-    pitchAngle: 'Tenant-improvement specialist — should be a Shadow Graphix referral partner (TI projects often need DI-NOC) AND a fleet-wrap customer for their work trucks.',
+    pitchAngle: 'Tenant-improvement specialist — strong referral partner candidate (TI projects often need DI-NOC) AND a fleet-wrap customer for their work trucks.',
   },
   {
     id: 'vetted-036',
@@ -472,7 +472,7 @@ const LEADS = [
     category: 'construction',
     city: 'Chicago', state: 'IL',
     website: 'skender.com',
-    pitchAngle: 'Major Chicago commercial GC that handles repeat-client tenant build-outs — Shadow Graphix should pitch BOTH their fleet AND become a DI-NOC supply/install partner for their interiors projects.',
+    pitchAngle: 'Major Chicago commercial GC that handles repeat-client tenant build-outs — pitch BOTH their fleet AND become a DI-NOC supply/install partner for their interiors projects.',
   },
 
   // ── ADDITIONAL VETTED LEADS FROM RANKED WORKBOOK ────────────────────────────

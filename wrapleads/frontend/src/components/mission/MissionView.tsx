@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
+import type { LeadStatus, LeadCategory } from '../../api/types';
 
 // ── AI Call Button ────────────────────────────────────────────────────────────
 
@@ -592,8 +593,8 @@ export default function MissionView() {
 
   function goToLeadsFiltered(status?: string, category?: string) {
     setFilter({
-      status: (status as any) ?? 'all',
-      category: (category as any) ?? 'all',
+      status: (status as LeadStatus) ?? 'all',
+      category: (category as LeadCategory) ?? 'all',
       state: '', search: '',
     });
     setMode('leads');

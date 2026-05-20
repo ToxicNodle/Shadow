@@ -3,7 +3,7 @@
  * -----------------------------------------
  * IndyCar, IMSA, NHRA, USAC, and support series.
  *
- * Geographic advantage: Shadow Graphix is in Speedway, IN — the global
+ * Geographic advantage: Speedway, IN — the global
  * headquarters of IndyCar. Brownsburg, IN (15 min west) is literally the NHRA
  * capital of the world: John Force Racing, DSR, Tony Stewart Racing, and more
  * are all within a single delivery run.
