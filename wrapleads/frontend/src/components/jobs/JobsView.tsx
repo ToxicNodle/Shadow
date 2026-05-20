@@ -359,7 +359,7 @@ export default function JobsView() {
         subject: 'Wrap Refresh Reminder',
         body: `Wrap installed ${job.install_date.split('T')[0]} on ${job.vehicle_count} ${VEHICLE_TYPE_LABELS[job.vehicle_type as VehicleType] ?? job.vehicle_type}(s) is approaching refresh window (${job.life_years} year lifespan). Follow up about renewal.`,
       });
-      await api.updateLead(job.lead_id, { followupDueAt: new Date().toISOString().split('T')[0] } as any);
+      await api.updateLead(job.lead_id, { followupDueAt: new Date().toISOString().split('T')[0] });
       qc.invalidateQueries({ queryKey: ['leads'] });
       showToast(`${job.company} queued for follow-up`, 'success');
     } catch {
