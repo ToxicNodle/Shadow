@@ -4,14 +4,14 @@ import { useAppStore } from '../../store/useAppStore';
 import { useCountUp } from '../../hooks/useCountUp';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
-const STATUS_ORDER = ['new', 'contacted', 'replied', 'proposal', 'won', 'lost', 'cold'] as const;
+const STATUS_ORDER = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost', 'cold'] as const;
 const STATUS_LABELS: Record<string, string> = {
   new: 'New', contacted: 'Contacted', replied: 'Replied',
-  proposal: 'Proposal', won: 'Won', lost: 'Lost', cold: 'Cold',
+  meeting: 'Meeting Set', proposal: 'Proposal', won: 'Won', lost: 'Lost', cold: 'Cold',
 };
 const STATUS_COLORS: Record<string, string> = {
   new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9',
-  proposal: '#f59e0b', won: '#22c55e', lost: '#ef4444', cold: '#6b7280',
+  meeting: '#f59e0b', proposal: '#f97316', won: '#22c55e', lost: '#ef4444', cold: '#6b7280',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -32,6 +32,35 @@ function fmt(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
   return `$${n.toLocaleString()}`;
+}
+
+function Sparkline({ data }: { data: { day: string; count: number }[] }) {
+  if (!data || data.length < 2) return null;
+  const W = 120, H = 32, PAD = 2;
+  const counts = data.map((d) => d.count);
+  const max = Math.max(...counts, 1);
+  const pts = counts.map((c, i) => {
+    const x = PAD + (i / (counts.length - 1)) * (W - PAD * 2);
+    const y = H - PAD - ((c / max) * (H - PAD * 2));
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const total = counts.reduce((a, b) => a + b, 0);
+  const trend = counts[counts.length - 1] >= counts[0] ? '#10b981' : '#ef4444';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <svg width={W} height={H} style={{ overflow: 'visible' }}>
+        <polyline points={pts.join(' ')} fill="none" stroke={trend} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        {pts.map((pt, i) => {
+          const [x, y] = pt.split(',').map(Number);
+          return <circle key={i} cx={x} cy={y} r="2.5" fill={i === pts.length - 1 ? trend : 'transparent'} stroke={i === pts.length - 1 ? trend : 'transparent'} />;
+        })}
+      </svg>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: trend }}>{total} <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>leads (7d)</span></div>
+        <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{counts[counts.length - 1]} today</div>
+      </div>
+    </div>
+  );
 }
 
 function BarRow({
@@ -92,7 +121,7 @@ export default function PipelineView() {
     );
   }
 
-  const { total, byStatus, byCategory, overdue, projectedRevenue, sequenceStats } = data;
+  const { total, byStatus, byCategory, overdue, projectedRevenue, sequenceStats, recentLeads } = data;
 
   const activeLeads = total - (byStatus.won ?? 0) - (byStatus.lost ?? 0) - (byStatus.cold ?? 0);
 
@@ -149,6 +178,12 @@ export default function PipelineView() {
           <div className="pv-hero-label">active drip sequences</div>
           <div className="pv-hero-sub">{animEmails} emails sent (30d)</div>
         </div>
+        {recentLeads && recentLeads.length > 1 && (
+          <div className="pv-hero-card">
+            <Sparkline data={recentLeads} />
+            <div className="pv-hero-label" style={{ marginTop: 6 }}>new leads this week</div>
+          </div>
+        )}
       </div>
 
       <div className="pv-grid">

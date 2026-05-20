@@ -4,6 +4,12 @@ import { useAppStore } from '../../store/useAppStore';
 import { scoreLead, scoreLabel } from '../../utils/scoring';
 import type { Lead, LeadStatus } from '../../api/types';
 
+const CATEGORY_COLORS: Record<string, string> = {
+  fleet: '#3b82f6', dinoc: '#8b5cf6', reatec: '#7c3aed', gc_referral: '#f59e0b',
+  construction: '#f97316', colorchange: '#ec4899', racing: '#ef4444',
+  wallgraphics: '#06b6d4', design: '#10b981',
+};
+
 const COLUMNS: { key: LeadStatus; label: string; color: string }[] = [
   { key: 'new',       label: 'New',        color: 'var(--text-muted)' },
   { key: 'cold',      label: 'Cold',       color: 'var(--text-faint)' },
@@ -118,20 +124,28 @@ export default function KanbanBoard() {
                       <span className="kanban-company">{lead.company}</span>
                       <span className={`score-badge score-${lbl}`}>{s}</span>
                     </div>
+                    {lead.contactName && (
+                      <div className="kanban-card-contact">{lead.contactName}</div>
+                    )}
                     {(lead.city || lead.state) && (
                       <div className="kanban-card-loc">
                         {[lead.city, lead.state].filter(Boolean).join(', ')}
                       </div>
                     )}
                     <div className="kanban-card-footer">
+                      <span className="kanban-cat-dot" style={{ background: CATEGORY_COLORS[lead.category] ?? '#6b7280' }} title={lead.category} />
                       {lead.fleetSize && (
-                        <span className="kanban-fleet">{lead.fleetSize} units</span>
+                        <span className="kanban-fleet">{lead.fleetSize}v</span>
                       )}
-                      {days !== null && (
-                        <span className={`kanban-days${days > 14 ? ' overdue' : ''}`}>
-                          {days === 0 ? 'today' : `${days}d ago`}
-                        </span>
-                      )}
+                      <div style={{ display: 'flex', gap: 4, marginLeft: 'auto', alignItems: 'center' }}>
+                        {lead.email && <span className="kanban-data-icon" title="Has email">@</span>}
+                        {lead.phone && <span className="kanban-data-icon" title="Has phone">☎</span>}
+                        {days !== null && (
+                          <span className={`kanban-days${days > 14 ? ' overdue' : ''}`}>
+                            {days === 0 ? 'today' : `${days}d`}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
