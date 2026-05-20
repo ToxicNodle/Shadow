@@ -49,7 +49,7 @@ const BUILT_IN_TEMPLATES: EmailTemplate[] = [
     label: 'Warm Introduction',
     tag: 'Intro',
     subject: `Fleet graphics for {{company}} — quick intro`,
-    body: `Hi {{contactName}},\n\nMy name is {{senderName}} with {{companyName}}. We specialize in fleet wraps and vehicle graphics across Indiana and the Midwest — certified 3M and Avery installers.\n\nI came across {{company}} and thought there might be a fit. We've wrapped fleets from 1 vehicle to 100+, and most jobs turn around within 48 hours of print.\n\nWould you be open to a quick call to see if it makes sense?\n\nBest,\n{{senderName}}\n{{companyName}}`,
+    body: `Hi {{contactName}},\n\nMy name is {{senderName}} with {{companyName}}. We specialize in fleet wraps, vehicle graphics, and commercial signage — certified 3M and Avery installers.\n\nI came across {{company}} and thought there might be a fit. We've wrapped fleets from 1 vehicle to 100+, and most jobs turn around within 48 hours of print.\n\nWould you be open to a quick call to see if it makes sense?\n\nBest,\n{{senderName}}\n{{companyName}}`,
   },
   {
     label: 'Wrap Refresh / Re-Order',
