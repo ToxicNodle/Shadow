@@ -139,7 +139,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -464,6 +464,32 @@ export default function AnalyticsView() {
               <span style={{ color: 'var(--text-muted)' }}>Confirmed revenue</span>
               <span style={{ fontWeight: 800, color: '#10b981', fontSize: 15 }}>{fmt(quoteRevenue.acceptedValue)}</span>
             </div>
+          </div>
+        )}
+
+        {/* ── Lead Geography ── */}
+        {byState && byState.length > 0 && (
+          <div className="an-card">
+            <div className="an-card-title">Lead Geography</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>Leads by state — top {byState.length}</div>
+            {(() => {
+              const maxCount = Math.max(...byState.map((s) => s.count), 1);
+              return byState.map((s) => (
+                <div key={s.state} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ width: 26, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>{s.state}</span>
+                  <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${Math.max(3, (s.count / maxCount) * 100)}%`,
+                      background: `hsl(${220 + Math.round((s.count / maxCount) * 40)}, 70%, ${40 + Math.round((s.count / maxCount) * 20)}%)`,
+                      borderRadius: 99,
+                      transition: 'width 0.4s ease',
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', width: 28, textAlign: 'right', flexShrink: 0 }}>{s.count}</span>
+                </div>
+              ));
+            })()}
           </div>
         )}
 

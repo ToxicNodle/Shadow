@@ -212,6 +212,7 @@ export const api = {
     needsEmail: { id: number; company: string; category: string; city: string; state: string; contact_title: string | null; estimated_value: number }[];
     sequences: { active: number; pendingEmails: number };
     wonThisMonth: number;
+    wonThisMonthRevenue: number;
     agingWraps: number;
     priorityScore: number;
     stuckDeals: { id: number; company: string; status: string; category: string; city: string; state: string; email: string; days_stale: number; last_contacted: string | null }[];
@@ -441,6 +442,7 @@ export const api = {
     emailPerf: { opens7d: number; totalTracked: number; openRatePct: number; leadsOpened: number };
     quoteRevenue: { totalQuotes: number; acceptedCount: number; acceptedValue: number; sentCount: number; sentValue: number; draftCount: number; pipelineValue: number };
     velocity: { stage: string; avg_days: number; sample: number }[];
+    byState: { state: string; count: number }[];
   }>('/analytics'),
 
   // AI Mission Brief

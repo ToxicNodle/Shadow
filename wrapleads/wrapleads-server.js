@@ -2152,7 +2152,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
     const [
       pipelineR, wonTrendR, catWinR, activity30dR,
       avgCloseR, winLossR, competitorR, topLeadsR, jobStatsR, clvR,
-      emailPerfR, quoteRevR, velocityR
+      emailPerfR, quoteRevR, velocityR, byStateR
     ] = await Promise.all([
       // Pipeline by status
       pool.query(`
@@ -2290,6 +2290,13 @@ app.get('/analytics', authMiddleware, async (req, res) => {
           COALESCE(SUM(total) FILTER (WHERE status IN ('sent','accepted')), 0) AS pipeline_value
         FROM shop_quotes WHERE user_id=$1
       `, [uid]),
+
+      // Lead density by state
+      pool.query(`
+        SELECT state, COUNT(*)::INT AS count
+        FROM leads WHERE user_id=$1 AND state IS NOT NULL AND state != ''
+        GROUP BY state ORDER BY count DESC LIMIT 20
+      `, [uid]),
     ]);
 
     const byStatus = {};
@@ -2337,6 +2344,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         leadsOpened: emailPerfR.rows[0]?.leads_opened ?? 0,
       },
       velocity: velocityR.rows,
+      byState: byStateR.rows,
       quoteRevenue: {
         totalQuotes: quoteRevR.rows[0]?.total_quotes ?? 0,
         acceptedCount: quoteRevR.rows[0]?.accepted_count ?? 0,
@@ -2853,10 +2861,14 @@ app.get('/mission', authMiddleware, async (req, res) => {
         FROM email_queue WHERE user_id=$1 AND status IN ('pending','sent')
         AND created_at >= NOW() - INTERVAL '30 days'
       `, [uid]),
-      // Won this month
+      // Won this month (count + accepted quote revenue)
       pool.query(`
-        SELECT COUNT(*)::INT AS count FROM leads
-        WHERE user_id=$1 AND status='won' AND updated_at >= DATE_TRUNC('month', NOW())
+        SELECT
+          COUNT(DISTINCT l.id)::INT AS count,
+          COALESCE(SUM(sq.total) FILTER (WHERE sq.status='accepted' AND sq.accepted_at >= DATE_TRUNC('month', NOW())), 0)::FLOAT AS revenue
+        FROM leads l
+        LEFT JOIN shop_quotes sq ON sq.lead_id = l.id AND sq.user_id = l.user_id
+        WHERE l.user_id=$1 AND l.status='won' AND l.updated_at >= DATE_TRUNC('month', NOW())
       `, [uid]),
       // Sequence complete — ready for phone call
       // These are contacted leads where all queued emails have been sent (no pending left)
@@ -2931,6 +2943,7 @@ app.get('/mission', authMiddleware, async (req, res) => {
       needsEmail: needsEmailR.rows,
       sequences: { active: seq.active, pendingEmails: seq.pending_emails },
       wonThisMonth: wonR.rows[0].count,
+      wonThisMonthRevenue: wonR.rows[0].revenue,
       agingWraps: agingCount,
       stuckDeals: stuckR.rows,
       priorityScore:
