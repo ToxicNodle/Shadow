@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppStore } from '../../store/useAppStore';
+import { useLeads } from '../../hooks/useLeads';
 import { api } from '../../api/client';
 import VisionQuoteModal from '../modals/VisionQuoteModal';
 import ARPreviewModal from '../modals/ARPreviewModal';
@@ -26,6 +27,7 @@ export default function Topbar() {
     leadView, setLeadView,
     setCommandPaletteOpen,
     setAddLeadOpen, setSettingsOpen, setBlueprintOpen,
+    currentLeadId,
   } = useAppStore((s) => ({
     mode: s.mode,
     leadView: s.leadView,
@@ -34,7 +36,11 @@ export default function Topbar() {
     setAddLeadOpen: s.setAddLeadOpen,
     setSettingsOpen: s.setSettingsOpen,
     setBlueprintOpen: s.setBlueprintOpen,
+    currentLeadId: s.currentLeadId,
   }));
+
+  const { leads } = useLeads();
+  const arLead = currentLeadId ? leads.find((l) => String(l.id) === String(currentLeadId) || String(l.serverId) === String(currentLeadId)) : undefined;
 
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
@@ -150,7 +156,7 @@ export default function Topbar() {
         </button>
 
         {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
-        {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} />}
+        {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
         {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
         {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       <div className="user-pill">
