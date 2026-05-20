@@ -46,7 +46,9 @@ export default function ActivityTab({ lead }: Props) {
   const logMutation = useMutation({
     mutationFn: (type: 'called' | 'meeting_set' | 'note_added') =>
       api.logActivity(lead.serverId!, { type }),
-    onSuccess: () => {
+    onSuccess: (_, type) => {
+      const meta = TYPE_LABELS[type as keyof typeof TYPE_LABELS];
+      if (meta) showToast(`${meta.label} logged`);
       qc.invalidateQueries({ queryKey: ['activities', lead.serverId] });
       qc.invalidateQueries({ queryKey: ['leads'] });
     },
@@ -66,10 +68,7 @@ export default function ActivityTab({ lead }: Props) {
               key={type}
               className="btn"
               style={{ fontSize: 12, padding: '5px 12px' }}
-              onClick={() => {
-                logMutation.mutate(type);
-                showToast(`${meta.label} logged`);
-              }}
+              onClick={() => logMutation.mutate(type)}
               disabled={logMutation.isPending}
             >
               Log {meta.label.replace(' logged', '').replace(' set', '')}
