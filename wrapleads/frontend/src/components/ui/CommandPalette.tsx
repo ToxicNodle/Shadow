@@ -6,11 +6,12 @@ import { scoreLead, scoreLabel } from '../../utils/scoring';
 
 interface CmdItem {
   id: string;
-  group: 'lead' | 'action' | 'filter';
+  group: 'lead' | 'action' | 'nav' | 'filter';
   label: string;
   sub?: string;
   icon: ReactNode;
   badge?: { text: string; cls: string };
+  shortcut?: string;
   action: () => void;
 }
 
@@ -58,6 +59,17 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: 'a:list',      group: 'action', label: 'List View',         sub: 'Switch to table list view',                icon: '≡',  action: () => { store.setLeadView('list'); store.setMode('leads'); onClose(); } },
   ];
 
+  const NAV_ITEMS: CmdItem[] = [
+    { id: 'n:mission',   group: 'nav', label: 'Mission Dashboard',  sub: 'Call queue, follow-ups, AI coach',    shortcut: '1', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, action: () => { store.setMode('mission');   onClose(); } },
+    { id: 'n:leads',     group: 'nav', label: 'My Leads',           sub: 'CRM list and kanban pipeline',        shortcut: '2', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>, action: () => { store.setMode('leads');     onClose(); } },
+    { id: 'n:discover',  group: 'nav', label: 'Discover Carriers',  sub: 'Search 600K FMCSA carriers',          shortcut: '3', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>, action: () => { store.setMode('discover');   onClose(); } },
+    { id: 'n:pipeline',  group: 'nav', label: 'Pipeline',           sub: 'Revenue forecast and funnel view',    shortcut: '4', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,                                                    action: () => { store.setMode('pipeline');   onClose(); } },
+    { id: 'n:bids',      group: 'nav', label: 'Bid Tracker',        sub: 'Track bids from tracking to won',     shortcut: '5', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>, action: () => { store.setMode('bids');      onClose(); } },
+    { id: 'n:jobs',      group: 'nav', label: 'Wrap Lifecycle',     sub: 'Installed jobs, photos, re-orders',   shortcut: '6', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>, action: () => { store.setMode('jobs');      onClose(); } },
+    { id: 'n:content',   group: 'nav', label: 'Content & E Ink',    sub: 'Manage wrap content, schedule sends', shortcut: '7', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>, action: () => { store.setMode('content');   onClose(); } },
+    { id: 'n:analytics', group: 'nav', label: 'Analytics',          sub: 'Win rate, CLV, AI narrative',         shortcut: '8', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>, action: () => { store.setMode('analytics');  onClose(); } },
+  ];
+
   const FILTERS: CmdItem[] = [
     { id: 'f:cold',     group: 'filter', label: 'Cold Leads',        sub: 'Status: cold — not yet contacted',         icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, action: () => { store.setFilter({ status: 'cold' }); store.setMode('leads'); onClose(); } },
     { id: 'f:replied',  group: 'filter', label: 'Replied',           sub: 'Status: replied — ready to follow up',     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>, action: () => { store.setFilter({ status: 'replied' }); store.setMode('leads'); onClose(); } },
@@ -71,9 +83,10 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const filt = (items: CmdItem[]) =>
     q ? items.filter((i) => i.label.toLowerCase().includes(q) || (i.sub?.toLowerCase().includes(q) ?? false)) : items;
 
+  const visNav = filt(NAV_ITEMS);
   const visActions = filt(ACTIONS);
   const visFilters = filt(FILTERS);
-  const allItems = [...leadItems, ...visActions, ...visFilters];
+  const allItems = [...leadItems, ...visNav, ...visActions, ...visFilters];
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
@@ -108,6 +121,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
               <span className="cmd-label">{item.label}</span>
               {item.sub && <span className="cmd-sub">{item.sub}</span>}
               {item.badge && <span className={item.badge.cls} style={{ fontSize: 10, marginLeft: 'auto', flexShrink: 0 }}>{item.badge.text}</span>}
+              {item.shortcut && !item.badge && <kbd className="cmd-kbd">{item.shortcut}</kbd>}
             </button>
           );
         })}
@@ -148,13 +162,15 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
             <div className="cmd-no-results">No results for "{query}"</div>
           )}
           {renderGroup(leadItems, 0, q ? 'Leads' : 'Top Leads')}
-          {renderGroup(visActions, leadItems.length, 'Actions')}
-          {renderGroup(visFilters, leadItems.length + visActions.length, 'Filters')}
+          {renderGroup(visNav, leadItems.length, 'Navigate')}
+          {renderGroup(visActions, leadItems.length + visNav.length, 'Actions')}
+          {renderGroup(visFilters, leadItems.length + visNav.length + visActions.length, 'Filters')}
         </div>
 
         <div className="cmd-footer">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
           <span><kbd>↵</kbd> select</span>
+          <span><kbd>1</kbd>–<kbd>8</kbd> switch view</span>
           <span><kbd>esc</kbd> dismiss</span>
         </div>
       </div>

@@ -4345,3 +4345,23 @@ textarea:focus {
   padding: 0 !important;
 }
 .toast-dismiss:hover { background: var(--bg-hover) !important; color: var(--text) !important; }
+
+/* v19 — command palette keyboard shortcut badge + nav group */
+.cmd-kbd {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}

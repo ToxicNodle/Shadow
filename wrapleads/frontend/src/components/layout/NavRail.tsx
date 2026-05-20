@@ -105,13 +105,13 @@ export default function NavRail() {
 
       {/* Primary nav */}
       <div className="nav-rail-items">
-        {NAV.map(({ mode: m, label, icon }) => (
+        {NAV.map(({ mode: m, label, icon }, idx) => (
           <button
             key={m}
             className={`nav-item${mode === m ? ' active' : ''}`}
             onClick={() => setMode(m)}
-            data-label={label}
-            aria-label={label}
+            data-label={`${label} [${idx + 1}]`}
+            aria-label={`${label} (press ${idx + 1})`}
             aria-current={mode === m ? 'page' : undefined}
           >
             <span className="nav-item-icon">{icon}</span>

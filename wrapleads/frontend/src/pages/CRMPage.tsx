@@ -33,13 +33,14 @@ import Toast from '../components/ui/Toast';
 export default function CRMPage() {
   const { user, isLoading } = useAuth();
   const {
-    mode, setPaywallOpen,
+    mode, setMode, setPaywallOpen,
     blueprintOpen, setBlueprintOpen,
     bulkOutreachOpen, csvImportOpen, proposalOpen,
     leadView,
     commandPaletteOpen, setCommandPaletteOpen,
   } = useAppStore((s) => ({
     mode: s.mode,
+    setMode: s.setMode,
     setPaywallOpen: s.setPaywallOpen,
     blueprintOpen: s.blueprintOpen,
     setBlueprintOpen: s.setBlueprintOpen,
@@ -64,16 +65,30 @@ export default function CRMPage() {
     }
   }, [user, setPaywallOpen]);
 
+  const MODE_KEYS: Record<string, typeof mode> = {
+    '1': 'mission', '2': 'leads', '3': 'discover',
+    '4': 'pipeline', '5': 'bids', '6': 'jobs',
+    '7': 'content', '8': 'analytics',
+  };
+
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setCommandPaletteOpen(true);
+        return;
+      }
+      // digit shortcuts (no modifier, not in an input/textarea/select)
+      const tag = (e.target as HTMLElement).tagName;
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey &&
+          tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        const dest = MODE_KEYS[e.key];
+        if (dest) { e.preventDefault(); setMode(dest); }
       }
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [setCommandPaletteOpen]);
+  }, [setCommandPaletteOpen, setMode]);
 
   // Load server-persisted settings on first mount
   const updateSettings = useAppStore((s) => s.updateSettings);
