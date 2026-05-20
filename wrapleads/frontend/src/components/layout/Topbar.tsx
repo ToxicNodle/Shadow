@@ -39,11 +39,16 @@ export default function Topbar() {
     ? user.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() ?? 'U';
 
+  const brandName = user?.planTier === 'wrapos' ? 'WrapOS'
+    : user?.planTier === 'shopflow' ? 'ShopFlow'
+    : 'WrapLeads';
+  const brandSuffix = user?.planTier === 'wrapos' || user?.planTier === 'shopflow' ? null : '.io';
+
   return (
     <header className="topbar">
       <div className="topbar-brand">
         <div className="topbar-logo">W</div>
-        <span className="topbar-name">WrapLeads<span>.io</span></span>
+        <span className="topbar-name">{brandName}{brandSuffix && <span>{brandSuffix}</span>}</span>
       </div>
 
       <div className="topbar-spacer" />

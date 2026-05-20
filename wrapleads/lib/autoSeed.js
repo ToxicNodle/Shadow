@@ -53,6 +53,14 @@ function pickStatus(clientId) {
  * Seeds all curated leads for a single user. Fire-and-forget from register endpoint.
  * Safe to call multiple times — ON CONFLICT DO NOTHING.
  */
+// Days-overdue offset by status — makes Mission Dashboard show real activity immediately
+const FOLLOWUP_OFFSET_DAYS = {
+  contacted: -16, // 16 days overdue — push to call queue
+  replied:   -3,  // 3 days overdue — needs proposal
+  meeting:   -2,  // 2 days post-meeting — send recap/quote
+  proposal:  -7,  // 7 days since proposal — follow up
+};
+
 async function autoSeedUser(userId, pool) {
   if (!ALL_LEADS.length) return;
   const uid = String(userId);
@@ -64,12 +72,18 @@ async function autoSeedUser(userId, pool) {
       const status = pickStatus(clientId);
       // For touched leads, stamp last_contacted so the activity timeline isn't empty.
       const lastContacted = status === 'new' ? null : new Date(Date.now() - (Math.abs(clientId?.length || 0) % 30) * 86400000);
+      // Set followup_due_at for active leads so the Mission view shows real overdue items.
+      const offsetDays = FOLLOWUP_OFFSET_DAYS[status];
+      const followupDueAt = offsetDays !== undefined
+        ? new Date(Date.now() + offsetDays * 86400000).toISOString().slice(0, 10)
+        : null;
       const r = await pool.query(`
         INSERT INTO leads (
           user_id, client_id, company, category, city, state, country,
-          contact_title, website, pitch_angle, status, source, notes, last_contacted
+          contact_title, website, pitch_angle, status, source, notes, last_contacted,
+          followup_due_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,'US',$7,$8,$9,$10,$11,$12,$13)
+        VALUES ($1,$2,$3,$4,$5,$6,'US',$7,$8,$9,$10,$11,$12,$13,$14)
         ON CONFLICT (user_id, client_id) DO NOTHING
         RETURNING id
       `, [
@@ -86,6 +100,7 @@ async function autoSeedUser(userId, pool) {
         lead.source || 'auto_seed',
         null,
         lastContacted,
+        followupDueAt,
       ]);
       if (r.rows.length) inserted++;
     } catch (e) {
