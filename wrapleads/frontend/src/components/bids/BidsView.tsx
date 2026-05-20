@@ -230,6 +230,7 @@ interface BidCardProps {
 }
 
 function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
+  const [confirmDel, setConfirmDel] = useState(false);
   const days = daysUntil(bid.bid_due);
   const isOverdue = days !== null && days < 0 && !['won', 'lost', 'no_bid'].includes(bid.status);
   const isUrgent  = days !== null && days >= 0 && days <= 3 && !['won', 'lost', 'no_bid'].includes(bid.status);
@@ -239,11 +240,21 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
       <div className="bid-card-header">
         <span className="bid-card-type">{PROJECT_TYPE_LABELS[bid.project_type]}</span>
         <div className="bid-card-actions">
-          <button className="bid-card-btn" onClick={() => api.openQuote(bid.id)} title="Preview Quote">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          </button>
-          <button className="bid-card-btn" onClick={() => onEdit(bid)} title="Edit">✎</button>
-          <button className="bid-card-btn bid-card-btn-del" onClick={() => onDelete(bid.id)} title="Delete">✕</button>
+          {confirmDel ? (
+            <>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', marginRight: 2 }}>Delete?</span>
+              <button className="bid-card-btn bid-card-btn-del" onClick={() => onDelete(bid.id)} title="Confirm delete">Yes</button>
+              <button className="bid-card-btn" onClick={() => setConfirmDel(false)} title="Cancel">No</button>
+            </>
+          ) : (
+            <>
+              <button className="bid-card-btn" onClick={() => api.openQuote(bid.id)} title="Preview Quote">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </button>
+              <button className="bid-card-btn" onClick={() => onEdit(bid)} title="Edit">✎</button>
+              <button className="bid-card-btn bid-card-btn-del" onClick={() => setConfirmDel(true)} title="Delete">✕</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -458,9 +469,7 @@ export default function BidsView() {
   }
 
   function handleDelete(id: number) {
-    if (confirm('Delete this bid? This cannot be undone.')) {
-      deleteMut.mutate(id);
-    }
+    deleteMut.mutate(id);
   }
 
   const colBids = (status: BidStatus) =>

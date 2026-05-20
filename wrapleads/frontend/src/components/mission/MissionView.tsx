@@ -552,6 +552,7 @@ function CampaignPanel({ onClose }: CampaignPanelProps) {
 export default function MissionView() {
   const setMode = useAppStore((s) => s.setMode);
   const setFilter = useAppStore((s) => s.setFilter);
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
   const settings = useAppStore((s) => s.settings);
   const [showBulk, setShowBulk] = useState(false);
   const [showEnrich, setShowEnrich] = useState(false);
@@ -580,9 +581,9 @@ export default function MissionView() {
     refetchInterval: 90_000,
   });
 
-  function goToLead(_leadId: number) {
-    // navigate to leads mode — the lead will be in the list
+  function goToLead(leadId: number) {
     setMode('leads');
+    setCurrentLeadId(String(leadId));
   }
 
   function goToLeadsFiltered(status?: string, category?: string) {

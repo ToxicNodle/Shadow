@@ -558,7 +558,6 @@ function DeviceGrid({ contentList }: { contentList: WrapContent[] }) {
           />
         </>
       )}
-      {showRegister && <RegisterDeviceModal onClose={() => setShowRegister(false)} />}
     </>
   );
 }
