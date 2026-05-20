@@ -124,7 +124,7 @@ export default function KanbanBoard() {
                     )}
                     <div className="kanban-card-footer">
                       {lead.fleetSize && (
-                        <span className="kanban-fleet">🚛 {lead.fleetSize}</span>
+                        <span className="kanban-fleet">{lead.fleetSize} units</span>
                       )}
                       {days !== null && (
                         <span className={`kanban-days${days > 14 ? ' overdue' : ''}`}>
