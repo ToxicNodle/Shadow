@@ -4129,3 +4129,58 @@ textarea:focus {
   align-items: center !important;
   justify-content: center !important;
 }
+
+/* ── v7: Onboarding modal SVG icons ─────────────────────────────────────────── */
+.onboarding-hero-icon {
+  width: 56px !important;
+  height: 56px !important;
+  border-radius: 16px !important;
+  background: rgba(244, 85, 28, 0.1) !important;
+  border: 1px solid rgba(244, 85, 28, 0.25) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 auto 20px !important;
+  color: var(--accent) !important;
+}
+.onboarding-hero-icon svg {
+  width: 26px !important;
+  height: 26px !important;
+}
+.onboarding-tour-icon {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+  background: rgba(244, 85, 28, 0.08) !important;
+  border: 1px solid rgba(244, 85, 28, 0.15) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+  color: var(--accent) !important;
+}
+.onboarding-tour-icon svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+.onboarding-setup-icon {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+  background: var(--bg-elev-2, rgba(255,255,255,0.06)) !important;
+  border: 1px solid var(--border-faint) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+  color: var(--text-dim) !important;
+}
+.onboarding-setup-icon svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+.onboarding-tier-name {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
