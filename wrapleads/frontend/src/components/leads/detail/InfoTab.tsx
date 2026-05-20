@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type React from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Lead, LeadCategory, LeadStatus } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
@@ -66,7 +67,12 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-box" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <span style={{ fontSize: 22 }}>{outcome === 'Won' ? '🏆' : '📋'}</span>
+          <span style={{ width: 22, height: 22, display: 'flex', color: outcome === 'Won' ? 'var(--green)' : 'var(--text-muted)' }}>
+            {outcome === 'Won'
+              ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            }
+          </span>
           <h2 className="modal-title" style={{ margin: 0 }}>Deal {outcome} — What was the factor?</h2>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '12px 0' }}>
@@ -162,7 +168,13 @@ function WinLossModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
 }
 
 const URGENCY_COLORS: Record<string, string> = { hot: '#ef4444', warm: '#f59e0b', cold: '#6b7280' };
-const CHANNEL_ICONS: Record<string, string> = { call: '📞', email: '✉', text: '💬', visit: '📍', none: '💡' };
+const CHANNEL_ICONS: Record<string, React.ReactNode> = {
+  call:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.44 2 2 0 0 1 3.59 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l1.97-1.97a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+  email: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+  text:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+  visit: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
+  none:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+};
 
 function AICoach({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
@@ -180,7 +192,7 @@ function AICoach({ lead }: { lead: Lead }) {
         className="ai-coach-header"
         onClick={() => { setOpen((o) => !o); if (!open && !data) refetch(); }}
       >
-        <span className="ai-coach-icon">🤖</span>
+        <span className="ai-coach-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M12 11V7"/><circle cx="12" cy="5" r="2"/><line x1="8" y1="15" x2="8" y2="15"/><line x1="16" y1="15" x2="16" y2="15"/></svg></span>
         <span className="ai-coach-title">AI Coach</span>
         {s && <span className="ai-coach-urgency-dot" style={{ background: URGENCY_COLORS[s.urgency] }} />}
         <span className="ai-coach-chevron">{open ? '▲' : '▼'}</span>
@@ -194,7 +206,7 @@ function AICoach({ lead }: { lead: Lead }) {
           ) : s ? (
             <>
               <div className="ai-coach-action">
-                <span style={{ fontSize: 16 }}>{CHANNEL_ICONS[s.channel] ?? '💡'}</span>
+                <span style={{ width: 16, height: 16, display: 'flex', color: 'var(--accent)' }}>{CHANNEL_ICONS[s.channel] ?? CHANNEL_ICONS.none}</span>
                 <span>{s.action}</span>
               </div>
               <div className="ai-coach-reason">{s.reasoning}</div>
@@ -240,7 +252,7 @@ function ProposalSection({ lead }: { lead: Lead }) {
 
   return (
     <div className="proposal-section">
-      <div className="proposal-section-title">📄 AI Proposal Writer</div>
+      <div className="proposal-section-title">AI Proposal Writer</div>
       {!proposal ? (
         <>
           <textarea
@@ -258,7 +270,7 @@ function ProposalSection({ lead }: { lead: Lead }) {
             disabled={mut.isPending}
             onClick={() => mut.mutate()}
           >
-            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : '✨ Generate Full Proposal'}
+            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : 'Generate Full Proposal'}
           </button>
         </>
       ) : (
@@ -266,13 +278,13 @@ function ProposalSection({ lead }: { lead: Lead }) {
           <div className="proposal-ready-title">✓ Proposal ready</div>
           {viewData && viewData.view_count > 0 && (
             <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
-              👁 Viewed {viewData.view_count}× · Last seen {viewData.last_viewed_ago}
+              Viewed {viewData.view_count}× · Last seen {viewData.last_viewed_ago}
             </div>
           )}
           <div className="proposal-ready-url">{url}</div>
           <div className="proposal-ready-actions">
             <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={copy}>
-              {copied ? '✓ Copied!' : '📋 Copy Link'}
+              {copied ? '✓ Copied!' : 'Copy Link'}
             </button>
             <button className="btn" style={{ fontSize: 12 }} onClick={() => window.open(url!, '_blank')}>
               Preview
@@ -297,7 +309,7 @@ function SmsModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-box" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <span style={{ fontSize: 20 }}>💬</span>
+          <span style={{ width: 20, height: 20, display: 'flex', color: 'var(--text-muted)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
           <h2 className="modal-title" style={{ margin: 0 }}>Text {lead.contactName || lead.company}</h2>
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>{lead.phone}</div>
@@ -318,7 +330,7 @@ function SmsModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
             disabled={!msg.trim() || mut.isPending}
             onClick={() => mut.mutate()}
           >
-            {mut.isPending ? 'Sending…' : '💬 Send SMS'}
+            {mut.isPending ? 'Sending…' : 'Send SMS'}
           </button>
         </div>
       </div>
@@ -435,7 +447,7 @@ export default function InfoTab({ lead }: Props) {
                 onClick={() => setShowSms(true)}
                 title="Send SMS"
               >
-                💬 SMS
+                SMS
               </button>
             )}
           </div>
