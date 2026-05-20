@@ -4269,3 +4269,30 @@ textarea:focus {
 /* v15 — lead-list empty state icon */
 .lead-list-empty-icon { width: 52px; height: 52px; color: var(--text-faint); margin: 0 auto 12px; }
 .lead-list-empty-icon svg { width: 52px; height: 52px; }
+
+/* v16 — skeleton shimmer loading pattern */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-elev) 25%, var(--bg-hover) 50%, var(--bg-elev) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+.lead-skeleton-row {
+  display: grid;
+  grid-template-columns: 34px 2.2fr 1fr 0.6fr 1fr 1.2fr 1fr 70px 34px;
+  align-items: center;
+  gap: 0 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-faint);
+}
+.lead-skeleton-row + .lead-skeleton-row { opacity: 0.85; }
+.lead-skeleton-row + .lead-skeleton-row + .lead-skeleton-row { opacity: 0.7; }
+.lead-skeleton-row + .lead-skeleton-row + .lead-skeleton-row + .lead-skeleton-row { opacity: 0.55; }
+.lead-skeleton-row + .lead-skeleton-row + .lead-skeleton-row + .lead-skeleton-row + .lead-skeleton-row { opacity: 0.4; }
+
+/* v17 — animated stat counter (PipelineView) */
+.pv-hero-value { transition: color 0.2s; }

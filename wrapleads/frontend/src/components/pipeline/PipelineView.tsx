@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
+import { useCountUp } from '../../hooks/useCountUp';
 
 const STATUS_ORDER = ['new', 'contacted', 'replied', 'proposal', 'won', 'lost', 'cold'] as const;
 const STATUS_LABELS: Record<string, string> = {
@@ -72,6 +73,13 @@ export default function PipelineView() {
   const { total, byStatus, byCategory, overdue, projectedRevenue, sequenceStats } = data;
 
   const activeLeads = total - (byStatus.won ?? 0) - (byStatus.lost ?? 0) - (byStatus.cold ?? 0);
+
+  const animTotal = useCountUp(total);
+  const animActive = useCountUp(activeLeads);
+  const animWon = useCountUp(byStatus.won ?? 0);
+  const animOverdue = useCountUp(overdue);
+  const animSeq = useCountUp(sequenceStats.activeSequences);
+  const animEmails = useCountUp(sequenceStats.emailsSent30d);
   const maxStatus = Math.max(...STATUS_ORDER.map((s) => (byStatus[s] ?? 0) as number), 1);
   const catEntries = Object.entries(byCategory ?? {})
     .map(([cat, count]) => [cat, count ?? 0] as [string, number])
@@ -98,26 +106,26 @@ export default function PipelineView() {
           <div className="pv-hero-sub">conservative avg per lead × active leads</div>
         </div>
         <div className="pv-hero-card">
-          <div className="pv-hero-value">{total.toLocaleString()}</div>
+          <div className="pv-hero-value">{animTotal.toLocaleString()}</div>
           <div className="pv-hero-label">total leads</div>
-          <div className="pv-hero-sub">{activeLeads} active in pipeline</div>
+          <div className="pv-hero-sub">{animActive} active in pipeline</div>
         </div>
         <div className="pv-hero-card pv-hero-won">
-          <div className="pv-hero-value">{byStatus.won ?? 0}</div>
+          <div className="pv-hero-value">{animWon}</div>
           <div className="pv-hero-label">won deals</div>
           <button className="pv-hero-link" onClick={() => goToLeads('won')}>view →</button>
         </div>
         {overdue > 0 && (
           <div className="pv-hero-card pv-hero-overdue">
-            <div className="pv-hero-value">{overdue}</div>
+            <div className="pv-hero-value">{animOverdue}</div>
             <div className="pv-hero-label">overdue follow-ups</div>
             <button className="pv-hero-link" onClick={() => goToLeads('contacted')}>view →</button>
           </div>
         )}
         <div className="pv-hero-card">
-          <div className="pv-hero-value">{sequenceStats.activeSequences}</div>
+          <div className="pv-hero-value">{animSeq}</div>
           <div className="pv-hero-label">active drip sequences</div>
-          <div className="pv-hero-sub">{sequenceStats.emailsSent30d} emails sent (30d)</div>
+          <div className="pv-hero-sub">{animEmails} emails sent (30d)</div>
         </div>
       </div>
 

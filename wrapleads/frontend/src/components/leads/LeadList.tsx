@@ -114,9 +114,40 @@ export default function LeadList() {
 
   if (isLoading) {
     return (
-      <div className="loading">
-        <span className="spinner spinner-lg" />
-        <span>Loading leads...</span>
+      <div className="lead-list-wrap">
+        <div className="lead-list-header">
+          <div />
+          <span>Company</span>
+          <span>Location</span>
+          <span>Fleet</span>
+          <span>Status</span>
+          <span>Email</span>
+          <span>Category / Last</span>
+          <span>Score</span>
+          <span />
+        </div>
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="lead-skeleton-row">
+            <div className="skeleton" style={{ width: 14, height: 14, borderRadius: 3 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="skeleton" style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0 }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: 1, minWidth: 0 }}>
+                <div className="skeleton" style={{ height: 12, width: `${55 + (i * 13) % 35}%` }} />
+                <div className="skeleton" style={{ height: 10, width: `${30 + (i * 17) % 30}%` }} />
+              </div>
+            </div>
+            <div className="skeleton" style={{ height: 11, width: '70%' }} />
+            <div className="skeleton" style={{ height: 11, width: '50%' }} />
+            <div className="skeleton" style={{ height: 20, width: 72, borderRadius: 12 }} />
+            <div className="skeleton" style={{ height: 11, width: '80%' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <div className="skeleton" style={{ height: 10, width: '90%' }} />
+              <div className="skeleton" style={{ height: 10, width: '60%' }} />
+            </div>
+            <div className="skeleton" style={{ height: 22, width: 38, borderRadius: 10 }} />
+            <div className="skeleton" style={{ width: 22, height: 22, borderRadius: 6 }} />
+          </div>
+        ))}
       </div>
     );
   }
