@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../api/client';
 import Modal from '../ui/Modal';
 import type { Settings } from '../../api/types';
@@ -7,6 +8,7 @@ import type { Settings } from '../../api/types';
 type FleetStatus = 'idle' | 'testing' | 'ok' | 'fail' | 'importing' | 'imported';
 
 export default function SettingsModal() {
+  const { user } = useAuth();
   const { settingsOpen, setSettingsOpen, settings, updateSettings, showToast } = useAppStore((s) => ({
     settingsOpen: s.settingsOpen,
     setSettingsOpen: s.setSettingsOpen,
@@ -15,6 +17,7 @@ export default function SettingsModal() {
     showToast: s.showToast,
   }));
   const [local, setLocal] = useState<Settings>(settings);
+  const [portalLoading, setPortalLoading] = useState(false);
   const [quoteLink, setQuoteLink] = useState<string | null>(null);
   const [quoteLinkCopied, setQuoteLinkCopied] = useState(false);
   const [portfolioLink, setPortfolioLink] = useState<string | null>(null);
@@ -34,6 +37,18 @@ export default function SettingsModal() {
     setApolloStatus('idle');
     setSamsaraStatus('idle');
     setMotiveStatus('idle');
+  }
+
+  async function openBillingPortal() {
+    setPortalLoading(true);
+    try {
+      const { url } = await api.portal();
+      window.location.href = url;
+    } catch {
+      showToast('Could not open billing portal — try again.');
+    } finally {
+      setPortalLoading(false);
+    }
   }
 
   async function testSamsara() {
@@ -163,6 +178,25 @@ export default function SettingsModal() {
             <input className="input" {...f('state')} placeholder="IN" maxLength={2} style={{ textTransform: 'uppercase' }} />
           </div>
         </div>
+        <div className="field-group">
+          <label className="field-label">Brand Accent Color</label>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <input
+              type="color"
+              value={local.accentColor || '#ff6b35'}
+              onChange={(e) => setLocal((s) => ({ ...s, accentColor: e.target.value }))}
+              style={{ width: 44, height: 36, padding: 2, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-input)', cursor: 'pointer' }}
+            />
+            <input
+              className="input"
+              value={local.accentColor || ''}
+              onChange={(e) => setLocal((s) => ({ ...s, accentColor: e.target.value }))}
+              placeholder="#ff6b35"
+              style={{ flex: 1, fontFamily: 'monospace' }}
+            />
+          </div>
+          <p className="settings-help" style={{ marginTop: 4 }}>Used on your public portfolio page as the headline and button color.</p>
+        </div>
       </div>
 
       <div className="settings-section">
@@ -244,7 +278,7 @@ export default function SettingsModal() {
           </div>
           <div className="field-group">
             <label className="field-label">Portfolio URL</label>
-            <input className="input" {...f('portfolioUrl')} placeholder="https://shadowgraphix.com/portfolio" />
+            <input className="input" {...f('portfolioUrl')} placeholder="https://yourshop.com/portfolio" />
           </div>
         </div>
       </div>
@@ -401,6 +435,31 @@ export default function SettingsModal() {
           </button>
         )}
       </div>
+
+      {(user?.subStatus === 'active' || user?.subStatus === 'past_due' || user?.subStatus === 'trialing') && (
+        <div className="settings-section">
+          <div className="settings-section-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+              <line x1="1" y1="10" x2="23" y2="10" />
+            </svg>
+            Billing
+          </div>
+          <p className="settings-help">
+            Manage your subscription, update payment method, or view invoices via the Stripe customer portal.
+          </p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button className="btn" onClick={openBillingPortal} disabled={portalLoading}>
+              {portalLoading ? 'Opening…' : 'Manage Billing →'}
+            </button>
+            {user?.subStatus === 'past_due' && (
+              <span style={{ fontSize: 12, color: 'var(--red)', fontWeight: 600 }}>
+                ⚠ Payment past due — update card to restore access
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="modal-actions">
         <button className="btn" onClick={handleClose}>Cancel</button>
