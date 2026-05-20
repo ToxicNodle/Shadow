@@ -52,11 +52,11 @@ function AutoCallButton({ leadId, phone }: { leadId: number; phone: string | nul
   );
 
   const labels: Record<CallState, string> = {
-    idle: '🤖 Auto-Call',
+    idle: 'Auto-Call',
     calling: 'Dialing…',
-    'in-progress': '📞 On Call…',
+    'in-progress': 'On Call…',
     done: '✓ Call Done',
-    voicemail: '📬 Left VM',
+    voicemail: 'Left VM',
     'no-answer': '↩ No Answer',
     error: '✗ Failed',
   };
@@ -668,7 +668,7 @@ export default function MissionView() {
               These leads received your full 3-email sequence and haven't replied yet.
               The next step is a phone call — email has done its job.
               {settings.vapiApiKey && settings.vapiPhoneNumberId
-                ? <span className="mission-vapi-badge"> 🤖 AI Auto-Call enabled</span>
+                ? <span className="mission-vapi-badge"> AI Auto-Call enabled</span>
                 : <span className="mission-vapi-nudge"> · <button className="mission-link-btn" onClick={() => useAppStore.getState().setSettingsOpen(true)}>Add Vapi key</button> to enable AI auto-calling</span>}
             </p>
             <div className="mission-call-grid">

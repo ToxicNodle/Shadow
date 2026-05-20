@@ -337,7 +337,7 @@ export default function SettingsModal() {
               style={{ fontSize: 11, whiteSpace: 'nowrap' }}
               onClick={() => { navigator.clipboard.writeText(quoteLink); setQuoteLinkCopied(true); setTimeout(() => setQuoteLinkCopied(false), 2000); }}
             >
-              {quoteLinkCopied ? '✓ Copied!' : '📋 Copy'}
+              {quoteLinkCopied ? '✓ Copied!' : 'Copy'}
             </button>
             <a href={quoteLink} target="_blank" rel="noreferrer" className="btn" style={{ fontSize: 11, whiteSpace: 'nowrap', textDecoration: 'none' }}>
               Preview
@@ -358,7 +358,7 @@ export default function SettingsModal() {
       </div>
 
       <div className="settings-section">
-        <div className="settings-section-title">📸 Public Portfolio</div>
+        <div className="settings-section-title">Public Portfolio</div>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
           A beautiful public page showcasing your completed installs with photos, stats, and a "Get a Quote" button. Share it anywhere — your website, Instagram bio, or after every install.
         </p>
@@ -372,7 +372,7 @@ export default function SettingsModal() {
               style={{ fontSize: 11, whiteSpace: 'nowrap' }}
               onClick={() => { navigator.clipboard.writeText(portfolioLink); setPortfolioLinkCopied(true); setTimeout(() => setPortfolioLinkCopied(false), 2000); }}
             >
-              {portfolioLinkCopied ? '✓ Copied!' : '📋 Copy'}
+              {portfolioLinkCopied ? '✓ Copied!' : 'Copy'}
             </button>
             <a href={portfolioLink} target="_blank" rel="noreferrer" className="btn" style={{ fontSize: 11, whiteSpace: 'nowrap', textDecoration: 'none' }}>
               Preview

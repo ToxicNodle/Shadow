@@ -113,7 +113,7 @@ export default function BulkOutreachModal() {
           >
             {loading
               ? <><span className="spinner" /> Generating {capped.length} emails…</>
-              : `⚡ Generate ${capped.length} Personalized Emails`}
+              : `Generate ${capped.length} Personalized Emails`}
           </button>
         )}
 

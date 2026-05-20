@@ -237,7 +237,7 @@ export default function EmailTab({ lead }: Props) {
       const res = await api.activateSequence(lead.serverId, tone);
       qc.invalidateQueries({ queryKey: ['email-queue', lead.serverId] });
       qc.invalidateQueries({ queryKey: ['activities', lead.serverId] });
-      showToast(`🚀 Drip activated — ${res.queued} emails queued`);
+      showToast(`Drip activated — ${res.queued} emails queued`);
       refetchQueue();
     } catch (e: unknown) {
       showToast((e as Error).message, 'error');
@@ -365,7 +365,7 @@ export default function EmailTab({ lead }: Props) {
             ? <><span className="spinner" /> Queueing sequence…</>
             : hasActiveSequence
               ? `✓ Sequence active — ${pendingQueue.length} emails queued`
-              : '🚀 Activate Auto-Send Sequence'}
+              : 'Activate Auto-Send Sequence'}
         </button>
       )}
 

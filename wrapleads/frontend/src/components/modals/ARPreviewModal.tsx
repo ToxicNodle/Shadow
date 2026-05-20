@@ -76,7 +76,7 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
       >
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 22 }}>🎨</span>
+            <span style={{ width: 22, height: 22, display: 'flex', color: 'var(--accent)' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c1.54 0 3-.36 4.29-1.01l-3.29-3.29C12.33 18.23 11.17 18.5 10 18.5c-3.59 0-6.5-2.91-6.5-6.5S6.41 5.5 10 5.5c1.41 0 2.72.45 3.79 1.21l3.21-3.21C15.44 2.45 13.77 2 12 2z"/></svg></span>
             <div>
               <h2 className="modal-title" style={{ margin: 0 }}>AR Wrap Preview</h2>
               <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
@@ -90,7 +90,7 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
         <div style={{ padding: '16px 24px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {!hasOpenAI && (
             <div style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#f59e0b' }}>
-              ⚠ Add your OpenAI API key in Settings → Design Studio to enable AI wrap generation.
+              Add your OpenAI API key in Settings → Design Studio to enable AI wrap generation.
             </div>
           )}
 
@@ -108,7 +108,7 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
                   <img src={preview} alt="vehicle" className="ar-dropzone-img" />
                 ) : (
                   <div className="ar-dropzone-empty">
-                    <span style={{ fontSize: 32 }}>📷</span>
+                    <span style={{ width: 32, height: 32, display: 'flex', color: 'var(--text-faint)', margin: '0 auto' }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
                     <span style={{ fontSize: 13, fontWeight: 700 }}>Drop vehicle photo here</span>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>or click to browse — JPEG/PNG, max 10 MB</span>
                   </div>
@@ -184,9 +184,9 @@ export default function ARPreviewModal({ onClose, presetDescription }: Props) {
             {loading ? (
               <><span className="spinner" style={{ width: 14, height: 14, marginRight: 8 }} />Applying wrap to your vehicle…</>
             ) : result ? (
-              '🎨 Generate Another'
+              'Generate Another'
             ) : (
-              '🎨 Apply Wrap to Vehicle'
+              'Apply Wrap to Vehicle'
             )}
           </button>
 

@@ -199,12 +199,12 @@ export default function PasteImportModal() {
                         </div>
                       )}
                       <div className="paste-meta">
-                        {d.phone && <span>📞 {d.phone}</span>}
-                        {d.email && <span>✉ {d.email}</span>}
-                        {(d.city || d.state) && <span>📍 {[d.city, d.state].filter(Boolean).join(', ')}</span>}
+                        {d.phone && <span>{d.phone}</span>}
+                        {d.email && <span>{d.email}</span>}
+                        {(d.city || d.state) && <span>{[d.city, d.state].filter(Boolean).join(', ')}</span>}
                       </div>
                       {d.pitchAngle && (
-                        <div className="paste-pitch">💡 {d.pitchAngle}</div>
+                        <div className="paste-pitch">{d.pitchAngle}</div>
                       )}
                     </>
                   )}

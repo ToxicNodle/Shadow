@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, setToken, getToken } from '../api/client';
 
@@ -53,28 +54,28 @@ const TIERS: readonly Tier[] = [
   },
 ];
 
-const FEATURE_HIGHLIGHTS = [
+const FEATURE_HIGHLIGHTS: { icon: ReactNode; title: string; body: string }[] = [
   {
-    icon: '🎯',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
     title: 'Find every fleet in your zip code',
     body: '600K+ FMCSA carriers searchable by state, fleet size, and wrap-score. Filter to the sweet spot (25–500 trucks), bulk import, and start pitching the same day.',
   },
   {
-    icon: '🧠',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>,
     title: 'AI that does the outreach for you',
     body: 'Claude writes the first email, schedules the follow-up sequence, and (if you want) Vapi calls the prospect on day 3. You step in when a real human responds.',
   },
   {
-    icon: '📐',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>,
     title: 'Quote from a photo',
     body: 'Snap a picture of the truck. The vision model returns square footage, material recommendations, and a price range your customer can react to in seconds.',
   },
   {
-    icon: '📊',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
     title: 'Pipeline that actually closes',
     body: 'Bid tracker, proposal generator with open-tracking, win/loss capture, anniversary re-engagement, and AI-narrated forecasts. Nothing falls through.',
   },
-] as const;
+];
 
 const STEPS = [
   { num: 1, title: 'Sign up — 14 days free',  body: 'No credit card. We seed 500+ curated leads in your CRM the second you finish registration.' },
@@ -166,9 +167,9 @@ export default function LandingPage() {
 
         <div className="landing-hero-art" aria-hidden="true">
           <div className="landing-art-card landing-art-card-1">
-            <div className="landing-art-row"><span>📦</span> 12 leads ready to call</div>
-            <div className="landing-art-row"><span>📨</span> 47 AI emails sent today</div>
-            <div className="landing-art-row"><span>🏆</span> 3 bids in shortlisted</div>
+            <div className="landing-art-row"><span className="landing-art-dot landing-art-dot-green" /> 12 leads ready to call</div>
+            <div className="landing-art-row"><span className="landing-art-dot landing-art-dot-accent" /> 47 AI emails sent today</div>
+            <div className="landing-art-row"><span className="landing-art-dot landing-art-dot-yellow" /> 3 bids in shortlisted</div>
           </div>
           <div className="landing-art-card landing-art-card-2">
             <div className="landing-art-amount">$184,500</div>
