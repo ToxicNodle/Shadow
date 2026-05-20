@@ -143,7 +143,7 @@ export default function SettingsModal() {
         <div className="settings-section-title">Company</div>
         <div className="field-group">
           <label className="field-label">Company Name</label>
-          <input className="input" {...f('companyName')} placeholder="Shadow Graphix" />
+          <input className="input" {...f('companyName')} placeholder="Apex Wraps" />
         </div>
         <div className="field-group">
           <label className="field-label">Tagline (for emails)</label>
@@ -188,7 +188,7 @@ export default function SettingsModal() {
         </div>
         <div className="field-group">
           <label className="field-label">Caller Name (shown on caller ID)</label>
-          <input className="input" {...f('vapiCallerName')} placeholder="Shadow Graphix" />
+          <input className="input" {...f('vapiCallerName')} placeholder="Apex Wraps" />
         </div>
         <div className="field-group">
           <label className="field-label">Call Humor Level</label>

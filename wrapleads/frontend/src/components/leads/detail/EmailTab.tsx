@@ -128,7 +128,7 @@ export default function EmailTab({ lead }: Props) {
       .replace(/\{\{contactName\}\}/g, lead.contactName || lead.company)
       .replace(/\{\{company\}\}/g, lead.company)
       .replace(/\{\{senderName\}\}/g, settings.senderName || 'Your Name')
-      .replace(/\{\{companyName\}\}/g, settings.companyName || 'Shadow Graphix')
+      .replace(/\{\{companyName\}\}/g, settings.companyName || 'our shop')
       .replace(/\{\{portfolioUrl\}\}/g, settings.portfolioUrl || 'our website')
       .replace(/\{\{vehicleType\}\}/g, lead.fleetSize ? `a ${lead.fleetSize}-unit fleet` : 'your vehicles');
     return { subject: fill(tpl.subject), body: fill(tpl.body) };
