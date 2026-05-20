@@ -165,6 +165,41 @@ export default function AnalyticsView() {
     });
   const totalForecast = forecastByStage.reduce((sum, r) => sum + r.expected, 0);
 
+  // ── Pipeline Health Score (0–100) ────────────────────────────────────────
+  // Combines: win rate, email open rate, proposal velocity, lead data quality,
+  // pipeline depth, and activity level into one grade.
+  const healthScore = (() => {
+    let s = 0;
+    // Win rate (0–25 pts): 50%+ → full points, scales linearly
+    if (summary.winRate !== null) s += Math.min(25, Math.round((summary.winRate / 50) * 25));
+    // Email open rate (0–20 pts): 40%+ → full
+    if (emailPerf.openRatePct > 0) s += Math.min(20, Math.round((emailPerf.openRatePct / 40) * 20));
+    // Active proposals (0–15 pts): 3+ → full
+    const proposalCount = byStatus['proposal'] ?? 0;
+    s += Math.min(15, proposalCount * 5);
+    // Activity last 30d (0–20 pts): 50+ touchpoints → full
+    s += Math.min(20, Math.round((totalActivity / 50) * 20));
+    // Pipeline depth — ratio of active:cold (0–10 pts)
+    const active = (byStatus['replied'] ?? 0) + (byStatus['meeting'] ?? 0) + (byStatus['proposal'] ?? 0);
+    const cold = (byStatus['cold'] ?? 0) + (byStatus['new'] ?? 0);
+    if (cold > 0) s += Math.min(10, Math.round((active / cold) * 10));
+    else if (active > 0) s += 10;
+    // Avg days to close (0–10 pts): <= 30d → full
+    const days = summary.avgDaysToClose;
+    if (days !== null) s += Math.max(0, Math.min(10, 10 - Math.round((days - 30) / 10)));
+    return Math.min(100, Math.max(0, s));
+  })();
+  const healthGrade = healthScore >= 80 ? 'A' : healthScore >= 65 ? 'B' : healthScore >= 50 ? 'C' : healthScore >= 35 ? 'D' : 'F';
+  const healthColor = healthScore >= 80 ? '#10b981' : healthScore >= 65 ? '#22c55e' : healthScore >= 50 ? '#f59e0b' : healthScore >= 35 ? '#f97316' : '#ef4444';
+
+  // ── Category average deal size ────────────────────────────────────────────
+  const REV_EST: Record<string, number> = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500, other: 2500 };
+  const catDealSizes = byCategory
+    .filter((c) => c.total > 0)
+    .map((c) => ({ category: c.category, avg: REV_EST[c.category] ?? 2500, won: c.won, total: c.total }))
+    .sort((a, b) => b.avg - a.avg);
+  const maxDealSize = Math.max(...catDealSizes.map((c) => c.avg), 1);
+
   return (
     <div className="an-root">
       <div className="an-header">
@@ -341,6 +376,85 @@ export default function AnalyticsView() {
             );
           })()}
         </div>
+
+        {/* ── Pipeline Health Score ── */}
+        <div className="an-card">
+          <div className="an-card-title">Pipeline Health Score</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 16 }}>
+            <div style={{ flexShrink: 0 }}>
+              <div style={{
+                width: 72, height: 72, borderRadius: '50%',
+                border: `4px solid ${healthColor}`,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                boxShadow: `0 0 20px ${healthColor}40`,
+              }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: healthColor, lineHeight: 1 }}>{healthGrade}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>{healthScore}/100</div>
+              </div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
+                {healthScore >= 80 ? 'Excellent — your pipeline is firing on all cylinders.' :
+                 healthScore >= 65 ? 'Good — strong fundamentals, a few areas to push.' :
+                 healthScore >= 50 ? 'Fair — room to improve engagement and conversion.' :
+                 healthScore >= 35 ? 'Needs attention — focus on mid-funnel leads.' :
+                 'Critical — pipeline needs immediate action.'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Composite score across win rate, email engagement, active proposals, pipeline depth, and close velocity.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {[
+              { label: 'Win Rate', pts: summary.winRate !== null ? Math.min(25, Math.round((summary.winRate / 50) * 25)) : 0, max: 25, val: summary.winRate !== null ? `${summary.winRate}%` : '—' },
+              { label: 'Email Open Rate', pts: emailPerf.openRatePct > 0 ? Math.min(20, Math.round((emailPerf.openRatePct / 40) * 20)) : 0, max: 20, val: emailPerf.openRatePct > 0 ? `${emailPerf.openRatePct}%` : '—' },
+              { label: 'Active Proposals', pts: Math.min(15, (byStatus['proposal'] ?? 0) * 5), max: 15, val: `${byStatus['proposal'] ?? 0} active` },
+              { label: '30-Day Activity', pts: Math.min(20, Math.round((totalActivity / 50) * 20)), max: 20, val: `${totalActivity} touches` },
+              { label: 'Pipeline Depth', pts: (() => { const a = (byStatus['replied'] ?? 0) + (byStatus['meeting'] ?? 0) + (byStatus['proposal'] ?? 0); const c = (byStatus['cold'] ?? 0) + (byStatus['new'] ?? 0); return c > 0 ? Math.min(10, Math.round((a / c) * 10)) : (a > 0 ? 10 : 0); })(), max: 10, val: '' },
+              { label: 'Close Velocity', pts: summary.avgDaysToClose !== null ? Math.max(0, Math.min(10, 10 - Math.round((summary.avgDaysToClose - 30) / 10))) : 0, max: 10, val: summary.avgDaysToClose !== null ? `${summary.avgDaysToClose}d avg` : '—' },
+            ].map((item) => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', width: 110, flexShrink: 0 }}>{item.label}</div>
+                <div style={{ flex: 1, height: 5, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(item.pts / item.max) * 100}%`, background: healthColor, borderRadius: 99, transition: 'width 0.4s ease' }} />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', width: 72, textAlign: 'right', flexShrink: 0 }}>
+                  {item.val || `${item.pts}/${item.max}pts`}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Category Average Deal Size ── */}
+        {catDealSizes.length > 0 && (
+          <div className="an-card">
+            <div className="an-card-title">Avg Deal Size by Category</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Estimated revenue per won deal · industry benchmarks
+            </div>
+            <div className="an-bar-list">
+              {catDealSizes.map((c) => (
+                <div key={c.category} className="an-bar-row">
+                  <div className="an-bar-label">{CATEGORIES[c.category as keyof typeof CATEGORIES] || c.category}</div>
+                  <div className="an-bar-track">
+                    <div className="an-bar-fill" style={{
+                      width: `${Math.max(2, (c.avg / maxDealSize) * 100)}%`,
+                      background: c.won > 0 ? '#10b981' : 'var(--accent)',
+                    }} />
+                  </div>
+                  <div className="an-bar-count">
+                    {fmt(c.avg)}{c.won > 0 && <span style={{ color: '#10b981', marginLeft: 4 }}>· {c.won}w</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-faint)' }}>
+              Focus on high-value categories to maximize revenue per hour of sales effort.
+            </div>
+          </div>
+        )}
 
         {/* ── Win/Loss Factors ── */}
         {winLossFactors.length > 0 && (
