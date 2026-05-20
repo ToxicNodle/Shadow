@@ -153,6 +153,16 @@ export default function SettingsModal() {
           <label className="field-label">Services (for emails)</label>
           <input className="input" {...f('companyServices')} placeholder="fleet wraps, color-change, DI-NOC…" />
         </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div className="field-group" style={{ flex: 1 }}>
+            <label className="field-label">City</label>
+            <input className="input" {...f('city')} placeholder="Indianapolis" />
+          </div>
+          <div className="field-group" style={{ width: 80 }}>
+            <label className="field-label">State</label>
+            <input className="input" {...f('state')} placeholder="IN" maxLength={2} style={{ textTransform: 'uppercase' }} />
+          </div>
+        </div>
       </div>
 
       <div className="settings-section">
