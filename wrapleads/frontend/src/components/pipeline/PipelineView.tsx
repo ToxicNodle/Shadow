@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useCountUp } from '../../hooks/useCountUp';
+import type { LeadStatus, LeadCategory } from '../../api/types';
 
 const STATUS_ORDER = ['new', 'contacted', 'replied', 'proposal', 'won', 'lost', 'cold'] as const;
 const STATUS_LABELS: Record<string, string> = {
@@ -109,8 +110,8 @@ export default function PipelineView() {
 
   function goToLeads(status?: string, category?: string) {
     setFilter({
-      status: (status as any) ?? 'all',
-      category: (category as any) ?? 'all',
+      status: (status as LeadStatus) ?? 'all',
+      category: (category as LeadCategory) ?? 'all',
       state: '',
       search: '',
     });
