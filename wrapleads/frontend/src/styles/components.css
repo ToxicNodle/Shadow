@@ -4483,3 +4483,67 @@ textarea:focus {
   transition: border-color .15s, background .15s;
 }
 .quote-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+
+/* ── Email Client Preview ─────────────────────────────────────────────────── */
+.email-client-preview {
+  background: var(--bg-input);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  font-family: inherit;
+}
+.email-client-preview-meta {
+  font-size: 12px;
+  line-height: 1.9;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  color: var(--text-dim);
+}
+.email-client-preview-meta strong { color: var(--text); font-weight: 600; }
+.ecp-lbl { display: inline-block; min-width: 36px; color: var(--text-faint); }
+.email-client-preview-body .ecp-line {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+/* ── Duplicate Warning ────────────────────────────────────────────────────── */
+.dup-warning {
+  margin-top: 6px;
+  background: rgba(250,204,21,0.06);
+  border: 1px solid rgba(250,204,21,0.25);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.dup-warning-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ca8a04;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+.dup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(250,204,21,0.12);
+}
+.dup-item:last-of-type { border-bottom: none; }
+.dup-item strong { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Lead Staleness Dot ───────────────────────────────────────────────────── */
+.lead-stale-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ca8a04;
+  flex-shrink: 0;
+  opacity: 0.75;
+}

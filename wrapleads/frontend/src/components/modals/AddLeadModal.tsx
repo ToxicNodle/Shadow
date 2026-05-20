@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useLeads } from '../../hooks/useLeads';
+import { api } from '../../api/client';
 import Modal from '../ui/Modal';
 import type { LeadCategory, LeadStatus } from '../../api/types';
 import { CATEGORIES, STATUSES } from '../../api/types';
+
+interface DupMatch { id: number; company: string; status: string; city: string; state: string; }
 
 const now = new Date().toISOString();
 
@@ -15,6 +18,8 @@ export default function AddLeadModal() {
   const { createLead } = useLeads();
 
   const [company, setCompany] = useState('');
+  const [dupMatches, setDupMatches] = useState<DupMatch[]>([]);
+  const dupTimer = useRef<ReturnType<typeof setTimeout>>();
   const [category, setCategory] = useState<LeadCategory>('fleet');
   const [status, setStatus] = useState<LeadStatus>('cold');
   const [state, setState] = useState('');
@@ -31,6 +36,22 @@ export default function AddLeadModal() {
     setCompany(''); setContactName(''); setEmail(''); setPhone(''); setFleetSize('');
     setState(''); setCity('');
     setCategory('fleet'); setStatus('cold');
+    setDupMatches([]);
+    clearTimeout(dupTimer.current);
+  }
+
+  function handleCompanyChange(val: string) {
+    setCompany(val);
+    clearTimeout(dupTimer.current);
+    setDupMatches([]);
+    if (val.trim().length >= 3) {
+      dupTimer.current = setTimeout(async () => {
+        try {
+          const r = await api.checkDuplicate(val.trim());
+          setDupMatches(r.matches);
+        } catch { /* silent */ }
+      }, 450);
+    }
   }
 
   function handleSubmit() {
@@ -51,10 +72,22 @@ export default function AddLeadModal() {
         <input
           className="input"
           value={company}
-          onChange={(e) => setCompany(e.target.value)}
+          onChange={(e) => handleCompanyChange(e.target.value)}
           placeholder="Acme Logistics"
           autoFocus
         />
+        {dupMatches.length > 0 && (
+          <div className="dup-warning">
+            <div className="dup-warning-title">Similar leads already exist:</div>
+            {dupMatches.map((m) => (
+              <div key={m.id} className="dup-item">
+                <strong>{m.company}</strong>
+                <span className={`status-tag ${m.status}`} style={{ fontSize: 10 }}>{STATUSES[m.status] ?? m.status}</span>
+                {m.city && m.state && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{m.city}, {m.state}</span>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="field-row">
         <div className="field-group">

@@ -28,7 +28,7 @@ export interface Lead {
   updatedAt: string;
 }
 
-export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated';
+export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted';
 
 export interface LeadActivity {
   id: string;

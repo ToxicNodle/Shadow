@@ -122,6 +122,7 @@ export default function EmailTab({ lead }: Props) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [activating, setActivating] = useState(false);
   const [copiedTpl, setCopiedTpl] = useState<number | null>(null);
+  const [previewMode, setPreviewMode] = useState(false);
 
   function fillTemplate(tpl: EmailTemplate) {
     const location = settings.city && settings.state
@@ -403,11 +404,36 @@ export default function EmailTab({ lead }: Props) {
       {/* Single email result */}
       {result && (
         <div className="email-preview">
-          <div className="email-subject-row">
-            <span className="label">Sub</span>
-            <span className="subject">{result.subject}</span>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+            <div className="email-subject-row" style={{ flex: 1, margin: 0, border: 'none', padding: 0, background: 'none' }}>
+              <span className="label">Sub</span>
+              <span className="subject">{result.subject}</span>
+            </div>
+            <button
+              className="btn"
+              style={{ fontSize: 11, flexShrink: 0, padding: '4px 10px' }}
+              onClick={() => setPreviewMode((p) => !p)}
+              title={previewMode ? 'Switch to edit mode' : 'Preview as email'}
+            >
+              {previewMode ? '✎ Edit' : '⊞ Preview'}
+            </button>
           </div>
-          <div className="email-body">{result.body}</div>
+          {previewMode ? (
+            <div className="email-client-preview">
+              <div className="email-client-preview-meta">
+                <div><span className="ecp-lbl">From:</span> <strong>{settings.senderName || 'You'}</strong>{settings.companyName ? ` · ${settings.companyName}` : ''}</div>
+                <div><span className="ecp-lbl">To:</span> <strong>{lead.contactName || lead.company}</strong>{lead.email ? ` <${lead.email}>` : <span style={{ color: 'var(--text-faint)' }}> (no email on file)</span>}</div>
+                <div><span className="ecp-lbl">Sub:</span> <strong>{result.subject}</strong></div>
+              </div>
+              <div className="email-client-preview-body">
+                {result.body.split('\n').map((line, i) => (
+                  <p key={i} className="ecp-line">{line || ' '}</p>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="email-body">{result.body}</div>
+          )}
           <div className="email-actions">
             <button className="btn" onClick={() => copy(`Subject: ${result.subject}\n\n${result.body}`)}>Copy</button>
             {lead.email && (
