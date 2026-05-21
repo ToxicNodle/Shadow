@@ -2068,6 +2068,25 @@ app.get('/track/email/:token', async (req, res) => {
           body: r.subject ? `"${r.subject}"` : 'They opened your outreach email.',
           metadata: { lead_id: r.lead_id, track_token: req.params.token },
         });
+      } else if (r.open_count === 3) {
+        // Third open — hot prospect alert (fire once, dedup by open_count milestone)
+        const { rows: leads } = await pool.query(
+          `SELECT company FROM leads WHERE id=$1 AND user_id=$2`, [r.lead_id, r.user_id]
+        );
+        const company = leads[0]?.company || 'A prospect';
+        const alreadyHot = await pool.query(
+          `SELECT 1 FROM notifications WHERE user_id=$1 AND type='hot_prospect'
+           AND metadata->>'lead_id' = $2 AND created_at > NOW() - INTERVAL '7 days' LIMIT 1`,
+          [r.user_id, String(r.lead_id)]
+        );
+        if (!alreadyHot.rows.length) {
+          await createNotification(r.user_id, {
+            type: 'hot_prospect',
+            title: `🔥 Hot prospect — ${company} opened your email 3 times`,
+            body: r.subject ? `"${r.subject}" — call them now while you\'re top of mind.` : 'High engagement. Now is the time to call.',
+            metadata: { lead_id: r.lead_id, track_token: req.params.token },
+          });
+        }
       }
     } catch { /* ignore */ }
   });
@@ -7341,6 +7360,57 @@ async function processBidExpiry() {
   }
 }
 
+// ── Stalled Deal Worker ───────────────────────────────────────────────────────
+// Fires once per day at 9 AM. Notifies when a lead has been in the same
+// active stage for 14+ days without any logged activity.
+async function processStalledDeals() {
+  try {
+    const { rows: users } = await pool.query(
+      `SELECT DISTINCT user_id FROM leads WHERE status IN ('contacted','replied','meeting','proposal')`
+    );
+    for (const { user_id } of users) {
+      const { rows: stalled } = await pool.query(
+        `SELECT l.id, l.company, l.status,
+                EXTRACT(DAY FROM NOW() - GREATEST(l.updated_at, l.last_contacted::timestamptz))::INT AS days_stalled
+           FROM leads l
+          WHERE l.user_id = $1
+            AND l.status IN ('contacted','replied','meeting','proposal')
+            AND GREATEST(l.updated_at, l.last_contacted::timestamptz) < NOW() - INTERVAL '14 days'
+          ORDER BY days_stalled DESC
+          LIMIT 5`,
+        [user_id]
+      );
+      for (const lead of stalled) {
+        const already = await pool.query(
+          `SELECT 1 FROM notifications WHERE user_id=$1 AND type='deal_stalled'
+           AND metadata->>'lead_id' = $2 AND created_at > NOW() - INTERVAL '7 days' LIMIT 1`,
+          [user_id, String(lead.id)]
+        );
+        if (already.rows.length) continue;
+        await createNotification(user_id, {
+          type: 'deal_stalled',
+          title: `⚠️ ${lead.company} stalled ${lead.days_stalled} days`,
+          body: `Still in "${lead.status.replace('_', ' ')}" — no activity in ${lead.days_stalled} days. Time to re-engage.`,
+          metadata: { lead_id: lead.id, days_stalled: lead.days_stalled, status: lead.status },
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[stalled-deal worker]', e.message);
+  }
+}
+
+function startStalledDealWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 9 && now.getMinutes() === 0) {
+      processStalledDeals();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Stalled deal worker: running (daily alert at 09:00 AM)');
+}
+
 function startBidExpiryWorker() {
   const check = () => {
     const now = new Date();
@@ -7381,6 +7451,7 @@ app.listen(PORT, async () => {
     startColdNurtureWorker();
     startReOrderWorker();
     startBidExpiryWorker();
+    startStalledDealWorker();
     startAnniversaryWorker();
     email.startTrialCron(pool);
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
