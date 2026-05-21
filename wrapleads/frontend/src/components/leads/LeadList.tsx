@@ -288,6 +288,7 @@ export default function LeadList() {
 
   const qc = useQueryClient();
   const [hotOnly, setHotOnly] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [seqStatus, setSeqStatus] = useState<'idle' | 'running' | 'done'>('idle');
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -322,6 +323,7 @@ export default function LeadList() {
       if (activeFilter.state && l.state !== activeFilter.state) return false;
       if (activeFilter.followupDue && !(l.followupDueAt && l.followupDueAt <= today)) return false;
       if (hotOnly && scoreLead(l) < 65) return false;
+      if (tagFilter && !(l.tags ?? []).includes(tagFilter)) return false;
       if (activeFilter.search) {
         const q = activeFilter.search.toLowerCase();
         const haystack = [l.company, l.contactName, l.email, l.city, l.state].join(' ').toLowerCase();
@@ -342,7 +344,16 @@ export default function LeadList() {
       }
       return 0;
     });
-  }, [leads, activeFilter, leadSort]);
+  }, [leads, activeFilter, leadSort, hotOnly, tagFilter]);
+
+  // Unique tags across all leads (sorted by frequency, then alpha)
+  const allTags = useMemo(() => {
+    const freq = new Map<string, number>();
+    for (const l of leads) {
+      for (const t of l.tags ?? []) freq.set(t, (freq.get(t) ?? 0) + 1);
+    }
+    return [...freq.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
+  }, [leads]);
 
   const selCount = selectedLeadIds.size;
   const allFilteredSelected = filtered.length > 0 && filtered.every((l) => selectedLeadIds.has(l.id));
@@ -478,6 +489,45 @@ export default function LeadList() {
 
       {/* Filter presets bar */}
       <FilterPresetsBar activeFilter={activeFilter} setFilter={setFilter} leads={leads} />
+
+      {/* Tag filter chips — only shown when leads have tags */}
+      {allTags.length > 0 && (
+        <div className="tag-filter-bar">
+          <span className="tag-filter-label">Tags:</span>
+          {allTags.map((t) => {
+            let h = 0;
+            for (let i = 0; i < t.length; i++) h = ((h << 5) - h + t.charCodeAt(i)) | 0;
+            const PALETTE = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#f97316'];
+            const c = PALETTE[Math.abs(h) % PALETTE.length];
+            const active = tagFilter === t;
+            return (
+              <button
+                key={t}
+                className="tag-filter-chip"
+                style={{
+                  background: active ? `${c}30` : 'var(--bg-card)',
+                  color: active ? c : 'var(--text-muted)',
+                  border: `1px solid ${active ? c : 'var(--border)'}`,
+                  fontWeight: active ? 700 : 500,
+                }}
+                onClick={() => setTagFilter(active ? null : t)}
+              >
+                {t}
+                {active && <span style={{ marginLeft: 4, opacity: 0.7 }}>×</span>}
+              </button>
+            );
+          })}
+          {tagFilter && (
+            <button
+              className="tag-filter-chip"
+              style={{ color: 'var(--text-faint)', border: '1px solid var(--border)', background: 'none' }}
+              onClick={() => setTagFilter(null)}
+            >
+              Clear filter
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Bulk selection toolbar */}
       {selCount > 0 && (

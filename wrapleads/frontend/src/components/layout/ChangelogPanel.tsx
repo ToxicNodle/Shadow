@@ -10,6 +10,36 @@ const CHANGELOG: Array<{
   {
     date: 'May 2025',
     tag: 'new',
+    title: 'Pipeline Health Score',
+    body: 'Analytics now shows a 0-100 composite score benchmarking your shop against wrap industry standards — win rate, days to close, email open rate, and monthly outreach volume.',
+  },
+  {
+    date: 'May 2025',
+    tag: 'new',
+    title: 'Lead Tags + Tag Filter',
+    body: 'Tag any lead with custom labels ("Hot Q4", "Budget confirmed", "Decision maker"). Tags appear as color-coded pills on lead cards and a chip bar lets you filter instantly.',
+  },
+  {
+    date: 'May 2025',
+    tag: 'new',
+    title: 'Market Penetration Analysis',
+    body: 'Analytics cross-references your pipeline with the FMCSA carrier database — see exactly how many untapped fleets exist in each state you\'re already working and launch a Discover search in one click.',
+  },
+  {
+    date: 'May 2025',
+    tag: 'new',
+    title: 'Action Calendar in Pipeline',
+    body: 'A 5-week Mo–Su calendar in Pipeline view shows follow-up due dates and bid deadlines as colored dots. Click any day to see the event detail and jump to the lead.',
+  },
+  {
+    date: 'May 2025',
+    tag: 'new',
+    title: 'Quote Builder Templates',
+    body: 'Six pre-loaded quote templates (Box Truck, Passenger Van, Semi Trailer, Fleet Package, Color Change, DI-NOC/Rea-Tec) auto-populate line items with industry-accurate pricing.',
+  },
+  {
+    date: 'May 2025',
+    tag: 'new',
     title: 'Won Deal Drill-Down',
     body: 'Click any revenue bar in Analytics to see the exact deals that made up that month — company, category, value, and a direct link to the lead.',
   },
