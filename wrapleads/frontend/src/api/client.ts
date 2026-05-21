@@ -578,6 +578,19 @@ export const api = {
   checkDuplicate: (q: string) =>
     authFetch<{ matches: Array<{ id: number; company: string; status: string; city: string; state: string }> }>(`/leads/check-duplicate?q=${encodeURIComponent(q)}`),
 
+  // Ideal Customer Profile
+  getICP: () =>
+    authFetch<{
+      ok: boolean;
+      hasData: boolean;
+      wonCount: number;
+      topCategory: string | null;
+      topState: string | null;
+      medianFleetSize: number | null;
+      fleetRange: { min: number; max: number } | null;
+      categoryBreakdown: { cat: string; count: number; pct: number }[];
+    }>('/analytics/icp'),
+
   // Sequence performance analytics
   getSequencePerformance: () =>
     authFetch<{
