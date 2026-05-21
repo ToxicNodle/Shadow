@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
@@ -1397,7 +1397,7 @@ const STATUS_DOT_HOT: Record<string, string> = {
   meeting: '#f59e0b', proposal: '#8b5cf6', won: '#10b981', lost: '#ef4444',
 };
 
-function daysAgo(iso: string | null) {
+function daysAgoLabel(iso: string | null) {
   if (!iso) return '—';
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
   if (diff === 0) return 'today';
@@ -1498,7 +1498,7 @@ function HotOpensLeaderboard({ onLeadClick }: { onLeadClick: (id: number) => voi
 
               {/* last opened */}
               <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0, minWidth: 44, textAlign: 'right' }}>
-                {daysAgo(p.last_opened)}
+                {daysAgoLabel(p.last_opened)}
               </span>
 
               {/* CTA */}

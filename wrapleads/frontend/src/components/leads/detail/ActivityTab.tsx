@@ -5,7 +5,6 @@ import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 
 // ── Pipeline Journey Swimlane ─────────────────────────────────────────────────
-const STAGE_ORDER = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'];
 const STAGE_COLORS: Record<string, string> = {
   new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9',
   meeting: '#f59e0b', proposal: '#f97316', won: '#22c55e', lost: '#ef4444',

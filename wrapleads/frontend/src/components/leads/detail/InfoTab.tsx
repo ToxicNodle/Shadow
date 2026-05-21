@@ -10,7 +10,7 @@ import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 
 // ── AI Call Script Panel ──────────────────────────────────────────────────────
 // ── Wrap ROI Calculator ───────────────────────────────────────────────────────
-const MEDIA_BENCHMARKS = [
+const MEDIA_BENCHMARKS: { name: string; cpm: number; isWrap?: boolean }[] = [
   { name: 'Billboards',     cpm: 5.21 },
   { name: 'Radio',          cpm: 8.40 },
   { name: 'Direct Mail',    cpm: 30.00 },
@@ -1122,7 +1122,7 @@ export default function InfoTab({ lead }: Props) {
               onChange={(e) => {
                 const val = e.target.value || null;
                 setLocal({ ...local, followupDueAt: val });
-                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { followup_due_at: val } });
+                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { followupDueAt: val } });
               }}
               style={{ flex: 1, fontSize: 12 }}
             />
@@ -1138,7 +1138,7 @@ export default function InfoTab({ lead }: Props) {
                   d.setDate(d.getDate() + days);
                   const val = d.toISOString().slice(0, 10);
                   setLocal({ ...local, followupDueAt: val });
-                  if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { followup_due_at: val } });
+                  if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { followupDueAt: val } });
                 }}
               >
                 +{days}d
@@ -1156,7 +1156,7 @@ export default function InfoTab({ lead }: Props) {
               onChange={(e) => {
                 const val = e.target.value || '';
                 setLocal({ ...local, lastContacted: val });
-                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { last_contacted: val } });
+                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { lastContacted: val } });
               }}
               style={{ flex: 1, fontSize: 12 }}
             />
@@ -1167,7 +1167,7 @@ export default function InfoTab({ lead }: Props) {
               onClick={() => {
                 const today = new Date().toISOString().slice(0, 10);
                 setLocal({ ...local, lastContacted: today });
-                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { last_contacted: today } });
+                if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { lastContacted: today } });
               }}
             >
               Today

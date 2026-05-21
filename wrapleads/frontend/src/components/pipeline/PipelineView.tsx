@@ -7,7 +7,6 @@ import { useLeads } from '../../hooks/useLeads';
 import { winProbability, scoreLead, SCORE_COLORS, scoreLabel } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
-const STATUS_ORDER = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost', 'cold'] as const;
 const STATUS_LABELS: Record<string, string> = {
   new: 'New', contacted: 'Contacted', replied: 'Replied',
   meeting: 'Meeting Set', proposal: 'Proposal', won: 'Won', lost: 'Lost', cold: 'Cold',
@@ -1117,7 +1116,6 @@ export default function PipelineView() {
   const animOverdue = useCountUp(overdue);
   const animSeq = useCountUp(sequenceStats.activeSequences);
   const animEmails = useCountUp(sequenceStats.emailsSent30d);
-  const maxStatus = Math.max(...STATUS_ORDER.map((s) => (byStatus[s] ?? 0) as number), 1);
   const catEntries = Object.entries(byCategory ?? {})
     .map(([cat, count]) => [cat, count ?? 0] as [string, number])
     .sort((a, b) => b[1] - a[1]);
