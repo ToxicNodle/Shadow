@@ -2461,6 +2461,38 @@ app.get('/analytics', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Won Deal History (drill-down for revenue trend chart) ─────────────────────
+app.get('/analytics/won-history', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT id,
+             company,
+             category,
+             city,
+             state,
+             TO_CHAR(DATE_TRUNC('month', updated_at), 'Mon YY') AS month,
+             CASE category
+               WHEN 'fleet'        THEN 4500
+               WHEN 'dinoc'        THEN 6000
+               WHEN 'gc_referral'  THEN 18000
+               WHEN 'construction' THEN 5000
+               WHEN 'colorchange'  THEN 3500
+               WHEN 'racing'       THEN 40000
+               WHEN 'reatec'       THEN 5500
+               WHEN 'design'       THEN 3000
+               WHEN 'wallgraphics' THEN 2500
+               ELSE 2500
+             END AS revenue
+      FROM leads
+      WHERE user_id=$1 AND status='won'
+        AND updated_at >= NOW() - INTERVAL '6 months'
+      ORDER BY updated_at DESC
+    `, [uid]);
+    res.json({ ok: true, deals: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Sequence Performance Analytics ────────────────────────────────────────────
 app.get('/analytics/sequence-performance', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);

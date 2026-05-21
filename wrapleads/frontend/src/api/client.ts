@@ -464,6 +464,12 @@ export const api = {
     activityCalendar: { day: string; count: number }[];
   }>('/analytics'),
 
+  // Won deal history for trend chart drill-down
+  getWonHistory: () => authFetch<{
+    ok: boolean;
+    deals: { id: number; company: string; category: string; city: string | null; state: string | null; month: string; revenue: number }[];
+  }>('/analytics/won-history'),
+
   // AI Mission Brief
   getMissionBrief: () => authFetch<{ brief: string | null; reason?: string }>('/mission/brief'),
 

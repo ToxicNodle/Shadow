@@ -718,12 +718,19 @@ export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
   const { user } = useAuth();
+  const [selectedWonMonth, setSelectedWonMonth] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['analytics'],
     queryFn: () => api.getAnalytics(),
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,
+  });
+
+  const { data: wonHistory } = useQuery({
+    queryKey: ['won-history'],
+    queryFn: () => api.getWonHistory(),
+    staleTime: 5 * 60_000,
   });
 
   if (isLoading || !data) {
@@ -916,33 +923,104 @@ export default function AnalyticsView() {
                   const total = wonTrend.reduce((s, t) => s + t.revenue, 0);
                   return total >= 1_000_000 ? `$${(total / 1_000_000).toFixed(1)}M` : `$${Math.round(total / 1_000)}K`;
                 })()} est.
+                {selectedWonMonth && (
+                  <button
+                    onClick={() => setSelectedWonMonth(null)}
+                    style={{ marginLeft: 10, fontSize: 10, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                  >
+                    ✕ close
+                  </button>
+                )}
               </div>
             )}
           </div>
           {wonTrend.length === 0 ? (
             <div className="an-empty">No won deals yet — keep pushing.</div>
           ) : (
-            <div className="an-trend-bars">
-              {wonTrend.map((t) => {
-                const revLabel = t.revenue >= 1000
-                  ? `$${Math.round(t.revenue / 1000)}K`
-                  : `$${t.revenue}`;
-                return (
-                  <div key={t.month} className="an-trend-col" title={`${t.won} deal${t.won !== 1 ? 's' : ''} · ${revLabel} est.`}>
-                    <div className="an-trend-val" style={{ fontSize: 10 }}>{revLabel}</div>
+            <>
+              <div className="an-trend-bars">
+                {wonTrend.map((t) => {
+                  const revLabel = t.revenue >= 1000
+                    ? `$${Math.round(t.revenue / 1000)}K`
+                    : `$${t.revenue}`;
+                  const isSelected = selectedWonMonth === t.month;
+                  return (
                     <div
-                      className="an-trend-bar"
-                      style={{
-                        height: `${Math.max(4, Math.round((t.revenue / maxRevTrend) * 80))}px`,
-                        background: 'linear-gradient(to top, var(--accent), #6366f1cc)',
-                      }}
-                    />
-                    <div className="an-trend-label">{t.month}</div>
-                    <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 1 }}>{t.won}w</div>
+                      key={t.month}
+                      className="an-trend-col"
+                      title={`${t.won} deal${t.won !== 1 ? 's' : ''} · ${revLabel} est. — click to see deals`}
+                      onClick={() => setSelectedWonMonth(isSelected ? null : t.month)}
+                      style={{ cursor: 'pointer', opacity: selectedWonMonth && !isSelected ? 0.45 : 1, transition: 'opacity 0.15s' }}
+                    >
+                      <div className="an-trend-val" style={{ fontSize: 10 }}>{revLabel}</div>
+                      <div
+                        className="an-trend-bar"
+                        style={{
+                          height: `${Math.max(4, Math.round((t.revenue / maxRevTrend) * 80))}px`,
+                          background: isSelected
+                            ? 'linear-gradient(to top, #22c55e, #10b981cc)'
+                            : 'linear-gradient(to top, var(--accent), #6366f1cc)',
+                          boxShadow: isSelected ? '0 0 8px #22c55e60' : undefined,
+                        }}
+                      />
+                      <div className="an-trend-label">{t.month}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 1 }}>{t.won}w</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Drill-down: show actual deals for selected month */}
+              {selectedWonMonth && (() => {
+                const monthDeals = (wonHistory?.deals ?? []).filter((d) => d.month === selectedWonMonth);
+                const monthTotal = monthDeals.reduce((s, d) => s + d.revenue, 0);
+                if (monthDeals.length === 0) return (
+                  <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '8px 0' }}>
+                    No deal detail available for {selectedWonMonth}.
                   </div>
                 );
-              })}
-            </div>
+                return (
+                  <div style={{
+                    marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12,
+                    display: 'flex', flexDirection: 'column', gap: 6,
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>
+                      {selectedWonMonth} — {monthDeals.length} deal{monthDeals.length !== 1 ? 's' : ''} ·{' '}
+                      <span style={{ color: '#22c55e' }}>
+                        ${monthTotal >= 1000 ? `${Math.round(monthTotal / 1000)}K` : monthTotal} est.
+                      </span>
+                    </div>
+                    {monthDeals.map((d) => (
+                      <button
+                        key={d.id}
+                        onClick={() => { setCurrentLeadId(String(d.id)); setMode('leads'); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)',
+                          borderRadius: 7, padding: '7px 12px', cursor: 'pointer',
+                          textAlign: 'left', width: '100%',
+                        }}
+                      >
+                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {d.company}
+                          </div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                            {CATEGORIES[d.category as keyof typeof CATEGORIES] || d.category}
+                            {d.city && d.state ? ` · ${d.city}, ${d.state}` : d.state ? ` · ${d.state}` : ''}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: '#22c55e', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                          ${d.revenue >= 1000 ? `${Math.round(d.revenue / 1000)}K` : d.revenue}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>View →</div>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+            </>
           )}
         </div>
 
