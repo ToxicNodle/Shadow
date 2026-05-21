@@ -2010,6 +2010,16 @@
 .ar-batch-dl { position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 5px; width: 22px; height: 22px; font-size: 13px; cursor: pointer; }
 .ar-batch-dl:hover { background: var(--accent); }
 
+/* ── AR Preview: HP Latex print setup panel ──────────────────────────────── */
+.ar-print-panel { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.ar-print-header { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--text); }
+.ar-print-chip { margin-left: auto; font-size: 10px; font-weight: 600; color: var(--accent); background: rgba(99,102,241,0.12); border-radius: 4px; padding: 2px 7px; }
+.ar-print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+.ar-print-field { display: flex; flex-direction: column; gap: 5px; }
+.ar-print-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.ar-print-summary { background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 7px; padding: 8px 12px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.ar-print-dim { font-weight: 800; color: var(--text); font-size: 14px; }
+
 /* ── Sprint 7: Quote Request Form (public) ───────────────────────────────── */
 .qr-root { min-height: 100vh; background: #0f1117; display: flex; align-items: center; justify-content: center; padding: 24px; font-family: system-ui, -apple-system, sans-serif; }
 .qr-card { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 16px; padding: 40px; max-width: 520px; width: 100%; }

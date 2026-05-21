@@ -3,6 +3,37 @@ import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import type { Lead, InstalledJob } from '../../api/types';
 
+// Mirror of server PRINT_DIMS — vehicle types with printable panel sides.
+// Values are physical wrap dimensions in inches.
+const PRINT_DIMS: Record<string, { label: string; sides: Record<string, { label: string; w: number; h: number }> }> = {
+  cargo_van_standard:  { label: 'Cargo Van (Standard)',    sides: { driver: { label: 'Driver Side', w: 168, h: 66 }, passenger: { label: 'Passenger Side', w: 168, h: 66 }, rear: { label: 'Rear Doors', w: 60, h: 60 } } },
+  cargo_van_high_roof: { label: 'Cargo Van (High Roof)',   sides: { driver: { label: 'Driver Side', w: 168, h: 78 }, passenger: { label: 'Passenger Side', w: 168, h: 78 }, rear: { label: 'Rear Doors', w: 60, h: 74 } } },
+  box_truck_16:        { label: '16ft Box Truck',          sides: { driver: { label: 'Driver Side', w: 194, h: 84 }, passenger: { label: 'Passenger Side', w: 194, h: 84 }, rear: { label: 'Rear Door', w: 96, h: 84 } } },
+  box_truck_24:        { label: '24ft Box Truck',          sides: { driver: { label: 'Driver Side', w: 290, h: 96 }, passenger: { label: 'Passenger Side', w: 290, h: 96 }, rear: { label: 'Rear Door', w: 96, h: 96 } } },
+  semi_cab_only:       { label: 'Semi Cab',                sides: { driver: { label: 'Driver Side', w: 120, h: 90 }, passenger: { label: 'Passenger Side', w: 120, h: 90 } } },
+  semi_full:           { label: 'Semi + 53ft Trailer',     sides: { driver: { label: 'Trailer Driver', w: 636, h: 114 }, passenger: { label: 'Trailer Passenger', w: 636, h: 114 }, cab_driver: { label: 'Cab Driver', w: 120, h: 90 }, cab_passenger: { label: 'Cab Passenger', w: 120, h: 90 } } },
+  pickup_truck:        { label: 'Full-Size Pickup',        sides: { driver: { label: 'Driver Side', w: 216, h: 66 }, passenger: { label: 'Passenger Side', w: 216, h: 66 }, tailgate: { label: 'Tailgate', w: 64, h: 24 } } },
+  suv_large:           { label: 'Large SUV / Crossover',   sides: { driver: { label: 'Driver Side', w: 90, h: 60 }, passenger: { label: 'Passenger Side', w: 90, h: 60 }, hood: { label: 'Hood', w: 64, h: 48 } } },
+  sedan:               { label: 'Sedan / Compact',         sides: { driver: { label: 'Driver Side', w: 70, h: 52 }, passenger: { label: 'Passenger Side', w: 70, h: 52 }, hood: { label: 'Hood', w: 58, h: 44 } } },
+  minivan:             { label: 'Minivan / Passenger Van', sides: { driver: { label: 'Driver Side', w: 145, h: 62 }, passenger: { label: 'Passenger Side', w: 145, h: 62 }, rear: { label: 'Rear Hatch', w: 52, h: 48 } } },
+  bus_school:          { label: 'School / Transit Bus',    sides: { driver: { label: 'Driver Side', w: 480, h: 84 }, passenger: { label: 'Passenger Side', w: 480, h: 84 }, rear: { label: 'Rear', w: 96, h: 84 } } },
+  flatbed:             { label: 'Flatbed Truck',           sides: { driver: { label: 'Driver Side', w: 216, h: 48 }, passenger: { label: 'Passenger Side', w: 216, h: 48 } } },
+  other:               { label: 'Vehicle (Generic)',       sides: { full: { label: 'Full', w: 168, h: 72 } } },
+};
+
+// Default vehicle type by lead category
+const CATEGORY_VEHICLE: Record<string, string> = {
+  fleet:        'cargo_van_standard',
+  construction: 'box_truck_16',
+  gc_referral:  'box_truck_16',
+  racing:       'sedan',
+  colorchange:  'sedan',
+  dinoc:        'other',
+  reatec:       'other',
+  wallgraphics: 'other',
+  design:       'other',
+};
+
 const WRAP_PRESETS = [
   { value: 'full color-change wrap, matte black finish, clean modern look', label: 'Matte Black', cats: ['dinoc','colorchange','design'] },
   { value: 'full color-change wrap, gloss white with blue accent stripe, corporate fleet style', label: 'Fleet White/Blue', cats: ['fleet','construction'] },
@@ -120,6 +151,16 @@ export default function ARPreviewModal({ onClose, presetDescription, lead }: Pro
   const [saveJobLoading, setSaveJobLoading] = useState(false);
   const [savedToGallery, setSavedToGallery] = useState(false);
 
+  // HP Latex print setup
+  const [showPrint, setShowPrint] = useState(false);
+  const [printVehicleKey, setPrintVehicleKey] = useState(
+    CATEGORY_VEHICLE[lead?.category ?? ''] ?? 'cargo_van_standard',
+  );
+  const [printSideKey, setPrintSideKey] = useState('driver');
+  const [printPrinterWidth, setPrintPrinterWidth] = useState(54);
+  const [printBleed, setPrintBleed] = useState(1.5);
+  const [printLoading, setPrintLoading] = useState(false);
+
   // Fleet batch mode
   const [batchItems, setBatchItems] = useState<{ file: File; preview: string; result: string | null; error?: string }[]>([]);
   const [batchRunning, setBatchRunning] = useState(false);
@@ -230,6 +271,34 @@ export default function ARPreviewModal({ onClose, presetDescription, lead }: Pro
   function download(url: string, name: string) {
     const a = document.createElement('a');
     a.href = url; a.download = name; a.click();
+  }
+
+  async function generatePrintFile() {
+    if (!activeUrl) return;
+    // Reset side key if it no longer exists for the new vehicle type
+    const sides = PRINT_DIMS[printVehicleKey]?.sides ?? {};
+    const resolvedSide = sides[printSideKey] ? printSideKey : Object.keys(sides)[0];
+    setPrintLoading(true);
+    try {
+      const { blob, widthIn, heightIn } = await api.printReadyFile({
+        imageUrl: activeUrl,
+        vehicleKey: printVehicleKey,
+        sideKey: resolvedSide,
+        printerWidthInches: printPrinterWidth,
+        bleedInches: printBleed,
+      });
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = `wrap-${printVehicleKey}-${resolvedSide}-${printPrinterWidth}in.tif`;
+      a.click();
+      URL.revokeObjectURL(objUrl);
+      showToast(`Print file ready — ${widthIn}"×${Math.round(heightIn * 10) / 10}" @ 150 DPI`);
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'Print file generation failed', 'error');
+    } finally {
+      setPrintLoading(false);
+    }
   }
 
   function copyImageUrl() {
@@ -383,6 +452,13 @@ export default function ARPreviewModal({ onClose, presetDescription, lead }: Pro
                         {savedToGallery ? '✓ In gallery' : saveJobLoading ? 'Saving…' : '🖼 Save to Gallery'}
                       </button>
                     )}
+                    <button
+                      className={`btn${showPrint ? ' btn-primary' : ''}`}
+                      style={{ fontSize: 11, flex: 1, minWidth: 120 }}
+                      onClick={() => setShowPrint((v) => !v)}
+                    >
+                      🖨 Print File
+                    </button>
                     <button className="btn" style={{ fontSize: 11 }} onClick={() => setResults([])}>
                       Try Another Style
                     </button>
@@ -397,6 +473,20 @@ export default function ARPreviewModal({ onClose, presetDescription, lead }: Pro
                       <code>{portalUrl}</code>
                     </div>
                   )}
+
+                  {/* HP Latex print setup panel */}
+                  {showPrint && <PrintSetupPanel
+                    vehicleKey={printVehicleKey}
+                    sideKey={printSideKey}
+                    printerWidth={printPrinterWidth}
+                    bleed={printBleed}
+                    loading={printLoading}
+                    onVehicleKey={(k) => { setPrintVehicleKey(k); setPrintSideKey(Object.keys(PRINT_DIMS[k]?.sides ?? {})[0] ?? 'driver'); }}
+                    onSideKey={setPrintSideKey}
+                    onPrinterWidth={setPrintPrinterWidth}
+                    onBleed={setPrintBleed}
+                    onGenerate={generatePrintFile}
+                  />}
 
                   {/* Send to Client panel */}
                   {showSend && lead && (
@@ -639,6 +729,118 @@ export default function ARPreviewModal({ onClose, presetDescription, lead }: Pro
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── HP Latex Print Setup Panel ────────────────────────────────────────────────
+interface PrintSetupProps {
+  vehicleKey: string;
+  sideKey: string;
+  printerWidth: number;
+  bleed: number;
+  loading: boolean;
+  onVehicleKey: (k: string) => void;
+  onSideKey: (k: string) => void;
+  onPrinterWidth: (w: number) => void;
+  onBleed: (b: number) => void;
+  onGenerate: () => void;
+}
+
+function PrintSetupPanel({ vehicleKey, sideKey, printerWidth, bleed, loading, onVehicleKey, onSideKey, onPrinterWidth, onBleed, onGenerate }: PrintSetupProps) {
+  const dim  = PRINT_DIMS[vehicleKey] ?? PRINT_DIMS.other;
+  const side = dim.sides[sideKey] ?? Object.values(dim.sides)[0];
+  const sides = Object.entries(dim.sides);
+
+  const scale   = printerWidth / side.w;
+  const outH    = Math.round(side.h * scale * 10) / 10;
+  const bleedPx = Math.round(bleed * scale * 150);
+  const canvasW = Math.round(printerWidth * 150 + bleedPx * 2);
+  const canvasH = Math.round(outH * 150 + bleedPx * 2);
+  const estMB   = Math.max(1, Math.round((canvasW * canvasH * 3) / 1024 / 1024 * 0.45));
+
+  const PRINTER_WIDTHS = [24, 42, 54, 64, 126];
+  const BLEED_OPTIONS  = [1, 1.5, 2];
+
+  return (
+    <div className="ar-print-panel">
+      <div className="ar-print-header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--accent)' }}>
+          <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        <span>HP Latex Print Setup</span>
+        <span className="ar-print-chip">150 DPI · LZW TIFF · bleed + reg marks</span>
+      </div>
+
+      <div className="ar-print-grid">
+        <div className="ar-print-field">
+          <label className="ar-print-label">Vehicle Type</label>
+          <select className="input" style={{ fontSize: 12 }} value={vehicleKey} onChange={(e) => onVehicleKey(e.target.value)}>
+            {Object.entries(PRINT_DIMS).map(([k, v]) => (
+              <option key={k} value={k}>{v.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="ar-print-field">
+          <label className="ar-print-label">Panel</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {sides.map(([k, s]) => (
+              <button key={k} className={`btn${sideKey === k ? ' btn-primary' : ''}`} style={{ fontSize: 11, padding: '3px 9px' }} onClick={() => onSideKey(k)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="ar-print-field">
+          <label className="ar-print-label">Printer Width</label>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {PRINTER_WIDTHS.map((w) => (
+              <button key={w} className={`btn${printerWidth === w ? ' btn-primary' : ''}`} style={{ fontSize: 11, padding: '3px 9px' }} onClick={() => onPrinterWidth(w)}>
+                {w}"
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="ar-print-field">
+          <label className="ar-print-label">Bleed</label>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {BLEED_OPTIONS.map((b) => (
+              <button key={b} className={`btn${bleed === b ? ' btn-primary' : ''}`} style={{ fontSize: 11, padding: '3px 9px' }} onClick={() => onBleed(b)}>
+                {b}"
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="ar-print-summary">
+        <div>
+          <span className="ar-print-dim">{printerWidth}"</span> × <span className="ar-print-dim">{outH}"</span>
+          <span style={{ color: 'var(--text-faint)', marginLeft: 6 }}>+ {bleed}" bleed all sides</span>
+        </div>
+        <div style={{ color: 'var(--text-faint)' }}>
+          Vehicle actual: {side.w}"×{side.h}" · ~{estMB} MB TIFF
+          {side.w > printerWidth && (
+            <span style={{ color: '#f59e0b', marginLeft: 8 }}>⚠ wider than printer — tile in RIP</span>
+          )}
+        </div>
+      </div>
+
+      <button
+        className="btn btn-primary"
+        style={{ width: '100%', justifyContent: 'center', padding: 10, fontSize: 13, marginTop: 4 }}
+        disabled={loading}
+        onClick={onGenerate}
+      >
+        {loading
+          ? <><span className="spinner" style={{ width: 13, height: 13, marginRight: 7 }} />Generating TIFF…</>
+          : <>Generate &amp; Download Print File (~{estMB} MB)</>
+        }
+      </button>
     </div>
   );
 }

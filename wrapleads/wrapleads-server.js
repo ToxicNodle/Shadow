@@ -5409,6 +5409,123 @@ const VEHICLE_DIMENSIONS = {
   other:               { label: 'Vehicle',                 sqft: [150, 250] },
 };
 
+// Physical wrap dimensions (inches) per vehicle type and panel side.
+// Used by /vision/ar-print-ready to produce correctly-sized HP Latex print files.
+const PRINT_DIMS = {
+  cargo_van_standard:  { label: 'Cargo Van (Standard)',    sides: { driver: { label: 'Driver Side', w: 168, h: 66 }, passenger: { label: 'Passenger Side', w: 168, h: 66 }, rear: { label: 'Rear Doors', w: 60, h: 60 } } },
+  cargo_van_high_roof: { label: 'Cargo Van (High Roof)',   sides: { driver: { label: 'Driver Side', w: 168, h: 78 }, passenger: { label: 'Passenger Side', w: 168, h: 78 }, rear: { label: 'Rear Doors', w: 60, h: 74 } } },
+  box_truck_16:        { label: '16ft Box Truck',          sides: { driver: { label: 'Driver Side', w: 194, h: 84 }, passenger: { label: 'Passenger Side', w: 194, h: 84 }, rear: { label: 'Rear Door', w: 96, h: 84 } } },
+  box_truck_24:        { label: '24ft Box Truck',          sides: { driver: { label: 'Driver Side', w: 290, h: 96 }, passenger: { label: 'Passenger Side', w: 290, h: 96 }, rear: { label: 'Rear Door', w: 96, h: 96 } } },
+  semi_cab_only:       { label: 'Semi Cab',                sides: { driver: { label: 'Driver Side', w: 120, h: 90 }, passenger: { label: 'Passenger Side', w: 120, h: 90 } } },
+  semi_full:           { label: 'Semi + 53ft Trailer',     sides: { driver: { label: 'Trailer Driver Side', w: 636, h: 114 }, passenger: { label: 'Trailer Passenger Side', w: 636, h: 114 }, cab_driver: { label: 'Cab Driver Side', w: 120, h: 90 }, cab_passenger: { label: 'Cab Passenger Side', w: 120, h: 90 } } },
+  pickup_truck:        { label: 'Full-Size Pickup',        sides: { driver: { label: 'Driver Side', w: 216, h: 66 }, passenger: { label: 'Passenger Side', w: 216, h: 66 }, tailgate: { label: 'Tailgate', w: 64, h: 24 } } },
+  suv_large:           { label: 'Large SUV / Crossover',   sides: { driver: { label: 'Driver Side', w: 90, h: 60 }, passenger: { label: 'Passenger Side', w: 90, h: 60 }, hood: { label: 'Hood', w: 64, h: 48 } } },
+  sedan:               { label: 'Sedan / Compact',         sides: { driver: { label: 'Driver Side', w: 70, h: 52 }, passenger: { label: 'Passenger Side', w: 70, h: 52 }, hood: { label: 'Hood', w: 58, h: 44 } } },
+  minivan:             { label: 'Minivan / Passenger Van', sides: { driver: { label: 'Driver Side', w: 145, h: 62 }, passenger: { label: 'Passenger Side', w: 145, h: 62 }, rear: { label: 'Rear Hatch', w: 52, h: 48 } } },
+  bus_school:          { label: 'School / Transit Bus',    sides: { driver: { label: 'Driver Side', w: 480, h: 84 }, passenger: { label: 'Passenger Side', w: 480, h: 84 }, rear: { label: 'Rear', w: 96, h: 84 } } },
+  flatbed:             { label: 'Flatbed Truck',           sides: { driver: { label: 'Driver Side', w: 216, h: 48 }, passenger: { label: 'Passenger Side', w: 216, h: 48 } } },
+  other:               { label: 'Vehicle (Generic)',       sides: { full: { label: 'Full', w: 168, h: 72 } } },
+};
+
+// ── HP Latex Print-Ready File Generator ──────────────────────────────────────
+// Scales the AR concept to correct physical dimensions, adds registration marks
+// and bleed, outputs a 150 DPI TIFF ready to drop into HP PrintOS or any RIP.
+app.post('/vision/ar-print-ready', authMiddleware, async (req, res) => {
+  const {
+    imageUrl,
+    vehicleKey = 'other',
+    sideKey    = 'driver',
+    printerWidthInches = 54,
+    bleedInches        = 1.5,
+  } = req.body || {};
+
+  if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
+
+  const dim  = PRINT_DIMS[vehicleKey] || PRINT_DIMS.other;
+  const side = dim.sides[sideKey] || Object.values(dim.sides)[0];
+  const physW = side.w;  // actual wrap width in inches
+  const physH = side.h;  // actual wrap height in inches
+  const pw    = Math.max(12, Math.min(126, Number(printerWidthInches) || 54));
+  const DPI   = 150;
+
+  // Scale image to fill the printer width while preserving vehicle aspect ratio
+  const scale   = pw / physW;
+  const outW    = Math.round(pw   * DPI);
+  const outH    = Math.round(physH * scale * DPI);
+  const bleedPx = Math.round(bleedInches * scale * DPI);
+  const canvasW = outW + 2 * bleedPx;
+  const canvasH = outH + 2 * bleedPx;
+
+  try {
+    const sharp = require('sharp');
+
+    // Decode image — supports data URLs (from gpt-image-1) and hosted URLs
+    let imageBuffer;
+    if (imageUrl.startsWith('data:')) {
+      const comma = imageUrl.indexOf(',');
+      if (comma === -1) throw new Error('Invalid data URL');
+      imageBuffer = Buffer.from(imageUrl.slice(comma + 1), 'base64');
+    } else {
+      const r = await fetch(imageUrl);
+      if (!r.ok) throw new Error('Could not fetch image URL');
+      imageBuffer = Buffer.from(await r.arrayBuffer());
+    }
+
+    // Registration marks and trim line via SVG composite
+    const gap = Math.max(4, Math.round(DPI * 0.125));   // 1/8" gap from trim edge
+    const ml  = Math.max(8, Math.round(DPI * 0.25));    // 1/4" mark length
+    const sw  = Math.max(1, Math.round(DPI / 100));     // stroke width
+    const fs  = Math.max(9, Math.round(DPI * 0.075));   // label font size
+
+    const tl = `${bleedPx}`;
+    const tr = `${canvasW - bleedPx}`;
+    const tt = `${bleedPx}`;
+    const tb = `${canvasH - bleedPx}`;
+
+    const svgMarks = [
+      // Top-left
+      `<line x1="${bleedPx - gap - ml}" y1="${tl}" x2="${bleedPx - gap}" y2="${tl}"/>`,
+      `<line x1="${tl}" y1="${bleedPx - gap - ml}" x2="${tl}" y2="${bleedPx - gap}"/>`,
+      // Top-right
+      `<line x1="${canvasW - bleedPx + gap}" y1="${tt}" x2="${canvasW - bleedPx + gap + ml}" y2="${tt}"/>`,
+      `<line x1="${tr}" y1="${bleedPx - gap - ml}" x2="${tr}" y2="${bleedPx - gap}"/>`,
+      // Bottom-left
+      `<line x1="${bleedPx - gap - ml}" y1="${tb}" x2="${bleedPx - gap}" y2="${tb}"/>`,
+      `<line x1="${tl}" y1="${canvasH - bleedPx + gap}" x2="${tl}" y2="${canvasH - bleedPx + gap + ml}"/>`,
+      // Bottom-right
+      `<line x1="${canvasW - bleedPx + gap}" y1="${tb}" x2="${canvasW - bleedPx + gap + ml}" y2="${tb}"/>`,
+      `<line x1="${tr}" y1="${canvasH - bleedPx + gap}" x2="${tr}" y2="${canvasH - bleedPx + gap + ml}"/>`,
+    ].join('');
+
+    const labelY = canvasH - Math.max(3, bleedPx - 4);
+    const svgOverlay = `<svg width="${canvasW}" height="${canvasH}" xmlns="http://www.w3.org/2000/svg">
+<g stroke="black" stroke-width="${sw}" fill="none">${svgMarks}</g>
+<rect x="${bleedPx}" y="${bleedPx}" width="${outW}" height="${outH}" fill="none" stroke="red" stroke-width="${sw}" stroke-dasharray="${ml / 2} ${gap}"/>
+<text x="${canvasW / 2}" y="${labelY}" text-anchor="middle" font-family="sans-serif" font-size="${fs}px" fill="#444">
+  ${dim.label} · ${side.label} · ${physW}"×${physH}" printed at ${pw}" wide · ${bleedInches}" bleed · ${DPI} DPI · HP Latex ready
+</text>
+</svg>`;
+
+    const tiffBuf = await sharp(imageBuffer)
+      .resize(outW, outH, { fit: 'fill', kernel: 'lanczos3' })
+      .extend({ top: bleedPx, bottom: bleedPx, left: bleedPx, right: bleedPx, background: { r: 255, g: 255, b: 255, alpha: 1 } })
+      .composite([{ input: Buffer.from(svgOverlay), top: 0, left: 0 }])
+      .tiff({ xres: DPI / 25.4, yres: DPI / 25.4, compression: 'lzw' })
+      .toBuffer();
+
+    const filename = `wrap-${vehicleKey}-${sideKey}-${pw}in.tif`;
+    res.setHeader('Content-Type', 'image/tiff');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', tiffBuf.length);
+    res.setHeader('X-Print-Width-In',  String(pw));
+    res.setHeader('X-Print-Height-In', String(Math.round(physH * scale * 10) / 10));
+    res.send(tiffBuf);
+  } catch (e) {
+    console.error('[ar-print-ready]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/vision/quote-vehicle', authMiddleware, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
   const apiKey = process.env.ANTHROPIC_API_KEY;

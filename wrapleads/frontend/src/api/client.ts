@@ -338,6 +338,30 @@ export const api = {
       `/jobs/${jobId}/concept-photo`,
       { method: 'POST', body: JSON.stringify({ imageUrl, caption }) },
     ),
+  // Generate a print-ready TIFF sized for an HP Latex wide-format printer
+  printReadyFile: (params: {
+    imageUrl: string;
+    vehicleKey: string;
+    sideKey: string;
+    printerWidthInches: number;
+    bleedInches: number;
+  }): Promise<{ blob: Blob; widthIn: number; heightIn: number }> => {
+    const token = getToken();
+    return fetch('/vision/ar-print-ready', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({ error: 'Print file generation failed' }));
+        throw new Error((d as { error?: string }).error || 'Print file generation failed');
+      }
+      const blob = await r.blob();
+      const widthIn  = Number(r.headers.get('X-Print-Width-In')  || params.printerWidthInches);
+      const heightIn = Number(r.headers.get('X-Print-Height-In') || 0);
+      return { blob, widthIn, heightIn };
+    });
+  },
 
   // AI Design Generation
   generateDesignBrief: (params: { vehicleType: string; primaryColor: string; secondaryColor: string; style: string; description: string; companyName: string }) =>
