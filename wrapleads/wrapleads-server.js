@@ -5074,6 +5074,77 @@ app.get('/leads/:id/followup-recommendation', authMiddleware, async (req, res) =
   }
 });
 
+// ── AI Notes Summary ──────────────────────────────────────────────────────────
+// Condenses a lead's journal entries + pinned notes into an executive brief.
+app.post('/leads/:id/notes-summary', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const uid = String(req.user.id);
+
+  try {
+    // Ownership check + lead data
+    const leadR = await pool.query(
+      `SELECT company, category, status, notes FROM leads WHERE id=$1 AND user_id=$2`,
+      [id, uid]
+    );
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+
+    // Journal entries
+    const actR = await pool.query(
+      `SELECT body, created_at FROM lead_activities
+        WHERE lead_id=$1 AND user_id=$2 AND type='note_added'
+        ORDER BY created_at DESC LIMIT 20`,
+      [id, uid]
+    );
+    const journalText = actR.rows.map((r) =>
+      `[${new Date(r.created_at).toLocaleDateString()}] ${r.body}`
+    ).join('\n');
+
+    const hasContent = journalText.trim() || (lead.notes || '').trim();
+    if (!hasContent) return res.status(400).json({ error: 'No notes to summarize' });
+
+    const prompt = `You are summarizing CRM notes for a vehicle wrap salesperson preparing for a client call or handoff.
+
+Company: ${lead.company} (${lead.category}, status: ${lead.status})
+
+Pinned Notes:
+${lead.notes || '(none)'}
+
+Journal Entries (newest first):
+${journalText || '(none)'}
+
+Write a concise executive brief (3–5 sentences max) covering:
+- Key facts about this prospect and their wrap opportunity
+- Current status and next recommended action
+- Any objections, concerns, or special considerations
+- Important context for whoever calls next
+
+Write in third person, present tense. No bullet points — flowing prose only.`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) throw new Error(`Anthropic ${resp.status}`);
+    const ai = await resp.json();
+    const summary = ai.content?.[0]?.text?.trim() ?? '';
+
+    res.json({ ok: true, summary });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Lead Category Suggestion ───────────────────────────────────────────────
 // Fast single-call inference: given a company name, suggest the best wrap
 // category, estimated fleet size range, and a one-line pitch angle.

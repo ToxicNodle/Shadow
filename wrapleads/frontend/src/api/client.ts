@@ -500,6 +500,9 @@ export const api = {
       }[];
     }>(`/leads/${leadId}/email-engagement`),
 
+  getNotesSummary: (leadId: number) =>
+    authFetch<{ ok: boolean; summary: string }>(`/leads/${leadId}/notes-summary`, { method: 'POST' }),
+
   suggestLead: (company: string) =>
     authFetch<{
       ok: boolean;
