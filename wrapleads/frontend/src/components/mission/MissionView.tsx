@@ -4,7 +4,7 @@ import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useLeads } from '../../hooks/useLeads';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
-import { winProbability } from '../../utils/scoring';
+import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
 const REV_EST: Record<string, number> = {
@@ -788,6 +788,116 @@ function RevenueGoalBar({ revenue, wonCount, goal, onSetGoal }: {
   );
 }
 
+// ── Hot Leads Leaderboard ─────────────────────────────────────────────────────
+
+const CAT_LABEL: Record<string, string> = {
+  fleet: 'Fleet', dinoc: 'Di-NOC', gc_referral: 'GC Ref', construction: 'Construction',
+  colorchange: 'Color Change', racing: 'Racing', reatec: 'Reatec', design: 'Design', wallgraphics: 'Wall',
+};
+
+function HotLeadsLeaderboard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { leads } = useLeads();
+  const [expanded, setExpanded] = useState(false);
+
+  const ranked = useMemo(() => {
+    return leads
+      .filter((l) => !['won', 'lost'].includes(l.status) && l.serverId)
+      .map((l) => ({ lead: l, score: scoreLead(l), prob: winProbability(l) }))
+      .sort((a, b) => b.score - a.score || b.prob - a.prob)
+      .slice(0, expanded ? 15 : 8);
+  }, [leads, expanded]);
+
+  if (ranked.length === 0) return null;
+
+  const topScore = ranked[0].score;
+
+  return (
+    <section className="mission-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="mission-card-header" style={{ marginBottom: 12 }}>
+        <span className="mission-card-icon" style={{ color: '#ef4444' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+        </span>
+        <span className="mission-card-title">Hot Leads — AI Score Ranking</span>
+        <span className="mission-badge" style={{ background: '#ef4444', color: '#fff' }}>{leads.filter((l) => !['won','lost'].includes(l.status)).length} active</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {ranked.map(({ lead, score, prob }, idx) => {
+          const label = scoreLabel(score);
+          const color = SCORE_COLORS[label];
+          const barPct = topScore > 0 ? Math.round((score / topScore) * 100) : 0;
+          const revEst = REV_EST[lead.category] ?? 2500;
+          const expectedVal = Math.round((prob / 100) * revEst);
+          return (
+            <button
+              key={lead.serverId}
+              onClick={() => onLeadClick(lead.serverId!)}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '24px 1fr 140px 64px 60px',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: '1px solid transparent',
+                background: idx === 0 ? `${color}0a` : 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = `${color}10`)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = idx === 0 ? `${color}0a` : 'transparent')}
+            >
+              {/* Rank */}
+              <span style={{ fontSize: 11, fontWeight: 700, color: idx < 3 ? color : 'var(--text-faint)', textAlign: 'center' }}>
+                {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`}
+              </span>
+
+              {/* Company + category */}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {lead.company}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  {CAT_LABEL[lead.category] ?? lead.category}
+                  {lead.city ? ` · ${lead.city}` : ''}
+                  {lead.state ? `, ${lead.state}` : ''}
+                </div>
+              </div>
+
+              {/* Score bar */}
+              <div style={{ position: 'relative', height: 6, background: 'var(--border)', borderRadius: 3 }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${barPct}%`, background: color, borderRadius: 3, transition: 'width 0.4s ease' }} />
+              </div>
+
+              {/* Score badge */}
+              <div style={{ textAlign: 'center' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color, background: `${color}18`, padding: '2px 7px', borderRadius: 5 }}>
+                  {score}pts
+                </span>
+              </div>
+
+              {/* Expected value */}
+              <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                ~${expectedVal >= 1000 ? `${(expectedVal/1000).toFixed(0)}K` : expectedVal}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {!expanded && leads.filter((l) => !['won','lost'].includes(l.status)).length > 8 && (
+        <button
+          onClick={() => setExpanded(true)}
+          style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0' }}
+        >
+          Show more →
+        </button>
+      )}
+    </section>
+  );
+}
+
 // ── Setup Checklist ───────────────────────────────────────────────────────────
 
 const ONBOARDING_DISMISS_KEY = 'wl_onboarding_dismissed';
@@ -1018,6 +1128,11 @@ export default function MissionView() {
 
       {/* ── Setup Checklist ── */}
       <SetupChecklist />
+
+      {/* ── Hot Leads Leaderboard ── */}
+      <div className="mission-grid" style={{ marginBottom: 0, paddingBottom: 0 }}>
+        <HotLeadsLeaderboard onLeadClick={goToLead} />
+      </div>
 
       {/* ── Bids Due Today / Tomorrow ── */}
       {bidsDueSoon.length > 0 && (
