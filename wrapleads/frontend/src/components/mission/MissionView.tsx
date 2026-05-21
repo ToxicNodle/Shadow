@@ -788,6 +788,99 @@ function RevenueGoalBar({ revenue, wonCount, goal, onSetGoal }: {
   );
 }
 
+// ── Global Activity Feed ──────────────────────────────────────────────────────
+
+const ACTIVITY_META: Record<string, { icon: string; color: string; label: string }> = {
+  note_added:          { icon: '📝', color: '#8b5cf6', label: 'Note added' },
+  email_sent:          { icon: '📤', color: '#3b82f6', label: 'Email sent' },
+  email_opened:        { icon: '👁',  color: '#6366f1', label: 'Email opened' },
+  email_reply:         { icon: '↩️',  color: '#22c55e', label: 'Replied' },
+  status_changed:      { icon: '🔄', color: '#f59e0b', label: 'Stage updated' },
+  called:              { icon: '📞', color: '#10b981', label: 'Called' },
+  meeting_set:         { icon: '📅', color: '#f97316', label: 'Meeting set' },
+  sequence_activated:  { icon: '⚡', color: '#6366f1', label: 'Sequence started' },
+  email_generated:     { icon: '✨', color: '#8b5cf6', label: 'AI email written' },
+  email_copied:        { icon: '📋', color: '#94a3b8', label: 'Email copied' },
+  proposal_sent:       { icon: '📄', color: '#f97316', label: 'Proposal sent' },
+  won:                 { icon: '🏆', color: '#22c55e', label: 'Deal WON' },
+  lost:                { icon: '❌', color: '#ef4444', label: 'Deal lost' },
+};
+
+function feedTimeAgo(iso: string) {
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function GlobalActivityFeed({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['activity-feed'],
+    queryFn: () => api.getActivityFeed(25),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  if (isLoading) return null;
+  const events = data?.events ?? [];
+  if (events.length === 0) return null;
+
+  return (
+    <section className="mission-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="mission-card-header" style={{ marginBottom: 12 }}>
+        <span className="mission-card-icon" style={{ color: '#6366f1' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+        </span>
+        <span className="mission-card-title">Recent Activity</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>across all leads · updates every min</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {events.slice(0, 20).map((ev) => {
+          const meta = ACTIVITY_META[ev.type] ?? { icon: '•', color: 'var(--text-muted)', label: ev.type };
+          const snippet = ev.subject || ev.body?.slice(0, 60) || meta.label;
+          return (
+            <button
+              key={ev.id}
+              onClick={() => onLeadClick(ev.lead_id)}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '28px 1fr auto',
+                alignItems: 'center',
+                gap: 10,
+                padding: '7px 10px',
+                borderRadius: 7,
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'background 0.12s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ fontSize: 14, textAlign: 'center', lineHeight: 1 }}>{meta.icon}</span>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: meta.color }}>{ev.company}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
+                  {snippet.length > 55 ? snippet.slice(0, 55) + '…' : snippet}
+                </span>
+              </div>
+              <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                {feedTimeAgo(ev.created_at)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 // ── Hot Leads Leaderboard ─────────────────────────────────────────────────────
 
 const CAT_LABEL: Record<string, string> = {
@@ -1129,9 +1222,10 @@ export default function MissionView() {
       {/* ── Setup Checklist ── */}
       <SetupChecklist />
 
-      {/* ── Hot Leads Leaderboard ── */}
+      {/* ── Hot Leads Leaderboard + Activity Feed ── */}
       <div className="mission-grid" style={{ marginBottom: 0, paddingBottom: 0 }}>
         <HotLeadsLeaderboard onLeadClick={goToLead} />
+        <GlobalActivityFeed onLeadClick={goToLead} />
       </div>
 
       {/* ── Bids Due Today / Tomorrow ── */}

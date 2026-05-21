@@ -578,6 +578,23 @@ export const api = {
   checkDuplicate: (q: string) =>
     authFetch<{ matches: Array<{ id: number; company: string; status: string; city: string; state: string }> }>(`/leads/check-duplicate?q=${encodeURIComponent(q)}`),
 
+  // Global activity feed
+  getActivityFeed: (limit?: number) =>
+    authFetch<{
+      ok: boolean;
+      events: {
+        id: number;
+        type: string;
+        subject: string | null;
+        body: string | null;
+        created_at: string;
+        lead_id: number;
+        company: string;
+        category: string;
+        status: string;
+      }[];
+    }>(`/activity/feed${limit ? `?limit=${limit}` : ''}`),
+
   // Onboarding
   getOnboardingStatus: () =>
     authFetch<{

@@ -7397,6 +7397,26 @@ ${personalBody.replace(/\n/g, '<br>')}
   res.json({ ok: true, sent, skipped, errors });
 });
 
+// ── Global Activity Feed ───────────────────────────────────────────────────────
+app.get('/activity/feed', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+  try {
+    const { rows } = await pool.query(`
+      SELECT la.id, la.type, la.subject, la.body, la.created_at,
+             l.id AS lead_id, l.company, l.category, l.status
+      FROM lead_activities la
+      JOIN leads l ON l.id = la.lead_id
+      WHERE la.user_id = $1
+      ORDER BY la.created_at DESC
+      LIMIT $2
+    `, [uid, limit]);
+    res.json({ ok: true, events: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Mission Live Signals ───────────────────────────────────────────────────────
 app.get('/mission/signals', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
