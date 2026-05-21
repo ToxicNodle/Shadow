@@ -2,13 +2,155 @@ import { useMemo, useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
-import type { LeadSort } from '../../store/useAppStore';
+import type { LeadSort, ActiveFilter } from '../../store/useAppStore';
 import LeadRow from './LeadRow';
 import { scoreLead } from '../../utils/scoring';
 import { api, getToken } from '../../api/client';
 import { STATUSES } from '../../api/types';
 import type { LeadStatus } from '../../api/types';
 import BroadcastModal from '../modals/BroadcastModal';
+
+// ── Filter Presets Bar ────────────────────────────────────────────────────────
+const BUILTIN_PRESETS: { name: string; icon: string; filter: Partial<ActiveFilter> }[] = [
+  { name: 'All', icon: '◎', filter: { category: 'all', status: 'all', state: '', search: '', followupDue: false } },
+  { name: 'Hot', icon: '🔥', filter: { status: 'all', category: 'all', state: '', search: '', followupDue: false } },
+  { name: 'Follow-up Due', icon: '⏰', filter: { category: 'all', status: 'all', state: '', search: '', followupDue: true } },
+  { name: 'Replied', icon: '💬', filter: { status: 'replied', category: 'all', state: '', search: '', followupDue: false } },
+  { name: 'Proposal', icon: '📋', filter: { status: 'proposal', category: 'all', state: '', search: '', followupDue: false } },
+  { name: 'Won', icon: '✅', filter: { status: 'won', category: 'all', state: '', search: '', followupDue: false } },
+  { name: 'Fleet', icon: '🚛', filter: { category: 'fleet', status: 'all', state: '', search: '', followupDue: false } },
+  { name: 'GC Referrals', icon: '🏗', filter: { category: 'gc_referral', status: 'all', state: '', search: '', followupDue: false } },
+];
+
+const STORAGE_KEY = 'wl_filter_presets_v1';
+
+interface CustomPreset { name: string; filter: Partial<ActiveFilter>; }
+
+function FilterPresetsBar({ activeFilter, setFilter, leads }: {
+  activeFilter: ActiveFilter;
+  setFilter: (patch: Partial<ActiveFilter>) => void;
+  leads: { status: string; category: string; followupDueAt?: string | null }[];
+}) {
+  const [custom, setCustom] = useState<CustomPreset[]>(() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]'); } catch { return []; }
+  });
+  const [naming, setNaming] = useState(false);
+  const [newName, setNewName] = useState('');
+  const today = new Date().toISOString().slice(0, 10);
+
+  function saveCustom(presets: CustomPreset[]) {
+    setCustom(presets);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+  }
+
+  function addPreset() {
+    if (!newName.trim()) return;
+    const preset: CustomPreset = { name: newName.trim(), filter: { ...activeFilter } };
+    saveCustom([...custom, preset]);
+    setNaming(false);
+    setNewName('');
+  }
+
+  function removePreset(i: number) {
+    saveCustom(custom.filter((_, idx) => idx !== i));
+  }
+
+  function isActive(filter: Partial<ActiveFilter>): boolean {
+    for (const [k, v] of Object.entries(filter)) {
+      if ((activeFilter as Record<string,unknown>)[k] !== v) return false;
+    }
+    return true;
+  }
+
+  function countFor(filter: Partial<ActiveFilter>): number {
+    return leads.filter((l) => {
+      if (filter.status && filter.status !== 'all' && l.status !== filter.status) return false;
+      if (filter.category && filter.category !== 'all' && l.category !== filter.category) return false;
+      if (filter.followupDue && !(l.followupDueAt && l.followupDueAt <= today)) return false;
+      return true;
+    }).length;
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', overflowX: 'auto', borderBottom: '1px solid var(--border)', flexWrap: 'nowrap', scrollbarWidth: 'none' }}>
+      {BUILTIN_PRESETS.map((p) => {
+        const active = isActive(p.filter);
+        const count = countFor(p.filter);
+        if (p.name !== 'All' && count === 0) return null;
+        return (
+          <button
+            key={p.name}
+            onClick={() => setFilter(p.filter)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+              padding: '3px 9px', borderRadius: 99, fontSize: 11, fontWeight: active ? 700 : 500, cursor: 'pointer',
+              border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
+              background: active ? 'var(--accent)' : 'transparent',
+              color: active ? '#fff' : 'var(--text-muted)',
+              transition: 'all 0.15s',
+            }}
+          >
+            <span style={{ fontSize: 12 }}>{p.icon}</span>
+            {p.name}
+            {p.name !== 'All' && <span style={{ fontSize: 10, opacity: 0.7 }}>{count}</span>}
+          </button>
+        );
+      })}
+
+      {/* Divider */}
+      {custom.length > 0 && <span style={{ width: 1, height: 16, background: 'var(--border)', flexShrink: 0 }} />}
+
+      {/* Custom presets */}
+      {custom.map((p, i) => {
+        const active = isActive(p.filter);
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+            <button
+              onClick={() => setFilter(p.filter)}
+              style={{
+                padding: '3px 9px', borderRadius: 99, fontSize: 11, fontWeight: active ? 700 : 500, cursor: 'pointer',
+                border: active ? '1px solid #8b5cf6' : '1px solid var(--border)',
+                background: active ? '#8b5cf6' : 'transparent',
+                color: active ? '#fff' : 'var(--text-muted)',
+              }}
+            >
+              ⚡ {p.name}
+            </button>
+            <button
+              onClick={() => removePreset(i)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 11, padding: '0 2px', lineHeight: 1 }}
+              title="Remove preset"
+            >✕</button>
+          </div>
+        );
+      })}
+
+      {/* Save current filter */}
+      {naming ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') addPreset(); if (e.key === 'Escape') { setNaming(false); setNewName(''); } }}
+            placeholder="Preset name…"
+            style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--text)', width: 120 }}
+          />
+          <button onClick={addPreset} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid #8b5cf6', background: '#8b5cf6', color: '#fff', cursor: 'pointer' }}>Save</button>
+          <button onClick={() => { setNaming(false); setNewName(''); }} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setNaming(true)}
+          style={{ flexShrink: 0, padding: '3px 9px', borderRadius: 99, fontSize: 11, border: '1px dashed var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+          title="Save current filter as preset"
+        >
+          + Save filter
+        </button>
+      )}
+    </div>
+  );
+}
 
 function downloadCSV() {
   fetch('/leads/export', { headers: { Authorization: `Bearer ${getToken()}` } })
@@ -235,6 +377,9 @@ export default function LeadList() {
 
         <span className="lead-count-badge">{filtered.length} / {leads.length}</span>
       </div>
+
+      {/* Filter presets bar */}
+      <FilterPresetsBar activeFilter={activeFilter} setFilter={setFilter} leads={leads} />
 
       {/* Bulk selection toolbar */}
       {selCount > 0 && (
