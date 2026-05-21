@@ -2520,6 +2520,55 @@ app.get('/analytics/sequence-performance', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Ideal Customer Profile (ICP) ──────────────────────────────────────────────
+app.get('/analytics/icp', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows: wonLeads } = await pool.query(`
+      SELECT category, state, city,
+             CASE WHEN fleet_size ~ '^[0-9]+$' THEN fleet_size::INT ELSE NULL END AS fleet_size_int
+      FROM leads WHERE user_id=$1 AND status='won'
+      LIMIT 100
+    `, [uid]);
+
+    if (wonLeads.length === 0) {
+      return res.json({ ok: true, hasData: false, wonCount: 0 });
+    }
+
+    // Top category
+    const catFreq: Record<string, number> = {};
+    wonLeads.forEach((r) => { if (r.category) catFreq[r.category] = (catFreq[r.category] || 0) + 1; });
+    const topCategory = Object.entries(catFreq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+    // Top state
+    const stateFreq: Record<string, number> = {};
+    wonLeads.forEach((r) => { if (r.state) stateFreq[r.state] = (stateFreq[r.state] || 0) + 1; });
+    const topState = Object.entries(stateFreq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+    // Fleet size median (from non-null)
+    const fleetSizes = wonLeads.map((r) => r.fleet_size_int).filter((n) => n !== null).sort((a, b) => a - b);
+    const medianFleet = fleetSizes.length > 0 ? fleetSizes[Math.floor(fleetSizes.length / 2)] : null;
+
+    // Fleet range (P25–P75)
+    const p25 = fleetSizes.length > 0 ? fleetSizes[Math.floor(fleetSizes.length * 0.25)] : null;
+    const p75 = fleetSizes.length > 0 ? fleetSizes[Math.floor(fleetSizes.length * 0.75)] : null;
+
+    res.json({
+      ok: true,
+      hasData: true,
+      wonCount: wonLeads.length,
+      topCategory,
+      topState,
+      medianFleetSize: medianFleet,
+      fleetRange: p25 !== null && p75 !== null ? { min: p25, max: p75 } : null,
+      categoryBreakdown: Object.entries(catFreq)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([cat, count]) => ({ cat, count, pct: Math.round((count / wonLeads.length) * 100) })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Sample carrier seeder (runs when companies table is empty)
 // ----------------------------------------------------------------------------
