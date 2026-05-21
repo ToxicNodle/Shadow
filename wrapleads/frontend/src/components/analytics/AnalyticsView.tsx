@@ -5,6 +5,144 @@ import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { CATEGORIES, STATUSES } from '../../api/types';
 
+// ── Activity Heatmap ──────────────────────────────────────────────────────────
+function ActivityHeatmap({ data }: { data: { day: string; count: number }[] }) {
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+
+  // Build a map of day → count for fast lookup
+  const countMap = new Map(data.map((d) => [d.day, d.count]));
+  const maxCount = Math.max(...data.map((d) => d.count), 1);
+
+  // Build 91-day grid: find the Sunday on or before 91 days ago
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  // Start from the Sunday of the first week
+  const startDay = new Date(today);
+  startDay.setDate(today.getDate() - 90);
+  startDay.setDate(startDay.getDate() - startDay.getDay()); // back to Sunday
+
+  const weeks: Date[][] = [];
+  let cur = new Date(startDay);
+  while (cur <= today) {
+    const week: Date[] = [];
+    for (let d = 0; d < 7; d++) {
+      week.push(new Date(cur));
+      cur.setDate(cur.getDate() + 1);
+    }
+    weeks.push(week);
+  }
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const DAYS = ['S','M','T','W','T','F','S'];
+
+  function cellColor(n: number): string {
+    if (n === 0) return 'var(--border)';
+    const intensity = Math.min(1, n / Math.max(maxCount * 0.75, 4));
+    const lightness = Math.round(55 - intensity * 30); // 55% → 25%
+    return `hsl(225, 70%, ${lightness}%)`;
+  }
+
+  function isoDay(d: Date): string {
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Month labels: one per week column when the week contains the 1st of a month
+  const monthLabels = weeks.map((w) => {
+    const hasFirst = w.some((d) => d.getDate() === 1);
+    if (hasFirst) {
+      const d = w.find((d) => d.getDate() === 1)!;
+      return MONTHS[d.getMonth()];
+    }
+    return null;
+  });
+
+  const totalActivity = data.reduce((s, d) => s + d.count, 0);
+  const activeDays = data.filter((d) => d.count > 0).length;
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Activity Calendar</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {totalActivity} touchpoints · {activeDays} active days (last 91 days)
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+        <div style={{ display: 'flex', gap: 3, alignItems: 'flex-start' }}>
+          {/* Day-of-week labels */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 18, marginRight: 4 }}>
+            {DAYS.map((d, i) => (
+              <div key={i} style={{ width: 10, height: 10, fontSize: 8, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {i % 2 === 1 ? d : ''}
+              </div>
+            ))}
+          </div>
+
+          {/* Weeks */}
+          {weeks.map((week, wi) => (
+            <div key={wi} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Month label */}
+              <div style={{ height: 14, fontSize: 9, color: 'var(--text-muted)', whiteSpace: 'nowrap', lineHeight: '14px' }}>
+                {monthLabels[wi] ?? ''}
+              </div>
+              {/* Day cells */}
+              {week.map((day, di) => {
+                const key = isoDay(day);
+                const count = countMap.get(key) ?? 0;
+                const isFuture = day > today;
+                return (
+                  <div
+                    key={di}
+                    style={{
+                      width: 10, height: 10, borderRadius: 2,
+                      background: isFuture ? 'transparent' : cellColor(count),
+                      cursor: count > 0 ? 'default' : 'default',
+                      position: 'relative',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (isFuture) return;
+                      const rect = (e.target as HTMLElement).getBoundingClientRect();
+                      setTooltip({
+                        x: rect.left + window.scrollX,
+                        y: rect.top + window.scrollY,
+                        text: `${count} touchpoint${count !== 1 ? 's' : ''} on ${day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+                      });
+                    }}
+                    onMouseLeave={() => setTooltip(null)}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div style={{
+          position: 'fixed', left: tooltip.x, top: tooltip.y - 32,
+          background: 'var(--bg-elev)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '4px 8px', fontSize: 11,
+          color: 'var(--text)', pointerEvents: 'none', zIndex: 9999,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)', whiteSpace: 'nowrap',
+        }}>
+          {tooltip.text}
+        </div>
+      )}
+
+      {/* Legend */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 10, justifyContent: 'flex-end' }}>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Less</span>
+        {[0, 1, 3, 5, 8].map((n) => (
+          <div key={n} style={{ width: 10, height: 10, borderRadius: 2, background: cellColor(n) }} />
+        ))}
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>More</span>
+      </div>
+    </div>
+  );
+}
+
 function PipelineNarrativeCard() {
   const [narrative, setNarrative] = useState<string | null>(null);
   const mut = useMutation({
@@ -139,7 +277,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals, atRisk } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals, atRisk, activityCalendar } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -678,6 +816,9 @@ export default function AnalyticsView() {
             </div>
           </div>
         )}
+
+        {/* ── Activity Heatmap ── */}
+        {activityCalendar && <ActivityHeatmap data={activityCalendar} />}
 
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />

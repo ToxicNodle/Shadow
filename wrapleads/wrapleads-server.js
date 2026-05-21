@@ -2329,6 +2329,16 @@ app.get('/analytics', authMiddleware, async (req, res) => {
        LIMIT 8
     `, [uid]);
 
+    const calendarR = await pool.query(`
+      SELECT (created_at AT TIME ZONE 'UTC')::DATE AS day,
+             COUNT(*)::INT AS count
+        FROM lead_activities
+       WHERE user_id = $1
+         AND created_at >= NOW() - INTERVAL '91 days'
+       GROUP BY day
+       ORDER BY day
+    `, [uid]);
+
     const byStatus = {};
     let totalLeads = 0;
     pipelineR.rows.forEach((r) => { byStatus[r.status] = r.count; totalLeads += r.count; });
@@ -2393,6 +2403,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         draftCount: quoteRevR.rows[0]?.draft_count ?? 0,
         pipelineValue: parseFloat(quoteRevR.rows[0]?.pipeline_value ?? '0'),
       },
+      activityCalendar: calendarR.rows.map((r) => ({ day: r.day, count: r.count })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

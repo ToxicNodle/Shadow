@@ -460,6 +460,8 @@ export const api = {
     velocity: { stage: string; avg_days: number; sample: number }[];
     byState: { state: string; count: number }[];
     referrals: { referred_by: string; referrals: number; won: number; active: number }[];
+    atRisk: { id: number; company: string; status: string; category: string; fleetSize: string; daysStale: number }[];
+    activityCalendar: { day: string; count: number }[];
   }>('/analytics'),
 
   // AI Mission Brief
