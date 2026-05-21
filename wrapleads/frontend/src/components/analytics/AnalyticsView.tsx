@@ -230,6 +230,115 @@ function BarRow({ label, value, max, color, count }: { label: string; value: num
   );
 }
 
+// ── Competitive Intelligence Card ────────────────────────────────────────────
+function CompetitorIntelCard({
+  competitors,
+  maxComp,
+}: {
+  competitors: { competitor: string; count: number }[];
+  maxComp: number;
+}) {
+  const [active, setActive] = useState<string | null>(null);
+  const [battleCards, setBattleCards] = useState<Record<string, { theirStrengths: string[]; ourAdvantages: string[]; talkTrack: string[]; closingMove: string }>>({});
+  const [loading, setLoading] = useState<string | null>(null);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function fetchStrategy(competitor: string) {
+    if (active === competitor) { setActive(null); return; }
+    setActive(competitor);
+    if (battleCards[competitor]) return; // cached
+    setLoading(competitor);
+    try {
+      const res = await api.getCounterStrategy(competitor);
+      setBattleCards((prev) => ({ ...prev, [competitor]: res.card }));
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'AI unavailable', 'error');
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Competitive Intelligence</div>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Click a competitor for AI battle card</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {competitors.map((c, i) => {
+          const pct = maxComp > 0 ? (c.count / maxComp) * 100 : 0;
+          const isOpen = active === c.competitor;
+          const card = battleCards[c.competitor];
+          const isLoading = loading === c.competitor;
+
+          return (
+            <div key={c.competitor} style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              {/* Competitor row */}
+              <button
+                onClick={() => fetchStrategy(c.competitor)}
+                style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 }}
+              >
+                <div style={{ width: 22, height: 22, borderRadius: 6, background: '#ef444422', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: '#ef4444' }}>{i + 1}</span>
+                </div>
+                <div style={{ flex: 1, textAlign: 'left' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>{c.competitor}</div>
+                  <div style={{ height: 4, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${pct}%`, background: '#ef4444', borderRadius: 99 }} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{c.count} loss{c.count !== 1 ? 'es' : ''}</div>
+                <div style={{ fontSize: 11, color: '#8b5cf6', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  {isLoading ? '…' : isOpen ? '▲ hide' : 'battle card ▼'}
+                </div>
+              </button>
+
+              {/* Battle card */}
+              {isOpen && (
+                <div style={{ padding: '0 12px 14px', borderTop: '1px solid var(--border)' }}>
+                  {isLoading && <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '10px 0' }}>Generating counter-strategy…</p>}
+                  {card && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
+                      {/* Their strengths */}
+                      <div style={{ background: '#ef444411', borderRadius: 8, padding: '10px 12px' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Their strengths</div>
+                        {(card.theirStrengths ?? []).map((s, j) => (
+                          <div key={j} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 4 }}>· {s}</div>
+                        ))}
+                      </div>
+                      {/* Our advantages */}
+                      <div style={{ background: '#10b98111', borderRadius: 8, padding: '10px 12px' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Your advantages</div>
+                        {(card.ourAdvantages ?? []).map((s, j) => (
+                          <div key={j} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 4 }}>· {s}</div>
+                        ))}
+                      </div>
+                      {/* Talk track */}
+                      <div style={{ gridColumn: '1 / -1', background: '#3b82f611', borderRadius: 8, padding: '10px 12px' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Talk Track</div>
+                        {(card.talkTrack ?? []).map((s, j) => (
+                          <div key={j} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 6, paddingLeft: 8, borderLeft: '2px solid #3b82f6' }}>{s}</div>
+                        ))}
+                      </div>
+                      {/* Closing move */}
+                      {card.closingMove && (
+                        <div style={{ gridColumn: '1 / -1', background: '#f59e0b11', borderRadius: 8, padding: '10px 12px' }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Closing Move</div>
+                          <div style={{ fontSize: 12, color: 'var(--text)', fontStyle: 'italic' }}>&ldquo;{card.closingMove}&rdquo;</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -653,22 +762,9 @@ export default function AnalyticsView() {
           </div>
         )}
 
-        {/* ── Competitor Leaderboard ── */}
+        {/* ── Competitive Intelligence ── */}
         {competitors && competitors.length > 0 && (
-          <div className="an-card">
-            <div className="an-card-title">Competitors You Lost To</div>
-            <div className="an-bar-list">
-              {competitors.map((c, i) => (
-                <BarRow
-                  key={c.competitor}
-                  label={`${i + 1}. ${c.competitor}`}
-                  value={c.count}
-                  max={maxComp}
-                  color="#ef4444"
-                />
-              ))}
-            </div>
-          </div>
+          <CompetitorIntelCard competitors={competitors} maxComp={maxComp} />
         )}
 
         {/* ── Top Leads to Work ── */}

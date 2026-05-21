@@ -488,6 +488,19 @@ export const api = {
       lead: { id: number; company: string };
     }>(`/leads/${leadId}/followup-recommendation`),
 
+  getCounterStrategy: (competitor: string) =>
+    authFetch<{
+      ok: boolean;
+      competitor: string;
+      lossCount: number;
+      card: {
+        theirStrengths: string[];
+        ourAdvantages: string[];
+        talkTrack: string[];
+        closingMove: string;
+      };
+    }>('/ai/counter-strategy', { method: 'POST', body: JSON.stringify({ competitor }) }),
+
   // Win/Loss capture
   captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
     authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),

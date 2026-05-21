@@ -5032,6 +5032,66 @@ app.get('/leads/:id/followup-recommendation', authMiddleware, async (req, res) =
   }
 });
 
+// ── AI Competitor Counter-Strategy ────────────────────────────────────────────
+// Generates a battle card for beating a named competitor.
+app.post('/ai/counter-strategy', authMiddleware, requireShopFlow, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  const uid = String(req.user.id);
+  const { competitor } = req.body || {};
+  if (!competitor) return res.status(400).json({ error: 'competitor required' });
+
+  try {
+    // Pull recent losses to this competitor for context
+    const lossR = await pool.query(
+      `SELECT l.company, l.category, a.notes
+         FROM lead_activities a
+         JOIN leads l ON l.id = a.lead_id AND l.user_id = $1
+        WHERE a.user_id = $1
+          AND a.metadata->>'competitor' ILIKE $2
+        ORDER BY a.created_at DESC LIMIT 10`,
+      [uid, `%${competitor}%`]
+    );
+
+    const losses = lossR.rows.map((r) => `- ${r.company} (${r.category}): ${r.notes || 'no notes'}`).join('\n') || 'No detailed loss data available yet.';
+
+    const prompt = `You are a vehicle wrap sales strategist. A wrap shop lost some deals to a competitor named "${competitor}".
+
+Recent losses to this competitor:
+${losses}
+
+Generate a concise competitive battle card in valid JSON with these exact keys:
+{
+  "theirStrengths": ["2-3 bullet strings about why clients might choose them"],
+  "ourAdvantages": ["2-3 bullet strings about genuine wrap shop advantages to emphasize"],
+  "talkTrack": ["3-4 specific sentences or questions to say on a sales call to reframe the comparison"],
+  "closingMove": "One powerful closing statement or offer to use when the prospect mentions this competitor"
+}
+Return ONLY the JSON, no other text.`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: 600,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) throw new Error(`Anthropic ${resp.status}`);
+    const ai = await resp.json();
+    const raw = ai.content?.[0]?.text ?? '{}';
+    let card;
+    try { card = JSON.parse(raw); } catch { card = {}; }
+
+    res.json({ ok: true, competitor, card, lossCount: lossR.rowCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Pipeline Narrative ─────────────────────────────────────────────────────
 app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
