@@ -4,12 +4,109 @@ import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { api } from '../../../api/client';
+import { winProbability, winProbabilityColor } from '../../../utils/scoring';
+import type { Lead } from '../../../api/types';
 import InfoTab from './InfoTab';
 import EmailTab from './EmailTab';
 import NotesTab from './NotesTab';
 import ActivityTab from './ActivityTab';
 import DesignStudioTab from './DesignStudioTab';
 import QuotesTab from './QuotesTab';
+
+// ── Deal Metrics Strip ────────────────────────────────────────────────────────
+// Conservative avg revenue per lead category (mirrors REV_EST in other files)
+const REV_EST: Record<string, number> = {
+  fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+  colorchange: 3500, racing: 40000, reatec: 5500, design: 3000,
+  wallgraphics: 2500, other: 2500,
+};
+
+// Active pipeline stages in order (excludes won/lost/cold)
+const PIPELINE_STAGES = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won'] as const;
+const STAGE_LABELS: Record<string, string> = {
+  new: 'New', contacted: 'Contacted', replied: 'Replied',
+  meeting: 'Meeting', proposal: 'Proposal', won: 'Won',
+};
+const STAGE_COLORS: Record<string, string> = {
+  new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9',
+  meeting: '#f59e0b', proposal: '#f97316', won: '#22c55e',
+};
+
+function DealMetricsStrip({ lead }: { lead: Lead }) {
+  const prob = winProbability(lead);
+  const probColor = winProbabilityColor(prob);
+  const dealEst = REV_EST[lead.category] ?? 2500;
+  const expectedVal = Math.round((prob / 100) * dealEst);
+  const daysInPipeline = lead.createdAt
+    ? Math.floor((Date.now() - new Date(lead.createdAt).getTime()) / 86_400_000)
+    : null;
+
+  // Stage progress indicator
+  const stageIdx = PIPELINE_STAGES.indexOf(lead.status as typeof PIPELINE_STAGES[number]);
+  const isActive = stageIdx >= 0;
+
+  function fmtK(n: number) {
+    return n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n.toLocaleString()}`;
+  }
+
+  if (lead.status === 'lost' || lead.status === 'cold') return null;
+
+  return (
+    <div style={{ padding: '8px 16px 4px', borderBottom: '1px solid var(--border-subtle)' }}>
+      {/* Pipeline stage progress */}
+      {isActive && (
+        <div style={{ display: 'flex', gap: 3, marginBottom: 8 }}>
+          {PIPELINE_STAGES.map((s, i) => {
+            const active = i <= stageIdx;
+            const current = i === stageIdx;
+            return (
+              <div key={s} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                <div style={{
+                  height: 3, width: '100%', borderRadius: 99,
+                  background: active ? (STAGE_COLORS[s] ?? 'var(--accent)') : 'var(--border)',
+                  transition: 'background 0.2s',
+                }} />
+                {current && (
+                  <span style={{ fontSize: 9, color: STAGE_COLORS[s], fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    {STAGE_LABELS[s]}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Metrics row */}
+      <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--text-muted)', paddingBottom: 6 }}>
+        <span>
+          Est. deal{' '}
+          <strong style={{ color: 'var(--text)' }}>{fmtK(dealEst)}</strong>
+        </span>
+        <span>·</span>
+        <span>
+          Win prob{' '}
+          <strong style={{ color: probColor }}>{prob}%</strong>
+        </span>
+        <span>·</span>
+        <span>
+          Expected{' '}
+          <strong style={{ color: '#10b981' }}>{fmtK(expectedVal)}</strong>
+        </span>
+        {daysInPipeline !== null && (
+          <>
+            <span>·</span>
+            <span style={{ marginLeft: 'auto' }}>
+              <strong style={{ color: daysInPipeline > 45 ? '#f59e0b' : 'var(--text)' }}>
+                {daysInPipeline}d
+              </strong>{' '}in pipeline
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 type Tab = 'info' | 'email' | 'quotes' | 'activity' | 'notes' | 'design';
 
@@ -158,6 +255,7 @@ export default function LeadDetail() {
           {lead.serverId && <PortalShareBtn leadServerId={lead.serverId} />}
         </div>
       </div>
+      <DealMetricsStrip lead={lead} />
 
       <div className="lead-detail-tabs">
         {(['info', 'email', 'quotes', 'activity', 'notes', 'design'] as Tab[]).map((t) => (
