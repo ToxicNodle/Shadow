@@ -467,6 +467,18 @@ export const api = {
   // AI Mission Brief
   getMissionBrief: () => authFetch<{ brief: string | null; reason?: string }>('/mission/brief'),
 
+  // AI Call Script
+  generateCallScript: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      script: {
+        opening: string;
+        pitch: string;
+        objections: { q: string; a: string }[];
+        close: string;
+      };
+    }>('/ai/call-script', { method: 'POST', body: JSON.stringify({ leadId }) }),
+
   // Win/Loss capture
   captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
     authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),
