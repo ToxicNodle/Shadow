@@ -38,18 +38,22 @@ export default function FilterRow() {
   const [minFleet, setMinFleet] = useState('');
   const [maxFleet, setMaxFleet] = useState('');
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState('wrap_score');
+  const [onlyWithPhone, setOnlyWithPhone] = useState(false);
   const [savePrompt, setSavePrompt] = useState(false);
   const [saveName, setSaveName] = useState('');
 
   function buildSearchParams(): CarrierSearchParams {
     return {
-      states:     states.length ? states : null,
-      industries: industries.length ? industries : null,
-      minFleet:   minFleet ? Number(minFleet) : null,
-      maxFleet:   maxFleet ? Number(maxFleet) : null,
-      query:      query || undefined,
-      limit:      25,
-      offset:     0,
+      states:       states.length ? states : null,
+      industries:   industries.length ? industries : null,
+      minFleet:     minFleet ? Number(minFleet) : null,
+      maxFleet:     maxFleet ? Number(maxFleet) : null,
+      query:        query || undefined,
+      sort,
+      onlyWithPhone: onlyWithPhone || undefined,
+      limit:        25,
+      offset:       0,
     };
   }
 
@@ -100,6 +104,8 @@ export default function FilterRow() {
     setMinFleet(p.minFleet);
     setMaxFleet(p.maxFleet);
     setQuery(p.query);
+    setSort('wrap_score');
+    setOnlyWithPhone(false);
     setCarrierOffset(0);
     searchMutation.mutate({
       states: p.states.length ? [...p.states] : null,
@@ -107,6 +113,7 @@ export default function FilterRow() {
       minFleet: p.minFleet ? Number(p.minFleet) : null,
       maxFleet: p.maxFleet ? Number(p.maxFleet) : null,
       query: p.query || undefined,
+      sort: 'wrap_score',
       limit: 25,
       offset: 0,
     });
@@ -175,6 +182,16 @@ export default function FilterRow() {
           />
         </div>
         <div className="field-group">
+          <label className="field-label">Sort By</label>
+          <select className="select" value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="wrap_score">Wrap Score ↓</option>
+            <option value="fleet_desc">Fleet Size ↓ (biggest first)</option>
+            <option value="fleet_asc">Fleet Size ↑ (smallest first)</option>
+            <option value="recent">Most Recently Reported</option>
+            <option value="name">Name A–Z</option>
+          </select>
+        </div>
+        <div className="field-group">
           <label className="field-label">Search</label>
           <input
             className="input"
@@ -183,6 +200,17 @@ export default function FilterRow() {
             onKeyDown={(e) => e.key === 'Enter' && runSearch()}
             placeholder="Company name, city…"
           />
+        </div>
+        <div className="field-group" style={{ alignSelf: 'end', display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 2 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            <input
+              type="checkbox"
+              checked={onlyWithPhone}
+              onChange={(e) => setOnlyWithPhone(e.target.checked)}
+              style={{ accentColor: 'var(--accent)', width: 14, height: 14 }}
+            />
+            Has phone
+          </label>
         </div>
         <div className="field-group" style={{ gridColumn: 'span 1' }}>
           <label className="field-label">&nbsp;</label>
