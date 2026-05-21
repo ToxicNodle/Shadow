@@ -169,6 +169,7 @@ export interface CarrierSearchParams {
   limit?: number;
   offset?: number;
   sort?: string;
+  onlyWithPhone?: boolean;
 }
 
 export interface CarrierSearchResult {
