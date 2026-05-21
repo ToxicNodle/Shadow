@@ -4,7 +4,7 @@ import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { api } from '../../../api/client';
-import { winProbability, winProbabilityColor } from '../../../utils/scoring';
+import { winProbability, winProbabilityColor, scoreBreakdown, scoreLead, SCORE_COLORS, scoreLabel } from '../../../utils/scoring';
 import type { Lead } from '../../../api/types';
 import InfoTab from './InfoTab';
 import EmailTab from './EmailTab';
@@ -108,6 +108,119 @@ function DealMetricsStrip({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Score Breakdown Modal ─────────────────────────────────────────────────────
+const SCORE_TIPS: Record<string, { condition: (l: Lead) => boolean; tip: string }[]> = {
+  fleet: [
+    { condition: (l) => !parseInt(l.fleetSize) || parseInt(l.fleetSize) < 5, tip: 'Ask about fleet size — even a rough number unlocks 6–30 pts.' },
+  ],
+  data: [
+    { condition: (l) => !l.email, tip: 'Add email address (+6 pts). Use Apollo enrichment to find it.' },
+    { condition: (l) => !l.contactName, tip: 'Add a contact name (+4 pts). Check LinkedIn or Google Maps.' },
+    { condition: (l) => !l.phone, tip: 'Add a phone number (+3 pts). Look up the company on Google.' },
+    { condition: (l) => !l.pitchAngle, tip: 'Set a pitch angle (+2 pts). Describe the wrap opportunity in one line.' },
+  ],
+  status: [
+    { condition: (l) => l.status === 'new', tip: 'Send first touch — moving to Contacted adds +10 pts.' },
+    { condition: (l) => l.status === 'contacted', tip: 'Get a reply — moving to Replied adds +15 pts and 2× close probability.' },
+    { condition: (l) => l.status === 'replied', tip: 'Book a meeting — adds +20 pts and puts you in the top-tier close window.' },
+  ],
+};
+
+function ScoreBreakdownModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+  const bd = scoreBreakdown(lead);
+  const prob = winProbability(lead);
+  const lbl = scoreLabel(bd.total);
+  const color = SCORE_COLORS[lbl];
+
+  // Collect applicable improvement tips
+  const tips: string[] = [];
+  for (const [key, checks] of Object.entries(SCORE_TIPS)) {
+    void key;
+    for (const { condition, tip } of checks) {
+      if (condition(lead)) tips.push(tip);
+    }
+  }
+
+  return (
+    <>
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 2000 }} onClick={onClose} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+        width: 380, maxHeight: '85vh', overflowY: 'auto',
+        background: 'var(--bg-elev)', border: '1px solid var(--border)',
+        borderRadius: 14, padding: 24, zIndex: 2001,
+        boxShadow: '0 20px 60px rgba(0,0,0,.6)',
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>Lead Health Score</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{lead.company}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1 }}>✕</button>
+        </div>
+
+        {/* Score gauge */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, padding: '14px 16px', background: 'var(--surface)', borderRadius: 10 }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: '50%',
+            border: `4px solid ${color}`,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color }}>{bd.total}</span>
+            <span style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{lbl}</span>
+          </div>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#10b981' }}>{prob}%</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>estimated close probability</div>
+          </div>
+        </div>
+
+        {/* Factor bars */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Score Breakdown</div>
+          {bd.factors.map((f) => {
+            const pct = f.max > 0 ? (f.points / f.max) * 100 : 0;
+            const barColor = pct >= 80 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444';
+            return (
+              <div key={f.label} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--text)' }}>{f.label}</span>
+                  <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{f.points}/{f.max}</span>
+                </div>
+                <div style={{ height: 6, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 99, transition: 'width 0.4s ease' }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Coaching tips */}
+        {tips.length > 0 && (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+              How to Improve
+            </div>
+            {tips.map((tip, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, fontSize: 12, color: 'var(--text)', lineHeight: 1.5 }}>
+                <span style={{ color: '#f59e0b', flexShrink: 0 }}>→</span>
+                {tip}
+              </div>
+            ))}
+          </div>
+        )}
+        {tips.length === 0 && (
+          <div style={{ fontSize: 12, color: '#10b981', textAlign: 'center', padding: '8px 0' }}>
+            ✓ This lead is fully optimized. Focus on moving through pipeline stages.
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 type Tab = 'info' | 'email' | 'quotes' | 'activity' | 'notes' | 'design';
 
 function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
@@ -204,6 +317,7 @@ export default function LeadDetail() {
     setQuickOpenTab: s.setQuickOpenTab,
   }));
   const [activeTab, setActiveTab] = useState<Tab>('info');
+  const [showScoreModal, setShowScoreModal] = useState(false);
 
   const lead = leads.find((l) => l.id === currentLeadId);
 
@@ -252,10 +366,25 @@ export default function LeadDetail() {
           {lead.city && lead.state && (
             <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{lead.city}, {lead.state}</span>
           )}
+          {/* Clickable score chip — opens breakdown modal */}
+          <button
+            onClick={() => setShowScoreModal(true)}
+            title="View score breakdown"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 8px', borderRadius: 99, border: 'none', cursor: 'pointer',
+              background: SCORE_COLORS[scoreLabel(scoreLead(lead))] + '22',
+              color: SCORE_COLORS[scoreLabel(scoreLead(lead))],
+              fontSize: 11, fontWeight: 700,
+            }}
+          >
+            {scoreLead(lead)} pts
+          </button>
           {lead.serverId && <PortalShareBtn leadServerId={lead.serverId} />}
         </div>
       </div>
       <DealMetricsStrip lead={lead} />
+      {showScoreModal && <ScoreBreakdownModal lead={lead} onClose={() => setShowScoreModal(false)} />}
 
       <div className="lead-detail-tabs">
         {(['info', 'email', 'quotes', 'activity', 'notes', 'design'] as Tab[]).map((t) => (
