@@ -143,6 +143,107 @@ function ActivityHeatmap({ data }: { data: { day: string; count: number }[] }) {
   );
 }
 
+// ── Sequence Performance Card ─────────────────────────────────────────────────
+const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const TONE_COLOR: Record<string, string> = {
+  professional: '#6366f1', casual: '#10b981', direct: '#f97316', local: '#f59e0b', unknown: '#94a3b8',
+};
+
+function SequencePerformanceCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['sequence-performance'],
+    queryFn: () => api.getSequencePerformance(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading || !data || (data.tones.length === 0 && data.byDow.length === 0)) return null;
+
+  const maxToneSent = Math.max(...data.tones.map((t) => t.sent), 1);
+  const maxDowSent = Math.max(...data.byDow.map((d) => d.sent), 1);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="an-card-title">Sequence Performance Intelligence</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
+        Which tones, days, and steps are converting your pipeline
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24 }}>
+
+        {/* Tone breakdown */}
+        {data.tones.length > 0 && (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 10 }}>
+              By Tone
+            </div>
+            {data.tones.map((t) => (
+              <div key={t.tone} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: TONE_COLOR[t.tone] ?? '#94a3b8', textTransform: 'capitalize' }}>{t.tone}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.progressRate}% reply rate</span>
+                </div>
+                <div style={{ height: 6, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.max(3, (t.sent / maxToneSent) * 100)}%`, background: TONE_COLOR[t.tone] ?? '#94a3b8', borderRadius: 99 }} />
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {t.sent} sent · {t.progressed} progressed · {t.won} won
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Best day of week */}
+        {data.byDow.length > 0 && (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 10 }}>
+              Best Day to Start
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 80 }}>
+              {DOW_LABELS.map((label, dow) => {
+                const entry = data.byDow.find((d) => d.dow === dow);
+                const rate = entry?.progressRate ?? 0;
+                const sent = entry?.sent ?? 0;
+                const maxRate = Math.max(...data.byDow.map((d) => d.progressRate), 1);
+                const h = maxRate > 0 ? Math.max(4, Math.round((rate / maxRate) * 70)) : 4;
+                const isBest = rate === Math.max(...data.byDow.map((d) => d.progressRate)) && sent > 0;
+                return (
+                  <div key={dow} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                    <div style={{ fontSize: 9, color: isBest ? '#6366f1' : 'var(--text-faint)', fontWeight: isBest ? 700 : 400 }}>
+                      {rate > 0 ? `${rate}%` : ''}
+                    </div>
+                    <div style={{ width: '100%', height: h, background: isBest ? '#6366f1' : (sent > 0 ? 'var(--border)' : 'transparent'), borderRadius: 3, transition: 'height 0.3s ease' }} />
+                    <div style={{ fontSize: 9, color: isBest ? '#6366f1' : 'var(--text-muted)', fontWeight: isBest ? 700 : 400 }}>{label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Step open rates */}
+        {data.byStep.length > 0 && (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 10 }}>
+              Email Open Rate by Step
+            </div>
+            {data.byStep.slice(0, 4).map((s) => (
+              <div key={s.day} style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text)' }}>Day {s.day} email</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.openRate}% open</span>
+                </div>
+                <div style={{ height: 5, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.max(2, s.openRate)}%`, background: '#3b82f6', borderRadius: 99 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PipelineNarrativeCard() {
   const [narrative, setNarrative] = useState<string | null>(null);
   const mut = useMutation({
@@ -915,6 +1016,9 @@ export default function AnalyticsView() {
 
         {/* ── Activity Heatmap ── */}
         {activityCalendar && <ActivityHeatmap data={activityCalendar} />}
+
+        {/* ── Sequence Performance Intelligence ── */}
+        <SequencePerformanceCard />
 
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />
