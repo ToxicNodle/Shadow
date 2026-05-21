@@ -443,6 +443,8 @@ export const api = {
   // Bulk lead update
   bulkUpdateLeads: (leadIds: number[], patch: { status?: string; category?: string }) =>
     authFetch<{ ok: boolean; updated: number }>('/leads/bulk-update', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, patch }) }),
+  bulkTagLeads: (leadIds: number[], tag: string, action: 'add' | 'remove' = 'add') =>
+    authFetch<{ ok: boolean; updated: number }>('/leads/bulk-tag', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds, tag, action }) }),
 
   // Analytics Dashboard
   getAnalytics: () => authFetch<{

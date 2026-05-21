@@ -1851,6 +1851,27 @@ app.post('/leads/bulk-update', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Bulk tag — add or remove a tag from multiple leads at once
+app.post('/leads/bulk-tag', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { lead_ids, tag, action = 'add' } = req.body || {};
+    if (!Array.isArray(lead_ids) || !lead_ids.length) return res.status(400).json({ error: 'lead_ids required' });
+    if (!tag || typeof tag !== 'string') return res.status(400).json({ error: 'tag required' });
+    const cleanTag = tag.trim().slice(0, 40);
+    if (!cleanTag) return res.status(400).json({ error: 'tag must not be empty' });
+
+    let sql;
+    if (action === 'remove') {
+      sql = `UPDATE leads SET tags = ARRAY_REMOVE(tags, $1), updated_at=NOW() WHERE user_id=$2 AND id = ANY($3::int[])`;
+    } else {
+      sql = `UPDATE leads SET tags = ARRAY(SELECT DISTINCT UNNEST(COALESCE(tags,'{}') || ARRAY[$1])), updated_at=NOW() WHERE user_id=$2 AND id = ANY($3::int[])`;
+    }
+    const { rowCount } = await pool.query(sql, [cleanTag, uid, lead_ids]);
+    res.json({ ok: true, updated: rowCount });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Inbound email reply webhook (Resend forwards inbound to this URL)
 app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, res) => {
   try {
