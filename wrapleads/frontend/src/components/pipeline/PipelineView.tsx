@@ -321,6 +321,138 @@ function RevenueForecastChart() {
 
 // ── Quick Win Predictor ───────────────────────────────────────────────────────
 
+// ── Deal Coach ────────────────────────────────────────────────────────────────
+// Rule-based coaching tips for active deals — no LLM, always accurate.
+
+const URGENCY_COLOR_DC: Record<string, string> = { critical: '#ef4444', high: '#f97316', medium: '#3b82f6' };
+
+interface CoachTip {
+  icon: string;
+  text: string;
+  urgency: 'critical' | 'high' | 'medium';
+}
+
+function buildTip(status: string, daysSince: number | null): CoachTip | null {
+  const d = daysSince;
+  if (status === 'replied') {
+    if (d !== null && d > 7)  return { icon: '⚡', text: `Hot moment fading — ${d}d since they replied. Book a call today before they forget you.`, urgency: 'critical' };
+    if (d !== null && d <= 2) return { icon: '🔥', text: `Just replied ${d || '<1'}d ago — strike while hot. Propose a meeting time now.`, urgency: 'high' };
+    return { icon: '📞', text: `Replied ${d ?? '?'}d ago. Perfect window — propose a quick Zoom or site walk.`, urgency: 'medium' };
+  }
+  if (status === 'meeting') {
+    if (d !== null && d > 10) return { icon: '⚠️', text: `Meeting was ${d}d ago with no proposal sent. Quote now or risk losing momentum.`, urgency: 'high' };
+    if (d !== null && d <= 3)  return { icon: '✏️', text: `Meeting ${d}d ago — build the proposal while it's fresh. Aim to send by EOD.`, urgency: 'medium' };
+    return { icon: '📋', text: `Post-meeting — time to build the quote. Momentum is on your side.`, urgency: 'medium' };
+  }
+  if (status === 'proposal') {
+    if (d !== null && d > 14) return { icon: '🤝', text: `Proposal out ${d}d with no reply. Try a different angle: send ROI numbers or a fleet case study.`, urgency: 'high' };
+    if (d !== null && d >= 4)  return { icon: '📬', text: `Proposal out ${d}d. Good time to check in — confirm they've had a chance to review.`, urgency: 'medium' };
+    return { icon: '✅', text: `Proposal fresh (${d ?? '?'}d old). Watch email open tracking — expect a reply soon.`, urgency: 'medium' };
+  }
+  if (status === 'contacted') {
+    if (d !== null && d > 21)  return { icon: '❄️', text: `${d}d of silence. Try a completely fresh subject line, or mark cold and revisit next quarter.`, urgency: 'high' };
+    if (d !== null && d > 8)   return { icon: '📧', text: `Last touch ${d}d ago. Send a follow-up with a new hook — seasonal angle or a recent case study.`, urgency: 'medium' };
+    return null; // Contacted within 8 days — no coaching needed yet
+  }
+  return null;
+}
+
+function DealCoachCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { leads } = useLeads();
+
+  const items = useMemo(() => {
+    return leads
+      .filter((l) => ['replied', 'meeting', 'proposal', 'contacted'].includes(l.status) && l.serverId)
+      .map((l) => {
+        const daysSince = l.lastContacted
+          ? Math.floor((Date.now() - new Date(l.lastContacted).getTime()) / 86_400_000)
+          : null;
+        const tip = buildTip(l.status, daysSince);
+        if (!tip) return null;
+        const rev = REV_PER_LEAD[l.category] ?? 1500;
+        return { lead: l, tip, rev };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => {
+        const urgencyRank = { critical: 0, high: 1, medium: 2 };
+        const uDiff = urgencyRank[a.tip.urgency] - urgencyRank[b.tip.urgency];
+        return uDiff !== 0 ? uDiff : b.rev - a.rev;
+      })
+      .slice(0, 6);
+  }, [leads]);
+
+  if (items.length === 0) return null;
+
+  const critCount = items.filter((i) => i.tip.urgency === 'critical').length;
+  const highCount = items.filter((i) => i.tip.urgency === 'high').length;
+
+  return (
+    <section className="pv-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div>
+          <h3 className="pv-card-title" style={{ margin: 0 }}>
+            Deal Coach
+            {critCount > 0 && (
+              <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: '#ef4444', background: '#ef444418', padding: '1px 6px', borderRadius: 99, verticalAlign: 'middle' }}>
+                {critCount} urgent
+              </span>
+            )}
+          </h3>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+            {items.length} active deals · {critCount + highCount} need your attention now
+          </p>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.map(({ lead, tip }) => {
+          const color = URGENCY_COLOR_DC[tip.urgency];
+          const stageColor: Record<string, string> = { replied: '#3b82f6', meeting: '#f59e0b', proposal: '#f97316', contacted: '#6366f1' };
+          const sc = stageColor[lead.status] ?? '#6b7280';
+          return (
+            <div
+              key={lead.serverId}
+              style={{
+                display: 'grid', gridTemplateColumns: '28px 1fr auto',
+                alignItems: 'center', gap: 12,
+                padding: '10px 14px', borderRadius: 9,
+                border: `1px solid ${color}22`,
+                background: tip.urgency === 'critical' ? `${color}06` : 'transparent',
+              }}
+            >
+              <span style={{ fontSize: 17, textAlign: 'center' }}>{tip.icon}</span>
+
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>
+                    {lead.company}
+                  </span>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: sc, background: `${sc}18`, padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>
+                    {lead.status}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>{tip.text}</div>
+              </div>
+
+              <button
+                onClick={() => onLeadClick(lead.serverId!)}
+                style={{
+                  fontSize: 11, fontWeight: 700, color,
+                  background: `${color}10`, border: `1px solid ${color}30`,
+                  borderRadius: 6, padding: '5px 12px', cursor: 'pointer',
+                  whiteSpace: 'nowrap', flexShrink: 0,
+                }}
+              >
+                Act →
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function QuickWinPredictor({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   const { leads } = useLeads();
   const [showAll, setShowAll] = useState(false);
@@ -563,6 +695,9 @@ export default function PipelineView() {
 
         {/* ── 90-Day Revenue Forecast ── */}
         <RevenueForecastChart />
+
+        {/* ── Deal Coach ── */}
+        <DealCoachCard onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
 
         {/* ── Quick Win Predictor ── */}
         <QuickWinPredictor onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
