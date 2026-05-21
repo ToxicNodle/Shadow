@@ -414,6 +414,85 @@ const CHANNEL_ICONS: Record<string, ReactNode> = {
   none:  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
 };
 
+// ── Follow-Up Recommender ─────────────────────────────────────────────────────
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function FollowUpRecommender({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const { data, isFetching } = useQuery({
+    queryKey: ['followup-rec', lead.serverId],
+    queryFn: () => api.getFollowUpRecommendation(lead.serverId!),
+    enabled: open && !!lead.serverId,
+    staleTime: 30 * 60_000,
+  });
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function schedule(dow: number, hour: number) {
+    if (!lead.serverId) return;
+    const today = new Date();
+    const diff = (dow - today.getDay() + 7) % 7 || 7;
+    const target = new Date(today);
+    target.setDate(today.getDate() + diff);
+    const iso = target.toISOString().slice(0, 10);
+    try {
+      await api.updateLead(lead.serverId, { followupDueAt: iso } as Partial<Lead>);
+      showToast(`Follow-up scheduled for ${DOW_SHORT[dow]} ${hour % 12 || 12}${hour >= 12 ? 'pm' : 'am'}`);
+    } catch {
+      showToast('Could not schedule — try again');
+    }
+  }
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, marginBottom: 12, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Best Time to Reach Out
+        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 11, fontWeight: 400 }}>
+          {open ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '0 14px 14px', borderTop: '1px solid var(--border)' }}>
+          {isFetching && <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 10 }}>Analyzing activity patterns…</p>}
+          {data && (
+            <>
+              <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: '10px 0 12px' }}>{data.summary}</p>
+              {data.dataSource === 'historical' && (
+                <div style={{ fontSize: 11, color: '#8b5cf6', marginBottom: 8 }}>
+                  ✦ Based on your win history ({data.slots[0]?.hits ?? 0}+ successful contacts)
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {data.slots.map((slot, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 8, background: i === 0 ? '#8b5cf6' : 'var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: i === 0 ? '#fff' : 'var(--text-muted)' }}>{DOW_SHORT[slot.dow]}</span>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{slot.label}</div>
+                      {slot.hits > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{slot.hits} positive responses</div>}
+                    </div>
+                    <button
+                      onClick={() => schedule(slot.dow, slot.hour)}
+                      style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid #8b5cf6', background: 'none', color: '#8b5cf6', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      Schedule
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AICoach({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
   const { data, isFetching, refetch } = useQuery({
@@ -877,6 +956,7 @@ export default function InfoTab({ lead }: Props) {
       </button>
 
       {lead.serverId && <AICoach lead={local} />}
+      {lead.serverId && <FollowUpRecommender lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {lead.serverId && <ProposalSection lead={local} />}
 

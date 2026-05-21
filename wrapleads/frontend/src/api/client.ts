@@ -479,6 +479,15 @@ export const api = {
       };
     }>('/ai/call-script', { method: 'POST', body: JSON.stringify({ leadId }) }),
 
+  getFollowUpRecommendation: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      slots: { dow: number; hour: number; hits: number; label: string }[];
+      summary: string;
+      dataSource: 'historical' | 'default';
+      lead: { id: number; company: string };
+    }>(`/leads/${leadId}/followup-recommendation`),
+
   // Win/Loss capture
   captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
     authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),
