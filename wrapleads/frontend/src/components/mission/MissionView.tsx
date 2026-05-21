@@ -738,7 +738,50 @@ function SeasonalRadar({ leads }: { leads: { category: string; status: string }[
   );
 }
 
-// ── Revenue Goal Bar ─────────────────────────────────────────────────────────
+// ── Revenue Goal Bar + Milestone Celebrations ────────────────────────────────
+
+const MILESTONES = [
+  { pct: 25, emoji: '🚀', label: '25% there!' },
+  { pct: 50, emoji: '🔥', label: 'Halfway to goal!' },
+  { pct: 75, emoji: '⚡', label: "75% — finish strong!" },
+  { pct: 100, emoji: '🏆', label: 'Goal crushed!' },
+];
+
+function GoalConfetti({ active }: { active: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (!active) return;
+    const canvas = ref.current; if (!canvas) return;
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    const colors = ['#f59e0b','#10b981','#6366f1','#8b5cf6','#ef4444','#ec4899','#fbbf24'];
+    type P = { x:number;y:number;vx:number;vy:number;color:string;w:number;h:number;rot:number;rs:number };
+    const pts: P[] = Array.from({ length: 120 }, () => ({
+      x: Math.random() * canvas.width, y: -10 - Math.random() * 200,
+      vx: (Math.random() - 0.5) * 5, vy: 1.5 + Math.random() * 3.5,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      w: 7 + Math.random() * 8, h: 4 + Math.random() * 4,
+      rot: Math.random() * 360, rs: (Math.random() - 0.5) * 9,
+    }));
+    let raf: number, t = 0;
+    function draw() {
+      ctx.clearRect(0, 0, canvas!.width, canvas!.height); t++;
+      for (const p of pts) {
+        p.x += p.vx; p.y += p.vy; p.vy += 0.06; p.rot += p.rs;
+        if (p.y > canvas!.height + 20) continue;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate((p.rot * Math.PI) / 180);
+        ctx.globalAlpha = Math.max(0, 1 - t / 190); ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); ctx.restore();
+      }
+      if (t < 220) raf = requestAnimationFrame(draw);
+      else { ctx.clearRect(0, 0, canvas!.width, canvas!.height); }
+    }
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [active]);
+  if (!active) return null;
+  return <canvas ref={ref} style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 9999 }} />;
+}
 
 function RevenueGoalBar({ revenue, wonCount, goal, onSetGoal }: {
   revenue: number;
@@ -747,44 +790,114 @@ function RevenueGoalBar({ revenue, wonCount, goal, onSetGoal }: {
   onSetGoal: () => void;
 }) {
   const now = new Date();
+  const monthKey = `${now.getFullYear()}-${now.getMonth()}`;
+  const storageKey = `wl_goal_milestones_${monthKey}`;
+  const streakKey = 'wl_goal_streak';
+
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeft = daysInMonth - now.getDate();
   const monthName = now.toLocaleString('default', { month: 'long' });
   const pct = goal > 0 ? Math.min(100, Math.round((revenue / goal) * 100)) : 0;
   const color = pct >= 100 ? '#10b981' : pct >= 60 ? '#f59e0b' : '#6366f1';
   const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  const showToast = useAppStore((s) => s.showToast);
+
+  const [confetti, setConfetti] = useState(false);
+  const [milestone, setMilestone] = useState<typeof MILESTONES[0] | null>(null);
+
+  // Streak: number of months with at least 1 won deal
+  const streak = (() => {
+    try { return parseInt(localStorage.getItem(streakKey) ?? '0') || 0; } catch { return 0; }
+  })();
+
+  // Milestone detection
+  useEffect(() => {
+    if (goal <= 0) return;
+    const triggered: number[] = (() => {
+      try { return JSON.parse(localStorage.getItem(storageKey) ?? '[]'); } catch { return []; }
+    })();
+    for (const m of MILESTONES) {
+      if (pct >= m.pct && !triggered.includes(m.pct)) {
+        triggered.push(m.pct);
+        localStorage.setItem(storageKey, JSON.stringify(triggered));
+        setMilestone(m);
+        setConfetti(true);
+        showToast(`${m.emoji} ${m.label}`, 'success');
+        setTimeout(() => setConfetti(false), 3500);
+        break;
+      }
+    }
+  }, [pct, goal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update streak when goal hit
+  useEffect(() => {
+    if (pct >= 100 && wonCount > 0) {
+      const lastStreak = localStorage.getItem(`${streakKey}_month`);
+      if (lastStreak !== monthKey) {
+        const newStreak = streak + 1;
+        localStorage.setItem(streakKey, String(newStreak));
+        localStorage.setItem(`${streakKey}_month`, monthKey);
+      }
+    }
+  }, [pct]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="revenue-goal-bar">
-      <div className="revenue-goal-left">
-        <span className="revenue-goal-month">{monthName}</span>
-        <span className="revenue-goal-days">{daysLeft}d left</span>
-      </div>
-      <div className="revenue-goal-center">
-        {goal > 0 ? (
-          <>
-            <div className="revenue-goal-track">
-              <div className="revenue-goal-fill" style={{ width: `${pct}%`, background: color }} />
-            </div>
-            <div className="revenue-goal-labels">
-              <span style={{ color }}>
-                {fmt(revenue)} closed
-                {pct >= 100 && ' 🎯'}
-              </span>
-              <span style={{ color: 'var(--text-muted)' }}>goal: {fmt(goal)}</span>
-            </div>
-          </>
-        ) : (
-          <button className="btn revenue-goal-set-btn" onClick={onSetGoal}>
-            Set monthly revenue goal →
-          </button>
+    <>
+      <GoalConfetti active={confetti} />
+      <div className="revenue-goal-bar" style={{ position: 'relative' }}>
+        {milestone && confetti && (
+          <div style={{
+            position: 'absolute', top: -38, left: '50%', transform: 'translateX(-50%)',
+            background: color, color: '#fff', fontSize: 12, fontWeight: 700,
+            padding: '5px 14px', borderRadius: 20, whiteSpace: 'nowrap',
+            animation: 'fadeInUp 0.3s ease', zIndex: 10,
+          }}>
+            {milestone.emoji} {milestone.label}
+          </div>
         )}
+        <div className="revenue-goal-left">
+          <span className="revenue-goal-month">{monthName}</span>
+          <span className="revenue-goal-days">{daysLeft}d left</span>
+          {streak > 0 && (
+            <span title={`${streak}-month win streak`} style={{ fontSize: 10, color: '#f59e0b', fontWeight: 700, marginTop: 2 }}>
+              🔥 {streak}mo streak
+            </span>
+          )}
+        </div>
+        <div className="revenue-goal-center">
+          {goal > 0 ? (
+            <>
+              <div className="revenue-goal-track" style={{ position: 'relative' }}>
+                <div className="revenue-goal-fill" style={{ width: `${pct}%`, background: color, transition: 'width 0.6s ease' }} />
+                {/* Milestone tick marks */}
+                {[25, 50, 75].map((p) => (
+                  <div key={p} style={{
+                    position: 'absolute', left: `${p}%`, top: 0, bottom: 0,
+                    width: 1, background: pct >= p ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.15)',
+                    pointerEvents: 'none',
+                  }} />
+                ))}
+              </div>
+              <div className="revenue-goal-labels">
+                <span style={{ color }}>
+                  {fmt(revenue)} closed · {pct}%
+                  {pct >= 100 && ' 🎯'}
+                </span>
+                <span style={{ color: 'var(--text-muted)' }}>goal: {fmt(goal)}</span>
+              </div>
+            </>
+          ) : (
+            <button className="btn revenue-goal-set-btn" onClick={onSetGoal}>
+              Set monthly revenue goal →
+            </button>
+          )}
+        </div>
+        <div className="revenue-goal-right">
+          <span className="revenue-goal-won-count">{wonCount}</span>
+          <span className="revenue-goal-won-label">won</span>
+        </div>
       </div>
-      <div className="revenue-goal-right">
-        <span className="revenue-goal-won-count">{wonCount}</span>
-        <span className="revenue-goal-won-label">won</span>
-      </div>
-    </div>
+    </>
   );
 }
 
