@@ -38,6 +38,23 @@ export default function LeadRow({ lead, selected, checked }: Props) {
   const probColor = prob !== null ? winProbabilityColor(prob) : undefined;
 
   const catColor = CAT_COLORS[lead.category] ?? '#6b7280';
+
+  // Lead momentum: how recently was this lead touched?
+  const daysSinceContact = lead.lastContacted
+    ? Math.floor((Date.now() - new Date(lead.lastContacted).getTime()) / 86_400_000)
+    : null;
+  const momentum = daysSinceContact === null ? 'cold'
+    : daysSinceContact <= 7 ? 'hot'
+    : daysSinceContact <= 21 ? 'warm'
+    : daysSinceContact <= 45 ? 'cool'
+    : 'cold';
+  const momentumDot = { hot: '#10b981', warm: '#f59e0b', cool: '#94a3b8', cold: 'var(--border)' }[momentum];
+  const momentumTitle = {
+    hot: `Active — contacted ${daysSinceContact}d ago`,
+    warm: `Warm — contacted ${daysSinceContact}d ago`,
+    cool: `Cooling — contacted ${daysSinceContact}d ago`,
+    cold: daysSinceContact === null ? 'Never contacted' : `Stale — ${daysSinceContact}d since last contact`,
+  }[momentum];
   const initials = lead.company
     ? lead.company.replace(/[^A-Za-z0-9 ]/g, '').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()
     : '?';
@@ -137,7 +154,11 @@ export default function LeadRow({ lead, selected, checked }: Props) {
       </div>
 
       {/* Score badge with breakdown popover */}
-      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div
+          style={{ width: 7, height: 7, borderRadius: '50%', background: momentumDot, flexShrink: 0 }}
+          title={momentumTitle}
+        />
         <div
           className="score-badge"
           style={{ background: `${color}1a`, color, border: `1px solid ${color}33` }}
