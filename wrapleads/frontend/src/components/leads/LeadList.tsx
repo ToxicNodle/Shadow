@@ -152,6 +152,104 @@ function FilterPresetsBar({ activeFilter, setFilter, leads }: {
   );
 }
 
+// ── Pipeline Health Banner ────────────────────────────────────────────────────
+interface HealthChip {
+  key: string;
+  icon: string;
+  label: string;
+  count: number;
+  color: string;
+  bg: string;
+  ctaLabel: string;
+  onCta: () => void;
+}
+
+function PipelineHealthBanner({
+  leads,
+  onFilter,
+  onBulkEmail,
+}: {
+  leads: { id: string; email?: string | null; phone?: string | null; status: string; followupDueAt?: string | null; lastContacted?: string | null; createdAt?: string | null }[];
+  onFilter: (patch: Partial<ActiveFilter>) => void;
+  onBulkEmail: () => void;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const now = Date.now();
+
+  const noEmail = leads.filter((l) => !l.email && !['won', 'lost'].includes(l.status));
+  const overdue  = leads.filter((l) => l.followupDueAt && l.followupDueAt < today && !['won', 'lost'].includes(l.status));
+  const stale    = leads.filter((l) => {
+    if (['won', 'lost', 'new', 'cold'].includes(l.status)) return false;
+    if (l.lastContacted) return now - new Date(l.lastContacted).getTime() > 30 * 86_400_000;
+    if (l.createdAt) return now - new Date(l.createdAt).getTime() > 45 * 86_400_000;
+    return false;
+  });
+  const neverTouched = leads.filter((l) => l.status === 'new');
+
+  const chips: HealthChip[] = [
+    noEmail.length > 0 && {
+      key: 'noEmail', icon: '✉', label: `${noEmail.length} missing email`, count: noEmail.length,
+      color: '#6366f1', bg: '#6366f114',
+      ctaLabel: 'Enrich →',
+      onCta: () => onFilter({ search: '' }),
+    },
+    overdue.length > 0 && {
+      key: 'overdue', icon: '⚠', label: `${overdue.length} overdue follow-up${overdue.length !== 1 ? 's' : ''}`, count: overdue.length,
+      color: '#ef4444', bg: '#ef444414',
+      ctaLabel: 'View →',
+      onCta: () => onFilter({ followupDue: true }),
+    },
+    stale.length > 0 && {
+      key: 'stale', icon: '🧊', label: `${stale.length} stale — 30d+ silent`, count: stale.length,
+      color: '#64748b', bg: '#64748b12',
+      ctaLabel: 'Re-engage →',
+      onCta: () => { onFilter({ status: 'all', search: '' }); onBulkEmail(); },
+    },
+    neverTouched.length > 0 && {
+      key: 'new', icon: '🌱', label: `${neverTouched.length} never contacted`, count: neverTouched.length,
+      color: '#10b981', bg: '#10b98112',
+      ctaLabel: 'Outreach →',
+      onCta: () => onFilter({ status: 'new' }),
+    },
+  ].filter(Boolean) as HealthChip[];
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+      padding: '6px 14px', borderBottom: '1px solid var(--border-subtle)',
+      background: 'var(--surface)',
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0 }}>Pipeline Health</span>
+      {chips.map((chip) => (
+        <div key={chip.key} style={{
+          display: 'flex', alignItems: 'center', gap: 5,
+          padding: '3px 8px', borderRadius: 99, fontSize: 11,
+          background: chip.bg, border: `1px solid ${chip.color}30`,
+        }}>
+          <span>{chip.icon}</span>
+          <span style={{ color: 'var(--text-muted)' }}>{chip.label}</span>
+          <button
+            onClick={chip.onCta}
+            style={{ fontSize: 10, fontWeight: 700, color: chip.color, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            {chip.ctaLabel}
+          </button>
+        </div>
+      ))}
+      <button
+        onClick={() => setDismissed(true)}
+        style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 13, lineHeight: 1, flexShrink: 0 }}
+        title="Dismiss"
+      >✕</button>
+    </div>
+  );
+}
+
 function downloadCSV() {
   fetch('/leads/export', { headers: { Authorization: `Bearer ${getToken()}` } })
     .then((r) => r.blob())
@@ -453,6 +551,8 @@ export default function LeadList() {
         </div>
       )}
 
+      <PipelineHealthBanner leads={leads} onFilter={setFilter} onBulkEmail={() => setBulkOutreachOpen(true)} />
+
       <div className="lead-list-header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <input
@@ -468,6 +568,7 @@ export default function LeadList() {
         <span>Status</span>
         <span>Email</span>
         <span>Category / Last</span>
+        <span>Win %</span>
         <span>Score</span>
         <span />
       </div>
