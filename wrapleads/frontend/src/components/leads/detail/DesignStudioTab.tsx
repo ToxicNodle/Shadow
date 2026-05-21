@@ -35,8 +35,8 @@ export default function DesignStudioTab({ lead }: Props) {
 
   // Send to client state
   const [showSend, setShowSend] = useState(false);
-  const [sendEmail, setSendEmail] = useState((lead as any).contactEmail || (lead as any).contact_email || '');
-  const [sendName, setSendName] = useState((lead as any).contactName || (lead as any).contact_name || '');
+  const [sendEmail, setSendEmail] = useState(lead.email || '');
+  const [sendName, setSendName] = useState(lead.contactName || '');
   const [sendNote, setSendNote] = useState('');
   const [sendLoading, setSendLoading] = useState(false);
   const [sendDone, setSendDone] = useState(false);

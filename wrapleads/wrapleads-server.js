@@ -286,6 +286,13 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'US'`);
   } catch (e) { console.warn('[migrate] Could not add country column:', e.message); }
+  // Indexes for leads (idempotent — safe to run on existing DBs)
+  try {
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_tags         ON leads USING gin (tags)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_company_trgm ON leads USING gin (company gin_trgm_ops)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_shop_token   ON users (shop_token)`);
+  } catch (e) { console.warn('[migrate] Could not create supplementary indexes:', e.message); }
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS email_tracking (
