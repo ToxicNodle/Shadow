@@ -143,6 +143,132 @@ function ActivityHeatmap({ data }: { data: { day: string; count: number }[] }) {
   );
 }
 
+// ── Pipeline Velocity Card ────────────────────────────────────────────────────
+const STAGE_COLORS_VEL: Record<string, string> = {
+  new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9',
+  meeting: '#f59e0b', proposal: '#f97316',
+};
+const STAGE_LABEL_VEL: Record<string, string> = {
+  new: 'New', contacted: 'Contacted', replied: 'Replied', meeting: 'Meeting', proposal: 'Proposal',
+};
+const STATUS_DOT: Record<string, string> = {
+  contacted: '#3b82f6', replied: '#0ea5e9', meeting: '#f59e0b', proposal: '#f97316',
+};
+
+function PipelineVelocityCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['pipeline-velocity'],
+    queryFn: () => api.getPipelineVelocity(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Pipeline Velocity</div>
+        <div className="skeleton" style={{ height: 80, borderRadius: 8, marginTop: 12 }} />
+      </div>
+    );
+  }
+
+  const vel = data?.velocity ?? [];
+  const withData = vel.filter((v) => v.avgDays !== null);
+  if (withData.length === 0) return null;
+
+  const maxDays = Math.max(...withData.map((v) => v.avgDays ?? 0), 1);
+
+  function fmtDays(d: number | null) {
+    if (d === null) return '—';
+    if (d < 1) return '<1d';
+    return `${d}d`;
+  }
+
+  const active = data?.activeWithPrediction ?? [];
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Pipeline Velocity</div>
+        {data?.totalAvgCycleDays != null && data.totalAvgCycleDays > 0 && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            avg cycle <strong style={{ color: 'var(--text)' }}>{data.totalAvgCycleDays}d</strong> new → proposal
+          </span>
+        )}
+        {data?.bottleneck && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', background: '#f59e0b14', padding: '2px 8px', borderRadius: 99 }}>
+            ⚠ Bottleneck: {STAGE_LABEL_VEL[data.bottleneck] ?? data.bottleneck}
+          </span>
+        )}
+      </div>
+
+      {/* Stage bars */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+        {vel.map((v) => {
+          const color = STAGE_COLORS_VEL[v.stage] ?? '#6b7280';
+          const isBottleneck = v.stage === data?.bottleneck;
+          const pct = v.avgDays !== null ? (v.avgDays / maxDays) * 100 : 0;
+          return (
+            <div key={v.stage} style={{ flex: '1 1 80px', minWidth: 64 }}>
+              <div style={{ fontSize: 10, color: isBottleneck ? '#f59e0b' : 'var(--text-muted)', fontWeight: isBottleneck ? 700 : 400, marginBottom: 4, textTransform: 'capitalize' }}>
+                {STAGE_LABEL_VEL[v.stage] ?? v.stage}
+                {isBottleneck && ' ⚠'}
+              </div>
+              <div style={{ height: 6, background: 'var(--border)', borderRadius: 99, overflow: 'hidden', marginBottom: 4 }}>
+                <div style={{
+                  height: '100%', width: `${pct}%`, borderRadius: 99,
+                  background: isBottleneck ? '#f59e0b' : color,
+                  transition: 'width 0.5s ease',
+                }} />
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: isBottleneck ? '#f59e0b' : color }}>
+                {fmtDays(v.avgDays)}
+              </div>
+              {v.sampleSize > 0 && (
+                <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{v.sampleSize} leads</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Predicted close dates for active deals */}
+      {active.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+            Predicted Close Dates — Active Deals
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+            {active.map((d) => {
+              const dot = STATUS_DOT[d.status] ?? '#6b7280';
+              return (
+                <div key={d.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '8px 10px', borderRadius: 8,
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                }}>
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0 }} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {d.company}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{d.status}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: d.daysToClose <= 14 ? '#10b981' : 'var(--text)' }}>
+                      {new Date(d.predictedClose).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{d.daysToClose}d out</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Sequence Performance Card ─────────────────────────────────────────────────
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const TONE_COLOR: Record<string, string> = {
@@ -1016,6 +1142,9 @@ export default function AnalyticsView() {
 
         {/* ── Activity Heatmap ── */}
         {activityCalendar && <ActivityHeatmap data={activityCalendar} />}
+
+        {/* ── Pipeline Velocity ── */}
+        <PipelineVelocityCard />
 
         {/* ── Sequence Performance Intelligence ── */}
         <SequencePerformanceCard />

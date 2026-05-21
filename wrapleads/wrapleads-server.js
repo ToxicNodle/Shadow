@@ -2569,6 +2569,86 @@ app.get('/analytics/icp', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Pipeline velocity: average days per stage, bottleneck detection, predicted closes
+app.get('/analytics/pipeline-velocity', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [{ rows: activities }, { rows: activeLeads }] = await Promise.all([
+      pool.query(`
+        SELECT la.lead_id, la.created_at, la.metadata,
+               l.created_at AS lead_created_at
+        FROM lead_activities la
+        JOIN leads l ON l.id = la.lead_id AND l.user_id = $1
+        WHERE la.type = 'status_changed'
+          AND la.metadata->>'from' IS NOT NULL
+          AND la.metadata->>'to'   IS NOT NULL
+        ORDER BY la.lead_id, la.created_at
+      `, [uid]),
+      pool.query(`
+        SELECT id, company, status
+        FROM leads WHERE user_id=$1 AND status IN ('contacted','replied','meeting','proposal')
+        ORDER BY created_at DESC LIMIT 20
+      `, [uid]),
+    ]);
+
+    // Group activities by lead
+    const byLead = {};
+    for (const a of activities) {
+      if (!byLead[a.lead_id]) byLead[a.lead_id] = [];
+      byLead[a.lead_id].push(a);
+    }
+
+    // Compute days spent in each 'from' stage per lead
+    const stageDays = {};
+    for (const leadActivities of Object.values(byLead)) {
+      for (let i = 0; i < leadActivities.length; i++) {
+        const curr = leadActivities[i];
+        const fromStage = curr.metadata.from;
+        if (!fromStage) continue;
+        const prevMs = i === 0
+          ? new Date(curr.lead_created_at).getTime()
+          : new Date(leadActivities[i - 1].created_at).getTime();
+        const currMs = new Date(curr.created_at).getTime();
+        const days = (currMs - prevMs) / 86_400_000;
+        if (days >= 0 && days <= 365) {
+          if (!stageDays[fromStage]) stageDays[fromStage] = [];
+          stageDays[fromStage].push(days);
+        }
+      }
+    }
+
+    const STAGES = ['new', 'contacted', 'replied', 'meeting', 'proposal'];
+    const velocity = STAGES.map((stage) => {
+      const days = (stageDays[stage] ?? []).slice().sort((a, b) => a - b);
+      const avg = days.length ? days.reduce((s, v) => s + v, 0) / days.length : null;
+      const median = days.length ? days[Math.floor(days.length / 2)] : null;
+      return {
+        stage,
+        avgDays: avg !== null ? Math.round(avg * 10) / 10 : null,
+        medianDays: median !== null ? Math.round(median * 10) / 10 : null,
+        sampleSize: days.length,
+      };
+    });
+
+    const withData = velocity.filter((v) => v.avgDays !== null);
+    const totalAvgCycleDays = Math.round(withData.reduce((s, v) => s + (v.avgDays ?? 0), 0));
+    const bottleneck = withData.length
+      ? withData.slice().sort((a, b) => (b.avgDays ?? 0) - (a.avgDays ?? 0))[0].stage
+      : null;
+
+    // Predicted close date for active deals
+    const avgByStage = Object.fromEntries(velocity.map((v) => [v.stage, v.avgDays ?? 7]));
+    const activeWithPrediction = activeLeads.map((l) => {
+      const idx = STAGES.indexOf(l.status);
+      const daysToClose = STAGES.slice(idx).reduce((s, st) => s + avgByStage[st], 0);
+      const predictedClose = new Date(Date.now() + daysToClose * 86_400_000).toISOString().slice(0, 10);
+      return { id: l.id, company: l.company, status: l.status, predictedClose, daysToClose: Math.round(daysToClose) };
+    }).sort((a, b) => a.daysToClose - b.daysToClose).slice(0, 8);
+
+    res.json({ ok: true, velocity, bottleneck, totalAvgCycleDays, activeWithPrediction });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Sample carrier seeder (runs when companies table is empty)
 // ----------------------------------------------------------------------------
