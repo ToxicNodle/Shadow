@@ -714,6 +714,108 @@ function CompetitorIntelCard({
   );
 }
 
+const ICP_CAT_LABELS: Record<string, string> = {
+  fleet: 'Fleet Wraps', dinoc: 'DI-NOC', gc_referral: 'GC Referral',
+  construction: 'Construction', colorchange: 'Color Change', racing: 'Motorsport',
+  reatec: 'Rea-Tec', design: 'Design / Arch', wallgraphics: 'Wall Graphics',
+};
+const ICP_CAT_COLORS: Record<string, string> = {
+  fleet: '#3b82f6', dinoc: '#8b5cf6', gc_referral: '#f59e0b',
+  construction: '#f97316', colorchange: '#ec4899', racing: '#ef4444',
+  reatec: '#a855f7', design: '#06b6d4', wallgraphics: '#14b8a6',
+};
+
+function ICPCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['icp'],
+    queryFn: () => api.getICP(),
+    staleTime: 10 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card">
+        <div className="an-card-title">Ideal Customer Profile</div>
+        <div className="skeleton" style={{ height: 100, borderRadius: 8, marginTop: 12 }} />
+      </div>
+    );
+  }
+
+  if (!data?.ok || !data.hasData || (data.categoryBreakdown?.length ?? 0) === 0) return null;
+
+  const topColor = ICP_CAT_COLORS[data.topCategory ?? ''] ?? '#6366f1';
+
+  return (
+    <div className="an-card">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Ideal Customer Profile</div>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          derived from {data.wonCount} won deal{data.wonCount !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      {/* Spotlight */}
+      <div style={{
+        background: `${topColor}10`, border: `1px solid ${topColor}28`,
+        borderRadius: 10, padding: '12px 14px', marginBottom: 14,
+        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12,
+      }}>
+        {data.topCategory && (
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Top Vertical</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: topColor }}>
+              {ICP_CAT_LABELS[data.topCategory] ?? data.topCategory}
+            </div>
+          </div>
+        )}
+        {data.topState && (
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Best Market</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>{data.topState}</div>
+          </div>
+        )}
+        {data.medianFleetSize && (
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Median Fleet</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>{data.medianFleetSize} units</div>
+          </div>
+        )}
+        {data.fleetRange && (
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Sweet Spot</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>
+              {data.fleetRange.min}–{data.fleetRange.max} trucks
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Category breakdown */}
+      {data.categoryBreakdown?.map((b) => {
+        const color = ICP_CAT_COLORS[b.cat] ?? '#6b7280';
+        return (
+          <div key={b.cat} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', flex: 1 }}>
+              {ICP_CAT_LABELS[b.cat] ?? b.cat}
+            </div>
+            <div style={{ flex: 2, height: 6, background: 'var(--surface-hover)', borderRadius: 99, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${b.pct}%`, background: color, borderRadius: 99, opacity: 0.7 }} />
+            </div>
+            <div style={{ width: 30, fontSize: 11, fontWeight: 700, color, textAlign: 'right', flexShrink: 0 }}>
+              {b.pct}%
+            </div>
+          </div>
+        );
+      })}
+
+      <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 10, marginBottom: 0 }}>
+        Use Discover to find more companies matching this profile.
+      </p>
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -1400,6 +1502,9 @@ export default function AnalyticsView() {
 
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />
+
+        {/* ── Ideal Customer Profile ── */}
+        <ICPCard />
 
         {/* ── Customer Lifetime Value ── */}
         {topCustomers && topCustomers.length > 0 && (
