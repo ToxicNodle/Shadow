@@ -4,6 +4,100 @@ import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 
+// ── Email Engagement Timeline ─────────────────────────────────────────────────
+function EmailEngagementTimeline({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const { data, isFetching } = useQuery({
+    queryKey: ['email-engagement', lead.serverId],
+    queryFn: () => api.getEmailEngagement(lead.serverId!),
+    enabled: open && !!lead.serverId,
+    staleTime: 60_000,
+  });
+
+  const emails = data?.emails ?? [];
+  const totalOpens = emails.reduce((s, e) => s + (e.open_count ?? 0), 0);
+  const openedCount = emails.filter((e) => e.open_count > 0).length;
+
+  function timeAgo(ts: string) {
+    const diff = Date.now() - new Date(ts).getTime();
+    const h = Math.floor(diff / 3_600_000);
+    if (h < 1) return `${Math.floor(diff / 60_000)}m ago`;
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  }
+
+  function heatColor(count: number) {
+    if (count === 0) return 'var(--border)';
+    if (count === 1) return '#3b82f6';
+    if (count <= 3) return '#f59e0b';
+    return '#ef4444';
+  }
+
+  if (!lead.serverId) return null;
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, marginBottom: 12, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        Email Engagement
+        {emails.length > 0 && (
+          <span style={{ fontSize: 11, fontWeight: 400, color: totalOpens > 0 ? '#3b82f6' : 'var(--text-muted)', marginLeft: 4 }}>
+            {openedCount}/{emails.length} opened · {totalOpens} total opens
+          </span>
+        )}
+        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 11, fontWeight: 400 }}>
+          {open ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '0 14px 14px', borderTop: '1px solid var(--border)' }}>
+          {isFetching && <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 10 }}>Loading…</p>}
+          {!isFetching && emails.length === 0 && (
+            <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 10 }}>No tracked emails sent yet. Use the Send Email tab — tracking is automatic.</p>
+          )}
+          {emails.map((e) => (
+            <div key={e.token} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+              {/* Open heat dot */}
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: heatColor(e.open_count), flexShrink: 0 }} title={`${e.open_count} opens`} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {e.subject || '(no subject)'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
+                  Sent {timeAgo(e.created_at)}
+                  {e.opened_at && ` · First opened ${timeAgo(e.opened_at)}`}
+                </div>
+              </div>
+              <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                {e.open_count > 0 ? (
+                  <span style={{ fontSize: 12, fontWeight: 700, color: heatColor(e.open_count) }}>
+                    {e.open_count}×
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>not opened</span>
+                )}
+              </div>
+            </div>
+          ))}
+          {emails.length > 0 && (
+            <div style={{ display: 'flex', gap: 12, marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+              {[['var(--border)', 'Not opened'], ['#3b82f6', '1 open'], ['#f59e0b', '2–3 opens'], ['#ef4444', '4+ opens (hot)']].map(([c, l]) => (
+                <span key={l as string} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: c as string, display: 'inline-block' }} />{l}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   lead: Lead;
 }
@@ -254,6 +348,9 @@ export default function EmailTab({ lead }: Props) {
 
   return (
     <div>
+      {/* Email engagement tracking */}
+      <EmailEngagementTimeline lead={lead} />
+
       {/* Mode tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 14, background: 'var(--bg-input)', borderRadius: 8, padding: 4 }}>
         {(['single', 'sequence', 'templates'] as TabMode[]).map((m) => (
