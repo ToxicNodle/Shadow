@@ -3,10 +3,12 @@ import type { ReactNode } from 'react';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import { scoreLead, scoreLabel } from '../../utils/scoring';
+import { api } from '../../api/client';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface CmdItem {
   id: string;
-  group: 'lead' | 'action' | 'nav' | 'filter';
+  group: 'lead' | 'recent' | 'overdue' | 'status' | 'action' | 'nav' | 'filter';
   label: string;
   sub?: string;
   icon: ReactNode;
@@ -15,37 +17,152 @@ interface CmdItem {
   action: () => void;
 }
 
+// ─── Recent leads localStorage helpers ───────────────────────────────────────
+function getRecentIds(): string[] {
+  try { return JSON.parse(localStorage.getItem('wl_recent_leads') || '[]'); } catch { return []; }
+}
+function pushRecentId(id: string) {
+  const next = [id, ...getRecentIds().filter((x) => x !== id)].slice(0, 6);
+  localStorage.setItem('wl_recent_leads', JSON.stringify(next));
+}
+
+// ─── Status-change command parser ("won Acme", "replied Jones Trucking") ─────
+const STATUS_CMDS: Record<string, string> = {
+  won: 'won', lost: 'lost', replied: 'replied',
+  contacted: 'contacted', proposal: 'proposal', meeting: 'meeting', new: 'new',
+};
+const STATUS_LABEL: Record<string, string> = {
+  won: 'Won', lost: 'Lost', replied: 'Replied',
+  contacted: 'Contacted', proposal: 'Proposal Sent', meeting: 'Meeting Set', new: 'New',
+};
+function parseStatusCmd(q: string): { status: string; search: string } | null {
+  const parts = q.split(' ');
+  const cmd = STATUS_CMDS[parts[0]];
+  if (!cmd || parts.length < 2) return null;
+  return { status: cmd, search: parts.slice(1).join(' ').toLowerCase() };
+}
+
 export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const { leads } = useLeads();
   const store = useAppStore();
+  const qc = useQueryClient();
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   const q = query.trim().toLowerCase();
 
-  const leadItems: CmdItem[] = leads
-    .filter((l) => {
-      if (!q) return true;
-      return [l.company, l.contactName, l.email, l.city, l.state].join(' ').toLowerCase().includes(q);
-    })
-    .sort((a, b) => scoreLead(b) - scoreLead(a))
-    .slice(0, q ? 7 : 4)
-    .map((l) => {
-      const s = scoreLead(l);
-      const lbl = scoreLabel(s);
-      return {
-        id: `lead:${l.id}`,
-        group: 'lead' as const,
-        label: l.company,
-        sub: [l.contactName, [l.city, l.state].filter(Boolean).join(', ')].filter(Boolean).join(' · '),
-        icon: '◎',
-        badge: { text: String(s), cls: `score-badge score-${lbl}` },
-        action: () => { store.setCurrentLeadId(l.id); store.setMode('leads'); onClose(); },
-      };
-    });
+  // ── Recent leads (shown when query is empty) ──────────────────────────────
+  const recentIds = getRecentIds();
+  const recentItems: CmdItem[] = !q
+    ? recentIds
+        .map((rid) => leads.find((l) => String(l.id) === rid))
+        .filter(Boolean)
+        .slice(0, 5)
+        .map((l) => {
+          const s = scoreLead(l!);
+          const lbl = scoreLabel(s);
+          return {
+            id: `recent:${l!.id}`,
+            group: 'recent' as const,
+            label: l!.company,
+            sub: [l!.contactName, [l!.city, l!.state].filter(Boolean).join(', ')].filter(Boolean).join(' · '),
+            icon: '◴',
+            badge: { text: String(s), cls: `score-badge score-${lbl}` },
+            action: () => {
+              pushRecentId(String(l!.id));
+              store.setCurrentLeadId(l!.id);
+              store.setMode('leads');
+              onClose();
+            },
+          };
+        })
+    : [];
+
+  // ── Overdue leads (shown when query is empty) ─────────────────────────────
+  const now = Date.now();
+  const overdueItems: CmdItem[] = !q
+    ? leads
+        .filter((l) => l.followupDueAt && new Date(l.followupDueAt).getTime() < now && !['won', 'lost'].includes(l.status))
+        .sort((a, b) => new Date(a.followupDueAt!).getTime() - new Date(b.followupDueAt!).getTime())
+        .slice(0, 4)
+        .map((l) => {
+          const daysAgo = Math.floor((now - new Date(l.followupDueAt!).getTime()) / 86_400_000);
+          return {
+            id: `overdue:${l.id}`,
+            group: 'overdue' as const,
+            label: l.company,
+            sub: `Follow-up ${daysAgo === 0 ? 'due today' : `${daysAgo}d overdue`} · ${l.status}`,
+            icon: (
+              <svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" width="14" height="14">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+            ),
+            action: () => {
+              pushRecentId(String(l.id));
+              store.setCurrentLeadId(l.id);
+              store.setMode('leads');
+              onClose();
+            },
+          };
+        })
+    : [];
+
+  // ── Status-change commands ─────────────────────────────────────────────────
+  const statusCmd = q ? parseStatusCmd(q) : null;
+  const statusItems: CmdItem[] = statusCmd
+    ? leads
+        .filter((l) => l.company.toLowerCase().includes(statusCmd.search) && l.status !== statusCmd.status)
+        .slice(0, 5)
+        .map((l) => ({
+          id: `status:${l.id}:${statusCmd.status}`,
+          group: 'status' as const,
+          label: `Mark "${l.company}" as ${STATUS_LABEL[statusCmd.status] ?? statusCmd.status}`,
+          sub: `Currently: ${l.status} · ${[l.city, l.state].filter(Boolean).join(', ')}`,
+          icon: (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          ),
+          action: async () => {
+            await api.updateLead(l.id, { status: statusCmd.status as never });
+            qc.invalidateQueries({ queryKey: ['leads'] });
+            store.showToast(`${l.company} → ${STATUS_LABEL[statusCmd.status]}`);
+            onClose();
+          },
+        }))
+    : [];
+
+  // ── Regular lead search ────────────────────────────────────────────────────
+  const leadItems: CmdItem[] = !statusCmd
+    ? leads
+        .filter((l) => {
+          if (!q) return true;
+          return [l.company, l.contactName, l.email, l.city, l.state].join(' ').toLowerCase().includes(q);
+        })
+        .sort((a, b) => scoreLead(b) - scoreLead(a))
+        .slice(0, q ? 7 : 4)
+        .map((l) => {
+          const s = scoreLead(l);
+          const lbl = scoreLabel(s);
+          return {
+            id: `lead:${l.id}`,
+            group: 'lead' as const,
+            label: l.company,
+            sub: [l.contactName, [l.city, l.state].filter(Boolean).join(', ')].filter(Boolean).join(' · '),
+            icon: '◎',
+            badge: { text: String(s), cls: `score-badge score-${lbl}` },
+            action: () => {
+              pushRecentId(String(l.id));
+              store.setCurrentLeadId(l.id);
+              store.setMode('leads');
+              onClose();
+            },
+          };
+        })
+    : [];
 
   const ACTIONS: CmdItem[] = [
     { id: 'a:add',       group: 'action', label: 'Add Lead',          sub: 'Create a new lead manually',              icon: '+',  action: () => { store.setAddLeadOpen(true); onClose(); } },
@@ -86,7 +203,11 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const visNav = filt(NAV_ITEMS);
   const visActions = filt(ACTIONS);
   const visFilters = filt(FILTERS);
-  const allItems = [...leadItems, ...visNav, ...visActions, ...visFilters];
+
+  // When status command is active, only show status items + suppress lead search
+  const allItems = statusCmd
+    ? [...statusItems, ...visNav, ...visActions, ...visFilters]
+    : [...recentItems, ...overdueItems, ...leadItems, ...visNav, ...visActions, ...visFilters];
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
@@ -103,11 +224,11 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function renderGroup(items: CmdItem[], startIdx: number, title: string) {
+  function renderGroup(items: CmdItem[], startIdx: number, title: string, titleColor?: string) {
     if (items.length === 0) return null;
     return (
       <>
-        <div className="cmd-group-label">{title}</div>
+        <div className="cmd-group-label" style={titleColor ? { color: titleColor } : undefined}>{title}</div>
         {items.map((item, i) => {
           const idx = startIdx + i;
           return (
@@ -129,6 +250,19 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     );
   }
 
+  const overdueCount = leads.filter((l) =>
+    l.followupDueAt && new Date(l.followupDueAt).getTime() < now && !['won', 'lost'].includes(l.status)
+  ).length;
+
+  let offset = 0;
+  const recentOffset = offset; offset += recentItems.length;
+  const overdueOffset = offset; offset += overdueItems.length;
+  const leadOffset = offset; offset += leadItems.length;
+  const statusOffset = offset; offset += statusItems.length;
+  const navOffset = offset; offset += visNav.length;
+  const actionOffset = offset; offset += visActions.length;
+  const filterOffset = offset;
+
   return (
     <div className="cmd-backdrop" onMouseDown={onClose}>
       <div className="cmd-panel" onMouseDown={(e) => e.stopPropagation()}>
@@ -143,7 +277,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
             value={query}
             onChange={(e) => { setQuery(e.target.value); setCursor(0); }}
             onKeyDown={onKeyDown}
-            placeholder="Search leads, run actions…"
+            placeholder={overdueCount > 0 ? `${overdueCount} overdue · Search or try "won Acme"…` : 'Search leads, run actions, try "won Acme"…'}
             autoComplete="off"
             spellCheck={false}
           />
@@ -161,16 +295,30 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
           {allItems.length === 0 && (
             <div className="cmd-no-results">No results for "{query}"</div>
           )}
-          {renderGroup(leadItems, 0, q ? 'Leads' : 'Top Leads')}
-          {renderGroup(visNav, leadItems.length, 'Navigate')}
-          {renderGroup(visActions, leadItems.length + visNav.length, 'Actions')}
-          {renderGroup(visFilters, leadItems.length + visNav.length + visActions.length, 'Filters')}
+          {statusCmd ? (
+            <>
+              {renderGroup(statusItems, statusOffset, `Mark as ${STATUS_LABEL[statusCmd.status] ?? statusCmd.status}`)}
+              {renderGroup(visNav, navOffset, 'Navigate')}
+              {renderGroup(visActions, actionOffset, 'Actions')}
+              {renderGroup(visFilters, filterOffset, 'Filters')}
+            </>
+          ) : (
+            <>
+              {renderGroup(recentItems, recentOffset, 'Recent')}
+              {renderGroup(overdueItems, overdueOffset, 'Overdue Follow-ups', '#ef4444')}
+              {renderGroup(leadItems, leadOffset, q ? 'Leads' : 'Top Leads')}
+              {renderGroup(visNav, navOffset, 'Navigate')}
+              {renderGroup(visActions, actionOffset, 'Actions')}
+              {renderGroup(visFilters, filterOffset, 'Filters')}
+            </>
+          )}
         </div>
 
         <div className="cmd-footer">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
           <span><kbd>↵</kbd> select</span>
           <span><kbd>1</kbd>–<kbd>8</kbd> switch view</span>
+          {overdueCount > 0 && <span style={{ color: '#ef4444', fontWeight: 600 }}>{overdueCount} overdue</span>}
           <span><kbd>esc</kbd> dismiss</span>
         </div>
       </div>
