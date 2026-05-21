@@ -763,6 +763,7 @@ export default function AnalyticsView() {
 
   const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals, atRisk, activityCalendar } = data;
   const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
+  const maxRevTrend = Math.max(...wonTrend.map((t) => t.revenue), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
   const maxComp = Math.max(...(competitors ?? []).map((c) => c.count), 1);
@@ -907,21 +908,40 @@ export default function AnalyticsView() {
 
         {/* ── Won Trend ── */}
         <div className="an-card">
-          <div className="an-card-title">Deals Won — Last 6 Months</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div className="an-card-title" style={{ marginBottom: 0 }}>Revenue Won — Last 6 Months</div>
+            {wonTrend.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                {wonTrend.reduce((s, t) => s + t.won, 0)} deals · {(() => {
+                  const total = wonTrend.reduce((s, t) => s + t.revenue, 0);
+                  return total >= 1_000_000 ? `$${(total / 1_000_000).toFixed(1)}M` : `$${Math.round(total / 1_000)}K`;
+                })()} est.
+              </div>
+            )}
+          </div>
           {wonTrend.length === 0 ? (
             <div className="an-empty">No won deals yet — keep pushing.</div>
           ) : (
             <div className="an-trend-bars">
-              {wonTrend.map((t) => (
-                <div key={t.month} className="an-trend-col">
-                  <div className="an-trend-val">{t.won}</div>
-                  <div
-                    className="an-trend-bar"
-                    style={{ height: `${Math.max(4, Math.round((t.won / maxTrend) * 80))}px` }}
-                  />
-                  <div className="an-trend-label">{t.month}</div>
-                </div>
-              ))}
+              {wonTrend.map((t) => {
+                const revLabel = t.revenue >= 1000
+                  ? `$${Math.round(t.revenue / 1000)}K`
+                  : `$${t.revenue}`;
+                return (
+                  <div key={t.month} className="an-trend-col" title={`${t.won} deal${t.won !== 1 ? 's' : ''} · ${revLabel} est.`}>
+                    <div className="an-trend-val" style={{ fontSize: 10 }}>{revLabel}</div>
+                    <div
+                      className="an-trend-bar"
+                      style={{
+                        height: `${Math.max(4, Math.round((t.revenue / maxRevTrend) * 80))}px`,
+                        background: 'linear-gradient(to top, var(--accent), #6366f1cc)',
+                      }}
+                    />
+                    <div className="an-trend-label">{t.month}</div>
+                    <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 1 }}>{t.won}w</div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
