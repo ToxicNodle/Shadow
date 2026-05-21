@@ -591,6 +591,16 @@ export const api = {
       categoryBreakdown: { cat: string; count: number; pct: number }[];
     }>('/analytics/icp'),
 
+  // Pipeline velocity analytics
+  getPipelineVelocity: () =>
+    authFetch<{
+      ok: boolean;
+      velocity: { stage: string; avgDays: number | null; medianDays: number | null; sampleSize: number }[];
+      bottleneck: string | null;
+      totalAvgCycleDays: number;
+      activeWithPrediction: { id: number; company: string; status: string; predictedClose: string; daysToClose: number }[];
+    }>('/analytics/pipeline-velocity'),
+
   // Sequence performance analytics
   getSequencePerformance: () =>
     authFetch<{
