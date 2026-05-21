@@ -292,6 +292,8 @@ export default function LeadList() {
   const [seqStatus, setSeqStatus] = useState<'idle' | 'running' | 'done'>('idle');
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [bulkTagInput, setBulkTagInput] = useState('');
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -313,6 +315,11 @@ export default function LeadList() {
     mutationFn: ({ ids, status }: { ids: number[]; status: string }) =>
       api.bulkUpdateLeads(ids, { status }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); clearLeadSelection(); setBulkStatusOpen(false); },
+  });
+
+  const bulkTagMut = useMutation({
+    mutationFn: ({ ids, tag }: { ids: number[]; tag: string }) => api.bulkTagLeads(ids, tag, 'add'),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); setBulkTagOpen(false); setBulkTagInput(''); },
   });
 
   const filtered = useMemo(() => {
@@ -583,6 +590,65 @@ export default function LeadList() {
               </div>
             )}
           </div>
+          {/* Bulk Tag */}
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn"
+              style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
+              onClick={() => setBulkTagOpen((o) => !o)}
+            >
+              🏷 Tag
+            </button>
+            {bulkTagOpen && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, zIndex: 50, width: 220, boxShadow: '0 8px 24px rgba(0,0,0,.3)', padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 6 }}>
+                  Add tag to {selCount} lead{selCount !== 1 ? 's' : ''}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1, fontSize: 12, padding: '4px 8px' }}
+                    placeholder="Tag name…"
+                    value={bulkTagInput}
+                    onChange={(e) => setBulkTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && bulkTagInput.trim()) {
+                        const ids = leads.filter((l) => selectedLeadIds.has(l.id) && l.serverId).map((l) => l.serverId!);
+                        if (ids.length) bulkTagMut.mutate({ ids, tag: bulkTagInput.trim() });
+                      }
+                      if (e.key === 'Escape') setBulkTagOpen(false);
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: 11, padding: '4px 10px' }}
+                    disabled={!bulkTagInput.trim() || bulkTagMut.isPending}
+                    onClick={() => {
+                      const ids = leads.filter((l) => selectedLeadIds.has(l.id) && l.serverId).map((l) => l.serverId!);
+                      if (ids.length) bulkTagMut.mutate({ ids, tag: bulkTagInput.trim() });
+                    }}
+                  >
+                    {bulkTagMut.isPending ? '…' : 'Apply'}
+                  </button>
+                </div>
+                {allTags.length > 0 && (
+                  <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {allTags.slice(0, 8).map((t) => (
+                      <button
+                        key={t}
+                        style={{ fontSize: 10, padding: '2px 7px', borderRadius: 99, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                        onClick={() => setBulkTagInput(t)}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <button
             className="btn"
             style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
