@@ -4877,6 +4877,89 @@ For state use the 2-letter abbreviation. For notes include any tagline or servic
   }
 });
 
+// ── AI Call Script Generator ──────────────────────────────────────────────────
+// POST /ai/call-script  (requireShopFlow)
+// Generates a structured phone sales script customized to the lead's profile.
+app.post('/ai/call-script', authMiddleware, requireShopFlow, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Anthropic API key not configured' });
+
+  const { leadId } = req.body;
+  if (!leadId) return res.status(400).json({ error: 'leadId required' });
+
+  const uid = String(req.user.id);
+  try {
+    const [leadR, settingsR] = await Promise.all([
+      pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const settings = settingsR.rows[0]?.settings_json || {};
+    const shopName = settings.companyName || 'our shop';
+    const shopServices = settings.companyServices || 'vehicle wraps and fleet graphics';
+
+    const CAT_CONTEXT = {
+      fleet: 'commercial fleet wrap — focus on brand visibility, driver acquisition, ROI vs. traditional advertising',
+      dinoc: 'DI-NOC architectural film — surface renovation without demolition, commercial interiors, healthcare, hospitality',
+      gc_referral: 'commercial graphics spec through a general contractor relationship — position as the trusted sub for branded environments',
+      construction: 'construction fleet and equipment wrap — brand on the jobsite, referral generation, professional image',
+      colorchange: 'vehicle color-change wrap — premium aesthetics, paint protection, reversibility vs. respray',
+      racing: 'race car / motorsport livery — sponsor visibility, team identity, technical vinyl expertise',
+      reatec: 'Rea Tec film — ultra-realistic stone, marble, wood surface renovation without demo',
+      wallgraphics: 'wall and window graphics — retail environments, office branding, wayfinding',
+      design: 'custom design and branding — visual identity, artwork, brand consistency across media',
+    };
+
+    const context = CAT_CONTEXT[lead.category] || 'vehicle graphics and wrap services';
+    const fleetNote = lead.fleet_size ? `They operate a fleet of approximately ${lead.fleet_size} vehicles.` : '';
+    const locationNote = lead.city && lead.state ? `They're based in ${lead.city}, ${lead.state}.` : '';
+    const pitchNote = lead.pitch_angle ? `Previous pitch angle noted: ${lead.pitch_angle}.` : '';
+    const statusNote = lead.status !== 'new' ? `Lead is currently in "${lead.status}" stage.` : '';
+
+    const prompt = `You are a top-performing sales coach for ${shopName}, a vehicle wrap and graphics shop specializing in ${shopServices}.
+
+Generate a concise, natural-sounding phone call script for reaching out to ${lead.company || 'this prospect'}.
+
+Lead context:
+- Category: ${context}
+- ${fleetNote}
+- ${locationNote}
+- ${pitchNote}
+- ${statusNote}
+
+Return a JSON object with exactly these fields:
+{
+  "opening": "A 2-3 sentence warm opening that mentions the company by name, establishes credibility, and earns 30 more seconds",
+  "pitch": "3-4 sentences: the core value proposition specific to this category and prospect. Be concrete — mention impressions, ROI, or transformation.",
+  "objections": [
+    { "q": "objection 1", "a": "response 1" },
+    { "q": "objection 2", "a": "response 2" },
+    { "q": "objection 3", "a": "response 3" }
+  ],
+  "close": "A specific, low-pressure call to action — suggest a 15-minute site visit or sending over a concept design"
+}
+
+Be direct and confident. No filler phrases like "Great question!" or "Absolutely!" Write how a real wrap shop owner talks — not corporate sales speak.`;
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic.default({ apiKey });
+    const msg = await client.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const raw = msg.content[0].text.trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('AI response was not valid JSON');
+    const script = JSON.parse(jsonMatch[0]);
+    res.json({ ok: true, script });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Pipeline Narrative ─────────────────────────────────────────────────────
 app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;

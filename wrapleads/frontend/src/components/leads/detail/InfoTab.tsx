@@ -8,6 +8,136 @@ import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 
+// ── AI Call Script Panel ──────────────────────────────────────────────────────
+function CallScriptPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [script, setScript] = useState<{ opening: string; pitch: string; objections: { q: string; a: string }[]; close: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.generateCallScript(lead.serverId);
+      setScript(res.script);
+    } catch (e: unknown) {
+      setError((e as Error).message || 'Generation failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copyAll() {
+    if (!script) return;
+    const text = [
+      `CALL SCRIPT — ${lead.company}`,
+      '',
+      '📞 OPENING:',
+      script.opening,
+      '',
+      '💡 PITCH:',
+      script.pitch,
+      '',
+      '🛡 OBJECTIONS:',
+      ...script.objections.map((o) => `  Q: ${o.q}\n  A: ${o.a}`),
+      '',
+      '🎯 CLOSE:',
+      script.close,
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(() => showToast('Call script copied'));
+  }
+
+  if (!lead.serverId) return null;
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', justifyContent: 'space-between', fontSize: 12 }}
+        onClick={() => { setOpen((v) => !v); if (!script && !open) generate(); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/>
+          </svg>
+          AI Call Script
+          {script && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>· ready</span>}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+          {loading ? <span className="spinner" style={{ width: 11, height: 11 }} /> : open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {error && <div className="error-box">{error}</div>}
+
+          {loading && !script && (
+            <div style={{ color: 'var(--text-muted)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+              Claude is writing your script…
+            </div>
+          )}
+
+          {script && (
+            <>
+              {[
+                { label: 'Opening', icon: '📞', text: script.opening, color: '#3b82f6' },
+                { label: 'Value Pitch', icon: '💡', text: script.pitch, color: '#f59e0b' },
+              ].map(({ label, icon, text, color }) => (
+                <div key={label} style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>
+                    {icon} {label}
+                  </div>
+                  <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text)', margin: 0 }}>{text}</p>
+                </div>
+              ))}
+
+              {script.objections.length > 0 && (
+                <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>
+                    🛡 Objection Handlers
+                  </div>
+                  {script.objections.map((o, i) => (
+                    <div key={i} style={{ marginBottom: i < script.objections.length - 1 ? 10 : 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 3 }}>"{o.q}"</div>
+                      <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text)', paddingLeft: 10, borderLeft: '2px solid var(--border)' }}>
+                        {o.a}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>
+                  🎯 Close
+                </div>
+                <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text)', margin: 0 }}>{script.close}</p>
+              </div>
+
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="btn btn-primary" style={{ fontSize: 11, flex: 1, justifyContent: 'center' }} onClick={copyAll}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5 }}>
+                    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  Copy Full Script
+                </button>
+                <button className="btn" style={{ fontSize: 11 }} onClick={generate} disabled={loading}>
+                  ↻ Regenerate
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --------------- Confetti ---------------
 function ConfettiCanvas({ active }: { active: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -747,6 +877,7 @@ export default function InfoTab({ lead }: Props) {
       </button>
 
       {lead.serverId && <AICoach lead={local} />}
+      {lead.serverId && <CallScriptPanel lead={local} />}
       {lead.serverId && <ProposalSection lead={local} />}
 
       {showWinLoss && lead.serverId && (
