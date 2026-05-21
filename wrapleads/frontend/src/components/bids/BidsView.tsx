@@ -222,6 +222,15 @@ function BidModal({ bid, onClose, onSave, saving }: BidModalProps) {
 
 // ── Bid Card ─────────────────────────────────────────────────────────────────
 
+const WIN_PROB: Partial<Record<BidStatus, number>> = {
+  tracking: 15, submitted: 30, shortlisted: 65,
+};
+
+const WIN_PROB_COLOR = (p: number) =>
+  p >= 60 ? { bg: 'rgba(34,197,94,0.15)', fg: '#22c55e' }
+  : p >= 25 ? { bg: 'rgba(99,102,241,0.15)', fg: '#6366f1' }
+  : { bg: 'rgba(107,114,128,0.12)', fg: '#9ca3af' };
+
 interface BidCardProps {
   bid: Bid;
   onEdit: (b: Bid) => void;
@@ -234,6 +243,8 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
   const days = daysUntil(bid.bid_due);
   const isOverdue = days !== null && days < 0 && !['won', 'lost', 'no_bid'].includes(bid.status);
   const isUrgent  = days !== null && days >= 0 && days <= 3 && !['won', 'lost', 'no_bid'].includes(bid.status);
+  const winProb = WIN_PROB[bid.status];
+  const probStyle = winProb !== undefined ? WIN_PROB_COLOR(winProb) : null;
 
   return (
     <div className={`bid-card${isOverdue ? ' bid-card-overdue' : isUrgent ? ' bid-card-urgent' : ''}`}>
@@ -276,12 +287,28 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
         </div>
       )}
 
+      {bid.notes && (
+        <div className="bid-card-notes-preview">
+          {bid.notes.length > 90 ? bid.notes.slice(0, 90) + '…' : bid.notes}
+        </div>
+      )}
+
       <div className="bid-card-footer">
-        {bid.estimated_value ? (
-          <span className="bid-card-value">{fmt(bid.estimated_value)}</span>
-        ) : (
-          <span className="bid-card-value-empty">No value set</span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {bid.estimated_value ? (
+            <span className="bid-card-value">{fmt(bid.estimated_value)}</span>
+          ) : (
+            <span className="bid-card-value-empty">No value set</span>
+          )}
+          {probStyle && winProb !== undefined && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+              background: probStyle.bg, color: probStyle.fg,
+            }}>
+              {winProb}% win
+            </span>
+          )}
+        </div>
         {days !== null && (
           <span className={`bid-card-due${isOverdue ? ' overdue' : isUrgent ? ' urgent' : ''}`}>
             {isOverdue
@@ -294,12 +321,30 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
       </div>
 
       {bid.status === 'tracking' && (
-        <button
-          className="bid-submit-btn"
-          onClick={() => onStatusChange(bid.id, 'submitted')}
-        >
+        <button className="bid-submit-btn" onClick={() => onStatusChange(bid.id, 'submitted')}>
           Mark Submitted →
         </button>
+      )}
+      {bid.status === 'submitted' && (
+        <button className="bid-submit-btn" onClick={() => onStatusChange(bid.id, 'shortlisted')}>
+          Mark Shortlisted →
+        </button>
+      )}
+      {bid.status === 'shortlisted' && (
+        <div className="bid-advance-btns">
+          <button
+            className="bid-advance-btn bid-advance-won"
+            onClick={() => onStatusChange(bid.id, 'won')}
+          >
+            Won ✓
+          </button>
+          <button
+            className="bid-advance-btn bid-advance-lost"
+            onClick={() => onStatusChange(bid.id, 'lost')}
+          >
+            Lost ✗
+          </button>
+        </div>
       )}
     </div>
   );
