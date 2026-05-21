@@ -198,7 +198,7 @@ function WrapPriceEstimator({ lead }: { lead: Lead }) {
   const [vehicleType, setVehicleType] = useState('cargo_van_standard');
   const [count, setCount] = useState(Math.max(1, parseInt(lead.fleetSize || '1') || 1));
   const [designs, setDesigns] = useState(1);
-  const [shopRate, setShopRate] = useState(75);
+  const [shopRate] = useState(75);
   const [coverage, setCoverage] = useState<'full' | 'partial' | 'spot'>('full');
 
   const coverageMultiplier = coverage === 'full' ? 1 : coverage === 'partial' ? 0.65 : 0.30;

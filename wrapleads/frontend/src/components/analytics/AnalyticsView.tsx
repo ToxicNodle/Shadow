@@ -433,7 +433,6 @@ function SequencePerformanceCard() {
   if (isLoading || !data || (data.tones.length === 0 && data.byDow.length === 0)) return null;
 
   const maxToneSent = Math.max(...data.tones.map((t) => t.sent), 1);
-  const maxDowSent = Math.max(...data.byDow.map((d) => d.sent), 1);
 
   return (
     <div className="an-card" style={{ gridColumn: '1 / -1' }}>
@@ -847,15 +846,10 @@ function PipelineHealthCard() {
     staleTime: 5 * 60_000,
   });
 
-  if (!data?.ok) return null;
-  const { summary, activity30d, emailPerf } = data as {
-    ok: boolean;
-    summary: { winRate: number | null; avgDaysToClose: number | null };
-    activity30d: { emails: number; calls: number };
-    emailPerf: { opens7d: number; totalTracked: number };
-  };
+  if (!data?.summary) return null;
+  const { summary, activity30d, emailPerf } = data;
 
-  const openRate = emailPerf?.totalTracked > 0
+  const openRate = emailPerf && emailPerf.totalTracked > 0
     ? Math.round((emailPerf.opens7d / emailPerf.totalTracked) * 100)
     : null;
   const monthlyActivity = (activity30d?.emails ?? 0) + (activity30d?.calls ?? 0);
@@ -1155,7 +1149,6 @@ export default function AnalyticsView() {
   }
 
   const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals, atRisk, activityCalendar } = data;
-  const maxTrend = Math.max(...wonTrend.map((t) => t.won), 1);
   const maxRevTrend = Math.max(...wonTrend.map((t) => t.revenue), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);

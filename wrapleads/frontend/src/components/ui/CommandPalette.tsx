@@ -127,7 +127,8 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
             </svg>
           ),
           action: async () => {
-            await api.updateLead(l.id, { status: statusCmd.status as never });
+            if (l.serverId == null) return;
+            await api.updateLead(l.serverId, { status: statusCmd.status as never });
             qc.invalidateQueries({ queryKey: ['leads'] });
             store.showToast(`${l.company} → ${STATUS_LABEL[statusCmd.status]}`);
             onClose();

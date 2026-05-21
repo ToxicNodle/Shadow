@@ -28,8 +28,8 @@ export default function AddLeadModal() {
 
   const [company, setCompany] = useState('');
   const [dupMatches, setDupMatches] = useState<DupMatch[]>([]);
-  const dupTimer = useRef<ReturnType<typeof setTimeout>>();
-  const aiTimer = useRef<ReturnType<typeof setTimeout>>();
+  const dupTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const aiTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [category, setCategory] = useState<LeadCategory>('fleet');
   const [status, setStatus] = useState<LeadStatus>('cold');
   const [state, setState] = useState('');
@@ -123,7 +123,7 @@ export default function AddLeadModal() {
             {dupMatches.map((m) => (
               <div key={m.id} className="dup-item">
                 <strong>{m.company}</strong>
-                <span className={`status-tag ${m.status}`} style={{ fontSize: 10 }}>{STATUSES[m.status] ?? m.status}</span>
+                <span className={`status-tag ${m.status}`} style={{ fontSize: 10 }}>{STATUSES[m.status as LeadStatus] ?? m.status}</span>
                 {m.city && m.state && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{m.city}, {m.state}</span>}
               </div>
             ))}
