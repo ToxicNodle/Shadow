@@ -1521,6 +1521,79 @@ function HotOpensLeaderboard({ onLeadClick }: { onLeadClick: (id: number) => voi
   );
 }
 
+// ── WrapLeads ROI Impact Strip ────────────────────────────────────────────────
+
+function ImpactStrip() {
+  const { data } = useQuery({
+    queryKey: ['impact'],
+    queryFn: () => api.getImpact(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (!data) return null;
+
+  const { emailsGenerated, sequencesActivated, hoursSaved, wonCount, wonRevenue } = data;
+
+  const hasActivity = emailsGenerated > 0 || sequencesActivated > 0 || wonCount > 0;
+  if (!hasActivity) return null;
+
+  const PLAN_COST = 79;
+  const timeValue = Math.round(hoursSaved * 75);
+  const totalValue = wonRevenue + timeValue;
+  const roiMultiple = totalValue > 0 ? Math.max(1, Math.round(totalValue / PLAN_COST)) : 0;
+
+  function fmtK(n: number) { return n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n}`; }
+
+  const chips: { icon: string; label: string; value: string | number; color: string }[] = [];
+  if (emailsGenerated > 0) chips.push({ icon: '✉', label: 'AI emails written', value: emailsGenerated, color: '#3b82f6' });
+  if (sequencesActivated > 0) chips.push({ icon: '⚡', label: 'sequences launched', value: sequencesActivated, color: '#8b5cf6' });
+  if (hoursSaved > 0) chips.push({ icon: '⏱', label: 'hrs saved', value: hoursSaved, color: '#f59e0b' });
+  if (wonCount > 0) chips.push({ icon: '🏆', label: 'won', value: `${wonCount} deals · ${fmtK(wonRevenue)}`, color: '#10b981' });
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, rgba(99,102,241,0.06), rgba(16,185,129,0.06))',
+      border: '1px solid rgba(99,102,241,0.2)',
+      borderRadius: 10,
+      padding: '10px 14px',
+      marginBottom: 12,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      flexWrap: 'wrap',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <span style={{ fontSize: 14 }}>📈</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          This month:
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+        {chips.map((c) => (
+          <span
+            key={c.label}
+            style={{
+              fontSize: 11, fontWeight: 700, color: c.color,
+              background: `${c.color}12`, border: `1px solid ${c.color}25`,
+              borderRadius: 99, padding: '2px 10px', whiteSpace: 'nowrap',
+            }}
+          >
+            {c.icon} {c.value} {c.label}
+          </span>
+        ))}
+      </div>
+
+      {roiMultiple > 1 && (
+        <div style={{ flexShrink: 0, textAlign: 'right' }}>
+          <span style={{ fontSize: 13, fontWeight: 900, color: '#10b981' }}>{roiMultiple}×</span>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 4 }}>ROI vs. plan cost</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ONBOARDING_DISMISS_KEY = 'wl_onboarding_dismissed';
 
 function SetupChecklist() {
@@ -1746,6 +1819,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── WrapLeads ROI Impact ── */}
+      <ImpactStrip />
 
       {/* ── Setup Checklist ── */}
       <SetupChecklist />
