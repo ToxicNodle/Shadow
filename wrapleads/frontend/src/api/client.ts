@@ -86,6 +86,7 @@ export const api = {
 
   // Leads
   getLeads: () => authFetch<{ leads: Lead[] }>('/leads'),
+  getLeadTags: () => authFetch<{ tags: string[] }>('/leads/tags'),
   createLead: (lead: Partial<Lead>) =>
     authFetch<{ id: number }>('/leads', { method: 'POST', body: JSON.stringify(lead) }),
   updateLead: (serverId: number, patch: Partial<Lead>) =>

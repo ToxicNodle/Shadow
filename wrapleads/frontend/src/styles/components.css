@@ -59,7 +59,41 @@
   margin-bottom: 6px;
   display: block;
 }
+.field-help { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* Tag editor */
+.tag-editor-wrap {
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; cursor: text; min-height: 36px;
+}
+.tag-editor-wrap:focus-within { border-color: var(--accent); }
+.tag-chip {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
+  line-height: 1.5; white-space: nowrap;
+}
+.tag-chip-remove {
+  background: none; border: none; cursor: pointer; padding: 0 0 0 2px;
+  font-size: 13px; line-height: 1; color: inherit; opacity: 0.7;
+}
+.tag-chip-remove:hover { opacity: 1; }
+.tag-input {
+  background: transparent; border: none; outline: none; color: var(--text);
+  font-size: 12px; padding: 0; flex: 1; min-width: 80px; width: 100%;
+}
+.tag-suggestions {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; z-index: 100; overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0,0,0,.3);
+}
+.tag-suggestion-item {
+  padding: 7px 12px; font-size: 12px; cursor: pointer; color: var(--text);
+  display: flex; align-items: center;
+}
+.tag-suggestion-item:hover { background: var(--bg-hover); }
 
 /* === Modal === */
 .modal-backdrop {
@@ -477,6 +511,8 @@
 .lead-row.selected { background: rgba(255,107,53,0.06); border-bottom-color: rgba(255,107,53,0.15); }
 .lead-company { font-weight: 600; font-size: 14px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lead-contact { font-size: 12px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lead-tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.lead-tag-pill { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px; line-height: 1.6; white-space: nowrap; letter-spacing: .02em; }
 .lead-location { font-size: 13px; color: var(--text-dim); }
 .lead-fleet { font-family: var(--mono); font-size: 13px; color: var(--text-dim); }
 .lead-email { font-size: 12px; color: var(--blue); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

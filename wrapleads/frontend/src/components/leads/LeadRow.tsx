@@ -114,6 +114,26 @@ export default function LeadRow({ lead, selected, checked }: Props) {
             {lead.contactName || <span style={{ color: 'var(--text-faint)' }}>No contact</span>}
             {lead.contactTitle ? ` · ${lead.contactTitle}` : ''}
           </div>
+          {lead.tags && lead.tags.length > 0 && (
+            <div className="lead-tag-row">
+              {lead.tags.slice(0, 3).map((t) => {
+                let h = 0;
+                for (let i = 0; i < t.length; i++) h = ((h << 5) - h + t.charCodeAt(i)) | 0;
+                const PALETTE = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#f97316'];
+                const c = PALETTE[Math.abs(h) % PALETTE.length];
+                return (
+                  <span key={t} className="lead-tag-pill" style={{ background: `${c}18`, color: c, border: `1px solid ${c}44` }}>
+                    {t}
+                  </span>
+                );
+              })}
+              {lead.tags.length > 3 && (
+                <span className="lead-tag-pill" style={{ background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                  +{lead.tags.length - 3}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
