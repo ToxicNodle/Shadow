@@ -5032,6 +5032,55 @@ app.get('/leads/:id/followup-recommendation', authMiddleware, async (req, res) =
   }
 });
 
+// ── AI Lead Category Suggestion ───────────────────────────────────────────────
+// Fast single-call inference: given a company name, suggest the best wrap
+// category, estimated fleet size range, and a one-line pitch angle.
+app.post('/ai/suggest-lead', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  const { company } = req.body || {};
+  if (!company || typeof company !== 'string' || company.trim().length < 2) {
+    return res.status(400).json({ error: 'company required' });
+  }
+
+  try {
+    const prompt = `You are classifying a business for a vehicle wrap sales CRM.
+
+Company name: "${company.trim()}"
+
+Based only on the company name, infer:
+1. The most likely wrap category from this list:
+   fleet, construction, gc_referral, dinoc, reatec, colorchange, wallgraphics, racing, design
+2. Estimated fleet size range (e.g. "5-15", "20-50", "unknown")
+3. A one-line wrap pitch angle (10-15 words max, specific to their business type)
+4. Your confidence: high | medium | low
+
+Respond with ONLY valid JSON, no extra text:
+{"category":"fleet","fleetRange":"10-30","pitchAngle":"...","confidence":"medium"}`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 120,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) throw new Error(`Anthropic ${resp.status}`);
+    const ai = await resp.json();
+    const raw = ai.content?.[0]?.text ?? '{}';
+    let suggestion;
+    try { suggestion = JSON.parse(raw); } catch { suggestion = {}; }
+
+    res.json({ ok: true, suggestion });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Competitor Counter-Strategy ────────────────────────────────────────────
 // Generates a battle card for beating a named competitor.
 app.post('/ai/counter-strategy', authMiddleware, requireShopFlow, async (req, res) => {
