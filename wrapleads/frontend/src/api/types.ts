@@ -24,6 +24,7 @@ export interface Lead {
   followupDueAt?: string | null;
   sourceCompanyId?: number;
   referred_by?: string | null;
+  tags: string[];
   createdAt: string;
   updatedAt: string;
 }

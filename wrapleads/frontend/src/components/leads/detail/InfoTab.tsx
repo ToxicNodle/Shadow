@@ -798,6 +798,91 @@ function SmsModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   );
 }
 
+// ── Lead Tag Editor ───────────────────────────────────────────────────────────
+const TAG_PALETTE = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#f97316'];
+function tagColor(tag: string) {
+  let h = 0;
+  for (let i = 0; i < tag.length; i++) h = ((h << 5) - h + tag.charCodeAt(i)) | 0;
+  return TAG_PALETTE[Math.abs(h) % TAG_PALETTE.length];
+}
+
+function TagEditor({ lead, onSave }: { lead: Lead; onSave: (tags: string[]) => void }) {
+  const [tags, setTags] = useState<string[]>(lead.tags ?? []);
+  const [input, setInput] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const { data: tagData } = useQuery({
+    queryKey: ['lead-tags'],
+    queryFn: () => api.getLeadTags(),
+    staleTime: 5 * 60_000,
+  });
+  const suggestions = (tagData?.tags ?? []).filter(
+    (t) => t.toLowerCase().includes(input.toLowerCase()) && !tags.includes(t)
+  ).slice(0, 6);
+
+  function addTag(raw: string) {
+    const tag = raw.trim().replace(/,/g, '').slice(0, 40);
+    if (!tag || tags.includes(tag)) { setInput(''); return; }
+    const next = [...tags, tag];
+    setTags(next);
+    onSave(next);
+    setInput('');
+  }
+
+  function removeTag(tag: string) {
+    const next = tags.filter((t) => t !== tag);
+    setTags(next);
+    onSave(next);
+  }
+
+  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(input); }
+    else if (e.key === 'Backspace' && !input && tags.length) removeTag(tags[tags.length - 1]);
+    else if (e.key === 'Escape') setShowSuggestions(false);
+  }
+
+  return (
+    <div className="field-group">
+      <label className="field-label">Tags</label>
+      <div className="tag-editor-wrap" onClick={() => inputRef.current?.focus()}>
+        {tags.map((t) => {
+          const c = tagColor(t);
+          return (
+            <span key={t} className="tag-chip" style={{ background: `${c}18`, color: c, border: `1px solid ${c}44` }}>
+              {t}
+              <button className="tag-chip-remove" onClick={(e) => { e.stopPropagation(); removeTag(t); }}>×</button>
+            </span>
+          );
+        })}
+        <div style={{ position: 'relative', flexGrow: 1, minWidth: 80 }}>
+          <input
+            ref={inputRef}
+            className="tag-input"
+            value={input}
+            placeholder={tags.length === 0 ? 'Add tags…' : ''}
+            onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
+            onKeyDown={handleKey}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          />
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="tag-suggestions">
+              {suggestions.map((s) => (
+                <div key={s} className="tag-suggestion-item" onMouseDown={() => addTag(s)}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor(s), display: 'inline-block', marginRight: 6 }} />
+                  {s}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="field-help">Press Enter or comma to add · Backspace to remove</div>
+    </div>
+  );
+}
+
 export default function InfoTab({ lead }: Props) {
   const { updateLead } = useLeads();
   const { setProposalOpen } = useAppStore((s) => ({ setProposalOpen: s.setProposalOpen }));
@@ -1016,6 +1101,14 @@ export default function InfoTab({ lead }: Props) {
           placeholder="Who referred this lead? (name or company)"
         />
       </div>
+
+      <TagEditor
+        lead={local}
+        onSave={(tags) => {
+          setLocal({ ...local, tags });
+          if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { tags } as Partial<Lead> });
+        }}
+      />
 
       {/* ── Follow-up + Last Contacted ── */}
       <div className="field-row">

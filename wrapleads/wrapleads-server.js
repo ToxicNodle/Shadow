@@ -1682,6 +1682,8 @@ function leadRow(row) {
     followupDueAt: row.followup_due_at ? row.followup_due_at.toISOString().slice(0, 10) : null,
     sourceCompanyId: row.source_company_id,
     createdAt: row.created_at, updatedAt: row.updated_at,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    referred_by: row.referred_by || null,
   };
 }
 
@@ -1702,6 +1704,17 @@ app.get('/leads', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(`SELECT * FROM leads WHERE user_id = $1 ORDER BY updated_at DESC`, [String(req.user.id)]);
     res.json({ leads: r.rows.map(leadRow) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Distinct tags used across the user's leads (for autocomplete)
+app.get('/leads/tags', authMiddleware, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT DISTINCT UNNEST(tags) AS tag FROM leads WHERE user_id=$1 ORDER BY tag`,
+      [String(req.user.id)]
+    );
+    res.json({ tags: r.rows.map((row) => row.tag).filter(Boolean) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1752,6 +1765,12 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
   const sets = []; const params = [];
   for (const [key, col] of Object.entries(colMap)) {
     if (d[key] !== undefined) { params.push(d[key]||null); sets.push(`${col}=$${params.length}`); }
+  }
+
+  // Tags — stored as TEXT[] in postgres; client sends a JS array
+  if (Array.isArray(d.tags)) {
+    params.push(d.tags);
+    sets.push(`tags = $${params.length}`);
   }
 
   // Auto-set followup_due_at when status changes to a trackable stage
