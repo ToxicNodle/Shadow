@@ -598,6 +598,130 @@ function PredictedCloseCalendar({ onLeadClick }: { onLeadClick: (id: number) => 
   );
 }
 
+const STAGE_VELOCITY_COLORS: Record<string, string> = {
+  new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9', meeting: '#f59e0b', proposal: '#f97316',
+};
+
+function PipelineVelocityCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['pipeline-velocity'],
+    queryFn: () => api.getPipelineVelocity(),
+    staleTime: 120_000,
+  });
+
+  if (isLoading) {
+    return (
+      <section className="pv-card">
+        <div className="skeleton" style={{ height: 11, width: 140, marginBottom: 14 }} />
+        {[100, 70, 55, 80, 65].map((w, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <div className="skeleton" style={{ height: 9, width: 72, flexShrink: 0 }} />
+            <div className="skeleton" style={{ height: 7, width: `${w}%`, flex: 1 }} />
+            <div className="skeleton" style={{ height: 9, width: 32 }} />
+          </div>
+        ))}
+      </section>
+    );
+  }
+
+  if (!data?.ok || !data.velocity.length) return null;
+
+  const stagesWithData = data.velocity.filter((v) => v.avgDays !== null);
+  if (stagesWithData.length === 0) return null;
+
+  const maxDays = Math.max(...stagesWithData.map((v) => v.avgDays ?? 0), 1);
+  const bottleneck = data.bottleneck;
+
+  return (
+    <section className="pv-card">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div>
+          <h3 className="pv-card-title" style={{ margin: 0 }}>Stage Velocity</h3>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+            Avg days spent per stage · based on historical transitions
+          </p>
+        </div>
+        {data.totalAvgCycleDays > 0 && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#6366f1', lineHeight: 1 }}>{data.totalAvgCycleDays}d</div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>avg cycle</div>
+          </div>
+        )}
+      </div>
+
+      {bottleneck && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12,
+          padding: '6px 10px', borderRadius: 7,
+          background: `${STAGE_VELOCITY_COLORS[bottleneck] ?? '#6b7280'}12`,
+          border: `1px solid ${STAGE_VELOCITY_COLORS[bottleneck] ?? '#6b7280'}28`,
+        }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13"
+            style={{ color: STAGE_VELOCITY_COLORS[bottleneck] ?? '#6b7280', flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            Bottleneck: <strong style={{ color: STAGE_VELOCITY_COLORS[bottleneck] ?? '#6b7280' }}>
+              {STATUS_LABELS[bottleneck] ?? bottleneck}
+            </strong> — leads stall longest here
+          </span>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        {stagesWithData.map((v) => {
+          const color = STAGE_VELOCITY_COLORS[v.stage] ?? '#6b7280';
+          const barPct = Math.max(6, Math.round(((v.avgDays ?? 0) / maxDays) * 100));
+          const isBottleneck = v.stage === bottleneck;
+          return (
+            <div key={v.stage} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 72, fontSize: 11, color: 'var(--text-muted)', flexShrink: 0, textAlign: 'right' }}>
+                {STATUS_LABELS[v.stage] ?? v.stage}
+              </div>
+              <div style={{ flex: 1, height: 8, background: 'var(--surface-hover)', borderRadius: 4, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', width: `${barPct}%`, borderRadius: 4,
+                  background: color,
+                  opacity: isBottleneck ? 1 : 0.6,
+                  transition: 'width 0.5s ease',
+                }} />
+              </div>
+              <div style={{ width: 36, fontSize: 11, fontWeight: 700, color: isBottleneck ? color : 'var(--text-muted)', flexShrink: 0 }}>
+                {v.avgDays}d
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {data.activeWithPrediction.length > 0 && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+            Next predicted closes
+          </div>
+          {data.activeWithPrediction.slice(0, 4).map((d) => {
+            const color = STATUS_COLORS[d.status] ?? '#6b7280';
+            return (
+              <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', gap: 8 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                  {d.company}
+                </div>
+                <span style={{ fontSize: 10, color, background: `${color}15`, padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>
+                  {STATUS_LABELS[d.status] ?? d.status}
+                </span>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>
+                  {d.predictedClose}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function QuickWinPredictor({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   const { leads } = useLeads();
   const [showAll, setShowAll] = useState(false);
@@ -840,6 +964,9 @@ export default function PipelineView() {
 
         {/* ── 90-Day Revenue Forecast ── */}
         <RevenueForecastChart />
+
+        {/* ── Pipeline Stage Velocity ── */}
+        <PipelineVelocityCard />
 
         {/* ── Predicted Close Calendar ── */}
         <PredictedCloseCalendar onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
