@@ -3339,15 +3339,155 @@ function startDripWorker() {
 }
 
 // Daily digest — sends each user a 7am morning briefing via email
+const REV_EST_DIGEST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+
+function digestFmt(n) {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+  return `$${n}`;
+}
+
+function buildDigestHtml({ shopName, firstName, actions, topLeads, hotOpens, wonThisMonth, wonRevenue, pipelineValue, appUrl }) {
+  const actionBadge = (count, label, color) => count > 0
+    ? `<tr><td style="padding:6px 0;border-bottom:1px solid #f1f5f9;"><span style="display:inline-block;background:${color}18;color:${color};font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;margin-right:8px;">${count}</span><span style="font-size:14px;color:#334155;">${label}</span></td></tr>`
+    : '';
+
+  const leadRow = (l) => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #f8fafc;">
+        <div style="font-size:14px;font-weight:700;color:#0f172a;">${l.company}</div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;">${l.category} · ${l.city || ''}${l.state ? `, ${l.state}` : ''}</div>
+      </td>
+      <td style="padding:10px 0 10px 16px;border-bottom:1px solid #f8fafc;text-align:right;white-space:nowrap;">
+        <span style="display:inline-block;background:${l.statusColor}18;color:${l.statusColor};font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;">${l.status}</span>
+        <div style="font-size:12px;color:#10b981;font-weight:700;margin-top:3px;">${l.expectedVal}</div>
+      </td>
+    </tr>`;
+
+  const openRow = (o) => `
+    <tr>
+      <td style="padding:8px 0;border-bottom:1px solid #f8fafc;">
+        <div style="font-size:13px;font-weight:600;color:#6366f1;">👁 ${o.company}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${o.subject} · opened ${o.openCount}x</div>
+      </td>
+    </tr>`;
+
+  const STATUS_COLOR = { meeting: '#f59e0b', proposal: '#f97316', replied: '#3b82f6', contacted: '#6366f1', new: '#94a3b8' };
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:32px 16px;">
+    <tr><td>
+      <table width="600" cellpadding="0" cellspacing="0" align="center" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.06);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:28px 32px;">
+            <div style="font-size:22px;font-weight:800;color:#fff;letter-spacing:-0.5px;">WrapLeads</div>
+            <div style="font-size:13px;color:rgba(255,255,255,0.75);margin-top:4px;">Daily Briefing for ${shopName}</div>
+          </td>
+        </tr>
+
+        <!-- Greeting -->
+        <tr>
+          <td style="padding:24px 32px 8px;">
+            <div style="font-size:18px;font-weight:700;color:#0f172a;">Good morning${firstName ? `, ${firstName}` : ''}! ☀️</div>
+            <div style="font-size:14px;color:#64748b;margin-top:6px;">Here's what needs your attention today.</div>
+          </td>
+        </tr>
+
+        <!-- Stats strip -->
+        <tr>
+          <td style="padding:16px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-radius:10px;overflow:hidden;">
+              <tr>
+                <td style="padding:14px;text-align:center;border-right:1px solid #e2e8f0;">
+                  <div style="font-size:22px;font-weight:800;color:#6366f1;">${wonThisMonth}</div>
+                  <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Won This Month</div>
+                </td>
+                <td style="padding:14px;text-align:center;border-right:1px solid #e2e8f0;">
+                  <div style="font-size:22px;font-weight:800;color:#22c55e;">${digestFmt(wonRevenue)}</div>
+                  <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Revenue Won</div>
+                </td>
+                <td style="padding:14px;text-align:center;">
+                  <div style="font-size:22px;font-weight:800;color:#f59e0b;">${digestFmt(pipelineValue)}</div>
+                  <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Pipeline Value</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        ${actions.length > 0 ? `
+        <!-- Action items -->
+        <tr>
+          <td style="padding:8px 32px 4px;">
+            <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;margin-bottom:8px;">Today's Actions</div>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              ${actions.map(([count, label, color]) => actionBadge(count, label, color)).join('')}
+            </table>
+          </td>
+        </tr>` : ''}
+
+        ${topLeads.length > 0 ? `
+        <!-- Top priority leads -->
+        <tr>
+          <td style="padding:20px 32px 4px;">
+            <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;margin-bottom:8px;">Top Priority Leads</div>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              ${topLeads.map((l) => leadRow({ ...l, statusColor: STATUS_COLOR[l.status] || '#94a3b8' })).join('')}
+            </table>
+          </td>
+        </tr>` : ''}
+
+        ${hotOpens.length > 0 ? `
+        <!-- Hot signals -->
+        <tr>
+          <td style="padding:20px 32px 4px;">
+            <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;margin-bottom:8px;">🔥 Hot Signals — Opened Your Email</div>
+            <table width="100%" cellpadding="0" cellspacing="0">
+              ${hotOpens.map(openRow).join('')}
+            </table>
+          </td>
+        </tr>` : ''}
+
+        <!-- CTA -->
+        <tr>
+          <td style="padding:28px 32px;">
+            <a href="${appUrl}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-size:14px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;letter-spacing:-0.2px;">
+              Open Mission Dashboard →
+            </a>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:16px 32px 28px;border-top:1px solid #f1f5f9;">
+            <div style="font-size:11px;color:#94a3b8;">
+              You're receiving this because you have an active WrapLeads account. Reply "unsubscribe" to opt out of daily digests.
+            </div>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
 async function sendDailyDigests() {
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) return;
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+  const appUrl = process.env.APP_URL || 'https://app.wrapleads.io';
   const today = new Date().toISOString().slice(0, 10);
 
   try {
     const { rows: users } = await pool.query(`
-      SELECT u.id, u.email, u.settings_json
+      SELECT u.id, u.name, u.email, u.settings_json
       FROM users u
       WHERE u.sub_status IN ('trialing','active')
         AND u.email IS NOT NULL AND u.email != ''
@@ -3358,18 +3498,50 @@ async function sendDailyDigests() {
         const uid = String(user.id);
         const s = user.settings_json || {};
         const shopName = s.companyName || 'your shop';
+        const firstName = (user.name || '').split(' ')[0] || '';
 
-        const [overdueR, repliedR, callReadyR, bidsR, agingR] = await Promise.all([
+        const [overdueR, repliedR, callReadyR, bidsR, agingR, topLeadsR, hotOpensR, wonR, pipelineR] = await Promise.all([
           pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status IN ('contacted','replied') AND followup_due_at < $2`, [uid, today]),
           pool.query(`SELECT COUNT(*)::INT AS n FROM leads WHERE user_id=$1 AND status='replied'`, [uid]),
           pool.query(`
-            SELECT COUNT(DISTINCT l.id)::INT AS n FROM leads l JOIN email_queue q ON q.lead_id=l.id
+            SELECT COUNT(DISTINCT l.id)::INT AS n FROM leads l
+            JOIN email_queue q ON q.lead_id=l.id AND q.user_id=l.user_id
             WHERE l.user_id=$1 AND l.status='contacted'
               AND NOT EXISTS (SELECT 1 FROM email_queue pq WHERE pq.lead_id=l.id AND pq.status='pending')
-            HAVING COUNT(q.id) FILTER (WHERE q.status='sent') >= 2
           `, [uid]),
           pool.query(`SELECT COUNT(*)::INT AS n FROM bids WHERE user_id=$1 AND status='tracking' AND bid_due >= $2 AND bid_due <= $2::date + INTERVAL '7 days'`, [uid, today]),
           pool.query(`SELECT COUNT(*)::INT AS n FROM installed_jobs WHERE user_id=$1 AND (install_date + (life_years || ' years')::interval) <= NOW() + INTERVAL '60 days'`, [uid]),
+          // Top 5 leads by stage priority + recency
+          pool.query(`
+            SELECT id, company, category, status, city, state, email, contact_name
+            FROM leads
+            WHERE user_id=$1 AND status IN ('proposal','meeting','replied','contacted')
+            ORDER BY CASE status WHEN 'proposal' THEN 1 WHEN 'meeting' THEN 2 WHEN 'replied' THEN 3 ELSE 4 END,
+                     COALESCE(last_contacted, created_at) DESC
+            LIMIT 5
+          `, [uid]),
+          // Hot signals: leads whose emails were opened in the last 24h
+          pool.query(`
+            SELECT l.company, et.subject, COUNT(*)::INT AS open_count
+            FROM email_tracking et
+            JOIN leads l ON l.id = et.lead_id
+            WHERE et.user_id=$1 AND et.opened_at >= NOW() - INTERVAL '24 hours'
+            GROUP BY l.company, et.subject
+            ORDER BY open_count DESC
+            LIMIT 4
+          `, [uid]),
+          // Won this month
+          pool.query(`
+            SELECT COUNT(*)::INT AS n,
+                   COALESCE(SUM(CASE category WHEN 'racing' THEN 40000 WHEN 'gc_referral' THEN 18000 WHEN 'dinoc' THEN 6000 WHEN 'fleet' THEN 4500 WHEN 'construction' THEN 5000 WHEN 'colorchange' THEN 3500 ELSE 2500 END), 0)::INT AS rev
+            FROM leads
+            WHERE user_id=$1 AND status='won' AND updated_at >= date_trunc('month', NOW())
+          `, [uid]),
+          // Active pipeline value
+          pool.query(`
+            SELECT COALESCE(SUM(CASE category WHEN 'racing' THEN 40000 WHEN 'gc_referral' THEN 18000 WHEN 'dinoc' THEN 6000 WHEN 'fleet' THEN 4500 WHEN 'construction' THEN 5000 WHEN 'colorchange' THEN 3500 ELSE 2500 END), 0)::INT AS val
+            FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost','cold')
+          `, [uid]),
         ]);
 
         const overdue = overdueR.rows[0]?.n ?? 0;
@@ -3377,28 +3549,33 @@ async function sendDailyDigests() {
         const callReady = callReadyR.rows[0]?.n ?? 0;
         const bids = bidsR.rows[0]?.n ?? 0;
         const aging = agingR.rows[0]?.n ?? 0;
+        const wonThisMonth = wonR.rows[0]?.n ?? 0;
+        const wonRevenue = wonR.rows[0]?.rev ?? 0;
+        const pipelineValue = pipelineR.rows[0]?.val ?? 0;
 
         const totalActions = overdue + replied + callReady + bids;
-        if (totalActions === 0 && aging === 0) continue;
+        if (totalActions === 0 && aging === 0 && hotOpensR.rows.length === 0) continue;
 
-        const rows = [];
-        if (callReady > 0) rows.push(`📞 ${callReady} lead${callReady > 1 ? 's' : ''} ready for a call — sequence complete`);
-        if (overdue > 0) rows.push(`⚠ ${overdue} overdue follow-up${overdue > 1 ? 's' : ''}`);
-        if (replied > 0) rows.push(`💬 ${replied} lead${replied > 1 ? 's' : ''} replied — send a proposal`);
-        if (bids > 0) rows.push(`📋 ${bids} bid${bids > 1 ? 's' : ''} due this week`);
-        if (aging > 0) rows.push(`🔄 ${aging} wrap${aging > 1 ? 's' : ''} approaching refresh window`);
+        const actions = [
+          [callReady, `${callReady} lead${callReady !== 1 ? 's' : ''} ready for a call — sequence complete`, '#10b981'],
+          [overdue, `${overdue} overdue follow-up${overdue !== 1 ? 's' : ''}`, '#ef4444'],
+          [replied, `${replied} lead${replied !== 1 ? 's' : ''} replied — ready for proposal`, '#3b82f6'],
+          [bids, `${bids} bid${bids !== 1 ? 's' : ''} due this week`, '#f97316'],
+          [aging, `${aging} wrap${aging !== 1 ? 's' : ''} approaching refresh window`, '#f59e0b'],
+        ].filter(([count]) => count > 0);
 
-        const body = `Good morning from WrapLeads!
+        const topLeads = topLeadsR.rows.map((l) => ({
+          ...l,
+          expectedVal: digestFmt(Math.round(0.3 * (REV_EST_DIGEST[l.category] ?? 2500))),
+        }));
 
-Here's your daily briefing for ${shopName}:
+        const hotOpens = hotOpensR.rows.map((r) => ({
+          company: r.company,
+          subject: r.subject || '(no subject)',
+          openCount: r.open_count,
+        }));
 
-${rows.map((r) => `• ${r}`).join('\n')}
-
-Log in to WrapLeads to take action: https://app.wrapleads.io
-
-—
-WrapLeads Daily Digest
-Unsubscribe: reply "unsubscribe" to this email`;
+        const html = buildDigestHtml({ shopName, firstName, actions, topLeads, hotOpens, wonThisMonth, wonRevenue, pipelineValue, appUrl });
 
         await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -3406,11 +3583,13 @@ Unsubscribe: reply "unsubscribe" to this email`;
           body: JSON.stringify({
             from: `WrapLeads <${fromEmail}>`,
             to: user.email,
-            subject: `Your WrapLeads Briefing — ${totalActions} action${totalActions !== 1 ? 's' : ''} today`,
-            text: body,
+            subject: totalActions > 0
+              ? `${totalActions} action${totalActions !== 1 ? 's' : ''} need your attention — ${shopName} Daily Briefing`
+              : `🔥 Hot signal: someone opened your email — ${shopName} Briefing`,
+            html,
           }),
         });
-        console.log(`[digest] Sent to ${user.email} (${totalActions} actions)`);
+        console.log(`[digest] Sent to ${user.email} (${totalActions} actions, ${hotOpens.length} opens)`);
       } catch (err) {
         console.error(`[digest] Failed for user ${user.id}:`, err.message);
       }
