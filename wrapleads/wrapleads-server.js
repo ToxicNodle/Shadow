@@ -3264,6 +3264,38 @@ app.get('/bids/intel', authMiddleware, async (req, res) => {
 });
 
 // ============================================================================
+// GC Relationship Directory — aggregate bid stats per general contractor
+// ============================================================================
+
+app.get('/bids/gc-directory', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         gc_name,
+         COUNT(*)::int                                                           AS total_bids,
+         COUNT(CASE WHEN status = 'won'  THEN 1 END)::int                       AS won_bids,
+         COUNT(CASE WHEN status IN ('lost','no_bid') THEN 1 END)::int           AS lost_bids,
+         COUNT(CASE WHEN status NOT IN ('won','lost','no_bid') THEN 1 END)::int AS active_bids,
+         COALESCE(SUM(CASE WHEN status = 'won' THEN estimated_value ELSE 0 END),0)::int AS won_value,
+         COALESCE(SUM(estimated_value),0)::int                                  AS total_value,
+         MAX(created_at)                                                         AS last_bid_at,
+         MAX(CASE WHEN status = 'won' THEN created_at END)                      AS last_won_at
+       FROM bids
+       WHERE user_id = $1 AND gc_name IS NOT NULL AND gc_name != ''
+       GROUP BY gc_name
+       ORDER BY won_value DESC, total_bids DESC
+       LIMIT 50`,
+      [uid]
+    );
+    res.json({ ok: true, gcs: rows });
+  } catch (err) {
+    console.error('GC directory error:', err);
+    res.status(500).json({ error: 'Failed to load GC directory' });
+  }
+});
+
+// ============================================================================
 // Bulk sequence activation — fires drip for multiple leads at once
 // ============================================================================
 

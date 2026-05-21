@@ -546,6 +546,15 @@ export const api = {
     platforms: { platform: string; total: number; won: number; lost: number; winRate: number | null; avgWonValue: number }[];
     valueBuckets: { bucket: string; total: number; won: number }[];
   }>('/bids/intel'),
+  getGCDirectory: () =>
+    authFetch<{
+      ok: boolean;
+      gcs: {
+        gc_name: string; total_bids: number; won_bids: number; lost_bids: number;
+        active_bids: number; won_value: number; total_value: number;
+        last_bid_at: string; last_won_at: string | null;
+      }[];
+    }>('/bids/gc-directory'),
   createBid: (bid: Partial<Bid>) =>
     authFetch<{ bid: Bid }>('/bids', { method: 'POST', body: JSON.stringify(bid) }),
   updateBid: (id: number, updates: Partial<Bid>) =>
