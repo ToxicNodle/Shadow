@@ -28,6 +28,62 @@ const DEFAULT_LINE_ITEMS: QuoteLineItem[] = [
   { id: crypto.randomUUID(), description: 'Design & artwork', qty: 1, unit: 'flat', unitPrice: 0, total: 0 },
 ];
 
+interface QuoteTemplate {
+  name: string;
+  items: Omit<QuoteLineItem, 'id'>[];
+}
+
+const QUOTE_TEMPLATES: QuoteTemplate[] = [
+  {
+    name: 'Box Truck',
+    items: [
+      { description: 'Full box truck wrap – labor & installation', qty: 1, unit: 'vehicle', unitPrice: 2200, total: 2200 },
+      { description: 'Premium vinyl film (800 sqft)', qty: 800, unit: 'sqft', unitPrice: 6, total: 4800 },
+      { description: 'Design & artwork', qty: 1, unit: 'flat', unitPrice: 600, total: 600 },
+    ],
+  },
+  {
+    name: 'Passenger Van',
+    items: [
+      { description: 'Passenger van full wrap – labor & installation', qty: 1, unit: 'vehicle', unitPrice: 1600, total: 1600 },
+      { description: 'Premium vinyl film (400 sqft)', qty: 400, unit: 'sqft', unitPrice: 6, total: 2400 },
+      { description: 'Design & artwork', qty: 1, unit: 'flat', unitPrice: 400, total: 400 },
+    ],
+  },
+  {
+    name: 'Semi Trailer',
+    items: [
+      { description: 'Semi-trailer full wrap – labor & installation', qty: 1, unit: 'vehicle', unitPrice: 3800, total: 3800 },
+      { description: 'Premium vinyl film (1,400 sqft)', qty: 1400, unit: 'sqft', unitPrice: 5, total: 7000 },
+      { description: 'Design & artwork', qty: 1, unit: 'flat', unitPrice: 800, total: 800 },
+    ],
+  },
+  {
+    name: 'Fleet Package',
+    items: [
+      { description: 'Fleet vehicle wrap – per vehicle labor', qty: 1, unit: 'vehicle', unitPrice: 1800, total: 1800 },
+      { description: 'Premium vinyl film', qty: 500, unit: 'sqft', unitPrice: 6, total: 3000 },
+      { description: 'Fleet discount (applied across order)', qty: 1, unit: 'flat', unitPrice: -200, total: -200 },
+      { description: 'Design & artwork (amortized across fleet)', qty: 1, unit: 'flat', unitPrice: 350, total: 350 },
+    ],
+  },
+  {
+    name: 'Color Change',
+    items: [
+      { description: 'Full color change wrap – labor & prep', qty: 1, unit: 'vehicle', unitPrice: 2000, total: 2000 },
+      { description: 'Cast vinyl film (600 sqft)', qty: 600, unit: 'sqft', unitPrice: 8, total: 4800 },
+    ],
+  },
+  {
+    name: 'DI-NOC / Rea-Tec',
+    items: [
+      { description: 'Architectural film installation – labor', qty: 1, unit: 'flat', unitPrice: 800, total: 800 },
+      { description: '3M DI-NOC film', qty: 150, unit: 'sqft', unitPrice: 20, total: 3000 },
+      { description: 'Surface prep & cleaning', qty: 1, unit: 'flat', unitPrice: 200, total: 200 },
+    ],
+  },
+];
+
 interface Props {
   leadId: number;
   leadCompany: string;
@@ -55,6 +111,11 @@ export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose,
     quote?.line_items?.length ? quote.line_items : DEFAULT_LINE_ITEMS
   );
   const [saving, setSaving] = useState(false);
+
+  function loadTemplate(tpl: QuoteTemplate) {
+    setLineItems(tpl.items.map((item) => ({ ...item, id: crypto.randomUUID() })));
+    if (!isEdit) setTitle(`${tpl.name} Wrap Quote`);
+  }
 
   const subtotal = lineItems.reduce((s, i) => s + (i.total || 0), 0);
   const taxAmount = Math.round(subtotal * (taxRate / 100) * 100) / 100;
@@ -178,6 +239,33 @@ export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose,
               />
               days
             </span>
+          </div>
+
+          {/* Template picker */}
+          <div style={{
+            padding: '8px 24px', borderBottom: '1px solid var(--border)',
+            flexShrink: 0, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
+          }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>
+              Templates:
+            </span>
+            {QUOTE_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.name}
+                onClick={() => loadTemplate(tpl)}
+                style={{
+                  fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 5,
+                  background: 'var(--bg-elev-2)', border: '1px solid var(--border)',
+                  color: 'var(--text-dim)', cursor: 'pointer',
+                  transition: 'border-color 0.12s, color 0.12s',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-dim)'; }}
+                title={`Load ${tpl.name} template (${tpl.items.length} line items, replaces current)`}
+              >
+                {tpl.name}
+              </button>
+            ))}
           </div>
 
           {/* Scrollable body */}
