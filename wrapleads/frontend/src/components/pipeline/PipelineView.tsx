@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useCountUp } from '../../hooks/useCountUp';
+import { useLeads } from '../../hooks/useLeads';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
 const STATUS_ORDER = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost', 'cold'] as const;
@@ -196,6 +197,126 @@ function BarRow({
   );
 }
 
+// ── 90-Day Revenue Forecast ───────────────────────────────────────────────────
+// Expected weeks to close per stage (conservative)
+const WEEKS_TO_CLOSE: Record<string, number> = {
+  proposal: 3, meeting: 6, replied: 10, contacted: 14, new: 18,
+};
+// Stage close probability weights
+const CLOSE_PROB: Record<string, number> = {
+  proposal: 0.55, meeting: 0.35, replied: 0.22, contacted: 0.12, new: 0.05,
+};
+const REV_EST: Record<string, number> = {
+  fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+  colorchange: 3500, racing: 40000, reatec: 5500, design: 3000,
+  wallgraphics: 2500, other: 2500,
+};
+
+function RevenueForecastChart() {
+  const { leads } = useLeads();
+  const NUM_WEEKS = 12;
+  const buckets = Array.from({ length: NUM_WEEKS }, (_, i) => ({ week: i, label: '', value: 0 }));
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Label each bucket as "Mon D" of that week's start
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  for (let i = 0; i < NUM_WEEKS; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i * 7);
+    buckets[i].label = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  }
+
+  // Project each active lead into a week bucket
+  for (const lead of leads) {
+    if (!['proposal','meeting','replied','contacted','new'].includes(lead.status)) continue;
+    const weeks = WEEKS_TO_CLOSE[lead.status] ?? 18;
+    const prob = CLOSE_PROB[lead.status] ?? 0.05;
+    const rev = REV_EST[lead.category] ?? 2500;
+    const expected = prob * rev;
+    const bucket = Math.min(Math.round(weeks), NUM_WEEKS - 1);
+    buckets[bucket].value += expected;
+  }
+
+  const maxVal = Math.max(...buckets.map((b) => b.value), 1);
+  const total = buckets.reduce((s, b) => s + b.value, 0);
+
+  // Find highest-value week for annotation
+  const peakWeek = buckets.reduce((best, b) => b.value > best.value ? b : best, buckets[0]);
+
+  if (total === 0) return null;
+
+  return (
+    <section className="pv-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+        <h3 className="pv-card-title" style={{ margin: 0 }}>90-Day Revenue Forecast</h3>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {fmt(total)} expected · weighted by close probability
+        </span>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 16px' }}>
+        Projected weekly closes based on current pipeline stage velocity
+      </p>
+
+      {/* Bar chart */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 100, marginBottom: 6 }}>
+        {buckets.map((b, i) => {
+          const heightPct = maxVal > 0 ? (b.value / maxVal) * 100 : 0;
+          const isPeak = b === peakWeek && b.value > 0;
+          const isNear = i < 4;
+          const barColor = isNear ? '#22c55e' : i < 8 ? '#3b82f6' : '#8b5cf6';
+          return (
+            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', position: 'relative' }}>
+              {isPeak && (
+                <div style={{ position: 'absolute', top: -18, fontSize: 9, color: '#f59e0b', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                  peak ▼
+                </div>
+              )}
+              <div style={{
+                width: '100%', borderRadius: '3px 3px 0 0',
+                height: `${Math.max(heightPct, b.value > 0 ? 4 : 0)}%`,
+                background: barColor,
+                opacity: b.value === 0 ? 0.15 : 1,
+                transition: 'height 0.4s ease',
+                position: 'relative',
+              }}>
+                {b.value > 0 && (
+                  <div style={{
+                    position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+                    fontSize: 8, color: 'var(--text-muted)', whiteSpace: 'nowrap', marginBottom: 2,
+                  }}>
+                    {fmt(b.value)}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Week labels — show every 3rd */}
+      <div style={{ display: 'flex', gap: 4 }}>
+        {buckets.map((b, i) => (
+          <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 8, color: 'var(--text-muted)', overflow: 'hidden' }}>
+            {i % 3 === 0 ? b.label : ''}
+          </div>
+        ))}
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 16, marginTop: 10, fontSize: 10, color: 'var(--text-muted)' }}>
+        {[['#22c55e', '0–4 wks (proposal/meeting)'], ['#3b82f6', '4–8 wks (replied/contacted)'], ['#8b5cf6', '8–12 wks (new leads)']].map(([c, l]) => (
+          <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: c, display: 'inline-block' }} />
+            {l}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function PipelineView() {
   const setMode = useAppStore((s) => s.setMode);
   const setFilter = useAppStore((s) => s.setFilter);
@@ -308,6 +429,9 @@ export default function PipelineView() {
           total={total}
           onStageClick={goToLeads}
         />
+
+        {/* ── 90-Day Revenue Forecast ── */}
+        <RevenueForecastChart />
 
         {/* ── Revenue by category ── */}
         <section className="pv-card">
