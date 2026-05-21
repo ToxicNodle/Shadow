@@ -488,6 +488,18 @@ export const api = {
       lead: { id: number; company: string };
     }>(`/leads/${leadId}/followup-recommendation`),
 
+  getEmailEngagement: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      emails: {
+        token: string;
+        subject: string;
+        open_count: number;
+        opened_at: string | null;
+        created_at: string;
+      }[];
+    }>(`/leads/${leadId}/email-engagement`),
+
   suggestLead: (company: string) =>
     authFetch<{
       ok: boolean;

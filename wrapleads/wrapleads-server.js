@@ -1905,6 +1905,29 @@ app.post('/leads/sync', authMiddleware, async (req, res) => {
 // ----------------------------------------------------------------------------
 // Lead activities (timeline)
 // ----------------------------------------------------------------------------
+// GET /leads/:id/email-engagement  — tracked emails sent to this lead
+app.get('/leads/:id/email-engagement', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const uid = String(req.user.id);
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Lead not found' });
+
+    const r = await pool.query(
+      `SELECT token, subject, open_count, opened_at, created_at
+         FROM email_tracking
+        WHERE lead_id=$1 AND user_id=$2
+        ORDER BY created_at DESC
+        LIMIT 30`,
+      [id, uid]
+    );
+    res.json({ ok: true, emails: r.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/leads/:id/activities', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
