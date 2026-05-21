@@ -166,6 +166,150 @@ const STATUS_COLORS: Record<QuoteStatus, string> = {
   invoiced: '#8b5cf6',
 };
 
+// ── Wrap Price Estimator ───────────────────────────────────────────────────────
+// Sq footage per vehicle type (printable wrap area including bleed)
+const SQFT: Record<string, number> = {
+  cargo_van_standard: 200, cargo_van_high_roof: 230,
+  box_truck_16: 320, box_truck_24: 480,
+  semi_tractor: 380, pickup_truck: 140,
+  sprinter_van: 260, car_sedan: 110, car_suv: 150, other: 200,
+};
+// Material cost per sqft (cast vinyl, mid-grade — e.g. Avery SW900 or 3M 1080)
+const MATERIAL_RATE = 3.80;  // $/sqft
+const LAMINATE_RATE = 1.40;  // $/sqft
+// Labor rate estimates (install hrs × shop rate)
+const LABOR_HOURS: Record<string, number> = {
+  cargo_van_standard: 8, cargo_van_high_roof: 10,
+  box_truck_16: 14, box_truck_24: 20,
+  semi_tractor: 16, pickup_truck: 5,
+  sprinter_van: 12, car_sedan: 5, car_suv: 7, other: 8,
+};
+const SHOP_RATE_LOW = 65;   // $/hr
+const SHOP_RATE_HIGH = 95;  // $/hr
+const DESIGN_FLAT = 350;    // per unique design
+
+const EST_VEHICLES: Record<string, string> = {
+  ...VEHICLE_LABELS,
+  car_sedan: 'Car / Sedan', car_suv: 'SUV / Crossover',
+};
+
+function WrapPriceEstimator({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [vehicleType, setVehicleType] = useState('cargo_van_standard');
+  const [count, setCount] = useState(Math.max(1, parseInt(lead.fleetSize || '1') || 1));
+  const [designs, setDesigns] = useState(1);
+  const [shopRate, setShopRate] = useState(75);
+  const [coverage, setCoverage] = useState<'full' | 'partial' | 'spot'>('full');
+
+  const coverageMultiplier = coverage === 'full' ? 1 : coverage === 'partial' ? 0.65 : 0.30;
+
+  const sqft = (SQFT[vehicleType] ?? 200) * coverageMultiplier;
+  const materialCost = sqft * MATERIAL_RATE;
+  const laminateCost = sqft * LAMINATE_RATE;
+  const laborHrs = (LABOR_HOURS[vehicleType] ?? 8) * (coverage === 'spot' ? 0.4 : coverageMultiplier);
+  const laborCost = laborHrs * shopRate;
+  const designCost = DESIGN_FLAT * designs;
+  const perVehicleLow = (materialCost + laminateCost + laborHrs * SHOP_RATE_LOW) * 0.95;
+  const perVehicleHigh = (materialCost + laminateCost + laborHrs * SHOP_RATE_HIGH + designCost / count) * 1.15;
+  const totalLow = perVehicleLow * count;
+  const totalHigh = perVehicleHigh * count;
+
+  void laborCost; // used in breakdown rows below
+
+  function fmtD(n: number) { return `$${Math.round(n).toLocaleString()}`; }
+
+  const breakdown = [
+    { label: `Cast vinyl (${Math.round(sqft)} sqft/unit)`, unit: `$${(sqft * MATERIAL_RATE).toFixed(0)}`, total: fmtD(sqft * MATERIAL_RATE * count), color: '#3b82f6' },
+    { label: `Laminate overcoat`, unit: `$${(sqft * LAMINATE_RATE).toFixed(0)}`, total: fmtD(sqft * LAMINATE_RATE * count), color: '#8b5cf6' },
+    { label: `Installation labor (${Math.round(laborHrs)}h/unit)`, unit: `$${Math.round(laborHrs * shopRate)}`, total: fmtD(laborHrs * shopRate * count), color: '#f59e0b' },
+    { label: `Design & print setup (${designs} design${designs !== 1 ? 's' : ''})`, unit: `$${Math.round(designCost / count)}`, total: fmtD(designCost), color: '#10b981' },
+  ];
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, marginBottom: 12, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', fontSize: 13, fontWeight: 600 }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        Wrap Price Estimator
+        {!open && count > 0 && (
+          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>
+            {count} {EST_VEHICLES[vehicleType] ?? 'vehicle'}{count !== 1 ? 's' : ''} · {fmtD(totalLow)}–{fmtD(totalHigh)}
+          </span>
+        )}
+        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 11, fontWeight: 400 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '0 14px 14px', borderTop: '1px solid var(--border)' }}>
+          {/* Controls */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Vehicle Type</label>
+              <select value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} className="select" style={{ width: '100%', fontSize: 12 }}>
+                {Object.entries(EST_VEHICLES).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Coverage</label>
+              <select value={coverage} onChange={(e) => setCoverage(e.target.value as 'full' | 'partial' | 'spot')} className="select" style={{ width: '100%', fontSize: 12 }}>
+                <option value="full">Full Wrap</option>
+                <option value="partial">Partial (65%)</option>
+                <option value="spot">Spot / Decals (30%)</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Vehicle Count: <strong>{count}</strong></label>
+              <input type="range" min={1} max={100} value={count} onChange={(e) => setCount(+e.target.value)} style={{ width: '100%' }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Designs: <strong>{designs}</strong></label>
+              <input type="range" min={1} max={5} value={designs} onChange={(e) => setDesigns(+e.target.value)} style={{ width: '100%' }} />
+            </div>
+          </div>
+
+          {/* Total range */}
+          <div style={{ margin: '14px 0', padding: '12px 14px', background: '#10b98111', borderRadius: 8, textAlign: 'center' }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#10b981' }}>{fmtD(totalLow)} – {fmtD(totalHigh)}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+              estimated total · {fmtD(perVehicleLow)}–{fmtD(perVehicleHigh)} per vehicle
+            </div>
+          </div>
+
+          {/* Material breakdown */}
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: 8 }}>Cost Breakdown</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase' }}>
+                <th style={{ textAlign: 'left', paddingBottom: 4, fontWeight: 600 }}>Item</th>
+                <th style={{ textAlign: 'right', paddingBottom: 4, fontWeight: 600 }}>Per Unit</th>
+                <th style={{ textAlign: 'right', paddingBottom: 4, fontWeight: 600 }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {breakdown.map((row) => (
+                <tr key={row.label} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td style={{ padding: '6px 0', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: row.color, flexShrink: 0, display: 'inline-block' }} />
+                    {row.label}
+                  </td>
+                  <td style={{ padding: '6px 0', textAlign: 'right', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{row.unit}</td>
+                  <td style={{ padding: '6px 0', textAlign: 'right', fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{row.total}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
+            Estimates use {Math.round(sqft)} sqft/unit at ${MATERIAL_RATE}/sqft cast vinyl + ${LAMINATE_RATE}/sqft laminate + ${shopRate}/hr labor.
+            Actual pricing varies by vehicle condition, graphic complexity, and market rates. Use as a starting point for your formal quote.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function fmt(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -328,6 +472,7 @@ export default function QuotesTab({ lead }: Props) {
         ))}
       </div>
 
+      <WrapPriceEstimator lead={lead} />
       <WrapROICalculator lead={lead} />
 
       {showBuilder && (
