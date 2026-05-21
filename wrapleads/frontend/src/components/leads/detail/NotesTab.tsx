@@ -5,6 +5,57 @@ import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
 
+// ── AI Notes Brief ────────────────────────────────────────────────────────────
+function AINotesBrief({ lead }: { lead: Lead }) {
+  const [summary, setSummary] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const res = await api.getNotesSummary(lead.serverId);
+      setSummary(res.summary);
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'No notes to summarize', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!lead.serverId) return null;
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      {!summary ? (
+        <button
+          onClick={generate}
+          disabled={loading}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '6px 12px', borderRadius: 7, border: '1px solid #8b5cf633', background: '#8b5cf608', color: '#8b5cf6', cursor: loading ? 'default' : 'pointer', fontWeight: 600 }}
+        >
+          {loading ? (
+            <><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid #8b5cf6', borderTopColor: 'transparent', animation: 'spin 0.7s linear infinite' }} />Summarizing…</>
+          ) : (
+            <><span>✨</span> AI Brief — summarize all notes</>
+          )}
+        </button>
+      ) : (
+        <div style={{ padding: '12px 14px', background: '#8b5cf611', border: '1px solid #8b5cf633', borderRadius: 9 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: 0.5 }}>✨ AI Brief</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => navigator.clipboard.writeText(summary).then(() => showToast('Brief copied'))} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 5, border: '1px solid #8b5cf6', background: 'none', color: '#8b5cf6', cursor: 'pointer' }}>Copy</button>
+              <button onClick={() => setSummary(null)} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
+            </div>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, margin: 0 }}>{summary}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   lead: Lead;
 }
@@ -138,6 +189,8 @@ export default function NotesTab({ lead }: Props) {
           No journal notes yet — add one above
         </p>
       )}
+
+      <AINotesBrief lead={lead} />
 
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 8 }}>
         <div className="field-group">
