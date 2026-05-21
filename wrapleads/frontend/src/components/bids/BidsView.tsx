@@ -416,6 +416,127 @@ function PlatformGuide() {
   );
 }
 
+// ── Bid Intelligence Panel ────────────────────────────────────────────────────
+const STAGE_COLORS_BID: Record<string, string> = {
+  tracking: '#6366f1', submitted: '#3b82f6', shortlisted: '#f59e0b', won: '#22c55e',
+};
+const PLATFORM_SHORT: Record<string, string> = {
+  building_connected: 'BuildConn.', isqft: 'iSqFt', planhub: 'PlanHub',
+  sam_gov: 'SAM.gov', indot: 'INDOT', direct: 'Direct', other: 'Other',
+};
+
+function BidIntelPanel() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['bid-intel'],
+    queryFn: () => api.getBidIntel(),
+    staleTime: 60_000,
+  });
+
+  if (isLoading || !data) return null;
+  const { funnel, winRate, shortlistToWin, platforms, valueBuckets } = data;
+
+  const hasFunnelData = funnel.some((f) => f.count > 0);
+  if (!hasFunnelData && platforms.length === 0) return null;
+
+  const maxFunnel = Math.max(...funnel.map((f) => f.count), 1);
+  const maxBucket = Math.max(...valueBuckets.map((b) => b.total), 1);
+
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14,
+      padding: '14px 16px', background: 'var(--surface)', borderRadius: 10,
+      border: '1px solid var(--border)', margin: '0 0 16px',
+    }}>
+
+      {/* Stage Funnel */}
+      {hasFunnelData && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+            Stage Funnel
+          </div>
+          {funnel.map((f) => {
+            const color = STAGE_COLORS_BID[f.stage] ?? '#6b7280';
+            const pct = (f.count / maxFunnel) * 100;
+            return (
+              <div key={f.stage} style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                  <span style={{ color: 'var(--text)', textTransform: 'capitalize', fontWeight: 500 }}>{f.stage}</span>
+                  <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{f.count}</span>
+                </div>
+                <div style={{ height: 5, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 99, transition: 'width 0.4s ease' }} />
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ marginTop: 10, display: 'flex', gap: 12, fontSize: 11, flexWrap: 'wrap' }}>
+            {winRate !== null && (
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Overall win rate </span>
+                <strong style={{ color: winRate >= 40 ? '#10b981' : winRate >= 20 ? '#f59e0b' : '#ef4444' }}>{winRate}%</strong>
+              </div>
+            )}
+            {shortlistToWin !== null && (
+              <div>
+                <span style={{ color: 'var(--text-muted)' }}>Shortlisted → won </span>
+                <strong style={{ color: '#10b981' }}>{shortlistToWin}%</strong>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Platform Performance */}
+      {platforms.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+            Best Platforms
+          </div>
+          {platforms.slice(0, 5).map((p) => (
+            <div key={p.platform} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+              <span style={{ fontSize: 11, color: 'var(--text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {PLATFORM_SHORT[p.platform] ?? p.platform}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>{p.won}/{p.total}</span>
+              {p.winRate !== null && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, flexShrink: 0,
+                  color: p.winRate >= 40 ? '#10b981' : p.winRate >= 20 ? '#f59e0b' : '#6b7280',
+                }}>
+                  {p.winRate}%
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Value Sweet Spot */}
+      {valueBuckets.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+            Value Sweet Spot
+          </div>
+          {valueBuckets.map((b) => {
+            const winPct = b.total > 0 ? Math.round((b.won / b.total) * 100) : 0;
+            return (
+              <div key={b.bucket} style={{ marginBottom: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
+                  <span style={{ color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{b.bucket}</span>
+                  <span style={{ color: winPct >= 40 ? '#10b981' : 'var(--text-muted)', fontWeight: winPct >= 40 ? 700 : 400 }}>{winPct}% win</span>
+                </div>
+                <div style={{ height: 4, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ height: '100%', width: `${(b.total / maxBucket) * 100}%`, background: 'var(--accent)', borderRadius: 99, opacity: 0.7 }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main BidsView ─────────────────────────────────────────────────────────────
 
 export default function BidsView() {
@@ -537,6 +658,9 @@ export default function BidsView() {
           )}
         </div>
       )}
+
+      {/* Bid Intelligence Panel */}
+      <BidIntelPanel />
 
       {/* Tab nav */}
       <div className="bids-tabs">

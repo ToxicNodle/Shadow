@@ -538,6 +538,14 @@ export const api = {
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
   getBidSummary: () => authFetch<BidSummary>('/bids/summary'),
+  getBidIntel: () => authFetch<{
+    ok: boolean;
+    funnel: { stage: string; count: number; value: number }[];
+    winRate: number | null;
+    shortlistToWin: number | null;
+    platforms: { platform: string; total: number; won: number; lost: number; winRate: number | null; avgWonValue: number }[];
+    valueBuckets: { bucket: string; total: number; won: number }[];
+  }>('/bids/intel'),
   createBid: (bid: Partial<Bid>) =>
     authFetch<{ bid: Bid }>('/bids', { method: 'POST', body: JSON.stringify(bid) }),
   updateBid: (id: number, updates: Partial<Bid>) =>
