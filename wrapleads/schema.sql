@@ -349,31 +349,35 @@ CREATE TABLE IF NOT EXISTS notifications (
   user_id    TEXT NOT NULL,
   type       TEXT NOT NULL,
   title      TEXT NOT NULL,
-  body       TEXT,
-  read       BOOLEAN DEFAULT false,
+  body       TEXT NOT NULL DEFAULT '',
   metadata   JSONB DEFAULT '{}',
+  read_at    TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, read, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_user   ON notifications (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications (user_id) WHERE read_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS proposals (
-  id              BIGSERIAL PRIMARY KEY,
-  user_id         TEXT NOT NULL,
-  lead_id         BIGINT REFERENCES leads(id) ON DELETE CASCADE,
-  title           TEXT,
-  content         TEXT,
-  status          TEXT DEFAULT 'draft',
-  view_token      TEXT UNIQUE,
-  view_count      INT DEFAULT 0,
-  last_viewed_at  TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW()
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  lead_id      BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+  token        TEXT NOT NULL UNIQUE,
+  title        TEXT NOT NULL,
+  intro        TEXT,
+  services     TEXT,
+  pricing_html TEXT,
+  timeline     TEXT,
+  notes        TEXT,
+  status       TEXT NOT NULL DEFAULT 'draft',
+  approved_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_proposals_user  ON proposals (user_id);
 CREATE INDEX IF NOT EXISTS idx_proposals_lead  ON proposals (lead_id);
-CREATE INDEX IF NOT EXISTS idx_proposals_token ON proposals (view_token);
+CREATE INDEX IF NOT EXISTS idx_proposals_token ON proposals (token);
 
 CREATE TABLE IF NOT EXISTS quote_requests (
   id           BIGSERIAL PRIMARY KEY,
