@@ -616,6 +616,23 @@ export const api = {
   generatePipelineNarrative: () =>
     authFetch<{ ok: boolean; narrative: string }>('/ai/pipeline-narrative', { method: 'POST', body: '{}' }),
 
+  // Market penetration analysis (FMCSA white-space vs. current pipeline)
+  getMarketOpportunity: () =>
+    authFetch<{
+      ok: boolean;
+      opportunities: {
+        state: string;
+        lead_count: number;
+        won_count: number;
+        active_count: number;
+        total_carriers: number;
+        target_carriers: number;
+        penetration_pct: number | null;
+        untapped_count: number;
+      }[];
+      totalUntapped: number;
+    }>('/analytics/market-opportunity'),
+
   // Duplicate detection
   checkDuplicate: (q: string) =>
     authFetch<{ matches: Array<{ id: number; company: string; status: string; city: string; state: string }> }>(`/leads/check-duplicate?q=${encodeURIComponent(q)}`),

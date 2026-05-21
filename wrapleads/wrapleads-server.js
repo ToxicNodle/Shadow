@@ -8295,6 +8295,70 @@ app.get('/mission/retention-radar', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Market Penetration Analysis ───────────────────────────────────────────────
+// Returns, for each of the user's top states, how many FMCSA-registered fleet
+// carriers exist vs. how many they're already targeting — the "white space".
+app.get('/analytics/market-opportunity', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    // Top 6 states the user is targeting (by lead count)
+    const { rows: leadStates } = await pool.query(`
+      SELECT
+        state,
+        COUNT(*)::INT                                         AS lead_count,
+        COUNT(*) FILTER (WHERE status = 'won')::INT           AS won_count,
+        COUNT(*) FILTER (WHERE status NOT IN ('won','lost','cold'))::INT AS active_count
+      FROM leads
+      WHERE user_id = $1 AND state IS NOT NULL AND state != ''
+      GROUP BY state
+      ORDER BY lead_count DESC
+      LIMIT 6
+    `, [uid]);
+
+    if (leadStates.length === 0) {
+      return res.json({ ok: true, opportunities: [], totalUntapped: 0 });
+    }
+
+    const states = leadStates.map((r) => r.state);
+
+    // FMCSA carrier counts for those states (fleet 10–500 is the sweet spot for wraps)
+    const { rows: carrierCounts } = await pool.query(`
+      SELECT
+        state,
+        COUNT(*)::INT                                            AS total_carriers,
+        COUNT(*) FILTER (WHERE fleet_size BETWEEN 10 AND 500)::INT AS target_carriers
+      FROM companies
+      WHERE state = ANY($1) AND source = 'fmcsa'
+      GROUP BY state
+    `, [states]);
+
+    const countMap = Object.fromEntries(
+      carrierCounts.map((r) => [r.state, r])
+    );
+
+    const opportunities = leadStates.map((ls) => {
+      const cs = countMap[ls.state] ?? { total_carriers: 0, target_carriers: 0 };
+      const tc = cs.target_carriers;
+      const penetration = tc > 0 ? Math.min(100, Math.round((ls.lead_count / tc) * 100 * 10) / 10) : null;
+      const untapped = Math.max(0, tc - ls.lead_count);
+      return {
+        state: ls.state,
+        lead_count: ls.lead_count,
+        won_count: ls.won_count,
+        active_count: ls.active_count,
+        total_carriers: cs.total_carriers,
+        target_carriers: tc,
+        penetration_pct: penetration,
+        untapped_count: untapped,
+      };
+    });
+
+    const totalUntapped = opportunities.reduce((s, o) => s + o.untapped_count, 0);
+
+    res.json({ ok: true, opportunities, totalUntapped });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {

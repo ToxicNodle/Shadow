@@ -816,6 +816,130 @@ function ICPCard() {
   );
 }
 
+// ── Market Penetration Analysis ───────────────────────────────────────────────
+function MarketPenetrationCard() {
+  const setMode = useAppStore((s) => s.setMode);
+  const setPendingDiscoverSearch = useAppStore((s) => s.setPendingDiscoverSearch);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['market-opportunity'],
+    queryFn: () => api.getMarketOpportunity(),
+    staleTime: 15 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Market Penetration Analysis</div>
+        <div className="skeleton" style={{ height: 140, borderRadius: 8, marginTop: 12 }} />
+      </div>
+    );
+  }
+
+  if (!data?.ok || !data.opportunities || data.opportunities.length === 0) return null;
+
+  const { opportunities, totalUntapped } = data;
+
+  function goDiscover(state: string) {
+    setPendingDiscoverSearch({ states: [state], sort: 'wrap_score', limit: 25, offset: 0, minFleet: 10, maxFleet: 500, industries: null });
+    setMode('discover');
+  }
+
+  const maxLeads = Math.max(...opportunities.map((o) => o.lead_count), 1);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Market Penetration Analysis</div>
+        {totalUntapped > 0 && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', background: '#22c55e14', padding: '2px 8px', borderRadius: 99, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            {totalUntapped.toLocaleString()} carriers untapped
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
+        Your pipeline vs. FMCSA fleet database — find white space in your target markets
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+        {opportunities.map((o) => {
+          const pct = o.penetration_pct ?? 0;
+          const barColor = pct >= 20 ? '#f59e0b' : pct >= 8 ? '#3b82f6' : '#22c55e';
+          const leadPct = maxLeads > 0 ? (o.lead_count / maxLeads) * 100 : 0;
+          return (
+            <div
+              key={o.state}
+              style={{
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: '1px solid var(--border)',
+                background: 'var(--bg-elev)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>{o.state}</span>
+                  {o.won_count > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#22c55e', background: '#22c55e14', padding: '1px 5px', borderRadius: 3 }}>
+                      {o.won_count} won
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => goDiscover(o.state)}
+                  style={{
+                    fontSize: 10, fontWeight: 700, color: 'var(--accent)',
+                    background: 'var(--accent-subtle)', border: '1px solid var(--accent-glow)',
+                    borderRadius: 5, padding: '2px 8px', cursor: 'pointer',
+                  }}
+                >
+                  Search →
+                </button>
+              </div>
+
+              {/* Pipeline bar */}
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>
+                  <span>Your leads</span>
+                  <span style={{ fontWeight: 600, color: 'var(--text)' }}>{o.lead_count.toLocaleString()}</span>
+                </div>
+                <div style={{ height: 5, borderRadius: 3, background: 'var(--bg-elev-2)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.max(2, leadPct)}%`, background: 'var(--accent)', borderRadius: 3, transition: 'width 0.5s ease' }} />
+                </div>
+              </div>
+
+              {/* Penetration rate */}
+              {o.target_carriers > 0 && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>
+                    <span>Market penetration</span>
+                    <span style={{ fontWeight: 700, color: barColor }}>{pct}%</span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: 'var(--bg-elev-2)', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: barColor, borderRadius: 3, transition: 'width 0.5s ease' }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 4 }}>
+                    {o.untapped_count.toLocaleString()} carriers untapped · {o.target_carriers.toLocaleString()} total addressable
+                  </div>
+                </div>
+              )}
+              {o.target_carriers === 0 && (
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 4 }}>
+                  Load FMCSA data to see market size
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-soft)', fontSize: 11, color: 'var(--text-faint)' }}>
+        Market size from FMCSA Motor Carrier Census · fleet range 10–500 vehicles · click "Search →" to prospect any state
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -1505,6 +1629,9 @@ export default function AnalyticsView() {
 
         {/* ── Ideal Customer Profile ── */}
         <ICPCard />
+
+        {/* ── Market Penetration Analysis ── */}
+        <MarketPenetrationCard />
 
         {/* ── Customer Lifetime Value ── */}
         {topCustomers && topCustomers.length > 0 && (
