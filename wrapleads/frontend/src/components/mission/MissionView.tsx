@@ -574,6 +574,117 @@ const SEASONAL: Record<string, { peak: number[]; label: string }> = {
   design:       { peak: [1,2,3,8,9,10],          label: 'Brand launches' },
 };
 
+// ── Deal Velocity Tracker ─────────────────────────────────────────────────────
+// Expected max days before a deal should advance from each stage
+const STAGE_STALL_DAYS: Record<string, number> = {
+  new: 7, contacted: 5, replied: 3, meeting: 7, proposal: 10,
+};
+// Label color per momentum bucket
+const MOMENTUM_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  hot:     { label: 'Hot',     color: '#10b981', bg: '#10b98118' },
+  warming: { label: 'Warming', color: '#f59e0b', bg: '#f59e0b18' },
+  cooling: { label: 'Cooling', color: '#94a3b8', bg: '#94a3b818' },
+  stalled: { label: 'Stalled', color: '#ef4444', bg: '#ef444418' },
+};
+
+import type { Lead } from '../../api/types';
+
+function DealVelocityCard({ leads, onLeadClick }: { leads: Lead[]; onLeadClick: (id: number) => void }) {
+  const activeLead = leads.filter((l) =>
+    ['new', 'contacted', 'replied', 'meeting', 'proposal'].includes(l.status)
+  );
+
+  if (activeLead.length === 0) return null;
+
+  // Score each lead by days since last contact vs. expected stall threshold
+  const scored = activeLead.map((l) => {
+    const days = daysAgo(l.lastContacted) ?? daysAgo(l.createdAt) ?? 999;
+    const threshold = STAGE_STALL_DAYS[l.status] ?? 7;
+    const ratio = days / threshold; // >1 = past due
+    let bucket: 'hot' | 'warming' | 'cooling' | 'stalled';
+    if (ratio <= 0.4)      bucket = 'hot';
+    else if (ratio <= 0.8) bucket = 'warming';
+    else if (ratio <= 1.2) bucket = 'cooling';
+    else                   bucket = 'stalled';
+    return { lead: l, days, threshold, ratio, bucket };
+  });
+
+  // Show top 3 hottest + top 3 most stalled
+  const hot     = scored.filter((s) => s.bucket === 'hot' || s.bucket === 'warming').slice(0, 3);
+  const stalled = scored.filter((s) => s.bucket === 'stalled' || s.bucket === 'cooling').sort((a, b) => b.ratio - a.ratio).slice(0, 3);
+
+  if (hot.length === 0 && stalled.length === 0) return null;
+
+  const STATUS_LABEL: Record<string, string> = {
+    new: 'New', contacted: 'Contacted', replied: 'Replied', meeting: 'Meeting', proposal: 'Proposal',
+  };
+
+  return (
+    <section className="mission-card" style={{ borderColor: 'rgba(139,92,246,0.25)', background: 'rgba(139,92,246,0.03)' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-icon" style={{ color: '#8b5cf6' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="18" height="18"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        </span>
+        <span className="mission-card-title">Deal Velocity</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+          {scored.filter((s) => s.bucket === 'stalled').length} stalled · {scored.filter((s) => s.bucket === 'hot').length} hot
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+        {/* Hot / Warming */}
+        {hot.length > 0 && (
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Moving Fast</div>
+            {hot.map(({ lead, days, bucket }) => {
+              const style = MOMENTUM_STYLE[bucket];
+              return (
+                <button
+                  key={lead.id}
+                  onClick={() => lead.serverId && onLeadClick(lead.serverId)}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)', textAlign: 'left' }}
+                >
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: style.color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.company}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{STATUS_LABEL[lead.status]} · {days === 0 ? 'today' : `${days}d ago`}</div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: style.color, background: style.bg, padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>{style.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Stalling */}
+        {stalled.length > 0 && (
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>At Risk</div>
+            {stalled.map(({ lead, days, threshold, bucket }) => {
+              const style = MOMENTUM_STYLE[bucket];
+              const overBy = days - threshold;
+              return (
+                <button
+                  key={lead.id}
+                  onClick={() => lead.serverId && onLeadClick(lead.serverId)}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)', textAlign: 'left' }}
+                >
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: style.color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.company}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{STATUS_LABEL[lead.status]} · {overBy > 0 ? `${overBy}d overdue` : `${days}d`}</div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: style.color, background: style.bg, padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>{style.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SeasonalRadar({ leads }: { leads: { category: string; status: string }[] }) {
   const month = new Date().getMonth();
   const alerts = useMemo(() => {
@@ -1188,6 +1299,9 @@ export default function MissionView() {
             </div>
           )}
         </section>
+
+        {/* ── Deal Velocity Tracker ── */}
+        <DealVelocityCard leads={leads} onLeadClick={goToLead} />
 
         {/* ── Seasonal Demand Radar ── */}
         <SeasonalRadar leads={leads} />
