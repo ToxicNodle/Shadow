@@ -788,6 +788,87 @@ function RevenueGoalBar({ revenue, wonCount, goal, onSetGoal }: {
   );
 }
 
+// ── Setup Checklist ───────────────────────────────────────────────────────────
+
+const ONBOARDING_DISMISS_KEY = 'wl_onboarding_dismissed';
+
+function SetupChecklist() {
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(ONBOARDING_DISMISS_KEY) === '1');
+
+  const { data } = useQuery({
+    queryKey: ['onboarding-status'],
+    queryFn: () => api.getOnboardingStatus(),
+    staleTime: 5 * 60_000,
+    enabled: !dismissed,
+  });
+
+  function dismiss() {
+    localStorage.setItem(ONBOARDING_DISMISS_KEY, '1');
+    setDismissed(true);
+  }
+
+  if (dismissed || !data) return null;
+  if (data.completed === data.total) return null;
+
+  const pct = Math.round((data.completed / data.total) * 100);
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, #6366f108, #8b5cf608)',
+      border: '1px solid #6366f130',
+      borderRadius: 12,
+      padding: '14px 18px',
+      marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}>
+            <svg viewBox="0 0 36 36" width="36" height="36">
+              <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--border)" strokeWidth="3" />
+              <circle cx="18" cy="18" r="15.9" fill="none" stroke="#6366f1" strokeWidth="3"
+                strokeDasharray={`${pct} 100`} strokeDashoffset="25" strokeLinecap="round" />
+            </svg>
+            <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: '#6366f1' }}>{pct}%</span>
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Getting started</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{data.completed} of {data.total} steps complete</div>
+          </div>
+        </div>
+        <button onClick={dismiss} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          Dismiss
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {data.steps.map((step) => (
+          <div key={step.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{
+              width: 18, height: 18, borderRadius: '50%', flexShrink: 0, marginTop: 1,
+              background: step.done ? '#6366f1' : 'transparent',
+              border: step.done ? 'none' : '1.5px solid var(--border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {step.done && (
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: step.done ? 500 : 600, color: step.done ? 'var(--text-muted)' : 'var(--text)', textDecoration: step.done ? 'line-through' : 'none' }}>
+                {step.title}
+              </div>
+              {!step.done && (
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{step.hint}</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main MissionView ──────────────────────────────────────────────────────────
 
 export default function MissionView() {
@@ -934,6 +1015,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Setup Checklist ── */}
+      <SetupChecklist />
 
       {/* ── Bids Due Today / Tomorrow ── */}
       {bidsDueSoon.length > 0 && (

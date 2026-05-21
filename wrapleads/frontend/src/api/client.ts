@@ -578,6 +578,15 @@ export const api = {
   checkDuplicate: (q: string) =>
     authFetch<{ matches: Array<{ id: number; company: string; status: string; city: string; state: string }> }>(`/leads/check-duplicate?q=${encodeURIComponent(q)}`),
 
+  // Onboarding
+  getOnboardingStatus: () =>
+    authFetch<{
+      ok: boolean;
+      steps: { id: string; done: boolean; title: string; hint: string }[];
+      completed: number;
+      total: number;
+    }>('/onboarding/status'),
+
   // Quote / Invoice Builder
   getLeadQuotes: (leadId: number) =>
     authFetch<{ quotes: import('./types').ShopQuote[] }>(`/leads/${leadId}/quotes`),

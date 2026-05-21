@@ -5074,6 +5074,39 @@ app.get('/leads/:id/followup-recommendation', authMiddleware, async (req, res) =
   }
 });
 
+// ── Onboarding Status ─────────────────────────────────────────────────────────
+// Returns completion status for the 5-step setup checklist.
+app.get('/onboarding/status', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [emailR, aiEmailR, seqR, callR, bidR] = await Promise.all([
+      // Step 1: sent a tracked email
+      pool.query(`SELECT 1 FROM email_tracking WHERE user_id=$1 LIMIT 1`, [uid]),
+      // Step 2: generated an AI email
+      pool.query(`SELECT 1 FROM lead_activities WHERE user_id=$1 AND type IN ('email_generated','email_copied') LIMIT 1`, [uid]),
+      // Step 3: activated a drip sequence
+      pool.query(`SELECT 1 FROM email_queue WHERE user_id=$1 LIMIT 1`, [uid]),
+      // Step 4: logged a call or booked a meeting
+      pool.query(`SELECT 1 FROM lead_activities WHERE user_id=$1 AND type IN ('called','meeting_set') LIMIT 1`, [uid]),
+      // Step 5: created a bid
+      pool.query(`SELECT 1 FROM bids WHERE user_id=$1 LIMIT 1`, [uid]),
+    ]);
+
+    const steps = [
+      { id: 'email_sent',    done: emailR.rows.length > 0,   title: 'Send your first email',       hint: 'Open a lead → Email tab → Generate & Send' },
+      { id: 'ai_email',     done: aiEmailR.rows.length > 0,  title: 'Generate an AI email',         hint: 'Open a lead → Email tab → Generate Email' },
+      { id: 'sequence',     done: seqR.rows.length > 0,      title: 'Activate a drip sequence',    hint: 'Open a lead → Email tab → Activate Sequence' },
+      { id: 'call_meeting', done: callR.rows.length > 0,     title: 'Log a call or meeting',       hint: 'Open a lead → Activity tab → Log Call / Meeting Set' },
+      { id: 'bid',          done: bidR.rows.length > 0,      title: 'Track your first bid',        hint: 'Switch to Bids view → Add New Bid' },
+    ];
+
+    const completed = steps.filter((s) => s.done).length;
+    res.json({ ok: true, steps, completed, total: steps.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Notes Summary ──────────────────────────────────────────────────────────
 // Condenses a lead's journal entries + pinned notes into an executive brief.
 app.post('/leads/:id/notes-summary', authMiddleware, async (req, res) => {
