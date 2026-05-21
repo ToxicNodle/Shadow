@@ -562,6 +562,13 @@ export const api = {
   getMissionSignals: () =>
     authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
 
+  getImpact: () =>
+    authFetch<{
+      ok: boolean;
+      emailsGenerated: number; sequencesActivated: number; emailsSent: number;
+      wonCount: number; wonRevenue: number; hoursSaved: number; apolloEnriched: number;
+    }>('/analytics/impact'),
+
   getRetentionRadar: () =>
     authFetch<{
       ok: boolean;

@@ -8108,6 +8108,64 @@ function startBidExpiryWorker() {
   console.log('· Bid expiry worker: running (daily alert at 10:00 AM)');
 }
 
+// WrapLeads ROI Impact — current-month stats showing platform value
+app.get('/analytics/impact', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+
+    const [actR, wonR, apolloR] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE type='email_generated')::INT  AS emails_generated,
+          COUNT(*) FILTER (WHERE type='sequence_activated')::INT AS sequences_activated,
+          COUNT(*) FILTER (WHERE type='email_sent')::INT         AS emails_sent,
+          COUNT(*) FILTER (WHERE type='note_added')::INT         AS notes_added
+        FROM lead_activities
+        WHERE user_id=$1 AND created_at >= $2
+      `, [uid, monthStart]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS cnt,
+               array_agg(DISTINCT category) AS categories
+        FROM leads
+        WHERE user_id=$1 AND status='won' AND updated_at >= $2
+      `, [uid, monthStart]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS cnt
+        FROM leads
+        WHERE user_id=$1 AND email IS NOT NULL AND updated_at >= $2
+          AND source IN ('apollo','auto_seed')
+      `, [uid, monthStart]),
+    ]);
+
+    const acts = actR.rows[0] ?? {};
+    const wonCount = wonR.rows[0]?.cnt ?? 0;
+    const wonCategories = wonR.rows[0]?.categories ?? [];
+
+    // Estimate won revenue by category avg
+    const REV = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+    const avgRev = wonCategories.length > 0
+      ? wonCategories.reduce((s, c) => s + (REV[c] ?? 3000), 0) / wonCategories.length
+      : 4500;
+    const wonRevenue = Math.round(wonCount * avgRev);
+
+    // Time savings: 15 min/email generated, 20 min/sequence
+    const minutesSaved = acts.emails_generated * 15 + acts.sequences_activated * 20;
+    const hoursSaved = Math.round(minutesSaved / 60 * 10) / 10;
+
+    res.json({
+      ok: true,
+      emailsGenerated: acts.emails_generated ?? 0,
+      sequencesActivated: acts.sequences_activated ?? 0,
+      emailsSent: acts.emails_sent ?? 0,
+      wonCount,
+      wonRevenue,
+      hoursSaved,
+      apolloEnriched: apolloR.rows[0]?.cnt ?? 0,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Retention Radar — aging installed wraps due for re-engagement
 // Returns installed_jobs where wrap age >= 60% of life_years, joined to lead CRM data
 app.get('/mission/retention-radar', authMiddleware, async (req, res) => {
