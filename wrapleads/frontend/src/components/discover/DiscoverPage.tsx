@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useCarrierStats, useCarrierSearch } from '../../hooks/useCarriers';
 import { useAppStore } from '../../store/useAppStore';
-import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import FilterRow from './FilterRow';
 import CarrierTable from './CarrierTable';
@@ -183,6 +183,7 @@ export default function DiscoverPage() {
     showToast: s.showToast,
     setMode: s.setMode,
   }));
+  const [campaignLoading, setCampaignLoading] = useState(false);
 
   async function bulkImport() {
     const ids = Array.from(selectedCarrierIds);
@@ -203,6 +204,28 @@ export default function DiscoverPage() {
       : `${success} carrier${success !== 1 ? 's' : ''} added to My Leads`;
     showToast(msg);
     if (success > 0) setMode('leads');
+  }
+
+  async function importAndLaunchCampaign() {
+    const ids = Array.from(selectedCarrierIds);
+    setCampaignLoading(true);
+    const leadIds: number[] = [];
+    for (const id of ids) {
+      try {
+        const result = await api.importCarrier(id);
+        if (result.leadId) leadIds.push(result.leadId);
+      } catch { /* skip duplicates */ }
+    }
+    if (leadIds.length > 0) {
+      try {
+        await api.bulkActivateSequences(leadIds);
+      } catch { /* sequences are optional */ }
+    }
+    clearSelectedCarrierIds();
+    qc.invalidateQueries({ queryKey: ['leads'] });
+    setCampaignLoading(false);
+    showToast(`${leadIds.length} carrier${leadIds.length !== 1 ? 's' : ''} imported · AI sequences launched`);
+    if (leadIds.length > 0) setMode('mission');
   }
 
   return (
@@ -249,10 +272,28 @@ export default function DiscoverPage() {
       {selectedCarrierIds.size > 0 && (
         <div className="bulk-action-bar">
           <span><span className="bulk-count">{selectedCarrierIds.size}</span> selected</span>
-          <button className="btn btn-primary" onClick={bulkImport}>
-            Import Selected
+          <button
+            className="btn btn-primary"
+            onClick={importAndLaunchCampaign}
+            disabled={campaignLoading}
+            title="Import carriers and immediately start AI email sequences — lands on Mission so you can watch them run"
+            style={{ background: 'linear-gradient(135deg, #10b981, #6366f1)', border: 'none', position: 'relative' }}
+          >
+            {campaignLoading ? (
+              <><span className="spinner" style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} /> Launching…</>
+            ) : (
+              <>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Import & Launch Sequences
+              </>
+            )}
           </button>
-          <button className="btn" onClick={clearSelectedCarrierIds}>Clear</button>
+          <button className="btn btn-primary" onClick={bulkImport} disabled={campaignLoading} style={{ opacity: campaignLoading ? 0.5 : 1 }}>
+            Import Only
+          </button>
+          <button className="btn" onClick={clearSelectedCarrierIds} disabled={campaignLoading}>Clear</button>
         </div>
       )}
     </div>

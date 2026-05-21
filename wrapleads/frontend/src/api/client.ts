@@ -140,7 +140,7 @@ export const api = {
     }),
   carrierStats: () => authFetch<CarrierStats>('/carriers/stats'),
   importCarrier: (companyId: number) =>
-    authFetch<void>('/carriers/import', {
+    authFetch<{ ok: boolean; leadId: number | null }>('/carriers/import', {
       method: 'POST', body: JSON.stringify({ companyId }),
     }),
 
