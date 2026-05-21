@@ -816,6 +816,166 @@ function ICPCard() {
   );
 }
 
+// ── Pipeline Health Score ─────────────────────────────────────────────────────
+interface BenchmarkMetric {
+  label: string;
+  userValue: number | null;
+  benchmark: number;
+  unit: string;
+  higherIsBetter: boolean;
+  tip: string;
+  score: number; // 0-25
+}
+
+function scoreBenchmark(value: number | null, benchmark: number, higherIsBetter: boolean, max = 25): number {
+  if (value === null) return max * 0.5; // neutral when no data
+  const ratio = higherIsBetter ? value / benchmark : benchmark / value;
+  return Math.round(Math.min(max, Math.max(0, ratio * max)));
+}
+
+function metricColor(score: number, max = 25): string {
+  const pct = score / max;
+  if (pct >= 0.8) return '#10b981';
+  if (pct >= 0.55) return '#f59e0b';
+  return '#ef4444';
+}
+
+function PipelineHealthCard() {
+  const { data } = useQuery({
+    queryKey: ['analytics'],
+    queryFn: () => api.getAnalytics(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (!data?.ok) return null;
+  const { summary, activity30d, emailPerf } = data as {
+    ok: boolean;
+    summary: { winRate: number | null; avgDaysToClose: number | null };
+    activity30d: { emails: number; calls: number };
+    emailPerf: { opens7d: number; totalTracked: number };
+  };
+
+  const openRate = emailPerf?.totalTracked > 0
+    ? Math.round((emailPerf.opens7d / emailPerf.totalTracked) * 100)
+    : null;
+  const monthlyActivity = (activity30d?.emails ?? 0) + (activity30d?.calls ?? 0);
+
+  const metrics: BenchmarkMetric[] = [
+    {
+      label: 'Win Rate',
+      userValue: summary?.winRate ?? null,
+      benchmark: 22,
+      unit: '%',
+      higherIsBetter: true,
+      tip: 'Prioritize leads already at Meeting or Proposal stage.',
+      score: scoreBenchmark(summary?.winRate ?? null, 22, true),
+    },
+    {
+      label: 'Days to Close',
+      userValue: summary?.avgDaysToClose !== null && summary?.avgDaysToClose !== undefined
+        ? Math.round(summary.avgDaysToClose) : null,
+      benchmark: 24,
+      unit: 'd',
+      higherIsBetter: false,
+      tip: 'Same-day follow-up after a reply cuts close time by 40%.',
+      score: scoreBenchmark(summary?.avgDaysToClose ?? null, 24, false),
+    },
+    {
+      label: 'Email Open Rate',
+      userValue: openRate,
+      benchmark: 28,
+      unit: '%',
+      higherIsBetter: true,
+      tip: 'Add the prospect\'s fleet size and city to the subject line.',
+      score: scoreBenchmark(openRate, 28, true),
+    },
+    {
+      label: 'Monthly Outreach',
+      userValue: monthlyActivity,
+      benchmark: 50,
+      unit: ' touches',
+      higherIsBetter: true,
+      tip: 'Use Bulk Sequence launch in Discover to scale outreach fast.',
+      score: scoreBenchmark(monthlyActivity, 50, true),
+    },
+  ];
+
+  const totalScore = metrics.reduce((s, m) => s + m.score, 0);
+  const scoreLabel = totalScore >= 80 ? 'Elite' : totalScore >= 60 ? 'Strong' : totalScore >= 40 ? 'Building' : 'Needs Work';
+  const scoreLabelColor = totalScore >= 80 ? '#10b981' : totalScore >= 60 ? '#3b82f6' : totalScore >= 40 ? '#f59e0b' : '#ef4444';
+  const circumference = 2 * Math.PI * 36;
+  const dashOffset = circumference - (totalScore / 100) * circumference;
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="an-card-title">Pipeline Health Score</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 20 }}>
+        Your shop vs. wrap industry benchmarks — updated each time analytics refresh
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 32, alignItems: 'center' }}>
+        {/* Gauge */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          <svg width="120" height="120" viewBox="0 0 88 88">
+            <circle cx="44" cy="44" r="36" fill="none" stroke="var(--border)" strokeWidth="8" />
+            <circle
+              cx="44" cy="44" r="36" fill="none"
+              stroke={scoreLabelColor} strokeWidth="8"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={dashOffset}
+              transform="rotate(-90 44 44)"
+              style={{ transition: 'stroke-dashoffset 1s ease' }}
+            />
+            <text x="44" y="40" textAnchor="middle" fill="var(--text)" fontSize="20" fontWeight="800" fontFamily="var(--mono)">
+              {totalScore}
+            </text>
+            <text x="44" y="56" textAnchor="middle" fill={scoreLabelColor} fontSize="9" fontWeight="700" letterSpacing="1">
+              / 100
+            </text>
+          </svg>
+          <div style={{ fontSize: 14, fontWeight: 800, color: scoreLabelColor }}>{scoreLabel}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', textAlign: 'center' }}>
+            Industry benchmark: 22% win rate · 24d close · 28% open rate · 50 touches/mo
+          </div>
+        </div>
+
+        {/* Metric breakdown */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {metrics.map((m) => {
+            const color = metricColor(m.score);
+            const barPct = (m.score / 25) * 100;
+            const needsWork = m.score < 14;
+            return (
+              <div key={m.label}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{m.label}</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                      benchmark: {m.benchmark}{m.unit}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color, fontFamily: 'var(--mono)' }}>
+                      {m.userValue !== null ? `${m.userValue}${m.unit}` : '—'}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ height: 5, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${barPct}%`, background: color, borderRadius: 99, transition: 'width 0.8s ease' }} />
+                </div>
+                {needsWork && (
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 4 }}>
+                    💡 {m.tip}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Market Penetration Analysis ───────────────────────────────────────────────
 function MarketPenetrationCard() {
   const setMode = useAppStore((s) => s.setMode);
@@ -1626,6 +1786,9 @@ export default function AnalyticsView() {
 
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />
+
+        {/* ── Pipeline Health Score ── */}
+        <PipelineHealthCard />
 
         {/* ── Ideal Customer Profile ── */}
         <ICPCard />
