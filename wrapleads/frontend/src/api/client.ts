@@ -620,6 +620,17 @@ export const api = {
       activeWithPrediction: { id: number; company: string; status: string; predictedClose: string; daysToClose: number }[];
     }>('/analytics/pipeline-velocity'),
 
+  // Hot email opens leaderboard
+  getHotOpens: () =>
+    authFetch<{
+      ok: boolean;
+      prospects: {
+        id: number; company: string; status: string; category: string;
+        email: string | null; total_opens: number;
+        last_opened: string | null; last_subject: string | null;
+      }[];
+    }>('/analytics/hot-opens'),
+
   // Sequence performance analytics
   getSequencePerformance: () =>
     authFetch<{
