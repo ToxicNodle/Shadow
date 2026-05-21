@@ -582,12 +582,99 @@ function BidIntelPanel() {
   );
 }
 
+// ── GC Relationship Directory ─────────────────────────────────────────────────
+
+function GCDirectory() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['gc-directory'],
+    queryFn: () => api.getGCDirectory(),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) return <div className="pv-loading"><span className="spinner" /><span>Loading GC directory…</span></div>;
+  const gcs = data?.gcs ?? [];
+
+  if (gcs.length === 0) return (
+    <div className="empty-state empty-state-sm">
+      <h3 className="empty-state-title">No GC relationships yet</h3>
+      <p className="empty-state-sub">Log bids with a GC / Builder name to start tracking your relationships and win rates per contractor.</p>
+    </div>
+  );
+
+  function fmtVal(n: number) {
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+    return `$${n}`;
+  }
+  function timeAgo(iso: string) {
+    const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+    return d === 0 ? 'today' : d === 1 ? '1d ago' : `${d}d ago`;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: 0, padding: '6px 14px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
+        <span>General Contractor</span>
+        <span style={{ textAlign: 'center' }}>Bids</span>
+        <span style={{ textAlign: 'center' }}>Win Rate</span>
+        <span style={{ textAlign: 'right' }}>Won Revenue</span>
+        <span style={{ textAlign: 'right' }}>Last Bid</span>
+      </div>
+      {gcs.map((gc) => {
+        const winRate = (gc.won_bids + gc.lost_bids) > 0
+          ? Math.round((gc.won_bids / (gc.won_bids + gc.lost_bids)) * 100) : null;
+        const winColor = winRate === null ? 'var(--text-muted)'
+          : winRate >= 50 ? '#22c55e' : winRate >= 25 ? '#f59e0b' : '#ef4444';
+        const hasActive = gc.active_bids > 0;
+        return (
+          <div key={gc.gc_name} style={{
+            display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: 0,
+            padding: '10px 14px', background: 'var(--surface)',
+            border: '1px solid var(--border)', borderRadius: 8, alignItems: 'center',
+          }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{gc.gc_name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                {gc.won_bids} won · {gc.lost_bids} lost{hasActive ? ` · ${gc.active_bids} active` : ''}
+                {gc.last_won_at && <span style={{ color: '#10b981', marginLeft: 6 }}>Last win {timeAgo(gc.last_won_at)}</span>}
+              </div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{gc.total_bids}</span>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              {winRate !== null ? (
+                <span style={{ fontSize: 15, fontWeight: 800, color: winColor }}>{winRate}%</span>
+              ) : (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>
+              )}
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              {gc.won_value > 0 ? (
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#22c55e' }}>{fmtVal(gc.won_value)}</span>
+              ) : (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>
+              )}
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)' }}>
+              {timeAgo(gc.last_bid_at)}
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ fontSize: 10, color: 'var(--text-faint)', textAlign: 'center', padding: '8px 0' }}>
+        {gcs.length} GC relationship{gcs.length !== 1 ? 's' : ''} tracked · sorted by won revenue
+      </div>
+    </div>
+  );
+}
+
 // ── Main BidsView ─────────────────────────────────────────────────────────────
 
 export default function BidsView() {
   const qc = useQueryClient();
   const [modalBid, setModalBid] = useState<Bid | null | 'new'>(null);
-  const [tab, setTab] = useState<'board' | 'guide'>('board');
+  const [tab, setTab] = useState<'board' | 'guide' | 'gcs'>('board');
 
   const { data, isLoading } = useQuery({
     queryKey: ['bids'],
@@ -712,12 +799,17 @@ export default function BidsView() {
         <button className={`bids-tab${tab === 'board' ? ' active' : ''}`} onClick={() => setTab('board')}>
           Kanban Board
         </button>
+        <button className={`bids-tab${tab === 'gcs' ? ' active' : ''}`} onClick={() => setTab('gcs')}>
+          GC Directory
+        </button>
         <button className={`bids-tab${tab === 'guide' ? ' active' : ''}`} onClick={() => setTab('guide')}>
           Where to Find Bids
         </button>
       </div>
 
-      {tab === 'guide' ? (
+      {tab === 'gcs' ? (
+        <GCDirectory />
+      ) : tab === 'guide' ? (
         <PlatformGuide />
       ) : isLoading ? (
         <div className="pv-loading">
