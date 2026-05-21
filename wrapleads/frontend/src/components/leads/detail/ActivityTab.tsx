@@ -4,6 +4,89 @@ import type { Lead, LeadActivity, ActivityType } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 
+// ── Pipeline Journey Swimlane ─────────────────────────────────────────────────
+const STAGE_ORDER = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost'];
+const STAGE_COLORS: Record<string, string> = {
+  new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9',
+  meeting: '#f59e0b', proposal: '#f97316', won: '#22c55e', lost: '#ef4444',
+};
+
+function PipelineJourney({ lead, activities }: { lead: Lead; activities: LeadActivity[] }) {
+  // Extract stage transition events from status_changed activities (oldest first)
+  const transitions = activities
+    .filter((a) => a.type === 'status_changed' && (a.metadata as Record<string,unknown>)?.to)
+    .map((a) => ({
+      to: String((a.metadata as Record<string,unknown>).to ?? ''),
+      at: new Date(a.created_at),
+    }))
+    .reverse(); // oldest first
+
+  if (transitions.length === 0) return null;
+
+  // Build stages with entry time and days spent
+  const stages: { stage: string; days: number; enteredAt: Date }[] = [];
+  for (let i = 0; i < transitions.length; i++) {
+    const curr = transitions[i];
+    const nextAt = transitions[i + 1]?.at ?? new Date();
+    const days = Math.max(0, Math.round((nextAt.getTime() - curr.at.getTime()) / 86_400_000));
+    stages.push({ stage: curr.to, days, enteredAt: curr.at });
+  }
+
+  // Current stage if not in transitions (lead might still be in initial 'new')
+  const lastKnown = stages[stages.length - 1]?.stage;
+  if (lead.status !== lastKnown && lead.status !== 'new') {
+    // Already covered by last transition
+  }
+
+  const maxDays = Math.max(...stages.map((s) => s.days), 1);
+
+  return (
+    <div style={{ marginBottom: 16, padding: '12px 14px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+        Pipeline Journey
+      </div>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', overflowX: 'auto' }}>
+        {stages.map((s, i) => {
+          const color = STAGE_COLORS[s.stage] ?? '#6b7280';
+          const heightPct = maxDays > 0 ? Math.max(20, (s.days / maxDays) * 80) : 20;
+          const isCurrent = i === stages.length - 1;
+          return (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 52 }}>
+              {/* Days label */}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                {s.days === 0 ? '<1d' : `${s.days}d`}
+              </div>
+              {/* Bar */}
+              <div style={{
+                width: 44, height: heightPct, borderRadius: '4px 4px 0 0',
+                background: color,
+                opacity: isCurrent ? 1 : 0.6,
+                border: isCurrent ? `2px solid ${color}` : 'none',
+                boxSizing: 'border-box',
+                position: 'relative',
+              }}>
+                {isCurrent && (
+                  <div style={{ position: 'absolute', top: -18, left: '50%', transform: 'translateX(-50%)', fontSize: 8, color, fontWeight: 800, whiteSpace: 'nowrap' }}>
+                    NOW
+                  </div>
+                )}
+              </div>
+              {/* Stage label */}
+              <div style={{ fontSize: 9, color: isCurrent ? color : 'var(--text-muted)', fontWeight: isCurrent ? 700 : 400, textAlign: 'center', whiteSpace: 'nowrap', textTransform: 'capitalize' }}>
+                {s.stage}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* Total timeline */}
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6, textAlign: 'right' }}>
+        {stages.reduce((s, st) => s + st.days, 0)} days total in pipeline
+      </div>
+    </div>
+  );
+}
+
 interface Props { lead: Lead; }
 
 const TYPE_LABELS: Record<ActivityType | string, { icon: ReactNode; label: string; color: string }> = {
@@ -84,6 +167,11 @@ export default function ActivityTab({ lead }: Props) {
         <div className="loading" style={{ padding: 20 }}>
           <span className="spinner" />
         </div>
+      )}
+
+      {/* Pipeline journey swimlane — only when there are stage transitions */}
+      {!isLoading && activities.length > 0 && (
+        <PipelineJourney lead={lead} activities={activities} />
       )}
 
       {!isLoading && activities.length === 0 && (
