@@ -5553,25 +5553,65 @@ app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (re
     if (competitive) prompt += ` Make the branding bold, large, and high-contrast for maximum visibility and on-road impact.`;
     prompt += ` Keep the vehicle shape, perspective, lighting, and surroundings identical. Make the wrap look photorealistic and production-quality.`;
 
-    // Use gpt-image-1 edit endpoint with the uploaded photo
+    // Use gpt-image-1 edit endpoint with the uploaded photo.
+    // Attempt batch generation (n > 1) first; if the API rejects the n parameter
+    // (some endpoint versions don't support it) fall back to sequential single calls.
     const FormDataNode = (await import('form-data')).default;
-    const form = new FormDataNode();
-    form.append('model', 'gpt-image-1');
-    form.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
-    form.append('prompt', prompt);
-    form.append('size', '1536x1024');
-    if (variants > 1) form.append('n', String(variants));
 
-    const resp = await fetch('https://api.openai.com/v1/images/edits', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${openaiKey}`, ...form.getHeaders() },
-      body: form,
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
+    async function singleEdit() {
+      const f = new FormDataNode();
+      f.append('model', 'gpt-image-1');
+      f.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
+      f.append('prompt', prompt);
+      f.append('size', '1536x1024');
+      const r = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${openaiKey}`, ...f.getHeaders() },
+        body: f,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error?.message || 'OpenAI image edit error');
+      const toUrl = (item) => item.url || (item.b64_json ? `data:image/png;base64,${item.b64_json}` : null);
+      return (d.data || []).map(toUrl).filter(Boolean);
+    }
 
-    const toUrl = (d) => d.url || (d.b64_json ? `data:image/png;base64,${d.b64_json}` : null);
-    const image_urls = (data.data || []).map(toUrl).filter(Boolean);
+    let image_urls = [];
+
+    if (variants > 1) {
+      // Try batch first
+      try {
+        const form = new FormDataNode();
+        form.append('model', 'gpt-image-1');
+        form.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
+        form.append('prompt', prompt);
+        form.append('size', '1536x1024');
+        form.append('n', String(variants));
+        const resp = await fetch('https://api.openai.com/v1/images/edits', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${openaiKey}`, ...form.getHeaders() },
+          body: form,
+        });
+        const data = await resp.json();
+        if (resp.ok && data.data?.length > 1) {
+          const toUrl = (item) => item.url || (item.b64_json ? `data:image/png;base64,${item.b64_json}` : null);
+          image_urls = (data.data || []).map(toUrl).filter(Boolean);
+        } else {
+          // API accepted request but returned only one, or rejected n — fall back
+          throw new Error('batch-unsupported');
+        }
+      } catch {
+        // Sequential fallback: fire variants calls in parallel (respects rate limits better than series)
+        const calls = Array.from({ length: variants }, () => singleEdit());
+        const settled = await Promise.allSettled(calls);
+        image_urls = settled
+          .filter((r) => r.status === 'fulfilled')
+          .flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+        if (!image_urls.length) throw new Error('All variant generations failed');
+      }
+    } else {
+      image_urls = await singleEdit();
+    }
+
     res.json({ ok: true, image_url: image_urls[0], image_urls, original_url: originalDataUrl });
   } catch (e) {
     res.status(500).json({ error: e.message });
