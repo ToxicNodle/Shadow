@@ -1106,6 +1106,143 @@ function HotLeadsLeaderboard({ onLeadClick }: { onLeadClick: (id: number) => voi
 
 // ── Setup Checklist ───────────────────────────────────────────────────────────
 
+// ── Wrap Season Intelligence ──────────────────────────────────────────────────
+// Hot months per category (1=Jan … 12=Dec). Industry-sourced seasonal demand.
+const SEASON_MAP: Record<string, { months: number[]; label: string; note: string }> = {
+  fleet: {
+    months: [4, 5, 6, 7, 8, 9],
+    label: 'Fleet Wrap Season',
+    note: 'Summer logistics push — fleets rebrand before peak delivery months.',
+  },
+  gc_referral: {
+    months: [3, 4, 5, 6, 7, 8, 9, 10],
+    label: 'GC Referral Season',
+    note: 'Construction is in full swing — GCs are signing subcontractors now.',
+  },
+  construction: {
+    months: [3, 4, 5, 6, 7, 8, 9, 10],
+    label: 'Construction Wrap Season',
+    note: 'Site crews ramping up — branded vehicles on active job sites.',
+  },
+  racing: {
+    months: [1, 2, 3, 4, 5, 9, 10, 11],
+    label: 'Racing Season',
+    note: 'Pre-season prep + fall circuit — sponsors commit wrap budgets now.',
+  },
+  colorchange: {
+    months: [3, 4, 5, 6, 7, 8],
+    label: 'Color Change Season',
+    note: 'Warm weather drives enthusiasm for vehicle transformations.',
+  },
+  dinoc: {
+    months: [10, 11, 12, 1, 2],
+    label: 'DI-NOC Interior Season',
+    note: 'Facility renovations peak in winter — indoor work with no weather risk.',
+  },
+  reatec: {
+    months: [10, 11, 12, 1, 2],
+    label: 'Reatec / Rea Tec Season',
+    note: 'Architectural film installs follow the same cycle as DI-NOC.',
+  },
+  wallgraphics: {
+    months: [1, 2, 3, 7, 8, 9],
+    label: 'Wall Graphics Season',
+    note: 'Trade show season — exhibitors order signage before Jan and July shows.',
+  },
+};
+
+const REV_EST_SEASON: Record<string, number> = {
+  fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+  colorchange: 3500, racing: 40000, reatec: 5500, design: 3000,
+  wallgraphics: 2500, other: 2500,
+};
+
+function WrapSeasonCard({
+  leads,
+  onFilter,
+}: {
+  leads: { category: string; status: string }[];
+  onFilter: (cat: string) => void;
+}) {
+  const month = new Date().getMonth() + 1; // 1-indexed
+
+  // Find hot categories this month
+  const hotCats = Object.entries(SEASON_MAP)
+    .filter(([, s]) => s.months.includes(month))
+    .map(([cat, s]) => {
+      const active = leads.filter((l) =>
+        l.category === cat && !['won', 'lost', 'cold'].includes(l.status)
+      );
+      return { cat, ...s, count: active.length, estValue: active.length * (REV_EST_SEASON[cat] ?? 2500) };
+    })
+    .filter((c) => c.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  if (hotCats.length === 0) return null;
+
+  const totalLeads = hotCats.reduce((s, c) => s + c.count, 0);
+  const totalValue = hotCats.reduce((s, c) => s + c.estValue, 0);
+  const topSeason = hotCats[0];
+
+  function fmtK(n: number) {
+    return n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n}`;
+  }
+
+  const monthName = new Date().toLocaleDateString('en-US', { month: 'long' });
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, #f59e0b08, #f9731608)',
+      border: '1px solid #f59e0b28',
+      borderRadius: 12,
+      padding: '12px 16px',
+      marginBottom: 16,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 10, background: '#f59e0b18',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          fontSize: 18,
+        }}>
+          🌡
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>
+            {monthName} — {topSeason.label}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.4 }}>
+            {topSeason.note}
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {hotCats.map((c) => (
+              <button
+                key={c.cat}
+                onClick={() => onFilter(c.cat)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+                  borderRadius: 99, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid #f59e0b30', background: '#f59e0b12', color: '#b45309',
+                }}
+                title={c.note}
+              >
+                <span style={{ fontWeight: 800, color: '#f59e0b' }}>{c.count}</span>
+                {c.cat === 'gc_referral' ? 'GC Referrals' : c.cat === 'colorchange' ? 'Color Change' : c.label.replace(' Season', '')}
+                →
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: '#f59e0b' }}>{totalLeads}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>in-season leads</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#10b981', marginTop: 4 }}>{fmtK(totalValue)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>est. pipeline</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const ONBOARDING_DISMISS_KEY = 'wl_onboarding_dismissed';
 
 function SetupChecklist() {
@@ -1334,6 +1471,12 @@ export default function MissionView() {
 
       {/* ── Setup Checklist ── */}
       <SetupChecklist />
+
+      {/* ── Wrap Season Intelligence ── */}
+      <WrapSeasonCard
+        leads={leads}
+        onFilter={(cat) => goToLeadsFiltered(undefined, cat)}
+      />
 
       {/* ── Hot Leads Leaderboard + Activity Feed ── */}
       <div className="mission-grid" style={{ marginBottom: 0, paddingBottom: 0 }}>
