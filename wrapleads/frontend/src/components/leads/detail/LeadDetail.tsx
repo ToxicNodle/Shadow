@@ -108,6 +108,184 @@ function DealMetricsStrip({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Next Best Action Bar ──────────────────────────────────────────────────────
+interface NBA {
+  icon: string;
+  text: string;
+  cta: string;
+  tab: Tab | null;
+  color: string;
+  urgency: 'high' | 'medium' | 'low';
+}
+
+function computeNBA(lead: Lead): NBA | null {
+  const now = Date.now();
+  const daysSince = lead.lastContacted
+    ? Math.floor((now - new Date(lead.lastContacted).getTime()) / 86_400_000)
+    : null;
+  const overdueBy = lead.followupDueAt && new Date(lead.followupDueAt).getTime() < now
+    ? Math.floor((now - new Date(lead.followupDueAt).getTime()) / 86_400_000)
+    : null;
+
+  // Overdue — highest priority
+  if (overdueBy !== null && !['won', 'lost'].includes(lead.status)) {
+    return {
+      icon: '⚠',
+      text: overdueBy === 0 ? 'Follow-up due today.' : `Follow-up ${overdueBy}d overdue.`,
+      cta: 'Draft Email →',
+      tab: 'email',
+      color: '#ef4444',
+      urgency: 'high',
+    };
+  }
+
+  if (lead.status === 'won' || lead.status === 'lost' || lead.status === 'cold') return null;
+
+  // No email — unlock enrichment
+  if (!lead.email && !lead.phone && lead.status === 'new') {
+    return {
+      icon: '🔍',
+      text: 'No contact info yet — add an email or phone to enable AI outreach.',
+      cta: 'Add Info →',
+      tab: 'info',
+      color: '#6366f1',
+      urgency: 'medium',
+    };
+  }
+
+  // New — never touched
+  if (lead.status === 'new') {
+    return {
+      icon: '✉',
+      text: 'First touch not sent yet. AI can write a personalized opener in seconds.',
+      cta: 'Generate Email →',
+      tab: 'email',
+      color: '#3b82f6',
+      urgency: 'medium',
+    };
+  }
+
+  // Contacted — push for reply
+  if (lead.status === 'contacted') {
+    if (daysSince !== null && daysSince > 10) {
+      return {
+        icon: '📬',
+        text: `${daysSince} days since last contact. A short follow-up doubles reply rates.`,
+        cta: 'Follow Up →',
+        tab: 'email',
+        color: '#f59e0b',
+        urgency: daysSince > 21 ? 'high' : 'medium',
+      };
+    }
+    return {
+      icon: '📬',
+      text: 'Waiting for reply. Consider a personalized follow-up if no response by day 7.',
+      cta: 'Draft Follow-up →',
+      tab: 'email',
+      color: '#64748b',
+      urgency: 'low',
+    };
+  }
+
+  // Replied — move to meeting
+  if (lead.status === 'replied') {
+    return {
+      icon: '📞',
+      text: 'They replied! Hot moment — schedule a call or discovery meeting now.',
+      cta: 'Log Meeting →',
+      tab: 'activity',
+      color: '#10b981',
+      urgency: 'high',
+    };
+  }
+
+  // Meeting — generate proposal
+  if (lead.status === 'meeting') {
+    return {
+      icon: '📋',
+      text: 'Meeting set. Strike while it\'s fresh — generate a quote while details are top of mind.',
+      cta: 'Build Quote →',
+      tab: 'quotes',
+      color: '#f97316',
+      urgency: 'medium',
+    };
+  }
+
+  // Proposal — follow up for decision
+  if (lead.status === 'proposal') {
+    if (daysSince !== null && daysSince > 5) {
+      return {
+        icon: '🤝',
+        text: `Proposal sent ${daysSince} days ago. A friendly check-in drives 40% faster decisions.`,
+        cta: 'Check In →',
+        tab: 'email',
+        color: '#f59e0b',
+        urgency: daysSince > 14 ? 'high' : 'medium',
+      };
+    }
+    return {
+      icon: '🤝',
+      text: 'Proposal out — give them a few days, then follow up with a decision prompt.',
+      cta: 'Plan Follow-up →',
+      tab: 'email',
+      color: '#64748b',
+      urgency: 'low',
+    };
+  }
+
+  return null;
+}
+
+function NextActionBar({ lead, onTabChange }: { lead: Lead; onTabChange: (t: Tab) => void }) {
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const dismissKey = `wl_nba_dismissed_${lead.id}_${todayKey}`;
+  const [dismissed, setDismissed] = useState(() => !!localStorage.getItem(dismissKey));
+
+  const nba = computeNBA(lead);
+  if (!nba || dismissed) return null;
+
+  function dismiss(e: React.MouseEvent) {
+    e.stopPropagation();
+    localStorage.setItem(dismissKey, '1');
+    setDismissed(true);
+  }
+
+  const bg = nba.urgency === 'high'
+    ? `${nba.color}15`
+    : nba.urgency === 'medium' ? `${nba.color}0d` : 'var(--surface)';
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '8px 14px',
+      background: bg,
+      borderBottom: `1px solid ${nba.color}28`,
+    }}>
+      <span style={{ fontSize: 14, flexShrink: 0 }}>{nba.icon}</span>
+      <span style={{ fontSize: 12, color: 'var(--text)', flex: 1, lineHeight: 1.4 }}>{nba.text}</span>
+      {nba.tab && (
+        <button
+          onClick={() => onTabChange(nba.tab!)}
+          style={{
+            fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
+            padding: '4px 10px', borderRadius: 6, border: `1px solid ${nba.color}50`,
+            background: `${nba.color}18`, color: nba.color, cursor: 'pointer',
+          }}
+        >
+          {nba.cta}
+        </button>
+      )}
+      <button
+        onClick={dismiss}
+        title="Dismiss for today"
+        style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14, lineHeight: 1, padding: '2px 4px' }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 // ── Score Breakdown Modal ─────────────────────────────────────────────────────
 const SCORE_TIPS: Record<string, { condition: (l: Lead) => boolean; tip: string }[]> = {
   fleet: [
@@ -384,6 +562,7 @@ export default function LeadDetail() {
         </div>
       </div>
       <DealMetricsStrip lead={lead} />
+      <NextActionBar lead={lead} onTabChange={setActiveTab} />
       {showScoreModal && <ScoreBreakdownModal lead={lead} onClose={() => setShowScoreModal(false)} />}
 
       <div className="lead-detail-tabs">
