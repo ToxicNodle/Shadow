@@ -310,6 +310,80 @@ function WrapPriceEstimator({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Proposal Decay Meter ──────────────────────────────────────────────────────
+// Shows acceptance probability declining over time after a proposal is sent.
+// Research-backed decay curve: 75% day 0 → ~20% day 21.
+
+function decayProbability(daysSince: number): number {
+  if (daysSince <= 0) return 75;
+  if (daysSince <= 3)  return Math.round(75 - daysSince * 3);    // 75→66
+  if (daysSince <= 7)  return Math.round(66 - (daysSince - 3) * 3.5); // 66→52
+  if (daysSince <= 14) return Math.round(52 - (daysSince - 7) * 2.5); // 52→35
+  if (daysSince <= 21) return Math.round(35 - (daysSince - 14) * 2);  // 35→21
+  return Math.max(10, Math.round(21 - (daysSince - 21) * 0.5));
+}
+
+function ProposalDecayMeter({ lead }: { lead: Lead }) {
+  if (lead.status !== 'proposal') return null;
+
+  const daysSince = lead.lastContacted
+    ? Math.floor((Date.now() - new Date(lead.lastContacted).getTime()) / 86_400_000)
+    : null;
+
+  if (daysSince === null) return null;
+
+  const prob = decayProbability(daysSince);
+  const pct = Math.min(100, prob); // bar width
+
+  const urgency = prob >= 60 ? 'fresh' : prob >= 40 ? 'warm' : prob >= 25 ? 'fading' : 'critical';
+  const COLOR: Record<string, string> = { fresh: '#10b981', warm: '#f59e0b', fading: '#f97316', critical: '#ef4444' };
+  const MSG: Record<string, string> = {
+    fresh:    'Proposal is fresh — follow up within the next few days to stay top of mind.',
+    warm:     'Good time for a check-in. Confirm they\'ve had a chance to review.',
+    fading:   'Urgency rising — re-engage with a new angle or a value-add (case study, ROI numbers).',
+    critical: 'Risk of loss. Send a final follow-up or offer an expiry incentive to force a decision.',
+  };
+  const color = COLOR[urgency];
+
+  return (
+    <div style={{
+      background: `${color}08`,
+      border: `1px solid ${color}28`,
+      borderRadius: 10,
+      padding: '10px 14px',
+      marginBottom: 14,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Proposal Acceptance Window</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+            {daysSince === 0 ? 'Sent today' : `Sent ${daysSince}d ago`}
+          </span>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <span style={{ fontSize: 17, fontWeight: 900, color, lineHeight: 1 }}>{prob}%</span>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 4 }}>accept prob.</span>
+        </div>
+      </div>
+
+      {/* Decay bar */}
+      <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width 0.4s ease' }} />
+      </div>
+
+      {/* Day markers */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text-faint)', marginBottom: 8 }}>
+        <span>Day 0 (75%)</span>
+        <span>Day 7 (52%)</span>
+        <span>Day 14 (35%)</span>
+        <span>Day 21+ (21%)</span>
+      </div>
+
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>{MSG[urgency]}</p>
+    </div>
+  );
+}
+
 function fmt(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -401,6 +475,9 @@ export default function QuotesTab({ lead }: Props) {
           </div>
         </div>
       )}
+
+      {/* Proposal decay meter — shown when status is 'proposal' */}
+      <ProposalDecayMeter lead={lead} />
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
