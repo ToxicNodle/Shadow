@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
-import type { LeadCategory } from '../../api/types';
+import type { Lead, LeadCategory } from '../../api/types';
+import BeforeAfterSlider from '../ui/BeforeAfterSlider';
 
 type Step = 'company' | 'brand' | 'capture' | 'result';
 
@@ -14,6 +15,12 @@ interface Brand {
   tagline: string;
 }
 
+interface Variant {
+  style: string;
+  label: string;
+  image_url: string;
+}
+
 const STYLE_OPTIONS: { value: string; label: string; sub: string }[] = [
   { value: 'full_wrap',   label: 'Full Wrap',     sub: 'Color-change, entire body' },
   { value: 'partial',     label: 'Partial Wrap',  sub: 'Doors, hood, rear panels' },
@@ -21,6 +28,8 @@ const STYLE_OPTIONS: { value: string; label: string; sub: string }[] = [
   { value: 'matte_brand', label: 'Matte Premium', sub: 'Brand color, matte finish' },
   { value: 'stripes',     label: 'Stripes',       sub: 'Front-to-back accent' },
 ];
+
+const DEFAULT_STYLES = ['full_wrap', 'matte_brand', 'logo_focus'];
 
 interface Props {
   onClose: () => void;
@@ -39,15 +48,50 @@ export default function PitchModeModal({ onClose }: Props) {
 
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [style, setStyle] = useState('full_wrap');
+  const [selectedStyles, setSelectedStyles] = useState<string[]>(DEFAULT_STYLES);
 
   const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState<{ image_url: string; original_url: string } | null>(null);
+  const [variants, setVariants] = useState<Variant[]>([]);
+  const [originalUrl, setOriginalUrl] = useState<string | null>(null);
+  const [pickedVariant, setPickedVariant] = useState<Variant | null>(null);
   const [genErr, setGenErr] = useState<string | null>(null);
 
+  // Save-to-lead picker
+  const [leadSearch, setLeadSearch] = useState<string | null>(null);
+  const [existingLeads, setExistingLeads] = useState<Lead[]>([]);
+  const [chosenLeadId, setChosenLeadId] = useState<number | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
+  const [proposing, setProposing] = useState(false);
+
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+
+  // Load leads once, filter client-side. Trigger when we hit the result step.
+  useEffect(() => {
+    if (step !== 'result' || existingLeads.length) return;
+    api.getLeads().then(({ leads }) => setExistingLeads(leads)).catch(() => {});
+  }, [step, existingLeads.length]);
+
+  // Closest existing lead match by company name — derived, not stored.
+  const bestMatch = useMemo<Lead | null>(() => {
+    if (!brand) return null;
+    const target = brand.name.toLowerCase().trim();
+    return existingLeads.find((l) => l.company.toLowerCase().trim() === target)
+      ?? existingLeads.find((l) => l.company.toLowerCase().includes(target))
+      ?? null;
+  }, [brand, existingLeads]);
+
+  // Effective selection used by save/proposal: explicit choice → best match → new.
+  const effectiveLeadId: number | 'new' = chosenLeadId ?? bestMatch?.serverId ?? 'new';
+  const searchValue = leadSearch ?? bestMatch?.company ?? brand?.name ?? '';
+
+  const leadOptions = useMemo(() => {
+    const q = searchValue.toLowerCase().trim();
+    if (!q) return existingLeads.slice(0, 6);
+    return existingLeads
+      .filter((l) => l.company.toLowerCase().includes(q))
+      .slice(0, 6);
+  }, [searchValue, existingLeads]);
 
   async function lookup() {
     if (!companyName.trim()) return;
@@ -70,23 +114,32 @@ export default function PitchModeModal({ onClose }: Props) {
     const reader = new FileReader();
     reader.onload = (e) => setPhotoUrl(e.target?.result as string);
     reader.readAsDataURL(f);
-    setStep('capture');
+  }
+
+  function toggleStyle(v: string) {
+    setSelectedStyles((cur) => {
+      if (cur.includes(v)) return cur.length === 1 ? cur : cur.filter((x) => x !== v);
+      return cur.length >= 4 ? cur : [...cur, v];
+    });
   }
 
   async function generate() {
     if (!photo || !brand) return;
     setGenerating(true);
     setGenErr(null);
-    setResult(null);
+    setVariants([]);
+    setPickedVariant(null);
     try {
       const r = await api.pitchPreview(photo, {
         companyName: brand.name,
         primary_color: brand.primary_color,
         secondary_color: brand.secondary_color,
         tagline: brand.tagline,
-        style,
+        styles: selectedStyles,
       });
-      setResult({ image_url: r.image_url, original_url: r.original_url });
+      setVariants(r.variants);
+      setOriginalUrl(r.original_url);
+      setPickedVariant(r.variants[0] ?? null);
       setStep('result');
     } catch (e) {
       setGenErr((e as Error).message);
@@ -96,46 +149,54 @@ export default function PitchModeModal({ onClose }: Props) {
   }
 
   async function shareResult() {
-    if (!result) return;
+    if (!pickedVariant) return;
     try {
-      const blob = await fetch(result.image_url).then((r) => r.blob());
-      const file = new File([blob], `${brand?.name || 'wrap'}-mockup.png`, { type: blob.type });
+      const blob = await fetch(pickedVariant.image_url).then((r) => r.blob());
+      const file = new File([blob], `${brand?.name || 'wrap'}-${pickedVariant.style}.png`, { type: blob.type });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: `${brand?.name} wrap concept`, text: `What a wrap could look like on this vehicle.` });
       } else {
         const a = document.createElement('a');
-        a.href = result.image_url;
+        a.href = pickedVariant.image_url;
         a.download = file.name;
         a.click();
       }
     } catch {
-      // user cancelled or share failed — non-fatal
+      // user cancelled or share failed
     }
   }
 
   async function saveToLead() {
-    if (!brand || !result) return;
+    if (!brand || !pickedVariant) return;
     setSaving(true);
     try {
-      const clientId = `pitch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const created = await api.createLead({
-        clientId,
-        company: brand.name,
-        category: 'fleet' as LeadCategory,
-        website: brand.domain ? `https://${brand.domain}` : '',
-        pitchAngle: `In-person pitch: ${brand.tagline || 'showed live AR wrap mockup on their vehicle'}`,
-        status: 'contacted',
-        notes: `Showed AR wrap preview during in-person visit.\nBrand colors: ${brand.primary_color} / ${brand.secondary_color}.`,
-      });
-      if (created?.id) {
-        await api.logActivity(created.id, {
+      let leadServerId: number | undefined;
+      const targetIsNew = effectiveLeadId === 'new';
+      if (targetIsNew) {
+        const clientId = `pitch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const created = await api.createLead({
+          clientId,
+          company: brand.name,
+          category: 'fleet' as LeadCategory,
+          website: brand.domain ? `https://${brand.domain}` : '',
+          pitchAngle: `In-person pitch: ${brand.tagline || 'showed live AR wrap mockup on their vehicle'}`,
+          status: 'contacted',
+          notes: `Showed AR wrap preview during in-person visit.\nBrand colors: ${brand.primary_color} / ${brand.secondary_color}.`,
+        });
+        leadServerId = created?.id;
+      } else {
+        leadServerId = effectiveLeadId;
+      }
+
+      if (leadServerId) {
+        await api.logActivity(leadServerId, {
           type: 'note_added',
-          subject: 'AR pitch demo shown in person',
-          body: `Live wrap mockup generated using ${brand.primary_color} primary / ${brand.secondary_color} accent.`,
-          metadata: { mockup_url: result.image_url, brand_domain: brand.domain, style },
+          subject: `AR pitch demo: ${pickedVariant.label}`,
+          body: `Live wrap mockup generated in ${brand.primary_color} / ${brand.secondary_color}. Style: ${pickedVariant.label}.`,
+          metadata: { mockup_url: pickedVariant.image_url, brand_domain: brand.domain, style: pickedVariant.style },
         });
       }
-      showToast(`Saved ${brand.name} to leads`, 'success');
+      showToast(targetIsNew ? `Saved ${brand.name} as a new lead` : `Logged mockup on ${brand.name}`, 'success');
       onClose();
     } catch (e) {
       showToast(`Save failed: ${(e as Error).message}`, 'error');
@@ -144,11 +205,49 @@ export default function PitchModeModal({ onClose }: Props) {
     }
   }
 
+  async function sendAsProposal() {
+    if (!brand || !pickedVariant) return;
+    setProposing(true);
+    try {
+      let leadServerId: number | undefined;
+      if (effectiveLeadId === 'new') {
+        const clientId = `pitch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const created = await api.createLead({
+          clientId,
+          company: brand.name,
+          category: 'fleet' as LeadCategory,
+          website: brand.domain ? `https://${brand.domain}` : '',
+          status: 'proposal',
+          notes: `Auto-created from in-person AR pitch.`,
+        });
+        leadServerId = created?.id;
+      } else {
+        leadServerId = effectiveLeadId;
+      }
+      if (!leadServerId) throw new Error('No lead');
+
+      const { proposal } = await api.createProposal(
+        leadServerId,
+        `Generated from in-person AR pitch using ${brand.primary_color} brand color.`,
+        pickedVariant.image_url,
+      );
+      const url = api.getProposalUrl(proposal.token);
+      await navigator.clipboard.writeText(url).catch(() => {});
+      showToast('Proposal created — link copied to clipboard', 'success');
+      window.open(url, '_blank');
+      onClose();
+    } catch (e) {
+      showToast(`Proposal failed: ${(e as Error).message}`, 'error');
+    } finally {
+      setProposing(false);
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="modal-box"
-        style={{ maxWidth: 520, width: '100%' }}
+        style={{ maxWidth: 560, width: '100%' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
@@ -174,7 +273,7 @@ export default function PitchModeModal({ onClose }: Props) {
             <span>→</span>
             <span style={{ opacity: step === 'capture' ? 1 : (photo ? 0.7 : 0.3) }}>3 · Photo</span>
             <span>→</span>
-            <span style={{ opacity: step === 'result' ? 1 : 0.3 }}>4 · Mockup</span>
+            <span style={{ opacity: step === 'result' ? 1 : 0.3 }}>4 · Concepts</span>
           </div>
 
           {!hasOpenAI && step !== 'company' && (
@@ -283,7 +382,7 @@ export default function PitchModeModal({ onClose }: Props) {
             </>
           )}
 
-          {/* ── Step 3: Camera / photo ──────────────────────────────────────── */}
+          {/* ── Step 3: Camera / photo + style picker ───────────────────────── */}
           {step === 'capture' && brand && (
             <>
               {photoUrl ? (
@@ -298,7 +397,6 @@ export default function PitchModeModal({ onClose }: Props) {
                 </div>
               )}
 
-              {/* Hidden inputs — camera vs gallery */}
               <input
                 ref={cameraRef}
                 type="file"
@@ -316,19 +414,25 @@ export default function PitchModeModal({ onClose }: Props) {
               />
 
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.06em' }}>Wrap style</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
-                  {STYLE_OPTIONS.map((s) => (
-                    <button
-                      key={s.value}
-                      className={`btn${style === s.value ? ' btn-primary' : ''}`}
-                      style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}
-                      onClick={() => setStyle(s.value)}
-                    >
-                      <span style={{ fontSize: 12, fontWeight: 700 }}>{s.label}</span>
-                      <span style={{ fontSize: 10, opacity: 0.8 }}>{s.sub}</span>
-                    </button>
-                  ))}
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.06em', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Pick concepts to generate</span>
+                  <span style={{ fontWeight: 600, opacity: 0.7 }}>{selectedStyles.length} / 4</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 6 }}>
+                  {STYLE_OPTIONS.map((s) => {
+                    const active = selectedStyles.includes(s.value);
+                    return (
+                      <button
+                        key={s.value}
+                        className={`btn${active ? ' btn-primary' : ''}`}
+                        style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}
+                        onClick={() => toggleStyle(s.value)}
+                      >
+                        <span style={{ fontSize: 12, fontWeight: 700 }}>{active ? '✓ ' : ''}{s.label}</span>
+                        <span style={{ fontSize: 10, opacity: 0.8 }}>{s.sub}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -358,52 +462,159 @@ export default function PitchModeModal({ onClose }: Props) {
                 <button
                   className="btn btn-primary"
                   style={{ width: '100%', justifyContent: 'center', padding: 16, fontSize: 16, background: brand.primary_color, color: '#fff', borderColor: brand.primary_color }}
-                  disabled={!photo || generating || !hasOpenAI}
+                  disabled={!photo || generating || !hasOpenAI || !selectedStyles.length}
                   onClick={generate}
                 >
                   {generating ? (
-                    <><span className="spinner" style={{ width: 14, height: 14, marginRight: 8 }} />Wrapping the vehicle…</>
-                  ) : `🎨 Show ${brand.name} wrapped`}
+                    <><span className="spinner" style={{ width: 14, height: 14, marginRight: 8 }} />Wrapping the vehicle in {selectedStyles.length} {selectedStyles.length === 1 ? 'style' : 'styles'}…</>
+                  ) : `🎨 Generate ${selectedStyles.length} ${selectedStyles.length === 1 ? 'concept' : 'concepts'}`}
                 </button>
               </div>
             </>
           )}
 
-          {/* ── Step 4: Result ──────────────────────────────────────────────── */}
-          {step === 'result' && result && brand && (
+          {/* ── Step 4: Result — variants + slider + save/proposal ──────────── */}
+          {step === 'result' && pickedVariant && brand && originalUrl && (
             <>
+              {/* Big preview with before/after slider */}
               <div style={{ position: 'relative' }}>
-                <img src={result.image_url} alt={`${brand.name} wrap concept`} style={{ width: '100%', borderRadius: 10, border: `2px solid ${brand.primary_color}` }} />
+                <BeforeAfterSlider
+                  before={originalUrl}
+                  after={pickedVariant.image_url}
+                  border={`2px solid ${brand.primary_color}`}
+                />
                 <div style={{
-                  position: 'absolute', top: 8, left: 8,
+                  position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)',
                   background: brand.primary_color, color: '#fff', padding: '4px 10px',
                   borderRadius: 6, fontSize: 11, fontWeight: 800, letterSpacing: '.04em',
+                  whiteSpace: 'nowrap',
                 }}>
-                  {brand.name.toUpperCase()} — CONCEPT
+                  {brand.name.toUpperCase()} · {pickedVariant.label.toUpperCase()}
                 </div>
               </div>
 
-              <details style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                <summary style={{ cursor: 'pointer' }}>Show original photo</summary>
-                <img src={result.original_url} alt="original" style={{ width: '100%', borderRadius: 8, marginTop: 6 }} />
-              </details>
+              {/* Variant thumbnails */}
+              {variants.length > 1 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                    {variants.length} concepts — tap to compare
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(variants.length, 4)}, 1fr)`, gap: 6 }}>
+                    {variants.map((v) => {
+                      const active = v.style === pickedVariant.style;
+                      return (
+                        <button
+                          key={v.style}
+                          onClick={() => setPickedVariant(v)}
+                          style={{
+                            padding: 0,
+                            background: 'transparent',
+                            border: active ? `2px solid ${brand.primary_color}` : '2px solid transparent',
+                            borderRadius: 8,
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                            position: 'relative',
+                          }}
+                        >
+                          <img src={v.image_url} alt={v.label} style={{ width: '100%', display: 'block' }} />
+                          <div style={{
+                            position: 'absolute', bottom: 0, left: 0, right: 0,
+                            background: 'linear-gradient(transparent, rgba(0,0,0,.7))',
+                            color: '#fff', fontSize: 10, fontWeight: 700,
+                            padding: '12px 6px 4px', textAlign: 'left',
+                          }}>
+                            {v.label}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Save target picker */}
+              <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                  Save mockup to
+                </div>
+                <input
+                  className="input"
+                  placeholder="Search your leads…"
+                  value={searchValue}
+                  onChange={(e) => { setLeadSearch(e.target.value); setChosenLeadId(null); }}
+                  style={{ width: '100%', marginBottom: 6 }}
+                />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 140, overflowY: 'auto' }}>
+                  {leadOptions.map((l) => {
+                    const active = effectiveLeadId === l.serverId;
+                    return (
+                      <button
+                        key={l.serverId}
+                        onClick={() => { setChosenLeadId(l.serverId ?? null); setLeadSearch(l.company); }}
+                        style={{
+                          textAlign: 'left',
+                          padding: '8px 10px',
+                          background: active ? brand.primary_color : 'var(--bg-card)',
+                          color: active ? '#fff' : 'var(--text)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.company}</span>
+                        <span style={{ opacity: 0.6, fontSize: 10 }}>{[l.city, l.state].filter(Boolean).join(', ')}</span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={() => { setChosenLeadId('new'); setLeadSearch(brand.name); }}
+                    style={{
+                      textAlign: 'left',
+                      padding: '8px 10px',
+                      background: effectiveLeadId === 'new' ? brand.primary_color : 'var(--bg-card)',
+                      color: effectiveLeadId === 'new' ? '#fff' : 'var(--text)',
+                      border: '1px dashed var(--border)',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    + Create new lead "{brand.name}"
+                  </button>
+                </div>
+              </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <button className="btn" style={{ justifyContent: 'center', padding: 12 }} onClick={shareResult}>
-                  📤 Share / Download
+                  📤 Share
                 </button>
-                <button className="btn" style={{ justifyContent: 'center', padding: 12 }} onClick={() => { setResult(null); setPhoto(null); setPhotoUrl(null); setStep('capture'); }}>
-                  🔄 Try another style
+                <button className="btn" style={{ justifyContent: 'center', padding: 12 }} onClick={() => { setVariants([]); setPickedVariant(null); setOriginalUrl(null); setStep('capture'); }}>
+                  🔄 Regenerate
                 </button>
               </div>
-              <button
-                className="btn btn-primary"
-                style={{ width: '100%', justifyContent: 'center', padding: 14, fontSize: 14, background: brand.primary_color, borderColor: brand.primary_color }}
-                disabled={saving}
-                onClick={saveToLead}
-              >
-                {saving ? 'Saving…' : `💾 Save ${brand.name} to my leads`}
-              </button>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <button
+                  className="btn"
+                  style={{ justifyContent: 'center', padding: 14, fontSize: 13 }}
+                  disabled={saving}
+                  onClick={saveToLead}
+                >
+                  {saving ? 'Saving…' : '💾 Log to lead'}
+                </button>
+                <button
+                  className="btn btn-primary"
+                  style={{ justifyContent: 'center', padding: 14, fontSize: 13, background: brand.primary_color, borderColor: brand.primary_color }}
+                  disabled={proposing}
+                  onClick={sendAsProposal}
+                >
+                  {proposing ? 'Building…' : '📄 Send as proposal'}
+                </button>
+              </div>
             </>
           )}
         </div>
