@@ -598,6 +598,224 @@ function PredictedCloseCalendar({ onLeadClick }: { onLeadClick: (id: number) => 
   );
 }
 
+// ── Action Calendar ─────────────────────────────────────────────────────────
+// Unified month/week calendar showing follow-up due dates (from leads) and bid
+// submission deadlines (from bids) — no backend needed, computed from existing data.
+
+const CAL_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const CAL_WEEKDAYS = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function ActionCalendar({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const { leads } = useLeads();
+
+  const { data: bidsData } = useQuery({
+    queryKey: ['bids'],
+    queryFn: () => api.getBids(),
+    staleTime: 60_000,
+  });
+  const bids = bidsData?.bids ?? [];
+
+  // Monday of the current week
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  const monday = useMemo(() => {
+    const d = new Date(today);
+    const dow = d.getDay();
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    return d;
+  }, [today]);
+
+  const weeks = useMemo(() =>
+    Array.from({ length: 5 }, (_, wi) =>
+      Array.from({ length: 7 }, (_, di) => {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + wi * 7 + di);
+        return d;
+      })
+    ), [monday]);
+
+  // Group leads by follow-up date
+  const followupByDate = useMemo(() => {
+    const map = new Map<string, typeof leads>();
+    for (const lead of leads) {
+      if (!lead.followupDueAt || ['won', 'lost'].includes(lead.status)) continue;
+      const key = lead.followupDueAt.slice(0, 10);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(lead);
+    }
+    return map;
+  }, [leads]);
+
+  // Group bids by due date
+  const bidsByDate = useMemo(() => {
+    const map = new Map<string, typeof bids>();
+    for (const bid of bids) {
+      if (!bid.bid_due || ['won', 'lost', 'no_bid'].includes(bid.status)) continue;
+      const key = bid.bid_due.slice(0, 10);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(bid);
+    }
+    return map;
+  }, [bids]);
+
+  if (followupByDate.size === 0 && bidsByDate.size === 0) return null;
+
+  const todayKey = isoDay(today);
+  const displayDate = selectedDate ?? todayKey;
+  const followupsForDate = followupByDate.get(displayDate) ?? [];
+  const bidsForDate = bidsByDate.get(displayDate) ?? [];
+
+  const totalFollowups = followupByDate.size;
+  const totalBidsDue = bidsByDate.size;
+
+  return (
+    <section className="pv-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div>
+          <h3 className="pv-card-title" style={{ margin: 0 }}>Action Calendar</h3>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+            {totalFollowups} follow-up{totalFollowups !== 1 ? 's' : ''} scheduled
+            {totalBidsDue > 0 && ` · ${totalBidsDue} bid deadline${totalBidsDue !== 1 ? 's' : ''}`}
+            {' '} · next 5 weeks
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-muted)', alignItems: 'center' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#3b82f6', display: 'inline-block' }} />
+            Follow-up
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} />
+            Bid due
+          </span>
+        </div>
+      </div>
+
+      {/* Weekday header */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 3 }}>
+        {CAL_WEEKDAYS.map((d) => (
+          <div key={d} style={{ textAlign: 'center', fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', paddingBottom: 2, letterSpacing: '.04em' }}>
+            {d}
+          </div>
+        ))}
+      </div>
+
+      {/* Week rows */}
+      {weeks.map((week, wi) => (
+        <div key={wi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 2 }}>
+          {week.map((day, di) => {
+            const dKey = isoDay(day);
+            const fups = followupByDate.get(dKey) ?? [];
+            const bdus = bidsByDate.get(dKey) ?? [];
+            const isToday = dKey === todayKey;
+            const isPast = day < today;
+            const isSelected = dKey === displayDate;
+            const hasEvents = fups.length > 0 || bdus.length > 0;
+            const isWeekend = di >= 5;
+            const showMonth = di === 0 || day.getDate() === 1;
+
+            return (
+              <button
+                key={dKey}
+                onClick={() => hasEvents ? setSelectedDate(isSelected ? null : dKey) : undefined}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  padding: '5px 2px 4px', borderRadius: 7,
+                  border: isSelected ? '1px solid var(--accent)' : isToday ? '1px solid rgba(99,102,241,0.35)' : '1px solid transparent',
+                  background: isSelected ? 'var(--accent-subtle)' : isToday ? 'rgba(99,102,241,0.07)' : 'transparent',
+                  cursor: hasEvents ? 'pointer' : 'default',
+                  opacity: isPast && !hasEvents ? 0.3 : 1,
+                  transition: 'background 0.12s, border-color 0.12s',
+                  minWidth: 0,
+                }}
+              >
+                {showMonth && (
+                  <span style={{ fontSize: 8, color: 'var(--text-faint)', lineHeight: 1.2, marginBottom: 1 }}>
+                    {CAL_MONTHS[day.getMonth()]}
+                  </span>
+                )}
+                <span style={{
+                  fontSize: 12, fontWeight: isToday ? 800 : 500,
+                  color: isToday ? '#6366f1' : isWeekend ? 'var(--text-muted)' : 'var(--text)',
+                  lineHeight: showMonth ? 1 : 1.6,
+                }}>
+                  {day.getDate()}
+                </span>
+                <div style={{ display: 'flex', gap: 2, marginTop: 3, minHeight: 6 }}>
+                  {fups.length > 0 && (
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} title={`${fups.length} follow-up${fups.length !== 1 ? 's' : ''}`} />
+                  )}
+                  {bdus.length > 0 && (
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} title={`${bdus.length} bid${bdus.length !== 1 ? 's' : ''} due`} />
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ))}
+
+      {/* Event detail for selected / today */}
+      {(followupsForDate.length > 0 || bidsForDate.length > 0) && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-dim)', marginBottom: 8 }}>
+            {new Date(displayDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          </div>
+          {followupsForDate.map((lead) => (
+            <button
+              key={lead.id}
+              onClick={() => lead.serverId && onLeadClick(lead.serverId)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '7px 10px', borderRadius: 7, marginBottom: 4,
+                background: 'var(--bg-elev-2)', border: '1px solid var(--border)',
+                cursor: lead.serverId ? 'pointer' : 'default', textAlign: 'left',
+                transition: 'border-color 0.12s',
+              }}
+              onMouseEnter={(e) => { if (lead.serverId) (e.currentTarget as HTMLButtonElement).style.borderColor = '#3b82f640'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; }}
+            >
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {lead.company}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>Follow-up due</span>
+              {lead.serverId && <span style={{ fontSize: 11, color: 'var(--accent)', flexShrink: 0 }}>→</span>}
+            </button>
+          ))}
+          {bidsForDate.map((bid) => (
+            <div
+              key={bid.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '7px 10px', borderRadius: 7, marginBottom: 4,
+                background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)',
+              }}
+            >
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {bid.project_name}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>
+                Bid due{bid.gc_name ? ` · ${bid.gc_name}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 const STAGE_VELOCITY_COLORS: Record<string, string> = {
   new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9', meeting: '#f59e0b', proposal: '#f97316',
 };
@@ -964,6 +1182,9 @@ export default function PipelineView() {
 
         {/* ── 90-Day Revenue Forecast ── */}
         <RevenueForecastChart />
+
+        {/* ── Action Calendar ── */}
+        <ActionCalendar onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
 
         {/* ── Pipeline Stage Velocity ── */}
         <PipelineVelocityCard />
