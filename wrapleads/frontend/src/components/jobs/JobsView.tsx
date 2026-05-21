@@ -310,6 +310,114 @@ function JobModal({ job, onClose }: JobModalProps) {
   );
 }
 
+// ── Wrap Portfolio Strip ──────────────────────────────────────────────────────
+
+const REV_EST: Record<string, number> = {
+  fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+  colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500,
+};
+
+function WrapPortfolioStrip({ jobs }: { jobs: InstalledJob[] }) {
+  if (jobs.length === 0) return null;
+
+  const totalVehicles = jobs.reduce((s, j) => s + j.vehicle_count, 0);
+  const totalValue    = jobs.reduce((s, j) => s + j.vehicle_count * (REV_EST[j.wrap_category] ?? 3500), 0);
+  const avgJobValue   = Math.round(totalValue / jobs.length);
+
+  const byCat: Record<string, number> = {};
+  jobs.forEach((j) => {
+    byCat[j.wrap_category] = (byCat[j.wrap_category] ?? 0) + j.vehicle_count * (REV_EST[j.wrap_category] ?? 3500);
+  });
+  const catEntries = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const maxCat = catEntries[0]?.[1] ?? 1;
+
+  const fmtVal = (n: number) =>
+    n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : `$${Math.round(n / 1_000)}K`;
+
+  const recentJob = [...jobs].sort((a, b) =>
+    new Date(b.install_date).getTime() - new Date(a.install_date).getTime()
+  )[0];
+  const daysSinceLast = recentJob
+    ? Math.floor((Date.now() - new Date(recentJob.install_date).getTime()) / 86_400_000)
+    : null;
+
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14,
+      padding: '14px 16px', background: 'var(--surface)', borderRadius: 10,
+      border: '1px solid var(--border)', margin: '0 0 16px',
+    }}>
+      {/* Portfolio value */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 6 }}>
+          Portfolio Value Installed
+        </div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--accent)', lineHeight: 1, marginBottom: 4 }}>
+          {fmtVal(totalValue)}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {totalVehicles} vehicles · avg {avgJobValue >= 1000 ? fmtVal(avgJobValue) : `$${avgJobValue}`}/job
+        </div>
+        {daysSinceLast !== null && (
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 4 }}>
+            Last install: {daysSinceLast === 0 ? 'today' : `${daysSinceLast}d ago`}
+          </div>
+        )}
+      </div>
+
+      {/* Revenue by category */}
+      {catEntries.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 8 }}>
+            Revenue by Category
+          </div>
+          {catEntries.map(([cat, val]) => (
+            <div key={cat} style={{ marginBottom: 7 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
+                <span style={{ color: 'var(--text)' }}>{CATEGORIES[cat as keyof typeof CATEGORIES] ?? cat}</span>
+                <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtVal(val)}</span>
+              </div>
+              <div style={{ height: 4, background: 'var(--border)', borderRadius: 99 }}>
+                <div style={{ height: '100%', width: `${(val / maxCat) * 100}%`, background: 'var(--accent)', borderRadius: 99, opacity: 0.75, transition: 'width 0.4s ease' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Re-order pipeline */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 8 }}>
+          Re-order Pipeline
+        </div>
+        {(() => {
+          const expiring90 = jobs.filter((j) => (j.days_until_expiry ?? Infinity) <= 90 && (j.days_until_expiry ?? -1) >= 0);
+          const expiring180 = jobs.filter((j) => (j.days_until_expiry ?? Infinity) > 90 && (j.days_until_expiry ?? Infinity) <= 180);
+          const expiredVal = jobs
+            .filter((j) => (j.days_until_expiry ?? 0) < 0)
+            .reduce((s, j) => s + j.vehicle_count * (REV_EST[j.wrap_category] ?? 3500), 0);
+          const soon90Val = expiring90.reduce((s, j) => s + j.vehicle_count * (REV_EST[j.wrap_category] ?? 3500), 0);
+          const soon180Val = expiring180.reduce((s, j) => s + j.vehicle_count * (REV_EST[j.wrap_category] ?? 3500), 0);
+          const rows = [
+            { label: 'Overdue / expired', val: expiredVal, color: '#ef4444' },
+            { label: 'Due within 90d',    val: soon90Val,  color: '#f97316' },
+            { label: 'Due 90–180d',       val: soon180Val, color: '#f59e0b' },
+          ].filter((r) => r.val > 0);
+          if (rows.length === 0) return (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>No expiring wraps in 180 days</div>
+          );
+          return rows.map((r) => (
+            <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.label}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: r.color }}>{fmtVal(r.val)}</span>
+            </div>
+          ));
+        })()}
+      </div>
+    </div>
+  );
+}
+
 // ── Aging Job Card ────────────────────────────────────────────────────────────
 
 function urgencyClass(days: number | undefined) {
@@ -393,6 +501,8 @@ export default function JobsView() {
           <span className="jobs-stat-label">Aging / Expiring</span>
         </div>
       </div>
+
+      <WrapPortfolioStrip jobs={allData?.jobs ?? []} />
 
       <div className="jobs-tabs">
         <button className={`jobs-tab ${tab === 'all' ? 'active' : ''}`} onClick={() => setTab('all')}>
