@@ -2450,6 +2450,76 @@ app.get('/analytics', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Sequence Performance Analytics ────────────────────────────────────────────
+app.get('/analytics/sequence-performance', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [toneR, dayR, stepR] = await Promise.all([
+      // Tone breakdown: which tone generates most replies/meetings
+      pool.query(`
+        SELECT
+          LOWER(la.metadata->>'tone') AS tone,
+          COUNT(DISTINCT la.lead_id)::INT AS sequences_sent,
+          COUNT(DISTINCT l.id) FILTER (WHERE l.status IN ('replied','meeting','proposal','won'))::INT AS progressed,
+          COUNT(DISTINCT l.id) FILTER (WHERE l.status IN ('won'))::INT AS won
+        FROM lead_activities la
+        JOIN leads l ON l.id = la.lead_id AND l.user_id = la.user_id
+        WHERE la.user_id = $1 AND la.type = 'sequence_activated'
+          AND la.metadata->>'tone' IS NOT NULL
+        GROUP BY LOWER(la.metadata->>'tone')
+        ORDER BY sequences_sent DESC
+      `, [uid]),
+
+      // Best day of week to activate (by reply rate)
+      pool.query(`
+        SELECT
+          EXTRACT(DOW FROM la.created_at)::INT AS dow,
+          COUNT(DISTINCT la.lead_id)::INT AS sent,
+          COUNT(DISTINCT l.id) FILTER (WHERE l.status IN ('replied','meeting','proposal','won'))::INT AS progressed
+        FROM lead_activities la
+        JOIN leads l ON l.id = la.lead_id AND l.user_id = la.user_id
+        WHERE la.user_id = $1 AND la.type = 'sequence_activated'
+        GROUP BY dow ORDER BY dow
+      `, [uid]),
+
+      // Which sequence step (day) gets opened most
+      pool.query(`
+        SELECT
+          q.sequence_day,
+          COUNT(*)::INT AS sent,
+          COUNT(*) FILTER (WHERE et.open_count > 0)::INT AS opened
+        FROM email_queue q
+        LEFT JOIN email_tracking et ON et.resend_id = q.resend_id AND et.user_id = q.user_id
+        WHERE q.user_id = $1 AND q.status = 'sent' AND q.sequence_day IS NOT NULL
+        GROUP BY q.sequence_day ORDER BY q.sequence_day
+      `, [uid]),
+    ]);
+
+    res.json({
+      ok: true,
+      tones: toneR.rows.map((r) => ({
+        tone: r.tone || 'unknown',
+        sent: r.sequences_sent,
+        progressed: r.progressed,
+        won: r.won,
+        progressRate: r.sequences_sent > 0 ? Math.round((r.progressed / r.sequences_sent) * 100) : 0,
+      })),
+      byDow: dayR.rows.map((r) => ({
+        dow: r.dow,
+        sent: r.sent,
+        progressed: r.progressed,
+        progressRate: r.sent > 0 ? Math.round((r.progressed / r.sent) * 100) : 0,
+      })),
+      byStep: stepR.rows.map((r) => ({
+        day: r.sequence_day,
+        sent: r.sent,
+        opened: r.opened,
+        openRate: r.sent > 0 ? Math.round((r.opened / r.sent) * 100) : 0,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Sample carrier seeder (runs when companies table is empty)
 // ----------------------------------------------------------------------------

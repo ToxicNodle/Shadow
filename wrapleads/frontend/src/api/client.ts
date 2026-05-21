@@ -578,6 +578,15 @@ export const api = {
   checkDuplicate: (q: string) =>
     authFetch<{ matches: Array<{ id: number; company: string; status: string; city: string; state: string }> }>(`/leads/check-duplicate?q=${encodeURIComponent(q)}`),
 
+  // Sequence performance analytics
+  getSequencePerformance: () =>
+    authFetch<{
+      ok: boolean;
+      tones: { tone: string; sent: number; progressed: number; won: number; progressRate: number }[];
+      byDow: { dow: number; sent: number; progressed: number; progressRate: number }[];
+      byStep: { day: number; sent: number; opened: number; openRate: number }[];
+    }>('/analytics/sequence-performance'),
+
   // Global activity feed
   getActivityFeed: (limit?: number) =>
     authFetch<{
