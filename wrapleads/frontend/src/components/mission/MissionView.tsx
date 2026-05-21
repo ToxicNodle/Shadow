@@ -1243,6 +1243,143 @@ function WrapSeasonCard({
   );
 }
 
+// ── Hot Opens Leaderboard ─────────────────────────────────────────────────────
+
+const CAT_SHORT: Record<string, string> = {
+  fleet: 'Fleet', dinoc: 'DI-NOC', gc_referral: 'GC', construction: 'Const.',
+  colorchange: 'CC', racing: 'Racing', reatec: 'Reatec', design: 'Design',
+  wallgraphics: 'Wall', other: 'Other',
+};
+
+const STATUS_DOT_HOT: Record<string, string> = {
+  new: '#6b7280', contacted: '#3b82f6', replied: '#10b981',
+  meeting: '#f59e0b', proposal: '#8b5cf6', won: '#10b981', lost: '#ef4444',
+};
+
+function daysAgo(iso: string | null) {
+  if (!iso) return '—';
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (diff === 0) return 'today';
+  if (diff === 1) return '1d ago';
+  return `${diff}d ago`;
+}
+
+function HotOpensLeaderboard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['hot-opens'],
+    queryFn: () => api.getHotOpens(),
+    staleTime: 2 * 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+
+  const prospects = data?.prospects ?? [];
+  if (!isLoading && prospects.length === 0) return null;
+
+  return (
+    <div style={{
+      background: 'rgba(239,68,68,0.04)',
+      border: '1px solid rgba(239,68,68,0.18)',
+      borderRadius: 12,
+      padding: '12px 16px',
+      marginBottom: 16,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <span style={{ fontSize: 17 }}>🔥</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Hot Prospects</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Opened your emails in the last 14 days — strike while hot</div>
+        </div>
+        {prospects.length > 0 && (
+          <span style={{
+            fontSize: 11, fontWeight: 700, color: '#ef4444',
+            background: 'rgba(239,68,68,0.12)', borderRadius: 99, padding: '2px 8px',
+          }}>
+            {prospects.length} engaged
+          </span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '4px 0' }}>Loading…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {prospects.map((p, i) => (
+            <div
+              key={p.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '7px 10px', borderRadius: 8,
+                background: i < 3 ? 'rgba(239,68,68,0.07)' : 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(239,68,68,0.1)',
+              }}
+            >
+              {/* rank */}
+              <span style={{
+                fontSize: 11, fontWeight: 800, color: i === 0 ? '#ef4444' : i === 1 ? '#f97316' : 'var(--text-muted)',
+                width: 16, textAlign: 'center', flexShrink: 0,
+              }}>
+                {i + 1}
+              </span>
+
+              {/* status dot */}
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                background: STATUS_DOT_HOT[p.status] ?? '#6b7280',
+              }} />
+
+              {/* company + category */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {p.company}
+                </div>
+                {p.last_subject && (
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    "{p.last_subject}"
+                  </div>
+                )}
+              </div>
+
+              {/* category chip */}
+              <span style={{
+                fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
+                background: 'rgba(255,255,255,0.06)', borderRadius: 4, padding: '1px 5px', flexShrink: 0,
+              }}>
+                {CAT_SHORT[p.category] ?? p.category}
+              </span>
+
+              {/* opens badge */}
+              <span style={{
+                fontSize: 11, fontWeight: 800, color: '#ef4444',
+                background: 'rgba(239,68,68,0.12)', borderRadius: 99, padding: '2px 8px', flexShrink: 0,
+              }}>
+                {p.total_opens}×
+              </span>
+
+              {/* last opened */}
+              <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0, minWidth: 44, textAlign: 'right' }}>
+                {daysAgo(p.last_opened)}
+              </span>
+
+              {/* CTA */}
+              <button
+                onClick={() => onLeadClick(p.id)}
+                style={{
+                  fontSize: 11, fontWeight: 700, color: '#ef4444',
+                  background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)',
+                  borderRadius: 6, padding: '3px 10px', cursor: 'pointer', flexShrink: 0,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Email Back →
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ONBOARDING_DISMISS_KEY = 'wl_onboarding_dismissed';
 
 function SetupChecklist() {
@@ -1477,6 +1614,9 @@ export default function MissionView() {
         leads={leads}
         onFilter={(cat) => goToLeadsFiltered(undefined, cat)}
       />
+
+      {/* ── Hot Email Opens Leaderboard ── */}
+      <HotOpensLeaderboard onLeadClick={goToLead} />
 
       {/* ── Hot Leads Leaderboard + Activity Feed ── */}
       <div className="mission-grid" style={{ marginBottom: 0, paddingBottom: 0 }}>

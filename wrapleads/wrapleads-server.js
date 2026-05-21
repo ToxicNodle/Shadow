@@ -2736,6 +2736,30 @@ app.get('/analytics/pipeline-velocity', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Hot email opens leaderboard — top prospects ranked by engagement (last 14 days)
+app.get('/analytics/hot-opens', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        l.id, l.company, l.status, l.category, l.email,
+        SUM(et.open_count)::int AS total_opens,
+        MAX(et.opened_at)      AS last_opened,
+        (SELECT subject FROM email_tracking
+         WHERE user_id=$1 AND lead_id=l.id
+         ORDER BY opened_at DESC NULLS LAST LIMIT 1) AS last_subject
+      FROM email_tracking et
+      JOIN leads l ON l.id = et.lead_id AND l.user_id = $1
+      WHERE et.user_id = $1
+        AND et.opened_at >= NOW() - INTERVAL '14 days'
+      GROUP BY l.id, l.company, l.status, l.category, l.email
+      ORDER BY total_opens DESC, last_opened DESC
+      LIMIT 10
+    `, [uid]);
+    res.json({ ok: true, prospects: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ----------------------------------------------------------------------------
 // Sample carrier seeder (runs when companies table is empty)
 // ----------------------------------------------------------------------------
