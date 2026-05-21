@@ -1,8 +1,10 @@
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useCountUp } from '../../hooks/useCountUp';
 import { useLeads } from '../../hooks/useLeads';
+import { winProbability, scoreLead, SCORE_COLORS, scoreLabel } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
 const STATUS_ORDER = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won', 'lost', 'cold'] as const;
@@ -317,6 +319,135 @@ function RevenueForecastChart() {
   );
 }
 
+// ── Quick Win Predictor ───────────────────────────────────────────────────────
+
+function QuickWinPredictor({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { leads } = useLeads();
+  const [showAll, setShowAll] = useState(false);
+
+  const candidates = useMemo(() => {
+    return leads
+      .filter((l) => ['meeting', 'proposal', 'replied'].includes(l.status) && l.serverId)
+      .map((l) => {
+        const prob = winProbability(l);
+        const score = scoreLead(l);
+        const rev = REV_PER_LEAD[l.category] ?? 1500;
+        const expectedVal = Math.round((prob / 100) * rev);
+        return { lead: l, prob, score, rev, expectedVal };
+      })
+      .sort((a, b) => b.expectedVal - a.expectedVal || b.prob - a.prob);
+  }, [leads]);
+
+  const displayed = showAll ? candidates : candidates.slice(0, 5);
+  const totalUpside = candidates.reduce((sum, c) => sum + c.expectedVal, 0);
+
+  if (candidates.length === 0) return null;
+
+  return (
+    <section className="pv-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div>
+          <h3 className="pv-card-title" style={{ margin: 0 }}>
+            Quick Win Predictor
+            <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 500, color: 'var(--text-muted)', verticalAlign: 'middle' }}>
+              meeting · proposal · replied
+            </span>
+          </h3>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+            {candidates.length} deals within striking distance · {fmt(totalUpside)} expected value if closed
+          </p>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#22c55e', lineHeight: 1 }}>{fmt(totalUpside)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>probability-weighted upside</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {displayed.map(({ lead, prob, score, rev, expectedVal }, idx) => {
+          const label = scoreLabel(score);
+          const color = SCORE_COLORS[label];
+          const stageColor: Record<string, string> = { meeting: '#f59e0b', proposal: '#f97316', replied: '#3b82f6' };
+          const sc = stageColor[lead.status] ?? '#6b7280';
+          return (
+            <button
+              key={lead.serverId}
+              onClick={() => onLeadClick(lead.serverId!)}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '20px 1fr auto auto auto',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 14px',
+                borderRadius: 9,
+                border: `1px solid ${idx === 0 ? '#22c55e33' : 'var(--border)'}`,
+                background: idx === 0 ? '#22c55e06' : 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#22c55e08')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = idx === 0 ? '#22c55e06' : 'transparent')}
+            >
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textAlign: 'center' }}>
+                {idx + 1}
+              </span>
+
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {lead.company}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: sc, background: `${sc}18`, padding: '1px 5px', borderRadius: 3 }}>
+                    {lead.status}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    {CATEGORY_LABELS[lead.category] ?? lead.category}
+                  </span>
+                  {lead.contactName && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>· {lead.contactName}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Win probability gauge */}
+              <div style={{ textAlign: 'center', minWidth: 52 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: prob >= 35 ? '#22c55e' : prob >= 20 ? '#f59e0b' : 'var(--text-muted)', lineHeight: 1 }}>
+                  {prob}%
+                </div>
+                <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>close prob</div>
+              </div>
+
+              {/* AI Score */}
+              <div style={{ textAlign: 'center', minWidth: 44 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color, background: `${color}18`, padding: '2px 6px', borderRadius: 4 }}>
+                  {score}
+                </span>
+                <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 1 }}>score</div>
+              </div>
+
+              {/* Expected value */}
+              <div style={{ textAlign: 'right', minWidth: 56 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#22c55e', lineHeight: 1 }}>{fmt(expectedVal)}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>of {fmt(rev)}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {candidates.length > 5 && !showAll && (
+        <button
+          onClick={() => setShowAll(true)}
+          style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0' }}
+        >
+          Show {candidates.length - 5} more →
+        </button>
+      )}
+    </section>
+  );
+}
+
 export default function PipelineView() {
   const setMode = useAppStore((s) => s.setMode);
   const setFilter = useAppStore((s) => s.setFilter);
@@ -432,6 +563,9 @@ export default function PipelineView() {
 
         {/* ── 90-Day Revenue Forecast ── */}
         <RevenueForecastChart />
+
+        {/* ── Quick Win Predictor ── */}
+        <QuickWinPredictor onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
 
         {/* ── Revenue by category ── */}
         <section className="pv-card">
