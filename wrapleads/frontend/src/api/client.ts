@@ -562,6 +562,18 @@ export const api = {
   getMissionSignals: () =>
     authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
 
+  getRetentionRadar: () =>
+    authFetch<{
+      ok: boolean;
+      clients: {
+        job_id: number; company: string; vehicle_type: string; vehicle_count: number;
+        wrap_category: string; material: string | null; install_date: string;
+        life_years: number; notes: string | null; age_pct: number; days_installed: number;
+        lead_id: number | null; lead_status: string | null;
+        email: string | null; phone: string | null; days_since_contact: number | null;
+      }[];
+    }>('/mission/retention-radar'),
+
   // Business card scanner
   scanBusinessCard: (file: File) => {
     const token = getToken();
