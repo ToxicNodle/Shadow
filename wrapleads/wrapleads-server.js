@@ -2619,12 +2619,12 @@ app.get('/analytics/icp', authMiddleware, async (req, res) => {
     }
 
     // Top category
-    const catFreq: Record<string, number> = {};
+    const catFreq = {};
     wonLeads.forEach((r) => { if (r.category) catFreq[r.category] = (catFreq[r.category] || 0) + 1; });
     const topCategory = Object.entries(catFreq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
     // Top state
-    const stateFreq: Record<string, number> = {};
+    const stateFreq = {};
     wonLeads.forEach((r) => { if (r.state) stateFreq[r.state] = (stateFreq[r.state] || 0) + 1; });
     const topState = Object.entries(stateFreq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
@@ -2999,6 +2999,10 @@ const CSV_FIELD_MAP = {
 
 const VALID_CATEGORIES = ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing'];
 const VALID_STATUSES = ['new','cold','contacted','replied','meeting','proposal','won','lost'];
+
+// Multer for multipart uploads (CSV import, blueprint PDF, vision images, job photos)
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 app.post('/leads/import-csv', authMiddleware, upload.single('file'), async (req, res) => {
   const uid = String(req.user.id);
@@ -4364,9 +4368,7 @@ app.get('/apollo/test', authMiddleware, async (req, res) => {
 // ----------------------------------------------------------------------------
 // Blueprint Scanner — upload a PDF bid spec, Claude extracts wrap opportunities
 // ----------------------------------------------------------------------------
-const multer  = require('multer');
 const pdfParse = require('pdf-parse');
-const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // Shared Claude fetch helper
 async function claudeHaiku(apiKey, messages, maxTokens = 1500) {
