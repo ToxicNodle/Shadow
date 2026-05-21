@@ -278,6 +278,9 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referred_by TEXT`);
   } catch (e) { console.warn('[migrate] Could not add referred_by column:', e.message); }
   try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`);
+  } catch (e) { console.warn('[migrate] Could not add tags column:', e.message); }
+  try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS source TEXT`);
   } catch (e) { console.warn('[migrate] Could not add source column:', e.message); }
   try {
