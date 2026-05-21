@@ -3166,6 +3166,79 @@ app.get('/bids/summary', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Bid intelligence: stage funnel, platform win rates, value sweet spot
+app.get('/bids/intel', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [{ rows: stageCounts }, { rows: platformRows }, { rows: valueRows }] = await Promise.all([
+      pool.query(`
+        SELECT status, COUNT(*)::INT AS count,
+               COALESCE(SUM(estimated_value), 0)::FLOAT AS value
+        FROM bids WHERE user_id=$1
+        GROUP BY status
+      `, [uid]),
+      pool.query(`
+        SELECT source_platform,
+               COUNT(*)::INT AS total,
+               COUNT(*) FILTER (WHERE status='won')::INT AS won,
+               COUNT(*) FILTER (WHERE status IN ('lost','no_bid'))::INT AS lost,
+               COALESCE(AVG(estimated_value) FILTER (WHERE status='won'), 0)::FLOAT AS avg_won_value
+        FROM bids WHERE user_id=$1 AND source_platform IS NOT NULL AND source_platform != ''
+        GROUP BY source_platform
+        ORDER BY COUNT(*) FILTER (WHERE status='won') DESC
+      `, [uid]),
+      pool.query(`
+        SELECT
+          CASE
+            WHEN estimated_value < 5000  THEN '<$5K'
+            WHEN estimated_value < 15000 THEN '$5K–$15K'
+            WHEN estimated_value < 50000 THEN '$15K–$50K'
+            WHEN estimated_value < 100000 THEN '$50K–$100K'
+            ELSE '$100K+'
+          END AS bucket,
+          COUNT(*)::INT AS total,
+          COUNT(*) FILTER (WHERE status='won')::INT AS won
+        FROM bids WHERE user_id=$1 AND estimated_value IS NOT NULL
+        GROUP BY 1
+        ORDER BY MIN(estimated_value)
+      `, [uid]),
+    ]);
+
+    // Stage funnel: tracking → submitted → shortlisted → won
+    const byStatus = {};
+    for (const r of stageCounts) byStatus[r.status] = { count: r.count, value: r.value };
+    const stages = ['tracking', 'submitted', 'shortlisted', 'won'];
+    const funnel = stages.map((s) => ({
+      stage: s, count: byStatus[s]?.count ?? 0, value: byStatus[s]?.value ?? 0,
+    }));
+
+    // Overall win rate (won / (won + lost))
+    const totalWon  = byStatus['won']?.count ?? 0;
+    const totalLost = (byStatus['lost']?.count ?? 0) + (byStatus['no_bid']?.count ?? 0);
+    const winRate   = (totalWon + totalLost) > 0
+      ? Math.round((totalWon / (totalWon + totalLost)) * 100)
+      : null;
+
+    // Shortlisted → won conversion
+    const shortlisted = byStatus['shortlisted']?.count ?? 0;
+    const shortlistToWin = (shortlisted + totalWon) > 0
+      ? Math.round((totalWon / (shortlisted + totalWon)) * 100)
+      : null;
+
+    // Platform stats: add win rate
+    const platforms = platformRows.map((r) => ({
+      platform: r.source_platform,
+      total: r.total,
+      won: r.won,
+      lost: r.lost,
+      winRate: (r.won + r.lost) > 0 ? Math.round((r.won / (r.won + r.lost)) * 100) : null,
+      avgWonValue: Math.round(r.avg_won_value),
+    }));
+
+    res.json({ ok: true, funnel, winRate, shortlistToWin, platforms, valueBuckets: valueRows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================================
 // Bulk sequence activation — fires drip for multiple leads at once
 // ============================================================================
