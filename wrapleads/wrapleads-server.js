@@ -4226,6 +4226,124 @@ app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (re
   }
 });
 
+// ── Pitch Mode — in-person sales demo (brand lookup + camera → live wrap) ─────
+//
+// Two endpoints power the field-sales pitch tool:
+//   POST /vision/brand-lookup     companyName → { domain, logo_url, primary/secondary colors, tagline }
+//   POST /vision/pitch-preview    image + brand info → photorealistic wrap mockup in the lead's colors
+//
+// Logo URL is derived from Clearbit (https://logo.clearbit.com/{domain}). It's
+// free, requires no key, and 404s gracefully if the domain has no logo — the
+// frontend just falls back to initials. Brand colors come from Claude.
+
+app.post('/vision/brand-lookup', authMiddleware, async (req, res) => {
+  const companyName = String(req.body?.companyName || '').trim();
+  if (!companyName) return res.status(400).json({ error: 'Missing companyName' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (ANTHROPIC_API_KEY)' });
+
+  try {
+    const text = await claudeHaiku(apiKey, [{
+      role: 'user',
+      content: `You are a brand-identity researcher. For the company below, return JSON only — no prose, no code fences — with your best guess for these exact fields. If you genuinely don't know a value, use an empty string for strings (never null).
+
+Company: "${companyName}"
+
+Required JSON shape:
+{
+  "name": "official display name, e.g. 'FedEx' not 'fedex inc'",
+  "domain": "primary website domain, e.g. 'fedex.com' (no protocol, no www)",
+  "primary_color": "main brand color as #rrggbb hex, e.g. '#4D148C'",
+  "secondary_color": "secondary/accent brand color as #rrggbb hex",
+  "tagline": "short positioning line if widely known, otherwise empty string"
+}
+
+For well-known brands use their actual colors. For unknown companies, pick a plausible, professional color pair based on the industry hint in the name. Always return valid hex colors.`,
+    }], 400);
+
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    let brand;
+    try { brand = JSON.parse(cleaned); }
+    catch { return res.status(502).json({ error: 'Brand lookup returned malformed JSON' }); }
+
+    // Normalize: keep only the fields we promised, force hex shape.
+    const hex = (v) => {
+      const s = String(v || '').trim();
+      return /^#[0-9a-f]{6}$/i.test(s) ? s.toUpperCase() : '';
+    };
+    const domain = String(brand.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+    const result = {
+      name: String(brand.name || companyName).trim(),
+      domain,
+      logo_url: domain ? `https://logo.clearbit.com/${domain}` : '',
+      primary_color: hex(brand.primary_color) || '#1F2937',
+      secondary_color: hex(brand.secondary_color) || '#F3F4F6',
+      tagline: String(brand.tagline || '').trim(),
+    };
+    res.json({ ok: true, brand: result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/vision/pitch-preview', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  const openaiKey = s.openaiApiKey;
+  if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key required — add it in Settings → Design Studio' });
+
+  const companyName    = String(req.body.companyName || '').trim();
+  const primaryColor   = String(req.body.primary_color || '#1F2937').trim();
+  const secondaryColor = String(req.body.secondary_color || '#F3F4F6').trim();
+  const style          = String(req.body.style || 'full_wrap').trim();
+  const tagline        = String(req.body.tagline || '').trim();
+
+  const styleClause = ({
+    full_wrap:    'full color-change wrap covering the entire body',
+    partial:      'partial wrap with bold panels on the doors, hood, and rear quarter',
+    stripes:      'racing-inspired stripe wrap running front to back',
+    logo_focus:   'clean white-or-black base with the brand logo and contact band prominently on the doors and rear',
+    matte_brand:  'matte-finish color-change wrap in the brand color, premium luxury look',
+  })[style] || 'full color-change wrap covering the entire body';
+
+  const wrapDescription = [
+    `Apply a professional vehicle wrap to this exact vehicle for the brand "${companyName}".`,
+    `Use the brand's actual colors: ${primaryColor} as the dominant base color and ${secondaryColor} as the accent.`,
+    `Style: ${styleClause}.`,
+    `Place a clean rendering of the "${companyName}" wordmark on the doors and rear panel.`,
+    tagline ? `Include the tagline "${tagline}" in small type below the wordmark.` : '',
+    `Keep the vehicle shape, perspective, lighting, and surroundings identical.`,
+    `Photorealistic, production-quality, as if installed by a top-tier wrap shop.`,
+  ].filter(Boolean).join(' ');
+
+  try {
+    const originalDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+
+    const FormDataNode = (await import('form-data')).default;
+    const form = new FormDataNode();
+    form.append('model', 'gpt-image-1');
+    form.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
+    form.append('prompt', wrapDescription);
+    form.append('size', '1536x1024');
+
+    const resp = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openaiKey}`, ...form.getHeaders() },
+      body: form,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
+
+    const image_url = data.data?.[0]?.url || (`data:image/png;base64,${data.data?.[0]?.b64_json}`);
+    res.json({ ok: true, image_url, original_url: originalDataUrl, brand_description: wrapDescription });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Business Card Scanner — Claude Vision → instant lead ──────────────────────
 app.post('/vision/scan-card', authMiddleware, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });

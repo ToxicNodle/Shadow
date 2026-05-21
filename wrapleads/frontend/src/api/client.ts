@@ -270,6 +270,32 @@ export const api = {
     });
   },
 
+  // Pitch Mode — in-person sales demo
+  brandLookup: (companyName: string) =>
+    authFetch<{
+      ok: boolean;
+      brand: { name: string; domain: string; logo_url: string; primary_color: string; secondary_color: string; tagline: string };
+    }>('/vision/brand-lookup', { method: 'POST', body: JSON.stringify({ companyName }) }),
+  pitchPreview: (file: File, params: { companyName: string; primary_color: string; secondary_color: string; tagline?: string; style?: string }) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('companyName', params.companyName);
+    form.append('primary_color', params.primary_color);
+    form.append('secondary_color', params.secondary_color);
+    if (params.tagline) form.append('tagline', params.tagline);
+    if (params.style) form.append('style', params.style);
+    return fetch('/vision/pitch-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Pitch preview failed');
+      return data as { ok: boolean; image_url: string; original_url: string; brand_description: string };
+    });
+  },
+
   // AR / Wrap Mockup Preview
   arPreview: (file: File, wrapDescription: string) => {
     const token = getToken();
