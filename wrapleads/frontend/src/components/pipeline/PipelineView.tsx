@@ -34,6 +34,121 @@ function fmt(n: number) {
   return `$${n.toLocaleString()}`;
 }
 
+// ── Visual Conversion Funnel ──────────────────────────────────────────────────
+const FUNNEL_STAGES = ['new', 'contacted', 'replied', 'meeting', 'proposal', 'won'] as const;
+
+function ConversionFunnel({
+  byStatus,
+  total,
+  onStageClick,
+}: {
+  byStatus: Record<string, number>;
+  total: number;
+  onStageClick: (stage: string) => void;
+}) {
+  const stages = FUNNEL_STAGES.map((s) => ({ status: s, count: byStatus[s] ?? 0 }));
+  const topCount = Math.max(stages[0].count, 1);
+
+  // Overall funnel conversion (new → won)
+  const topToWon = stages[0].count > 0
+    ? Math.round((stages[stages.length - 1].count / stages[0].count) * 100)
+    : 0;
+
+  return (
+    <section className="pv-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 16 }}>
+        <h3 className="pv-card-title" style={{ margin: 0 }}>Conversion Funnel</h3>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {topToWon}% end-to-end conversion · click stage to filter leads
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        {stages.map((stage, i) => {
+          const prev = stages[i - 1];
+          const convRate = prev && prev.count > 0
+            ? Math.round((stage.count / prev.count) * 100)
+            : null;
+          const barWidth = Math.max(15, Math.round((stage.count / topCount) * 100));
+          const color = STATUS_COLORS[stage.status] ?? '#6b7280';
+          const pctOfTotal = total > 0 ? Math.round((stage.count / total) * 100) : 0;
+
+          return (
+            <div key={stage.status}>
+              {convRate !== null && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '3px 0', justifyContent: 'center',
+                }}>
+                  <div style={{ flex: 1, height: 1, background: 'var(--border-subtle)' }} />
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                    ↓ {convRate}% converted
+                  </span>
+                  <div style={{ flex: 1, height: 1, background: 'var(--border-subtle)' }} />
+                </div>
+              )}
+              <button
+                onClick={() => onStageClick(stage.status)}
+                style={{
+                  display: 'block', width: `${barWidth}%`, margin: '0 auto',
+                  background: `${color}18`, border: `1px solid ${color}40`,
+                  borderRadius: 6, padding: '8px 14px', cursor: 'pointer',
+                  transition: 'all 0.15s', textAlign: 'center',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = `${color}28`;
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = `${color}80`;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = `${color}18`;
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = `${color}40`;
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: color, flexShrink: 0,
+                  }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color }}>
+                    {STATUS_LABELS[stage.status]}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
+                    {stage.count.toLocaleString()}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    {pctOfTotal}%
+                  </span>
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Lost + Cold summary beneath funnel */}
+      <div style={{ display: 'flex', gap: 16, marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
+        {(['lost', 'cold'] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => onStageClick(s)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0',
+              color: 'var(--text-muted)', fontSize: 12,
+            }}
+          >
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLORS[s], display: 'inline-block' }} />
+            {STATUS_LABELS[s]}: <strong style={{ marginLeft: 3, color: 'var(--text)' }}>{(byStatus[s] ?? 0).toLocaleString()}</strong>
+          </button>
+        ))}
+        <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 'auto', alignSelf: 'center' }}>
+          Not counted in funnel
+        </span>
+      </div>
+    </section>
+  );
+}
+
 function Sparkline({ data }: { data: { day: string; count: number }[] }) {
   if (!data || data.length < 2) return null;
   const W = 120, H = 32, PAD = 2;
@@ -187,26 +302,12 @@ export default function PipelineView() {
       </div>
 
       <div className="pv-grid">
-        {/* ── Funnel by status ── */}
-        <section className="pv-card">
-          <h3 className="pv-card-title">Lead Funnel</h3>
-          <div className="pv-bars">
-            {STATUS_ORDER.map((s) => {
-              const count = byStatus[s] ?? 0;
-              if (!count) return null;
-              return (
-                <button key={s} className="pv-bar-btn" onClick={() => goToLeads(s)}>
-                  <BarRow
-                    label={STATUS_LABELS[s]}
-                    count={count}
-                    max={maxStatus}
-                    color={STATUS_COLORS[s]}
-                  />
-                </button>
-              );
-            })}
-          </div>
-        </section>
+        {/* ── Conversion Funnel ── */}
+        <ConversionFunnel
+          byStatus={byStatus}
+          total={total}
+          onStageClick={goToLeads}
+        />
 
         {/* ── Revenue by category ── */}
         <section className="pv-card">
