@@ -9,6 +9,149 @@ import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 
 // ── AI Call Script Panel ──────────────────────────────────────────────────────
+// ── Wrap ROI Calculator ───────────────────────────────────────────────────────
+const MEDIA_BENCHMARKS = [
+  { name: 'Billboards',     cpm: 5.21 },
+  { name: 'Radio',          cpm: 8.40 },
+  { name: 'Direct Mail',    cpm: 30.00 },
+  { name: 'TV (local)',     cpm: 22.00 },
+  { name: 'Digital Display',cpm: 3.55 },
+];
+
+function WrapROICalculator({ lead }: { lead: Lead }) {
+  const fleet = parseInt(String(lead.fleetSize ?? '10'), 10) || 10;
+  const [open, setOpen] = useState(false);
+  const [costPerVehicle, setCostPerVehicle] = useState(3500);
+  const [milesPerYear, setMilesPerYear] = useState(36500);
+  const [lifespanYears, setLifespanYears] = useState(5);
+  const [copied, setCopied] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  const totalCost           = fleet * costPerVehicle;
+  const annualImpressions   = fleet * milesPerYear * 600; // 600 impressions/mile — industry avg
+  const lifetimeImpressions = annualImpressions * lifespanYears;
+  const effectiveCPM        = lifetimeImpressions > 0 ? (totalCost / lifetimeImpressions) * 1000 : 0;
+  const monthlyImpressions  = Math.round(annualImpressions / 12);
+
+  const allBenchmarks = [
+    { name: 'Your Fleet Wraps', cpm: effectiveCPM, isWrap: true },
+    ...MEDIA_BENCHMARKS,
+  ].sort((a, b) => a.cpm - b.cpm);
+  const maxCPM = Math.max(...allBenchmarks.map((b) => b.cpm), 1);
+
+  function fmtN(n: number) {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+    return String(n);
+  }
+
+  function copyROI() {
+    const text = [
+      `WRAP ROI ANALYSIS — ${lead.company}`,
+      `Fleet: ${fleet} vehicles · ${milesPerYear.toLocaleString()} mi/yr each`,
+      '',
+      `Total Investment: $${totalCost.toLocaleString()}`,
+      `Over ${lifespanYears} years:`,
+      `  • ${fmtN(lifetimeImpressions)} total impressions`,
+      `  • ${fmtN(monthlyImpressions)}/month average reach`,
+      `  • $${effectiveCPM.toFixed(2)} CPM — vs. $5.21 billboards, $8.40 radio`,
+      '',
+      `Vehicle wraps deliver ${(5.21 / Math.max(effectiveCPM, 0.01)).toFixed(1)}× better CPM than billboards.`,
+      'Source: Outdoor Advertising Association / OAAA industry benchmarks.',
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      showToast('ROI summary copied to clipboard');
+    });
+  }
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, fontWeight: 600 }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Wrap ROI — Ad Value vs. Traditional Media
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 14 }}>
+          {/* Inputs */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+            <div className="field-group">
+              <label className="field-label">Cost / Vehicle ($)</label>
+              <input className="input" type="number" min={500} step={100} value={costPerVehicle}
+                onChange={(e) => setCostPerVehicle(Number(e.target.value))} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Miles / Year / Vehicle</label>
+              <input className="input" type="number" min={5000} step={1000} value={milesPerYear}
+                onChange={(e) => setMilesPerYear(Number(e.target.value))} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Wrap Lifespan</label>
+              <select className="input" value={lifespanYears} onChange={(e) => setLifespanYears(Number(e.target.value))}>
+                {[3, 4, 5, 7].map((y) => <option key={y} value={y}>{y} years</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Key metrics */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+            {[
+              { val: `$${Math.round(totalCost / 1000)}K`, label: `${fleet} vehicle investment`, color: 'var(--text)' },
+              { val: fmtN(monthlyImpressions), label: 'impressions/month', color: '#10b981' },
+              { val: `$${effectiveCPM.toFixed(2)}`, label: `CPM over ${lifespanYears}yrs`, color: effectiveCPM < 2.5 ? '#10b981' : effectiveCPM < 5 ? '#f59e0b' : '#ef4444' },
+            ].map(({ val, label, color }) => (
+              <div key={label} style={{ textAlign: 'center', padding: '10px 8px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1, marginBottom: 3 }}>{val}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* CPM comparison bars */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 8 }}>
+              CPM vs. Traditional Media — lower is better
+            </div>
+            {allBenchmarks.map((b) => (
+              <div key={b.name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                <span style={{ fontSize: 11, minWidth: 120, color: b.isWrap ? 'var(--accent)' : 'var(--text-muted)', fontWeight: b.isWrap ? 700 : 400 }}>
+                  {b.name}
+                </span>
+                <div style={{ flex: 1, height: 5, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{
+                    height: '100%', borderRadius: 99, transition: 'width 0.4s ease',
+                    width: `${(b.cpm / maxCPM) * 100}%`,
+                    background: b.isWrap ? 'var(--accent)' : 'rgba(107,114,128,0.4)',
+                  }} />
+                </div>
+                <span style={{ fontSize: 11, fontWeight: b.isWrap ? 700 : 400, color: b.isWrap ? 'var(--accent)' : 'var(--text-muted)', minWidth: 40, textAlign: 'right' }}>
+                  ${b.cpm.toFixed(2)}
+                </span>
+              </div>
+            ))}
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 6 }}>
+              Based on 600 impressions/mile · OAAA benchmarks
+            </div>
+          </div>
+
+          <button className="btn" style={{ width: '100%', fontSize: 11, fontWeight: 600 }} onClick={copyROI}>
+            {copied ? '✓ Copied!' : 'Copy ROI Summary for Proposal →'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CallScriptPanel({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
   const [script, setScript] = useState<{ opening: string; pitch: string; objections: { q: string; a: string }[]; close: string } | null>(null);
@@ -958,6 +1101,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
+      {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && <ProposalSection lead={local} />}
 
       {showWinLoss && lead.serverId && (
