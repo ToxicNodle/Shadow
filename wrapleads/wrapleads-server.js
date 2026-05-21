@@ -5539,18 +5539,28 @@ app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (re
   if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key required for AR preview — add it in Settings' });
 
   const wrapDescription = req.body.wrapDescription || 'professional vehicle wrap with bold graphics';
+  const brandColors = (req.body.brandColors || '').trim();
+  const competitive = req.body.competitive === '1' || req.body.competitive === 'true';
+  const variants = Math.max(1, Math.min(3, parseInt(req.body.variants, 10) || 1));
 
   try {
     // Store original as base64 data URL for side-by-side display
     const originalDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+
+    // Build the wrap prompt, layering in brand colors + competitive framing when requested
+    let prompt = `Apply a professional vehicle wrap to this exact vehicle. Wrap design: ${wrapDescription}.`;
+    if (brandColors) prompt += ` Incorporate these exact brand colors prominently throughout the design: ${brandColors}.`;
+    if (competitive) prompt += ` Make the branding bold, large, and high-contrast for maximum visibility and on-road impact.`;
+    prompt += ` Keep the vehicle shape, perspective, lighting, and surroundings identical. Make the wrap look photorealistic and production-quality.`;
 
     // Use gpt-image-1 edit endpoint with the uploaded photo
     const FormDataNode = (await import('form-data')).default;
     const form = new FormDataNode();
     form.append('model', 'gpt-image-1');
     form.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
-    form.append('prompt', `Apply a professional vehicle wrap to this exact vehicle. Wrap design: ${wrapDescription}. Keep the vehicle shape, perspective, and surroundings identical. Make the wrap look photorealistic and production-quality.`);
+    form.append('prompt', prompt);
     form.append('size', '1536x1024');
+    if (variants > 1) form.append('n', String(variants));
 
     const resp = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
@@ -5560,8 +5570,9 @@ app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (re
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
 
-    const image_url = data.data?.[0]?.url || (`data:image/png;base64,${data.data?.[0]?.b64_json}`);
-    res.json({ ok: true, image_url, original_url: originalDataUrl });
+    const toUrl = (d) => d.url || (d.b64_json ? `data:image/png;base64,${d.b64_json}` : null);
+    const image_urls = (data.data || []).map(toUrl).filter(Boolean);
+    res.json({ ok: true, image_url: image_urls[0], image_urls, original_url: originalDataUrl });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -6354,6 +6365,42 @@ app.delete('/portal-links/:id', authMiddleware, async (req, res) => {
   try {
     await pool.query('DELETE FROM portal_links WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Push an AR wrap concept to a lead's client portal and return a shareable approval link.
+// Logs the image as a note_added activity (the portal renders the latest such image as the
+// design concept) and ensures a portal link exists for the lead.
+app.post('/leads/:id/ar-concept', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  const { imageUrl, note } = req.body || {};
+  if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
+  try {
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Lead not found' });
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note_added',
+      subject: 'AR wrap concept shared to portal',
+      body: note || 'AI-generated wrap concept',
+      metadata: { image_url: imageUrl },
+    });
+
+    let link;
+    const existing = await pool.query('SELECT * FROM portal_links WHERE lead_id=$1 AND user_id=$2', [leadId, uid]);
+    if (existing.rows.length) link = existing.rows[0];
+    else {
+      const token = crypto.randomBytes(24).toString('hex');
+      const r = await pool.query(
+        `INSERT INTO portal_links (user_id, lead_id, token, label) VALUES ($1,$2,$3,$4) RETURNING *`,
+        [uid, leadId, token, 'Wrap concept']
+      );
+      link = r.rows[0];
+    }
+
+    const baseUrl = process.env.APP_BASE_URL || APP_URL;
+    res.json({ ok: true, portalUrl: `${baseUrl}/portal/${link.token}`, token: link.token });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7557,6 +7604,22 @@ app.delete('/jobs/photos/:photoId', authMiddleware, async (req, res) => {
   try {
     await pool.query('DELETE FROM job_photos WHERE id=$1 AND user_id=$2', [req.params.photoId, String(req.user.id)]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save an AR wrap concept (data URL or hosted URL) directly to a job's photo gallery.
+// Unlike POST /jobs/:id/photos this takes the image as a JSON string rather than multipart.
+app.post('/jobs/:id/concept-photo', authMiddleware, async (req, res) => {
+  try {
+    const own = await pool.query('SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Job not found' });
+    const { imageUrl, caption = 'AR wrap concept', photo_type = 'concept' } = req.body || {};
+    if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
+    const { rows } = await pool.query(
+      `INSERT INTO job_photos (user_id, job_id, image_data, caption, photo_type) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [String(req.user.id), req.params.id, imageUrl, caption, photo_type]
+    );
+    res.json({ ok: true, photo: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

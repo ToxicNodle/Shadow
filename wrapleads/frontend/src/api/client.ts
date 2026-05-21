@@ -304,11 +304,18 @@ export const api = {
   },
 
   // AR / Wrap Mockup Preview
-  arPreview: (file: File, wrapDescription: string) => {
+  arPreview: (
+    file: File,
+    wrapDescription: string,
+    opts?: { brandColors?: string; variants?: number; competitive?: boolean },
+  ) => {
     const token = getToken();
     const form = new FormData();
     form.append('image', file);
     form.append('wrapDescription', wrapDescription);
+    if (opts?.brandColors) form.append('brandColors', opts.brandColors);
+    if (opts?.variants && opts.variants > 1) form.append('variants', String(opts.variants));
+    if (opts?.competitive) form.append('competitive', '1');
     return fetch('/vision/ar-preview', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
@@ -316,9 +323,21 @@ export const api = {
     }).then(async (r) => {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'Preview failed');
-      return data as { ok: boolean; image_url: string; original_url: string };
+      return data as { ok: boolean; image_url: string; image_urls?: string[]; original_url: string };
     });
   },
+  // Push an AR concept to the lead's client portal → shareable approval link
+  arConceptToPortal: (leadId: number | string, imageUrl: string, note?: string) =>
+    authFetch<{ ok: boolean; portalUrl: string; token: string }>(
+      `/leads/${leadId}/ar-concept`,
+      { method: 'POST', body: JSON.stringify({ imageUrl, note }) },
+    ),
+  // Save an AR concept image to a job's photo gallery
+  saveConceptToJob: (jobId: number, imageUrl: string, caption?: string) =>
+    authFetch<{ ok: boolean; photo: JobPhoto }>(
+      `/jobs/${jobId}/concept-photo`,
+      { method: 'POST', body: JSON.stringify({ imageUrl, caption }) },
+    ),
 
   // AI Design Generation
   generateDesignBrief: (params: { vehicleType: string; primaryColor: string; secondaryColor: string; style: string; description: string; companyName: string }) =>

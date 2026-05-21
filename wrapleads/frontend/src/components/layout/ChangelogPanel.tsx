@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2025',
     tag: 'new',
+    title: 'AR Preview: variations, brand colors & fleet batch',
+    body: 'Generate 3 wrap variations at once, match the client\'s exact brand colors, preview an entire fleet in one pass, push concepts straight to a client approval link, and save concepts to the job gallery — all from the AR Wrap Preview.',
+  },
+  {
+    date: 'May 2025',
+    tag: 'new',
     title: 'Pipeline Health Score',
     body: 'Analytics now shows a 0-100 composite score benchmarking your shop against wrap industry standards — win rate, days to close, email open rate, and monthly outreach volume.',
   },

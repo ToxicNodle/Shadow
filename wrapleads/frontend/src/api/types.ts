@@ -427,7 +427,7 @@ export interface PortalLink {
 
 // ── Job Photos ────────────────────────────────────────────────────────────────
 
-export type JobPhotoType = 'before' | 'after' | 'detail' | 'other';
+export type JobPhotoType = 'before' | 'after' | 'detail' | 'concept' | 'other';
 
 export interface JobPhoto {
   id: number;
