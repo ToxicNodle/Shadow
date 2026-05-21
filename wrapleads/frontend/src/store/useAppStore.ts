@@ -109,6 +109,10 @@ interface AppStore {
   setCsvImportOpen: (open: boolean) => void;
   setProposalOpen: (open: boolean, leadId?: string) => void;
 
+  // Pre-filled Discover search (set from lead detail "Find Similar")
+  pendingDiscoverSearch: CarrierSearchParams | null;
+  setPendingDiscoverSearch: (params: CarrierSearchParams | null) => void;
+
   // Current lead for Apollo enrichment
   apolloLeadId: string | null;
   setApolloLeadId: (id: string | null) => void;
@@ -244,6 +248,10 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       setBulkOutreachOpen: (open) => set({ bulkOutreachOpen: open }),
       setCsvImportOpen: (open) => set({ csvImportOpen: open }),
       setProposalOpen: (open, leadId) => set({ proposalOpen: open, proposalLeadId: leadId ?? null }),
+
+      // Pending discover search
+      pendingDiscoverSearch: null,
+      setPendingDiscoverSearch: (params) => set({ pendingDiscoverSearch: params }),
 
       // Apollo lead context
       apolloLeadId: null,
