@@ -447,7 +447,7 @@ export const api = {
   getAnalytics: () => authFetch<{
     summary: { totalLeads: number; won: number; lost: number; winRate: number | null; avgDaysToClose: number | null; pipelineValue: number };
     byStatus: Record<string, number>;
-    wonTrend: { month: string; won: number }[];
+    wonTrend: { month: string; won: number; revenue: number }[];
     byCategory: { category: string; total: number; won: number; lost: number }[];
     activity30d: { emails: number; calls: number; meetings: number; sequences: number };
     winLossFactors: { factor: string; count: number }[];

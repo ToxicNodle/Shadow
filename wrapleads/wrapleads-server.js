@@ -2203,11 +2203,22 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         FROM leads WHERE user_id=$1 GROUP BY status
       `, [uid]),
 
-      // Won per month — last 6 months
+      // Won per month — last 6 months (with revenue estimate by category)
       pool.query(`
         SELECT TO_CHAR(DATE_TRUNC('month', updated_at), 'Mon YY') AS month,
                COUNT(*)::INT AS won,
-               DATE_TRUNC('month', updated_at) AS sort_key
+               DATE_TRUNC('month', updated_at) AS sort_key,
+               SUM(CASE category
+                 WHEN 'fleet'       THEN 4500
+                 WHEN 'dinoc'       THEN 6000
+                 WHEN 'gc_referral' THEN 18000
+                 WHEN 'construction'THEN 5000
+                 WHEN 'colorchange' THEN 3500
+                 WHEN 'racing'      THEN 40000
+                 WHEN 'reatec'      THEN 5500
+                 WHEN 'design'      THEN 3000
+                 WHEN 'wallgraphics'THEN 2500
+                 ELSE 2500 END)::INT AS revenue
         FROM leads WHERE user_id=$1 AND status='won'
           AND updated_at >= NOW() - INTERVAL '6 months'
         GROUP BY DATE_TRUNC('month', updated_at)
@@ -2406,7 +2417,7 @@ app.get('/analytics', authMiddleware, async (req, res) => {
         pipelineValue,
       },
       byStatus,
-      wonTrend: wonTrendR.rows.map((r) => ({ month: r.month, won: r.won })),
+      wonTrend: wonTrendR.rows.map((r) => ({ month: r.month, won: r.won, revenue: r.revenue ?? 0 })),
       byCategory: catWinR.rows,
       activity30d: {
         emails: act.emails ?? 0,
