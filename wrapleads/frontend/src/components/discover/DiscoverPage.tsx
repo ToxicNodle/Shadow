@@ -13,6 +13,68 @@ const CAT_LABEL: Record<string, string> = {
   reatec: 'Reatec', design: 'Design', wallgraphics: 'Wall Graphics',
 };
 
+// ── Search Intelligence Strip ─────────────────────────────────────────────────
+
+function SearchIntelStrip() {
+  const results = useAppStore((s) => s.carrierState.results);
+  const total   = useAppStore((s) => s.carrierState.total);
+
+  if (results.length === 0) return null;
+
+  const withFleet   = results.filter((c) => c.fleet_size);
+  const avgFleet    = withFleet.length
+    ? Math.round(withFleet.reduce((s, c) => s + (c.fleet_size ?? 0), 0) / withFleet.length)
+    : null;
+  const avgScore    = Math.round(results.reduce((s, c) => s + c.wrap_score, 0) / results.length);
+  const hotCount    = results.filter((c) => c.wrap_score >= 70).length;
+  const contactable = results.filter((c) => c.phone).length;
+  const contactPct  = Math.round((contactable / results.length) * 100);
+  const newLeads    = results.filter((c) => !c.already_imported);
+  const estOpportunity = newLeads.reduce((s, c) => s + (c.fleet_size ?? 30) * 150, 0);
+
+  const fmtK = (n: number) =>
+    n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : `$${Math.round(n / 1_000)}K`;
+
+  const chips: { label: string; value: string; accent?: string }[] = [
+    { label: 'in region', value: total.toLocaleString() },
+    ...(avgFleet !== null ? [{ label: 'avg fleet', value: `${avgFleet} units` }] : []),
+    { label: 'avg score', value: `${avgScore}/100` },
+    { label: 'hot leads', value: String(hotCount), accent: hotCount > 0 ? '#22c55e' : undefined },
+    { label: 'contactable', value: `${contactPct}%`, accent: contactPct >= 50 ? '#10b981' : undefined },
+    { label: 'est. opportunity', value: fmtK(estOpportunity), accent: 'var(--accent)' },
+  ];
+
+  return (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
+      padding: '10px 14px', background: 'var(--surface)',
+      border: '1px solid var(--border)', borderRadius: 10,
+      margin: '0 0 12px',
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginRight: 4 }}>
+        Results
+      </span>
+      {chips.map((chip) => (
+        <div key={chip.label} style={{
+          display: 'flex', alignItems: 'baseline', gap: 4,
+          background: 'rgba(255,255,255,0.04)', borderRadius: 6,
+          padding: '3px 9px', border: '1px solid var(--border)',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: chip.accent ?? 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+            {chip.value}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{chip.label}</span>
+        </div>
+      ))}
+      {newLeads.length < results.length && (
+        <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 2 }}>
+          · {results.length - newLeads.length} already in CRM
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ICPBanner() {
   const { data, isLoading } = useQuery({
     queryKey: ['icp'],
@@ -174,6 +236,8 @@ export default function DiscoverPage() {
 
       {/* ICP Banner — shows when user has won deals */}
       <ICPBanner />
+
+      <SearchIntelStrip />
 
       <SavedChips />
       <FilterRow />
