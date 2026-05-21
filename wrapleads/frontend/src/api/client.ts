@@ -488,6 +488,17 @@ export const api = {
       lead: { id: number; company: string };
     }>(`/leads/${leadId}/followup-recommendation`),
 
+  suggestLead: (company: string) =>
+    authFetch<{
+      ok: boolean;
+      suggestion: {
+        category: string;
+        fleetRange: string;
+        pitchAngle: string;
+        confidence: 'high' | 'medium' | 'low';
+      };
+    }>('/ai/suggest-lead', { method: 'POST', body: JSON.stringify({ company }) }),
+
   getCounterStrategy: (competitor: string) =>
     authFetch<{
       ok: boolean;
