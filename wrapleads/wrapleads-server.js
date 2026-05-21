@@ -4960,6 +4960,78 @@ Be direct and confident. No filler phrases like "Great question!" or "Absolutely
   }
 });
 
+// ── Follow-up Recommendation ──────────────────────────────────────────────────
+// Returns top contact time slots derived from this user's historical activity
+// (days/hours when leads moved to replied/meeting/proposal/won).
+app.get('/leads/:id/followup-recommendation', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid lead id' });
+
+  try {
+    // Verify lead belongs to this user
+    const leadR = await pool.query(
+      `SELECT id, category, status, company FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+
+    // Find the user's successful contact events (status advances) by hour/dow
+    const histR = await pool.query(
+      `SELECT
+         EXTRACT(DOW FROM created_at AT TIME ZONE 'UTC')::INT  AS dow,
+         EXTRACT(HOUR FROM created_at AT TIME ZONE 'UTC')::INT AS hour,
+         COUNT(*)::INT AS hits
+       FROM lead_activities
+       WHERE user_id = $1
+         AND type IN ('status_change','email_sent','call_completed','reply_received')
+         AND notes ILIKE ANY(ARRAY['%replied%','%meeting%','%proposal%','%won%','%positive%','%interested%'])
+       GROUP BY dow, hour
+       ORDER BY hits DESC
+       LIMIT 50`,
+      [uid]
+    );
+
+    const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    // Aggregate by (dow, hour) bucket and pick top 3
+    const buckets = histR.rows;
+    const top3 = buckets.slice(0, 3).map((b) => {
+      const h = b.hour;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      return {
+        dow: b.dow,
+        hour: b.hour,
+        hits: b.hits,
+        label: `${DAYS[b.dow]}s around ${h12}:00 ${ampm}`,
+      };
+    });
+
+    // Fallback when no history yet: weekday business hours
+    const fallback = [
+      { dow: 2, hour: 10, hits: 0, label: 'Tuesdays around 10:00 AM' },
+      { dow: 3, hour: 14, hits: 0, label: 'Wednesdays around 2:00 PM' },
+      { dow: 4, hour: 9,  hits: 0, label: 'Thursdays around 9:00 AM'  },
+    ];
+    const slots = top3.length > 0 ? top3 : fallback;
+    const dataSource = top3.length > 0 ? 'historical' : 'default';
+
+    // Build summary sentence
+    let summary;
+    if (dataSource === 'historical') {
+      summary = `Based on your past activity, ${lead.company} (${lead.category}) is most reachable on ${slots[0].label}.`;
+    } else {
+      summary = `No response history yet. These are high-performing windows for ${lead.category} leads industry-wide.`;
+    }
+
+    res.json({ ok: true, slots, summary, dataSource, lead: { id: lead.id, company: lead.company } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Pipeline Narrative ─────────────────────────────────────────────────────
 app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
