@@ -591,6 +591,17 @@ export const api = {
       categoryBreakdown: { cat: string; count: number; pct: number }[];
     }>('/analytics/icp'),
 
+  // Win-rate matrix: category × state heatmap + revenue trend
+  getWinMatrix: () =>
+    authFetch<{
+      ok: boolean;
+      topStates: string[];
+      categories: string[];
+      matrix: Record<string, Record<string, { total: number; won: number; lost: number; winRate: number }>>;
+      revTrend: { month: string; revenue: number }[];
+      catRates: { category: string; total: number; won: number; winRate: number }[];
+    }>('/analytics/win-matrix'),
+
   // Pipeline velocity analytics
   getPipelineVelocity: () =>
     authFetch<{

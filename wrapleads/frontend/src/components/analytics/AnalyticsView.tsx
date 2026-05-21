@@ -143,6 +143,154 @@ function ActivityHeatmap({ data }: { data: { day: string; count: number }[] }) {
   );
 }
 
+// ── Win Rate Matrix ───────────────────────────────────────────────────────────
+const CAT_LABEL_SHORT: Record<string, string> = {
+  fleet: 'Fleet', dinoc: 'DI-NOC', gc_referral: 'GC Ref', construction: 'Constr.',
+  colorchange: 'Color Chg', racing: 'Racing', reatec: 'Reatec',
+  design: 'Design', wallgraphics: 'Wall', other: 'Other',
+};
+
+function WinRateMatrix() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['win-matrix'],
+    queryFn: () => api.getWinMatrix(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Win Rate Intelligence</div>
+        <div className="skeleton" style={{ height: 120, borderRadius: 8, marginTop: 12 }} />
+      </div>
+    );
+  }
+  if (!data || data.topStates.length === 0 || data.categories.length === 0) return null;
+
+  const { topStates, categories, matrix, revTrend, catRates } = data;
+
+  function rateColor(rate: number): string {
+    if (rate >= 60) return '#10b981';
+    if (rate >= 35) return '#f59e0b';
+    if (rate >= 15) return '#f97316';
+    return '#ef4444';
+  }
+  function rateBg(rate: number): string {
+    if (rate >= 60) return '#10b98122';
+    if (rate >= 35) return '#f59e0b18';
+    if (rate >= 15) return '#f9731614';
+    return '#ef444412';
+  }
+
+  const maxRev = Math.max(...revTrend.map((r) => r.revenue), 1);
+
+  function fmtMonth(ym: string) {
+    const [y, m] = ym.split('-');
+    return new Date(Number(y), Number(m) - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Win Rate Intelligence</div>
+        {catRates.length > 0 && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Best vertical: <strong style={{ color: '#10b981' }}>{CAT_LABEL_SHORT[catRates[0].category] ?? catRates[0].category}</strong> at <strong style={{ color: '#10b981' }}>{catRates[0].winRate}%</strong>
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+
+        {/* ── Category × State matrix ── */}
+        <div style={{ overflowX: 'auto' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+            Win Rate by Category × State
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: '4px 6px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10 }}>Vertical</th>
+                {topStates.map((s) => (
+                  <th key={s} style={{ textAlign: 'center', padding: '4px 4px', color: 'var(--text-muted)', fontWeight: 600, fontSize: 10, whiteSpace: 'nowrap' }}>{s}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {categories.filter((cat) => matrix[cat]).map((cat) => (
+                <tr key={cat}>
+                  <td style={{ padding: '3px 6px', color: 'var(--text)', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 11 }}>
+                    {CAT_LABEL_SHORT[cat] ?? cat}
+                  </td>
+                  {topStates.map((state) => {
+                    const cell = matrix[cat]?.[state];
+                    if (!cell) return <td key={state} style={{ padding: '3px 4px', textAlign: 'center' }}><span style={{ color: 'var(--text-faint)', fontSize: 10 }}>—</span></td>;
+                    return (
+                      <td key={state} style={{ padding: '2px 3px', textAlign: 'center' }}>
+                        <div title={`${cell.won}/${cell.total} leads`} style={{
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          width: 36, height: 22, borderRadius: 4, fontSize: 10, fontWeight: 700,
+                          background: rateBg(cell.winRate), color: rateColor(cell.winRate),
+                        }}>
+                          {cell.winRate}%
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ marginTop: 8, display: 'flex', gap: 10, fontSize: 10, color: 'var(--text-muted)' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, background: '#10b98122', border: '1px solid #10b981', borderRadius: 2, display: 'inline-block' }} />≥60%</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, background: '#f59e0b18', border: '1px solid #f59e0b', borderRadius: 2, display: 'inline-block' }} />35–59%</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, background: '#f9731614', border: '1px solid #f97316', borderRadius: 2, display: 'inline-block' }} />15–34%</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, background: '#ef444412', border: '1px solid #ef4444', borderRadius: 2, display: 'inline-block' }} />&lt;15%</span>
+          </div>
+        </div>
+
+        {/* ── 12-month revenue trend ── */}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+            12-Month Revenue Trend (Est.)
+          </div>
+          {revTrend.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>No closed deals in the last 12 months yet.</div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 100 }}>
+                {revTrend.map((r) => {
+                  const pct = (r.revenue / maxRev) * 100;
+                  return (
+                    <div key={r.month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, height: '100%', justifyContent: 'flex-end' }}
+                      title={`${fmtMonth(r.month)}: $${r.revenue.toLocaleString()}`}>
+                      <div style={{ width: '100%', height: `${Math.max(4, pct)}%`, background: 'var(--accent)', borderRadius: '3px 3px 0 0', opacity: 0.85 }} />
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                {revTrend.map((r) => (
+                  <div key={r.month} style={{ flex: 1, fontSize: 9, color: 'var(--text-faint)', textAlign: 'center', overflow: 'hidden' }}>
+                    {fmtMonth(r.month).split(' ')[0]}
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                <span style={{ color: 'var(--text-muted)' }}>12-month total</span>
+                <strong style={{ color: '#10b981' }}>
+                  ${revTrend.reduce((s, r) => s + r.revenue, 0).toLocaleString()} est.
+                </strong>
+              </div>
+            </>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ── Pipeline Velocity Card ────────────────────────────────────────────────────
 const STAGE_COLORS_VEL: Record<string, string> = {
   new: '#6366f1', contacted: '#3b82f6', replied: '#0ea5e9',
@@ -1142,6 +1290,9 @@ export default function AnalyticsView() {
 
         {/* ── Activity Heatmap ── */}
         {activityCalendar && <ActivityHeatmap data={activityCalendar} />}
+
+        {/* ── Win Rate Intelligence ── */}
+        <WinRateMatrix />
 
         {/* ── Pipeline Velocity ── */}
         <PipelineVelocityCard />

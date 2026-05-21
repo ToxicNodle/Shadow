@@ -2569,6 +2569,93 @@ app.get('/analytics/icp', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Win-rate matrix: category × state heatmap + 12-month estimated revenue trend
+app.get('/analytics/win-matrix', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [{ rows: cells }, { rows: trend }] = await Promise.all([
+      // Category × state breakdown (min 1 lead)
+      pool.query(`
+        SELECT category, state,
+               COUNT(*)::INT AS total,
+               COUNT(*) FILTER (WHERE status='won')::INT AS won,
+               COUNT(*) FILTER (WHERE status='lost')::INT AS lost
+        FROM leads
+        WHERE user_id=$1
+          AND state   IS NOT NULL AND state   != ''
+          AND category IS NOT NULL AND category != ''
+        GROUP BY category, state
+        HAVING COUNT(*) >= 1
+        ORDER BY COUNT(*) FILTER (WHERE status='won') DESC NULLS LAST
+      `, [uid]),
+
+      // 12-month won revenue trend (category breakdown per month)
+      pool.query(`
+        SELECT TO_CHAR(DATE_TRUNC('month', updated_at), 'YYYY-MM') AS month,
+               category,
+               COUNT(*)::INT AS won_count
+        FROM leads
+        WHERE user_id=$1 AND status='won'
+          AND updated_at >= NOW() - INTERVAL '12 months'
+        GROUP BY DATE_TRUNC('month', updated_at), category
+        ORDER BY DATE_TRUNC('month', updated_at)
+      `, [uid]),
+    ]);
+
+    // Revenue estimates per category
+    const REV = {
+      fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+      colorchange: 3500, racing: 40000, reatec: 5500, design: 3000,
+      wallgraphics: 2500, other: 2500,
+    };
+
+    // Compute top 7 states by total lead count across all categories
+    const stateTotals = {};
+    for (const c of cells) {
+      stateTotals[c.state] = (stateTotals[c.state] || 0) + c.total;
+    }
+    const topStates = Object.entries(stateTotals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 7)
+      .map(([s]) => s);
+
+    // Compute all categories that appear in the data
+    const cats = [...new Set(cells.map((c) => c.category))];
+
+    // Build matrix: matrix[cat][state] = { total, won, winRate }
+    const matrix = {};
+    for (const c of cells) {
+      if (!matrix[c.category]) matrix[c.category] = {};
+      matrix[c.category][c.state] = {
+        total: c.total,
+        won: c.won,
+        lost: c.lost,
+        winRate: c.total > 0 ? Math.round((c.won / c.total) * 100) : 0,
+      };
+    }
+
+    // Revenue trend: aggregate by month, sum estimated revenue across categories
+    const revByMonth = {};
+    for (const r of trend) {
+      const rev = r.won_count * (REV[r.category] ?? 2500);
+      revByMonth[r.month] = (revByMonth[r.month] || 0) + rev;
+    }
+    const revTrend = Object.entries(revByMonth)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, revenue]) => ({ month, revenue }));
+
+    // Best category by win rate (min 3 total leads)
+    const catRates = cats.map((cat) => {
+      const catCells = cells.filter((c) => c.category === cat);
+      const total = catCells.reduce((s, c) => s + c.total, 0);
+      const won = catCells.reduce((s, c) => s + c.won, 0);
+      return { category: cat, total, won, winRate: total >= 3 ? Math.round((won / total) * 100) : null };
+    }).filter((c) => c.winRate !== null).sort((a, b) => b.winRate - a.winRate);
+
+    res.json({ ok: true, topStates, categories: cats, matrix, revTrend, catRates });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Pipeline velocity: average days per stage, bottleneck detection, predicted closes
 app.get('/analytics/pipeline-velocity', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
