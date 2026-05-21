@@ -488,11 +488,13 @@ function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
 
 export default function LeadDetail() {
   const { leads } = useLeads();
-  const { currentLeadId, setCurrentLeadId, quickOpenTab, setQuickOpenTab } = useAppStore((s) => ({
+  const { currentLeadId, setCurrentLeadId, quickOpenTab, setQuickOpenTab, setMode, setPendingDiscoverSearch } = useAppStore((s) => ({
     currentLeadId: s.currentLeadId,
     setCurrentLeadId: s.setCurrentLeadId,
     quickOpenTab: s.quickOpenTab,
     setQuickOpenTab: s.setQuickOpenTab,
+    setMode: s.setMode,
+    setPendingDiscoverSearch: s.setPendingDiscoverSearch,
   }));
   const [activeTab, setActiveTab] = useState<Tab>('info');
   const [showScoreModal, setShowScoreModal] = useState(false);
@@ -559,6 +561,38 @@ export default function LeadDetail() {
             {scoreLead(lead)} pts
           </button>
           {lead.serverId && <PortalShareBtn leadServerId={lead.serverId} />}
+          <button
+            className="btn"
+            style={{ fontSize: 11 }}
+            title="Find similar companies in the FMCSA database"
+            onClick={() => {
+              const CAT_TO_INDUSTRY: Record<string, string> = {
+                fleet: 'freight', construction: 'construction_fleet',
+                gc_referral: 'construction_general', racing: 'trucking',
+                dinoc: 'freight', reatec: 'freight', colorchange: 'freight',
+                design: 'design_general', wallgraphics: 'design_general',
+              };
+              const fleet = parseInt(lead.fleetSize ?? '') || 0;
+              const minFleet = fleet > 0 ? Math.max(1, Math.floor(fleet * 0.5)) : null;
+              const maxFleet = fleet > 0 ? Math.ceil(fleet * 2) : null;
+              const industry = CAT_TO_INDUSTRY[lead.category];
+              setPendingDiscoverSearch({
+                states: lead.state ? [lead.state] : null,
+                industries: industry ? [industry] : null,
+                minFleet,
+                maxFleet,
+                sort: 'wrap_score',
+                limit: 25,
+                offset: 0,
+              });
+              setMode('discover');
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            Find Similar
+          </button>
         </div>
       </div>
       <DealMetricsStrip lead={lead} />

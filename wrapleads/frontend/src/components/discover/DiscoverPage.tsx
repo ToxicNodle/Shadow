@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useCarrierStats, useCarrierSearch } from '../../hooks/useCarriers';
 import { useAppStore } from '../../store/useAppStore';
 import { api } from '../../api/client';
@@ -177,13 +177,24 @@ function ICPBanner() {
 export default function DiscoverPage() {
   const { data: stats, isLoading: statsLoading } = useCarrierStats();
   const qc = useQueryClient();
-  const { selectedCarrierIds, clearSelectedCarrierIds, showToast, setMode } = useAppStore((s) => ({
+  const { selectedCarrierIds, clearSelectedCarrierIds, showToast, setMode, pendingDiscoverSearch, setPendingDiscoverSearch } = useAppStore((s) => ({
     selectedCarrierIds: s.selectedCarrierIds,
     clearSelectedCarrierIds: s.clearSelectedCarrierIds,
     showToast: s.showToast,
     setMode: s.setMode,
+    pendingDiscoverSearch: s.pendingDiscoverSearch,
+    setPendingDiscoverSearch: s.setPendingDiscoverSearch,
   }));
   const [campaignLoading, setCampaignLoading] = useState(false);
+  const pendingSearch = useCarrierSearch();
+
+  useEffect(() => {
+    if (pendingDiscoverSearch) {
+      pendingSearch.mutate(pendingDiscoverSearch);
+      setPendingDiscoverSearch(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function bulkImport() {
     const ids = Array.from(selectedCarrierIds);
