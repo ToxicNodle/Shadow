@@ -377,6 +377,7 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS view_count INT DEFAULT 0`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS mockup_url TEXT`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS roi_section TEXT`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
   }
@@ -5116,7 +5117,7 @@ app.post('/leads/:id/proposal', authMiddleware, subMiddleware, async (req, res) 
   try {
     const uid = String(req.user.id);
     const leadId = Number(req.params.id);
-    const { extra_notes = '', mockup_url = null } = req.body || {};
+    const { extra_notes = '', mockup_url = null, roi_html = null } = req.body || {};
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
 
@@ -5173,9 +5174,9 @@ Return ONLY valid JSON:
 
     const token = require('crypto').randomBytes(20).toString('hex');
     const { rows } = await pool.query(`
-      INSERT INTO proposals (user_id, lead_id, token, title, intro, services, pricing_html, timeline, notes, status, mockup_url)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft',$10) RETURNING *
-    `, [uid, leadId, token, parsed.title, parsed.intro, parsed.services, parsed.pricing_html, parsed.timeline, extra_notes, mockup_url]);
+      INSERT INTO proposals (user_id, lead_id, token, title, intro, services, pricing_html, timeline, notes, status, mockup_url, roi_section)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft',$10,$11) RETURNING *
+    `, [uid, leadId, token, parsed.title, parsed.intro, parsed.services, parsed.pricing_html, parsed.timeline, extra_notes, mockup_url, roi_html]);
 
     await logActivity(pool, { leadId, userId: uid, type: 'email_generated', subject: `Proposal generated: ${parsed.title}`, metadata: { proposal_token: token } });
     res.json({ ok: true, proposal: rows[0] });
@@ -5329,6 +5330,12 @@ app.get('/proposals/:token', async (req, res) => {
       <div class="section-label">Investment</div>
       ${p.pricing_html || ''}
     </div>
+
+    ${p.roi_section ? `
+    <div class="section">
+      <div class="section-label">Your Rolling Billboard — The Numbers</div>
+      ${p.roi_section}
+    </div>` : ''}
 
     <div class="section">
       <div class="section-label">Project Timeline</div>

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import type { Lead, LeadCategory } from '../../api/types';
+import { DEFAULT_SETTINGS } from '../../api/types';
 import BeforeAfterSlider from '../ui/BeforeAfterSlider';
+import WrapRoiPanel from '../ui/WrapRoiPanel';
+import { roiHtml, type RoiResult } from '../../utils/wrapRoi';
 
 type Step = 'company' | 'brand' | 'capture' | 'result';
 
@@ -62,6 +65,11 @@ export default function PitchModeModal({ onClose }: Props) {
   const [chosenLeadId, setChosenLeadId] = useState<number | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
   const [proposing, setProposing] = useState(false);
+
+  // Latest ROI snapshot from the panel — included when sending a proposal.
+  const [roi, setRoi] = useState<RoiResult | null>(null);
+  const priceLow = parseFloat(settings.pricePerSqftLow || DEFAULT_SETTINGS.pricePerSqftLow);
+  const priceHigh = parseFloat(settings.pricePerSqftHigh || DEFAULT_SETTINGS.pricePerSqftHigh);
 
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
@@ -230,6 +238,7 @@ export default function PitchModeModal({ onClose }: Props) {
         leadServerId,
         `Generated from in-person AR pitch using ${brand.primary_color} brand color.`,
         pickedVariant.image_url,
+        roi ? roiHtml(roi, brand.primary_color) : undefined,
       );
       const url = api.getProposalUrl(proposal.token);
       await navigator.clipboard.writeText(url).catch(() => {});
@@ -531,6 +540,14 @@ export default function PitchModeModal({ onClose }: Props) {
                   </div>
                 </div>
               )}
+
+              {/* Mobile billboard ROI — the money close */}
+              <WrapRoiPanel
+                priceLow={priceLow}
+                priceHigh={priceHigh}
+                brandColor={brand.primary_color}
+                onRoiChange={setRoi}
+              />
 
               {/* Save target picker */}
               <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>

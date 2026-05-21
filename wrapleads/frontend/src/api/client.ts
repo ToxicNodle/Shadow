@@ -420,8 +420,8 @@ export const api = {
     authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
 
   // Proposals (shareable client HTML pages)
-  createProposal: (leadId: number, extraNotes?: string, mockupUrl?: string) =>
-    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '', mockup_url: mockupUrl || null }) }),
+  createProposal: (leadId: number, extraNotes?: string, mockupUrl?: string, roiHtml?: string) =>
+    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '', mockup_url: mockupUrl || null, roi_html: roiHtml || null }) }),
   getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
