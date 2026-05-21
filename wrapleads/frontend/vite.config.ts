@@ -39,6 +39,8 @@ export default defineConfig({
       '/vision':        API,
       '/webhooks':      API,
       '/health':        API,
+      '/activity':      API,
+      '/onboarding':    API,
       '/admin':         API,
     },
   },
