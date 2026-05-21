@@ -453,6 +453,151 @@ function DealCoachCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   );
 }
 
+// ── Predicted Close Calendar ─────────────────────────────────────────────────
+// Shows active deals bucketed by predicted month of close, based on avg days
+// remaining from current stage (industry benchmarks).
+
+const STAGE_DAYS_REMAINING: Record<string, number> = {
+  proposal: 9, meeting: 16, replied: 26, contacted: 45,
+};
+
+const MONTH_COLORS = ['#6366f1', '#8b5cf6', '#a78bfa'];
+
+function PredictedCloseCalendar({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { leads } = useLeads();
+
+  const { months, totalExpected } = useMemo(() => {
+    const active = leads.filter((l) =>
+      ['proposal', 'meeting', 'replied', 'contacted'].includes(l.status) && l.serverId
+    );
+
+    // Bucket into next 3 calendar months
+    const now = new Date();
+    const monthBuckets: Array<{
+      label: string;
+      year: number;
+      month: number;
+      deals: Array<{ lead: typeof active[0]; daysToClose: number; prob: number; rev: number }>;
+    }> = Array.from({ length: 3 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      return {
+        label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        year: d.getFullYear(),
+        month: d.getMonth(),
+        deals: [],
+      };
+    });
+
+    let totalExp = 0;
+    for (const lead of active) {
+      const daysToClose = STAGE_DAYS_REMAINING[lead.status] ?? 30;
+      const closeDate = new Date(Date.now() + daysToClose * 86_400_000);
+      const diffMonths = (closeDate.getFullYear() - now.getFullYear()) * 12 + (closeDate.getMonth() - now.getMonth());
+      if (diffMonths >= 0 && diffMonths < 3) {
+        const prob = winProbability(lead);
+        const rev = REV_PER_LEAD[lead.category] ?? 1500;
+        const expVal = Math.round((prob / 100) * rev);
+        monthBuckets[diffMonths].deals.push({ lead, daysToClose, prob, rev });
+        totalExp += expVal;
+      }
+    }
+
+    return { months: monthBuckets, totalExpected: totalExp };
+  }, [leads]);
+
+  const hasAnyDeals = months.some((m) => m.deals.length > 0);
+  if (!hasAnyDeals) return null;
+
+  return (
+    <section className="pv-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div>
+          <h3 className="pv-card-title" style={{ margin: 0 }}>Predicted Close Calendar</h3>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '2px 0 0' }}>
+            Based on average days per stage · probability-weighted
+          </p>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: '#6366f1', lineHeight: 1 }}>{fmt(totalExpected)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>90-day expected value</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+        {months.map((m, mi) => {
+          const color = MONTH_COLORS[mi];
+          const monthExpected = m.deals.reduce((s, d) => s + Math.round((winProbability(d.lead) / 100) * (REV_PER_LEAD[d.lead.category] ?? 1500)), 0);
+          return (
+            <div
+              key={m.label}
+              style={{
+                border: `1px solid ${color}28`,
+                borderRadius: 10,
+                overflow: 'hidden',
+                background: mi === 0 ? `${color}06` : 'transparent',
+              }}
+            >
+              {/* Month header */}
+              <div style={{
+                padding: '8px 12px',
+                background: `${color}12`,
+                borderBottom: `1px solid ${color}20`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color }}>{m.label}</span>
+                {m.deals.length > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#10b981' }}>{fmt(monthExpected)}</span>
+                )}
+              </div>
+
+              {/* Deal list */}
+              <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 5, minHeight: 60 }}>
+                {m.deals.length === 0 ? (
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic', paddingTop: 4 }}>No closes predicted</span>
+                ) : (
+                  m.deals
+                    .sort((a, b) => winProbability(b.lead) - winProbability(a.lead))
+                    .slice(0, 5)
+                    .map(({ lead }) => {
+                      const prob = winProbability(lead);
+                      const stageColor: Record<string, string> = { proposal: '#f97316', meeting: '#f59e0b', replied: '#3b82f6', contacted: '#6366f1' };
+                      const sc = stageColor[lead.status] ?? '#6b7280';
+                      return (
+                        <button
+                          key={lead.serverId}
+                          onClick={() => onLeadClick(lead.serverId!)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: '3px 4px', borderRadius: 5, textAlign: 'left',
+                            transition: 'background 0.12s',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = `${color}12`)}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                        >
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: sc, flexShrink: 0 }} />
+                          <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {lead.company}
+                          </span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: prob >= 40 ? '#10b981' : 'var(--text-muted)', flexShrink: 0 }}>
+                            {prob}%
+                          </span>
+                        </button>
+                      );
+                    })
+                )}
+                {m.deals.length > 5 && (
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)', paddingLeft: 4 }}>+{m.deals.length - 5} more</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function QuickWinPredictor({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   const { leads } = useLeads();
   const [showAll, setShowAll] = useState(false);
@@ -695,6 +840,9 @@ export default function PipelineView() {
 
         {/* ── 90-Day Revenue Forecast ── */}
         <RevenueForecastChart />
+
+        {/* ── Predicted Close Calendar ── */}
+        <PredictedCloseCalendar onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
 
         {/* ── Deal Coach ── */}
         <DealCoachCard onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
