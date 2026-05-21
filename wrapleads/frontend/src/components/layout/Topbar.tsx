@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppStore } from '../../store/useAppStore';
@@ -8,6 +8,7 @@ import VisionQuoteModal from '../modals/VisionQuoteModal';
 import ARPreviewModal from '../modals/ARPreviewModal';
 import CardScanModal from '../modals/CardScanModal';
 import NotificationPanel from './NotificationPanel';
+import ChangelogPanel, { getChangelogBadge } from './ChangelogPanel';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
@@ -15,6 +16,12 @@ export default function Topbar() {
   const [arOpen, setArOpen] = useState(false);
   const [cardScanOpen, setCardScanOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const [changelogBadge, setChangelogBadge] = useState(false);
+
+  useEffect(() => {
+    setChangelogBadge(getChangelogBadge());
+  }, []);
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => api.getNotifications(),
@@ -148,6 +155,19 @@ export default function Topbar() {
           </svg>
           {unreadCount > 0 && <span className="notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
         </button>
+        <button
+          className="btn btn-icon"
+          title="What's New"
+          onClick={() => { setChangelogOpen((o) => !o); setChangelogBadge(false); }}
+          style={{ position: 'relative' }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" strokeWidth="3" />
+          </svg>
+          {changelogBadge && <span className="notif-badge" style={{ background: '#10b981' }}>!</span>}
+        </button>
         <button className="btn btn-icon" title="Settings" onClick={() => setSettingsOpen(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="3" />
@@ -159,6 +179,7 @@ export default function Topbar() {
         {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
         {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
         {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
+        {changelogOpen && <ChangelogPanel onClose={() => { setChangelogOpen(false); setChangelogBadge(false); }} />}
       <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>
           <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0] ?? ''}</span>
