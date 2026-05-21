@@ -8108,6 +8108,60 @@ function startBidExpiryWorker() {
   console.log('· Bid expiry worker: running (daily alert at 10:00 AM)');
 }
 
+// Retention Radar — aging installed wraps due for re-engagement
+// Returns installed_jobs where wrap age >= 60% of life_years, joined to lead CRM data
+app.get('/mission/retention-radar', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        ij.id            AS job_id,
+        ij.company,
+        ij.vehicle_type,
+        ij.vehicle_count,
+        ij.wrap_category,
+        ij.material,
+        ij.install_date,
+        ij.life_years,
+        ij.notes,
+        ROUND(
+          EXTRACT(EPOCH FROM (NOW() - ij.install_date))
+          / (ij.life_years * 365.25 * 86400) * 100
+        )::INT AS age_pct,
+        EXTRACT(DAY FROM (NOW() - ij.install_date))::INT AS days_installed,
+        -- CRM lead data (joined via lead_id FK, fallback to company name match)
+        COALESCE(l.id, lname.id)           AS lead_id,
+        COALESCE(l.status, lname.status)   AS lead_status,
+        COALESCE(l.email, lname.email)     AS email,
+        COALESCE(l.phone, lname.phone)     AS phone,
+        CASE
+          WHEN l.last_contacted IS NOT NULL
+               THEN EXTRACT(DAY FROM (NOW() - l.last_contacted))::INT
+          WHEN lname.last_contacted IS NOT NULL
+               THEN EXTRACT(DAY FROM (NOW() - lname.last_contacted))::INT
+          ELSE NULL
+        END AS days_since_contact
+      FROM installed_jobs ij
+      LEFT JOIN leads l
+             ON l.id = ij.lead_id AND l.user_id = $1
+      LEFT JOIN leads lname
+             ON lname.user_id = $1
+            AND LOWER(lname.company) = LOWER(ij.company)
+            AND ij.lead_id IS NULL
+      WHERE ij.user_id = $1
+        AND ij.install_date IS NOT NULL
+        AND ij.life_years  IS NOT NULL
+        AND ij.life_years  > 0
+        AND EXTRACT(EPOCH FROM (NOW() - ij.install_date))
+            / (ij.life_years * 365.25 * 86400) >= 0.60
+        AND COALESCE(l.status, lname.status, 'won') != 'lost'
+      ORDER BY age_pct DESC
+      LIMIT 8
+    `, [uid]);
+    res.json({ ok: true, clients: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {

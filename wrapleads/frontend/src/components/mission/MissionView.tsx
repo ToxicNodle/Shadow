@@ -1243,6 +1243,147 @@ function WrapSeasonCard({
   );
 }
 
+// ── Retention Radar ───────────────────────────────────────────────────────────
+
+const VEHICLE_LABEL: Record<string, string> = {
+  cargo_van_standard: 'Cargo Van', cargo_van_high_roof: 'High-Roof Van',
+  box_truck_16: '16ft Box', box_truck_24: '24ft Box', box_truck_26: '26ft Box',
+  pickup_truck: 'Pickup', semi_truck: 'Semi', sprinter: 'Sprinter',
+  trailer_48: '48ft Trailer', trailer_53: '53ft Trailer', other: 'Vehicle',
+};
+
+const WRAP_CAT_LABEL: Record<string, string> = {
+  fleet: 'Fleet Wrap', dinoc: 'DI-NOC', colorchange: 'Color Change',
+  racing: 'Racing', construction: 'Construction', reatec: 'Reatec',
+  wallgraphics: 'Wall Graphics', design: 'Design', general: 'General',
+};
+
+const REV_BY_CAT_RETENTION: Record<string, number> = {
+  fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+  colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500,
+};
+
+function agePctColor(pct: number) {
+  if (pct >= 90) return '#ef4444';
+  if (pct >= 75) return '#f97316';
+  if (pct >= 60) return '#f59e0b';
+  return '#10b981';
+}
+
+function RetentionRadarCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['retention-radar'],
+    queryFn: () => api.getRetentionRadar(),
+    staleTime: 10 * 60_000,
+  });
+
+  const clients = data?.clients ?? [];
+  if (!isLoading && clients.length === 0) return null;
+
+  const totalEstValue = clients.reduce((s, c) => s + (REV_BY_CAT_RETENTION[c.wrap_category] ?? 2500) * c.vehicle_count, 0);
+
+  function fmtK(n: number) { return n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n}`; }
+
+  return (
+    <div style={{
+      background: 'rgba(16,185,129,0.04)',
+      border: '1px solid rgba(16,185,129,0.2)',
+      borderRadius: 12,
+      padding: '12px 16px',
+      marginBottom: 16,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <span style={{ fontSize: 17 }}>🔄</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Retention Radar</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Past clients with aging wraps — re-engagement opportunities</div>
+        </div>
+        {!isLoading && (
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#10b981' }}>{fmtK(totalEstValue)}</div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>est. re-order value</div>
+          </div>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Loading…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {clients.map((c) => {
+            const urgencyColor = agePctColor(c.age_pct);
+            const vLabel = VEHICLE_LABEL[c.vehicle_type] ?? 'Vehicle';
+            const catLabel = WRAP_CAT_LABEL[c.wrap_category] ?? c.wrap_category;
+            const reOrderVal = (REV_BY_CAT_RETENTION[c.wrap_category] ?? 2500) * c.vehicle_count;
+            const installYear = new Date(c.install_date).getFullYear();
+            const yearsOld = (c.days_installed / 365.25).toFixed(1);
+
+            return (
+              <div
+                key={c.job_id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '7px 10px', borderRadius: 8,
+                  background: c.age_pct >= 90 ? 'rgba(239,68,68,0.07)' : 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${urgencyColor}22`,
+                }}
+              >
+                {/* Age progress bar */}
+                <div style={{ flexShrink: 0, width: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: urgencyColor }}>{c.age_pct}%</div>
+                  <div style={{ width: 28, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.min(100, c.age_pct)}%`, height: '100%', background: urgencyColor, borderRadius: 2 }} />
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>of life</div>
+                </div>
+
+                {/* Main info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {c.company}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {c.vehicle_count}× {vLabel} · {catLabel} · {installYear} ({yearsOld}yr)
+                  </div>
+                </div>
+
+                {/* Contact recency */}
+                <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: c.days_since_contact && c.days_since_contact > 180 ? '#f97316' : 'var(--text-muted)' }}>
+                    {c.days_since_contact ? `${c.days_since_contact}d` : '—'}
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>since contact</div>
+                </div>
+
+                {/* Re-order value */}
+                <div style={{ flexShrink: 0, textAlign: 'right', minWidth: 36 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: '#10b981' }}>{fmtK(reOrderVal)}</div>
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>est.</div>
+                </div>
+
+                {/* CTA */}
+                {c.lead_id && (
+                  <button
+                    onClick={() => onLeadClick(c.lead_id!)}
+                    style={{
+                      fontSize: 11, fontWeight: 700, color: '#10b981',
+                      background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)',
+                      borderRadius: 6, padding: '3px 10px', cursor: 'pointer', flexShrink: 0,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Re-engage →
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Hot Opens Leaderboard ─────────────────────────────────────────────────────
 
 const CAT_SHORT: Record<string, string> = {
@@ -1614,6 +1755,9 @@ export default function MissionView() {
         leads={leads}
         onFilter={(cat) => goToLeadsFiltered(undefined, cat)}
       />
+
+      {/* ── Retention Radar — aging wraps ready for re-engagement ── */}
+      <RetentionRadarCard onLeadClick={goToLead} />
 
       {/* ── Hot Email Opens Leaderboard ── */}
       <HotOpensLeaderboard onLeadClick={goToLead} />
