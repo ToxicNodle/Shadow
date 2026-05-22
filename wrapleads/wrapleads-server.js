@@ -395,6 +395,8 @@ async function migrateDb() {
     // Sprint 7: view tracking columns
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS view_count INT DEFAULT 0`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS mockup_url TEXT`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS roi_section TEXT`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
   }
@@ -4293,6 +4295,147 @@ app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (re
   }
 });
 
+// ── Pitch Mode — in-person sales demo (brand lookup + camera → live wrap) ─────
+//
+// Two endpoints power the field-sales pitch tool:
+//   POST /vision/brand-lookup     companyName → { domain, logo_url, primary/secondary colors, tagline }
+//   POST /vision/pitch-preview    image + brand info → photorealistic wrap mockup in the lead's colors
+//
+// Logo URL is derived from Clearbit (https://logo.clearbit.com/{domain}). It's
+// free, requires no key, and 404s gracefully if the domain has no logo — the
+// frontend just falls back to initials. Brand colors come from Claude.
+
+app.post('/vision/brand-lookup', authMiddleware, async (req, res) => {
+  const companyName = String(req.body?.companyName || '').trim();
+  if (!companyName) return res.status(400).json({ error: 'Missing companyName' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (ANTHROPIC_API_KEY)' });
+
+  try {
+    const text = await claudeHaiku(apiKey, [{
+      role: 'user',
+      content: `You are a brand-identity researcher. For the company below, return JSON only — no prose, no code fences — with your best guess for these exact fields. If you genuinely don't know a value, use an empty string for strings (never null).
+
+Company: "${companyName}"
+
+Required JSON shape:
+{
+  "name": "official display name, e.g. 'FedEx' not 'fedex inc'",
+  "domain": "primary website domain, e.g. 'fedex.com' (no protocol, no www)",
+  "primary_color": "main brand color as #rrggbb hex, e.g. '#4D148C'",
+  "secondary_color": "secondary/accent brand color as #rrggbb hex",
+  "tagline": "short positioning line if widely known, otherwise empty string"
+}
+
+For well-known brands use their actual colors. For unknown companies, pick a plausible, professional color pair based on the industry hint in the name. Always return valid hex colors.`,
+    }], 400);
+
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    let brand;
+    try { brand = JSON.parse(cleaned); }
+    catch { return res.status(502).json({ error: 'Brand lookup returned malformed JSON' }); }
+
+    // Normalize: keep only the fields we promised, force hex shape.
+    const hex = (v) => {
+      const s = String(v || '').trim();
+      return /^#[0-9a-f]{6}$/i.test(s) ? s.toUpperCase() : '';
+    };
+    const domain = String(brand.domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+    const result = {
+      name: String(brand.name || companyName).trim(),
+      domain,
+      logo_url: domain ? `https://logo.clearbit.com/${domain}` : '',
+      primary_color: hex(brand.primary_color) || '#1F2937',
+      secondary_color: hex(brand.secondary_color) || '#F3F4F6',
+      tagline: String(brand.tagline || '').trim(),
+    };
+    res.json({ ok: true, brand: result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/vision/pitch-preview', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+
+  const settingsRow = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [req.user.id]);
+  const s = settingsRow.rows[0]?.settings_json || {};
+  const openaiKey = s.openaiApiKey;
+  if (!openaiKey) return res.status(503).json({ error: 'OpenAI API key required — add it in Settings → Design Studio' });
+
+  const companyName    = String(req.body.companyName || '').trim();
+  const primaryColor   = String(req.body.primary_color || '#1F2937').trim();
+  const secondaryColor = String(req.body.secondary_color || '#F3F4F6').trim();
+  const tagline        = String(req.body.tagline || '').trim();
+
+  const STYLE_LIBRARY = {
+    full_wrap:   { label: 'Full Wrap',     clause: 'full color-change wrap covering the entire body in the brand color' },
+    partial:     { label: 'Partial Wrap',  clause: 'partial wrap with bold panels on the doors, hood, and rear quarter' },
+    stripes:     { label: 'Stripes',       clause: 'racing-inspired stripe wrap running front to back' },
+    logo_focus:  { label: 'Logo + Contact', clause: 'clean white-or-black base with the brand logo and contact band prominently on the doors and rear' },
+    matte_brand: { label: 'Matte Premium', clause: 'matte-finish color-change wrap in the brand color, premium luxury look' },
+  };
+
+  // Accept either `styles` (CSV) for multi-variant or a single `style` for back-compat.
+  const stylesRaw = String(req.body.styles || req.body.style || 'full_wrap');
+  const requested = stylesRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const styles = requested.filter(s => STYLE_LIBRARY[s]);
+  const stylesToRun = styles.length ? styles.slice(0, 4) : ['full_wrap'];
+
+  function buildPrompt(styleKey) {
+    const { clause } = STYLE_LIBRARY[styleKey] || STYLE_LIBRARY.full_wrap;
+    return [
+      `Apply a professional vehicle wrap to this exact vehicle for the brand "${companyName}".`,
+      `Use the brand's actual colors: ${primaryColor} as the dominant base color and ${secondaryColor} as the accent.`,
+      `Style: ${clause}.`,
+      `Place a clean rendering of the "${companyName}" wordmark on the doors and rear panel.`,
+      tagline ? `Include the tagline "${tagline}" in small type below the wordmark.` : '',
+      `Keep the vehicle shape, perspective, lighting, and surroundings identical.`,
+      `Photorealistic, production-quality, as if installed by a top-tier wrap shop.`,
+    ].filter(Boolean).join(' ');
+  }
+
+  try {
+    const originalDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    const FormDataNode = (await import('form-data')).default;
+
+    async function runOne(styleKey) {
+      const form = new FormDataNode();
+      form.append('model', 'gpt-image-1');
+      form.append('image', req.file.buffer, { filename: 'vehicle.jpg', contentType: req.file.mimetype });
+      form.append('prompt', buildPrompt(styleKey));
+      form.append('size', '1536x1024');
+      const resp = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${openaiKey}`, ...form.getHeaders() },
+        body: form,
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
+      const image_url = data.data?.[0]?.url || (`data:image/png;base64,${data.data?.[0]?.b64_json}`);
+      return { style: styleKey, label: STYLE_LIBRARY[styleKey].label, image_url };
+    }
+
+    const settled = await Promise.allSettled(stylesToRun.map(runOne));
+    const variants = settled.filter(r => r.status === 'fulfilled').map(r => r.value);
+    if (!variants.length) {
+      const reason = settled[0]?.status === 'rejected' ? settled[0].reason?.message : 'No variants generated';
+      throw new Error(reason || 'No variants generated');
+    }
+
+    res.json({
+      ok: true,
+      variants,
+      original_url: originalDataUrl,
+      // back-compat for old clients
+      image_url: variants[0].image_url,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Business Card Scanner — Claude Vision → instant lead ──────────────────────
 app.post('/vision/scan-card', authMiddleware, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
@@ -5041,7 +5184,7 @@ app.post('/leads/:id/proposal', authMiddleware, requireWrapOS, async (req, res) 
   try {
     const uid = String(req.user.id);
     const leadId = Number(req.params.id);
-    const { extra_notes = '' } = req.body || {};
+    const { extra_notes = '', mockup_url = null, roi_html = null } = req.body || {};
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
 
@@ -5098,9 +5241,9 @@ Return ONLY valid JSON:
 
     const token = require('crypto').randomBytes(20).toString('hex');
     const { rows } = await pool.query(`
-      INSERT INTO proposals (user_id, lead_id, token, title, intro, services, pricing_html, timeline, notes, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft') RETURNING *
-    `, [uid, leadId, token, parsed.title, parsed.intro, parsed.services, parsed.pricing_html, parsed.timeline, extra_notes]);
+      INSERT INTO proposals (user_id, lead_id, token, title, intro, services, pricing_html, timeline, notes, status, mockup_url, roi_section)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft',$10,$11) RETURNING *
+    `, [uid, leadId, token, parsed.title, parsed.intro, parsed.services, parsed.pricing_html, parsed.timeline, extra_notes, mockup_url, roi_html]);
 
     await logActivity(pool, { leadId, userId: uid, type: 'email_generated', subject: `Proposal generated: ${parsed.title}`, metadata: { proposal_token: token } });
     res.json({ ok: true, proposal: rows[0] });
@@ -5213,6 +5356,10 @@ app.get('/proposals/:token', async (req, res) => {
   .approve-btn{background:#22c55e;color:#fff;border:none;padding:14px 40px;border-radius:8px;font-size:16px;font-weight:700;cursor:pointer;letter-spacing:-.3px}
   .approve-btn:hover{background:#16a34a}
   .approved-badge{background:#dcfce7;border:2px solid #22c55e;border-radius:12px;padding:20px;text-align:center;color:#15803d;font-weight:700;font-size:16px}
+  .mockup-section{margin-bottom:36px}
+  .mockup-frame{position:relative;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,.08);background:#000}
+  .mockup-frame img{width:100%;display:block}
+  .mockup-tag{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:4px 8px;border-radius:4px;letter-spacing:.04em}
   .footer{background:#f8f8f8;padding:24px 48px;border-top:1px solid #eee;font-size:12px;color:#888;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
   @media(max-width:600px){.body-wrap,.header,.footer{padding:24px 20px}.prop-title{font-size:22px}}
   @media print{body{background:#fff}.wrap{box-shadow:none}.approve-section,.approve-btn{display:none}}
@@ -5227,6 +5374,15 @@ app.get('/proposals/:token', async (req, res) => {
   </div>
 
   <div class="body-wrap">
+    ${p.mockup_url ? `
+    <div class="section mockup-section">
+      <div class="section-label">Your Vehicle, Wrapped</div>
+      <div class="mockup-frame">
+        <img src="${p.mockup_url}" alt="Wrap concept for ${p.company || 'your vehicle'}" />
+        <div class="mockup-tag">AI-rendered concept · final design subject to approval</div>
+      </div>
+    </div>` : ''}
+
     <div class="section">
       <div class="section-label">Introduction</div>
       ${(p.intro || '').split('\n\n').map(par => `<p>${par}</p>`).join('')}
@@ -5241,6 +5397,12 @@ app.get('/proposals/:token', async (req, res) => {
       <div class="section-label">Investment</div>
       ${p.pricing_html || ''}
     </div>
+
+    ${p.roi_section ? `
+    <div class="section">
+      <div class="section-label">Your Rolling Billboard — The Numbers</div>
+      ${p.roi_section}
+    </div>` : ''}
 
     <div class="section">
       <div class="section-label">Project Timeline</div>
