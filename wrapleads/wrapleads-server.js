@@ -8647,14 +8647,15 @@ if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'change-me-in-produc
 
 app.listen(PORT, async () => {
   console.log(banner);
+  console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
+  console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
+  // Run migrations first so checkDb works on a fresh database
+  try { await migrateDb(); } catch (e) { console.error('migrateDb error:', e.message); }
   const db = await checkDb();
   console.log(db.ok
     ? `· Postgres connected. ${db.carriers.toLocaleString()} carriers loaded.`
     : `· Postgres NOT connected: ${db.error}\n  Run: docker compose up -d`);
-  console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
-  console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
   if (db.ok) {
-    await migrateDb();
     startDripWorker();
     startDigestWorker();
     startColdNurtureWorker();
