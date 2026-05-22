@@ -1,5 +1,4 @@
 import type { User } from '../../api/types';
-import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 
 interface Props {
@@ -7,7 +6,6 @@ interface Props {
 }
 
 export default function TrialBanner({ user }: Props) {
-  const showToast = useAppStore((s) => s.showToast);
 
   async function handleUpgrade() {
     // Open paywall modal so user can choose their tier
