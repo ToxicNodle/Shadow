@@ -99,7 +99,7 @@ export default function CRMPage() {
     api.getSettings().then(({ settings }) => {
       if (Object.keys(settings).length > 0) updateSettings(settings);
     }).catch(() => {});
-  }, [updateSettings]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Apply user's brand accent color to the app CSS variables
   const accentColor = useAppStore((s) => s.settings.accentColor);
