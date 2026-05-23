@@ -65,7 +65,7 @@ export default function CRMPage() {
     if (user.isFirstLogin) {
       setShowOnboarding(true);
     }
-  }, [user, setPaywallOpen]);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const MODE_KEYS: Record<string, typeof mode> = {
     '1': 'mission', '2': 'leads', '3': 'discover',
@@ -91,7 +91,7 @@ export default function CRMPage() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [setCommandPaletteOpen, setMode]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load server-persisted settings on first mount
   const updateSettings = useAppStore((s) => s.updateSettings);
