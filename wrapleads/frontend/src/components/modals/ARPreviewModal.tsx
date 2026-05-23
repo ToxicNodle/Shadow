@@ -52,6 +52,132 @@ function sortedPresets(category?: string) {
   return [...priority, ...rest];
 }
 
+// Canvas-rendered cargo van for the investor demo — no external assets needed.
+function createDemoVehicle(): Promise<File> {
+  return new Promise((resolve) => {
+    const W = 900, H = 540;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d')!;
+
+    // Sky gradient
+    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.72);
+    sky.addColorStop(0, '#cdd9e8'); sky.addColorStop(1, '#e8eef5');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+
+    // Ground
+    ctx.fillStyle = '#9aacb8'; ctx.fillRect(0, H * 0.72, W, H * 0.28);
+    ctx.fillStyle = '#7890a0'; ctx.fillRect(0, H * 0.72, W, 3);
+
+    // Ground shadow under van
+    const gShadow = ctx.createRadialGradient(W / 2, H * 0.72, 20, W / 2, H * 0.72, 320);
+    gShadow.addColorStop(0, 'rgba(0,0,0,0.25)'); gShadow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gShadow; ctx.fillRect(0, H * 0.66, W, H * 0.1);
+
+    // Van body
+    const bodyGrad = ctx.createLinearGradient(0, H * 0.2, 0, H * 0.72);
+    bodyGrad.addColorStop(0, '#f2f2f2'); bodyGrad.addColorStop(0.45, '#e8e8e8'); bodyGrad.addColorStop(1, '#d0d0d0');
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.moveTo(90, H * 0.72); ctx.lineTo(90, H * 0.28); ctx.quadraticCurveTo(90, H * 0.22, 130, H * 0.22);
+    ctx.lineTo(W - 60, H * 0.22); ctx.quadraticCurveTo(W - 40, H * 0.22, W - 40, H * 0.28);
+    ctx.lineTo(W - 40, H * 0.72); ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#b8b8b8'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // Roof highlight strip
+    const roofGrad = ctx.createLinearGradient(0, H * 0.18, 0, H * 0.26);
+    roofGrad.addColorStop(0, '#f8f8f8'); roofGrad.addColorStop(1, '#e0e0e0');
+    ctx.fillStyle = roofGrad;
+    ctx.beginPath();
+    ctx.moveTo(90, H * 0.28); ctx.quadraticCurveTo(90, H * 0.22, 130, H * 0.22);
+    ctx.lineTo(W - 60, H * 0.22); ctx.quadraticCurveTo(W - 40, H * 0.22, W - 40, H * 0.28);
+    ctx.lineTo(90, H * 0.28); ctx.closePath();
+    ctx.fill();
+
+    // Cab windshield
+    ctx.fillStyle = 'rgba(160,195,220,0.85)';
+    ctx.beginPath();
+    ctx.moveTo(100, H * 0.28); ctx.lineTo(100, H * 0.52); ctx.lineTo(250, H * 0.52);
+    ctx.lineTo(250, H * 0.28); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#9ab4c8'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // Cab/body divider
+    ctx.fillStyle = '#b0b0b0'; ctx.fillRect(255, H * 0.22, 4, H * 0.5);
+
+    // Side windows (passenger area)
+    [330, 420, 510].forEach((x) => {
+      ctx.fillStyle = 'rgba(160,195,220,0.7)';
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(x, H * 0.27, 72, 58, 4) : (() => {
+        ctx.rect(x, H * 0.27, 72, 58);
+      })();
+      ctx.fill(); ctx.strokeStyle = '#9ab4c8'; ctx.lineWidth = 1; ctx.stroke();
+    });
+
+    // Rear doors
+    ctx.strokeStyle = '#b0b0b0'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(W - 120, H * 0.22); ctx.lineTo(W - 120, H * 0.72); ctx.stroke();
+    // Door handle
+    ctx.fillStyle = '#909090'; ctx.fillRect(W - 95, H * 0.47, 16, 3);
+
+    // Headlight
+    ctx.fillStyle = '#fff8e0';
+    ctx.beginPath(); ctx.ellipse(108, H * 0.54, 14, 10, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#d0c060'; ctx.lineWidth = 1; ctx.stroke();
+
+    // Turn signal
+    ctx.fillStyle = '#f5a020';
+    ctx.beginPath(); ctx.ellipse(108, H * 0.61, 10, 6, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Taillight
+    ctx.fillStyle = '#ee3030';
+    ctx.beginPath(); ctx.ellipse(W - 50, H * 0.54, 14, 10, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#a02020'; ctx.lineWidth = 1; ctx.stroke();
+
+    // Wheels (front)
+    [[200, H * 0.72], [W - 200, H * 0.72]].forEach(([cx, cy]) => {
+      ctx.fillStyle = '#1a1a1a'; ctx.beginPath();
+      ctx.ellipse(cx, cy, 56, 56, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3d3d3d'; ctx.beginPath();
+      ctx.ellipse(cx, cy, 44, 44, 0, 0, Math.PI * 2); ctx.fill();
+      // Spokes
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        ctx.fillStyle = '#888';
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * 10, cy + Math.sin(a) * 10);
+        ctx.lineTo(cx + Math.cos(a) * 38, cy + Math.sin(a) * 38);
+        ctx.lineWidth = 5; ctx.strokeStyle = '#888'; ctx.stroke();
+      }
+      ctx.fillStyle = '#c0c0c0'; ctx.beginPath();
+      ctx.ellipse(cx, cy, 12, 12, 0, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // Side panel branding placeholder
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#4060d0';
+    ctx.fillRect(265, H * 0.28, 490, H * 0.38);
+    ctx.restore();
+    ctx.font = 'bold 22px "Arial", sans-serif';
+    ctx.fillStyle = 'rgba(80,100,150,0.5)';
+    ctx.textAlign = 'center';
+    ctx.fillText('YOUR COMPANY WRAP', 510, H * 0.465);
+    ctx.font = '14px "Arial", sans-serif';
+    ctx.fillStyle = 'rgba(100,120,160,0.4)';
+    ctx.fillText('AI-generated wrap preview will appear here', 510, H * 0.51);
+
+    // Ground line reflection
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(0, H * 0.72, W, 2);
+
+    canvas.toBlob((blob) => {
+      resolve(new File([blob!], 'demo-cargo-van.jpg', { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.88);
+  });
+}
+
 interface Props {
   onClose: () => void;
   presetDescription?: string;
@@ -166,6 +292,21 @@ export default function ARPreviewModal({ onClose, presetDescription, lead }: Pro
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchIndex, setBatchIndex] = useState(0);
   const batchFileRef = useRef<HTMLInputElement>(null);
+
+  // Investor demo: load a canvas-rendered cargo van so visitors can try the flow
+  const [demoLoading, setDemoLoading] = useState(false);
+  async function loadDemoVehicle() {
+    setDemoLoading(true);
+    try {
+      const f = await createDemoVehicle();
+      handleFile(f);
+      // Auto-select the fleet preset so the demo is ready to go
+      const fleetIdx = presets.findIndex((p) => p.label === 'Fleet White/Blue');
+      if (fleetIdx >= 0) pickPreset(fleetIdx);
+    } finally {
+      setDemoLoading(false);
+    }
+  }
 
   const brandColorsStr = useBrandColors ? `${brandColor1}, ${brandColor2}` : undefined;
   const activeUrl: string | null = results[activeResult] ?? null;
@@ -554,11 +695,26 @@ export default function ARPreviewModal({ onClose, presetDescription, lead }: Pro
                     <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
                   </div>
-                  {preview && (
-                    <button className="btn" style={{ fontSize: 11, alignSelf: 'flex-start' }} onClick={resetPhoto}>
-                      ✕ Remove photo
-                    </button>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {preview ? (
+                      <button className="btn" style={{ fontSize: 11 }} onClick={resetPhoto}>
+                        ✕ Remove photo
+                      </button>
+                    ) : (
+                      <button
+                        className="btn"
+                        style={{ fontSize: 11, borderStyle: 'dashed', color: 'var(--accent)', borderColor: 'var(--accent)', background: 'var(--accent-subtle)' }}
+                        onClick={(e) => { e.stopPropagation(); loadDemoVehicle(); }}
+                        disabled={demoLoading}
+                        title="Load a canvas-rendered cargo van to try the AR pipeline without uploading your own photo"
+                      >
+                        {demoLoading ? 'Generating…' : '✨ Try Demo Vehicle'}
+                      </button>
+                    )}
+                    {!preview && (
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No photo? Load a demo van and try it instantly</span>
+                    )}
+                  </div>
                 </div>
               )}
             </>

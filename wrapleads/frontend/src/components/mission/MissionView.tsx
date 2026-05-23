@@ -1729,6 +1729,24 @@ export default function MissionView() {
     setMode('leads');
   }
 
+  // Hooks must be unconditional — compute before the early-return guard
+  const expectedPipeline = useMemo(() => {
+    return leads
+      .filter((l) => !['won', 'lost'].includes(l.status))
+      .reduce((sum, l) => sum + (winProbability(l) / 100) * (REV_EST[l.category] ?? 2500), 0);
+  }, [leads]);
+
+  const bidsDueSoon = useMemo(() => {
+    const bw = data?.bidsThisWeek ?? [];
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + 2); cutoff.setHours(23, 59, 59);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return bw.filter((b: { bid_due?: string }) => {
+      if (!b.bid_due) return false;
+      const d = new Date(b.bid_due);
+      return d >= today && d <= cutoff;
+    });
+  }, [data?.bidsThisWeek]);
+
   if (isLoading || !data) {
     return (
       <div className="pv-loading">
@@ -1741,24 +1759,6 @@ export default function MissionView() {
   const { overdue, newWithEmail, replied, bidsThisWeek, callReady, needsEmail, sequences, wonThisMonth, wonThisMonthRevenue, agingWraps, stuckDeals } = data;
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
-
-  // Expected pipeline value: sum(winProbability × deal size) across all active leads
-  const expectedPipeline = useMemo(() => {
-    return leads
-      .filter((l) => !['won', 'lost'].includes(l.status))
-      .reduce((sum, l) => sum + (winProbability(l) / 100) * (REV_EST[l.category] ?? 2500), 0);
-  }, [leads]);
-
-  // Bids due today or tomorrow
-  const bidsDueSoon = useMemo(() => {
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + 2); cutoff.setHours(23, 59, 59);
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    return bidsThisWeek.filter((b: { bid_due?: string }) => {
-      if (!b.bid_due) return false;
-      const d = new Date(b.bid_due);
-      return d >= today && d <= cutoff;
-    });
-  }, [bidsThisWeek]);
 
   return (
     <div className="mission-root">

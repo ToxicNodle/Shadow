@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../api/client';
@@ -29,6 +29,12 @@ export default function SettingsModal() {
   const [motiveStatus, setMotiveStatus] = useState<FleetStatus>('idle');
   const [motiveCount, setMotiveCount] = useState<number | null>(null);
   const [motiveImported, setMotiveImported] = useState<{ imported: number; skipped: number } | null>(null);
+
+  // Sync local form state whenever the modal opens — settings may have loaded from
+  // the server after initial mount, so re-initialize when the user actually opens it.
+  useEffect(() => {
+    if (settingsOpen) setLocal(settings);
+  }, [settingsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!settingsOpen) return null;
 

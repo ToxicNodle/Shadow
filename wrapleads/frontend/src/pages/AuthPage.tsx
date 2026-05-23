@@ -51,9 +51,8 @@ export default function AuthPage() {
     setDemoLoading(true);
     setError('');
     try {
-      const { token, user } = await api.demoLogin();
+      const { token } = await api.demoLogin();
       setToken(token);
-      localStorage.setItem('wl_user', JSON.stringify(user));
       navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Demo unavailable');
@@ -72,9 +71,8 @@ export default function AuthPage() {
     setError('');
     setLoading(true);
     try {
-      const { token, user } = await api.login(loginEmail, loginPassword);
+      const { token } = await api.login(loginEmail, loginPassword);
       setToken(token);
-      localStorage.setItem('wl_user', JSON.stringify(user));
       navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Login failed');
@@ -88,9 +86,8 @@ export default function AuthPage() {
     setError('');
     setLoading(true);
     try {
-      const { token, user } = await api.register(regName, regCompany, regEmail, regPassword);
+      const { token } = await api.register(regName, regCompany, regEmail, regPassword);
       setToken(token);
-      localStorage.setItem('wl_user', JSON.stringify(user));
       navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Registration failed');

@@ -106,7 +106,6 @@ export default function LandingPage() {
     try {
       const { token, user } = await api.demoLogin();
       setToken(token);
-      localStorage.setItem('wl_user', JSON.stringify(user));
       navigate('/', { replace: true });
     } catch (e) {
       setDemoError(e instanceof Error ? e.message : 'Demo unavailable');

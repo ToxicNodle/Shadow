@@ -1670,7 +1670,7 @@ app.post('/searches/saved/:id/run', authMiddleware, async (req, res) => {
     const where = conditions.length ? conditions.join(' AND ') : 'TRUE';
     const countRes = await pool.query(`SELECT COUNT(*)::INT AS new_count FROM companies WHERE ${where}`, params);
     const newCount = countRes.rows[0].new_count;
-    await pool.query(`UPDATE saved_searches SET last_checked = NOW(), new_count = $1 WHERE id = $2`, [newCount, id]);
+    await pool.query(`UPDATE saved_searches SET last_checked = NOW(), new_count = $1 WHERE id = $2 AND user_id = $3`, [newCount, id, String(req.user.id)]);
     res.json({ new_count: newCount });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1905,7 +1905,7 @@ app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, r
     // Only advance if not already past replied
     const advanceStatuses = ['new', 'cold', 'contacted'];
     if (advanceStatuses.includes(lead.status)) {
-      await pool.query(`UPDATE leads SET status='replied', followup_due_at=CURRENT_DATE, updated_at=NOW() WHERE id=$1`, [lead.id]);
+      await pool.query(`UPDATE leads SET status='replied', followup_due_at=CURRENT_DATE, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
       await logActivity(pool, { leadId: lead.id, userId: uid, type: 'status_changed', subject: `Reply received: ${subject}`, body: text.slice(0, 500), metadata: { inbound: true, from } });
       await createNotification(uid, {
         type: 'email_reply',
@@ -3535,7 +3535,7 @@ app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
       body: message,
       metadata: { twilio_sid: twilioData.sid, to: lead.phone },
     });
-    await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1`, [leadId]);
+    await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [leadId, uid]);
 
     res.json({ ok: true, sid: twilioData.sid });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6864,7 +6864,7 @@ app.post('/portal/:token/approve', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM portal_links WHERE token=$1', [req.params.token]);
     if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
     const link = rows[0];
-    await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [link.lead_id]);
+    await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1 AND user_id=$2`, [link.lead_id, link.user_id]);
     await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'status_changed', subject: 'Client approved quote via portal' });
     await createNotification(link.user_id, {
       type: 'email_reply',
