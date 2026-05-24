@@ -6210,6 +6210,104 @@ Write 3 paragraphs:
   }
 });
 
+// ── AI — Win Pattern Analysis ────────────────────────────────────────────────
+app.post('/ai/win-patterns', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  const uid = String(req.user.id);
+  try {
+    const settingsR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+    const shopName = settingsR.rows[0]?.settings_json?.companyName || 'your shop';
+
+    const [wonR, lostR, allR] = await Promise.all([
+      pool.query(`
+        SELECT category, state, fleet_size,
+               EXTRACT(MONTH FROM updated_at)::INT AS close_month,
+               ROUND(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)::INT AS days_to_close,
+               company, contact_title
+          FROM leads
+         WHERE user_id=$1 AND status='won'
+         ORDER BY updated_at DESC LIMIT 50
+      `, [uid]),
+      pool.query(`
+        SELECT category, state, fleet_size,
+               EXTRACT(MONTH FROM updated_at)::INT AS close_month,
+               metadata->>'win_loss_factor' AS loss_factor
+          FROM leads
+         WHERE user_id=$1 AND status='lost' LIMIT 30
+      `, [uid]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS total,
+               COUNT(*) FILTER (WHERE status='won')::INT AS won,
+               COUNT(*) FILTER (WHERE status='lost')::INT AS lost,
+               ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400) FILTER (WHERE status='won'))::INT AS avg_close_days
+          FROM leads WHERE user_id=$1
+      `, [uid]),
+    ]);
+
+    const won = wonR.rows;
+    const lost = lostR.rows;
+    const totals = allR.rows[0] || {};
+
+    if (won.length === 0) {
+      return res.json({ ok: true, patterns: 'Log your first win to unlock AI pattern analysis. Once you have won deals, Claude will identify your highest-probability prospect profile — the exact fleet size, category, and state combination where you close most.', chips: [] });
+    }
+
+    const catCount = {};
+    const stateCount = {};
+    const fleetBuckets = { small: 0, mid: 0, large: 0 };
+    const monthCount = {};
+    won.forEach((w) => {
+      catCount[w.category] = (catCount[w.category] || 0) + 1;
+      if (w.state) stateCount[w.state] = (stateCount[w.state] || 0) + 1;
+      if (w.fleet_size <= 25) fleetBuckets.small++;
+      else if (w.fleet_size <= 150) fleetBuckets.mid++;
+      else fleetBuckets.large++;
+      if (w.close_month) monthCount[w.close_month] = (monthCount[w.close_month] || 0) + 1;
+    });
+
+    const topCats = Object.entries(catCount).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const topStates = Object.entries(stateCount).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    const topMonth = Object.entries(monthCount).sort((a, b) => b[1] - a[1])[0];
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const avgCloseDays = totals.avg_close_days || 'unknown';
+    const winRate = totals.total > 0 ? Math.round((totals.won / totals.total) * 100) : 0;
+
+    const prompt = `You are a sales pattern analyst for ${shopName}, a vehicle wrap shop.
+
+Analyze these win patterns and write a sharp 2-paragraph insight. Name specific patterns, be concrete. End each paragraph with one actionable sentence. No bullet points. Pure prose.
+
+WIN DATA (${won.length} total wins):
+Top categories: ${topCats.map(([c, n]) => `${c} (${n} wins)`).join(', ')}
+Top states: ${topStates.map(([s, n]) => `${s} (${n} wins)`).join(', ')}
+Fleet size breakdown: small ≤25 trucks: ${fleetBuckets.small}, mid 26-150: ${fleetBuckets.mid}, large 150+: ${fleetBuckets.large}
+Peak close month: ${topMonth ? MONTHS[topMonth[0] - 1] : 'n/a'} (${topMonth?.[1] || 0} closes)
+Avg days to close: ${avgCloseDays}d
+Win rate: ${winRate}%
+
+LOSS DATA (${lost.length} lost deals):
+Loss factors: ${[...new Set(lost.map((l) => l.loss_factor).filter(Boolean))].join(', ') || 'not tracked yet'}
+Lost in categories: ${[...new Set(lost.map((l) => l.category))].join(', ')}
+
+Write 2 paragraphs:
+1. Your ICP — the single highest-probability prospect profile based on win patterns (be specific about category, size, location)
+2. The gap between your wins and losses — what's the pattern in what you're NOT winning, and what to do about it`;
+
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 500);
+
+    const chips = [
+      topCats[0] && { label: `Best vertical: ${topCats[0][0]}`, color: '#10b981' },
+      topStates[0] && { label: `Top market: ${topStates[0][0]}`, color: '#6366f1' },
+      topMonth && { label: `Peak month: ${MONTHS[topMonth[0] - 1]}`, color: '#f59e0b' },
+      avgCloseDays && { label: `Avg close: ${avgCloseDays}d`, color: 'var(--text-muted)' },
+    ].filter(Boolean);
+
+    res.json({ ok: true, patterns: text.trim(), chips });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Anniversary Email Worker ─────────────────────────────────────────────────
 async function processAnniversaries() {
   const resendKey = process.env.RESEND_API_KEY;

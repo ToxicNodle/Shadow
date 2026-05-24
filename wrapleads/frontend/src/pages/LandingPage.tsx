@@ -104,7 +104,7 @@ export default function LandingPage() {
     setDemoLoading(true);
     setDemoError('');
     try {
-      const { token, user } = await api.demoLogin();
+      const { token } = await api.demoLogin();
       setToken(token);
       navigate('/', { replace: true });
     } catch (e) {

@@ -553,6 +553,174 @@ function PipelineNarrativeCard() {
   );
 }
 
+// ── Win Pattern AI Card ───────────────────────────────────────────────────────
+function WinPatternCard() {
+  const [result, setResult] = useState<{ patterns: string; chips: { label: string; color: string }[] } | null>(null);
+  const mut = useMutation({
+    mutationFn: () => api.getWinPatterns(),
+    onSuccess: (d) => setResult(d),
+  });
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Win Pattern Analysis</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Claude identifies your highest-probability prospect profile from past wins and losses
+          </div>
+        </div>
+        <button
+          className="btn btn-primary"
+          style={{ fontSize: 11, flexShrink: 0 }}
+          disabled={mut.isPending}
+          onClick={() => mut.mutate()}
+        >
+          {mut.isPending ? 'Analyzing…' : result ? '↺ Re-analyze' : 'Analyze My Wins'}
+        </button>
+      </div>
+
+      {result?.chips && result.chips.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+          {result.chips.map((chip) => (
+            <span key={chip.label} style={{
+              fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 99,
+              background: `${chip.color}18`, color: chip.color,
+              border: `1px solid ${chip.color}30`,
+            }}>
+              {chip.label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {!result && !mut.isPending && (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+          Claude analyzes your won and lost deals to surface the exact customer profile you close most — vertical, fleet size, geography, and timing. The more wins you log, the sharper the insight.
+        </p>
+      )}
+      {mut.isPending && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+          <span className="spinner" /> Reading your win history…
+        </div>
+      )}
+      {result && (
+        <div className="pipeline-narrative">{result.patterns}</div>
+      )}
+    </div>
+  );
+}
+
+// ── US State Heatmap ──────────────────────────────────────────────────────────
+const STATE_GRID: Record<string, { c: number; r: number }> = {
+  WA:{c:0,r:0}, MT:{c:1,r:0}, ND:{c:2,r:0}, MN:{c:3,r:0}, WI:{c:4,r:0}, MI:{c:5,r:0}, NY:{c:8,r:0}, VT:{c:9,r:0}, ME:{c:10,r:0},
+  OR:{c:0,r:1}, ID:{c:1,r:1}, SD:{c:2,r:1}, IA:{c:3,r:1}, IL:{c:4,r:1}, IN:{c:5,r:1}, OH:{c:6,r:1}, PA:{c:7,r:1}, NJ:{c:8,r:1}, NH:{c:9,r:1}, MA:{c:10,r:1},
+  CA:{c:0,r:2}, NV:{c:1,r:2}, WY:{c:2,r:2}, NE:{c:3,r:2}, MO:{c:4,r:2}, KY:{c:5,r:2}, WV:{c:6,r:2}, VA:{c:7,r:2}, MD:{c:8,r:2}, DE:{c:9,r:2}, CT:{c:10,r:2},
+  AZ:{c:1,r:3}, UT:{c:2,r:3}, CO:{c:3,r:3}, KS:{c:4,r:3}, AR:{c:5,r:3}, TN:{c:6,r:3}, NC:{c:7,r:3}, SC:{c:8,r:3}, RI:{c:10,r:3},
+  NM:{c:2,r:4}, OK:{c:3,r:4}, LA:{c:4,r:4}, MS:{c:5,r:4}, AL:{c:6,r:4}, GA:{c:7,r:4}, FL:{c:8,r:4},
+  TX:{c:3,r:5},
+  AK:{c:0,r:6}, HI:{c:1,r:6},
+};
+
+const COLS = 11;
+const ROWS = 7;
+
+function StateHeatmap({ byState, onStateClick }: { byState: { state: string; count: number }[]; onStateClick: (state: string) => void }) {
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+  const countMap = new Map(byState.map((d) => [d.state, d.count]));
+  const maxCount = Math.max(...byState.map((d) => d.count), 1);
+
+  function cellBg(count: number): string {
+    if (count === 0) return 'var(--border)';
+    const intensity = Math.min(1, count / maxCount);
+    const lightness = Math.round(50 - intensity * 25);
+    const saturation = Math.round(60 + intensity * 20);
+    return `hsl(225, ${saturation}%, ${lightness}%)`;
+  }
+
+  const CELL = 34;
+  const GAP = 3;
+  const width = COLS * (CELL + GAP) - GAP;
+  const height = ROWS * (CELL + GAP) - GAP;
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Lead Density Map</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {byState.length} state{byState.length !== 1 ? 's' : ''} · click to search in Discover
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+        <div style={{ position: 'relative', width, height, flexShrink: 0 }}>
+          {Object.entries(STATE_GRID).map(([state, { c, r }]) => {
+            const count = countMap.get(state) ?? 0;
+            const x = c * (CELL + GAP);
+            const y = r * (CELL + GAP);
+            const hasLeads = count > 0;
+            return (
+              <div
+                key={state}
+                style={{
+                  position: 'absolute',
+                  left: x, top: y,
+                  width: CELL, height: CELL,
+                  borderRadius: 5,
+                  background: cellBg(count),
+                  display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center',
+                  cursor: hasLeads ? 'pointer' : 'default',
+                  transition: 'transform 0.1s, box-shadow 0.1s',
+                  boxShadow: hasLeads ? `0 0 0 1px hsl(225, 80%, ${Math.round(45 - (count / maxCount) * 20)}%)30` : 'none',
+                }}
+                onClick={() => hasLeads && onStateClick(state)}
+                onMouseEnter={(e) => {
+                  const rect = (e.target as HTMLElement).closest('div')!.getBoundingClientRect();
+                  setTooltip({ x: rect.left + CELL / 2 + window.scrollX, y: rect.top + window.scrollY, text: `${state}: ${count} lead${count !== 1 ? 's' : ''}` });
+                  if (hasLeads) (e.currentTarget as HTMLElement).style.transform = 'scale(1.1)';
+                }}
+                onMouseLeave={(e) => {
+                  setTooltip(null);
+                  (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
+                }}
+              >
+                <div style={{ fontSize: 9, fontWeight: 800, color: count > 0 ? '#fff' : 'var(--text-faint)', letterSpacing: '0.02em', lineHeight: 1 }}>
+                  {state}
+                </div>
+                {count > 0 && (
+                  <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.75)', lineHeight: 1, marginTop: 2 }}>
+                    {count}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {tooltip && (
+        <div style={{
+          position: 'fixed', left: tooltip.x - 50, top: tooltip.y - 38,
+          background: 'var(--bg-elev)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '4px 10px', fontSize: 11,
+          color: 'var(--text)', pointerEvents: 'none', zIndex: 9999,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.35)', whiteSpace: 'nowrap',
+        }}>
+          {tooltip.text}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, justifyContent: 'flex-end' }}>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>0</span>
+        {[0, 0.2, 0.4, 0.7, 1].map((i) => (
+          <div key={i} style={{ width: 12, height: 12, borderRadius: 3, background: i === 0 ? 'var(--border)' : `hsl(225, ${Math.round(60 + i * 20)}%, ${Math.round(50 - i * 25)}%)` }} />
+        ))}
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>max</span>
+      </div>
+    </div>
+  );
+}
+
 function fmt(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
@@ -1097,6 +1265,7 @@ function MarketPenetrationCard() {
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const setPendingDiscoverSearch = useAppStore((s) => s.setPendingDiscoverSearch);
   const { user } = useAuth();
   const [selectedWonMonth, setSelectedWonMonth] = useState<string | null>(null);
 
@@ -1708,30 +1877,15 @@ export default function AnalyticsView() {
           </div>
         )}
 
-        {/* ── Lead Geography ── */}
+        {/* ── Lead Density Map ── */}
         {byState && byState.length > 0 && (
-          <div className="an-card">
-            <div className="an-card-title">Lead Geography</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>Leads by state — top {byState.length}</div>
-            {(() => {
-              const maxCount = Math.max(...byState.map((s) => s.count), 1);
-              return byState.map((s) => (
-                <div key={s.state} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ width: 26, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>{s.state}</span>
-                  <div style={{ flex: 1, height: 8, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%',
-                      width: `${Math.max(3, (s.count / maxCount) * 100)}%`,
-                      background: `hsl(${220 + Math.round((s.count / maxCount) * 40)}, 70%, ${40 + Math.round((s.count / maxCount) * 20)}%)`,
-                      borderRadius: 99,
-                      transition: 'width 0.4s ease',
-                    }} />
-                  </div>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', width: 28, textAlign: 'right', flexShrink: 0 }}>{s.count}</span>
-                </div>
-              ));
-            })()}
-          </div>
+          <StateHeatmap
+            byState={byState}
+            onStateClick={(state) => {
+              setPendingDiscoverSearch({ states: [state], sort: 'wrap_score', limit: 25, offset: 0, minFleet: 10, maxFleet: 500, industries: null });
+              setMode('discover');
+            }}
+          />
         )}
 
         {/* ── Referral Sources ── */}
@@ -1779,6 +1933,9 @@ export default function AnalyticsView() {
 
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />
+
+        {/* ── Win Pattern Analysis ── */}
+        <WinPatternCard />
 
         {/* ── Pipeline Health Score ── */}
         <PipelineHealthCard />

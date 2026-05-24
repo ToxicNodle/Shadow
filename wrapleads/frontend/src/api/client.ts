@@ -662,6 +662,9 @@ export const api = {
   generatePipelineNarrative: () =>
     authFetch<{ ok: boolean; narrative: string }>('/ai/pipeline-narrative', { method: 'POST', body: '{}' }),
 
+  getWinPatterns: () =>
+    authFetch<{ ok: boolean; patterns: string; chips: { label: string; color: string }[] }>('/ai/win-patterns', { method: 'POST', body: '{}' }),
+
   // Market penetration analysis (FMCSA white-space vs. current pipeline)
   getMarketOpportunity: () =>
     authFetch<{
