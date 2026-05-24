@@ -55,10 +55,8 @@ export default function Topbar() {
     ? user.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() ?? 'U';
 
-  const brandName = user?.planTier === 'wrapos' ? 'WrapOS'
-    : user?.planTier === 'shopflow' ? 'ShopFlow'
-    : 'WrapLeads';
-  const brandSuffix = user?.planTier === 'wrapos' || user?.planTier === 'shopflow' ? null : '.io';
+  const brandName = 'WrapOS';
+  const brandSuffix = null;
 
   return (
     <header className="topbar">

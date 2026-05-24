@@ -30,8 +30,10 @@ import AnalyticsView from '../components/analytics/AnalyticsView';
 import CSVImportModal from '../components/modals/CSVImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
+import { useGlobalDraggableModals } from '../hooks/useGlobalDraggableModals';
 
 export default function CRMPage() {
+  useGlobalDraggableModals();
   const { user, isLoading } = useAuth();
   const {
     mode, setMode, setPaywallOpen,
