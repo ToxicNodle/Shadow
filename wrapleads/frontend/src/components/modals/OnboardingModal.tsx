@@ -30,6 +30,16 @@ const TOUR: { icon: ReactNode; title: string; body: string }[] = [
     title: 'Bid Tracker + Jobs',
     body: 'Kanban for every active bid. After you win, jobs flow into the lifecycle tracker — photos, social posts, anniversary re-engagement. Nothing falls through.',
   },
+  {
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>,
+    title: 'AR Preview + Vision Quote',
+    body: 'Upload a photo of any vehicle — the AI overlays your wrap design in augmented reality. Vision Quote reads the truck and returns a price range in seconds. Close on-site, every time.',
+  },
+  {
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+    title: 'Analytics & AI Pipeline Forecast',
+    body: 'Win rate by category and state, revenue forecast, pipeline health score, and a plain-English AI narrative that tells you exactly where the money is this week.',
+  },
 ];
 
 export default function OnboardingModal({ onClose }: Props) {
@@ -110,7 +120,7 @@ export default function OnboardingModal({ onClose }: Props) {
             <div className="onboarding-hero-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
             </div>
-            <h2 className="onboarding-h2">Four things that make money</h2>
+            <h2 className="onboarding-h2">Six tools that close deals</h2>
             <p className="onboarding-sub">
               Every shop runs a different play. Here&apos;s where the platform pulls weight for you.
             </p>

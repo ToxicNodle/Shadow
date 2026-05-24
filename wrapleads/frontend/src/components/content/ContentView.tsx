@@ -711,7 +711,7 @@ export default function ContentView() {
                     <button className="btn" style={{ fontSize: 11 }}
                       onClick={() => setScheduleModal('new')}>Schedule</button>
                     <button className="btn" style={{ fontSize: 11, color: 'var(--red)' }}
-                      onClick={() => deleteMut.mutate(c.id)}>Delete</button>
+                      onClick={() => { if (window.confirm(`Delete "${c.name}"?`)) deleteMut.mutate(c.id); }}>Delete</button>
                   </div>
                 </div>
               </div>
