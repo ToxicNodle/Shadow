@@ -185,7 +185,6 @@ export default function Topbar() {
         </button>
 
         {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
-<<<<<<< HEAD
         {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
         {pitchOpen && <PitchModeModal onClose={() => setPitchOpen(false)} />}
         {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}

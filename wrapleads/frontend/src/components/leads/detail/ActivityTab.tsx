@@ -101,6 +101,7 @@ const TYPE_LABELS: Record<ActivityType | string, { icon: ReactNode; label: strin
   quote_created:  { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>, label: 'Quote created',       color: '#60a5fa' },
   quote_sent:     { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,                                                   label: 'Quote sent to client', color: '#3b82f6' },
   quote_accepted: { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>,                                                                                                   label: 'Quote accepted!',      color: '#10b981' },
+  email_reply:    { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>,                                                                  label: 'Reply received',       color: '#34d399' },
 };
 
 function fmtDate(iso: string) {
@@ -184,6 +185,20 @@ export default function ActivityTab({ lead }: Props) {
           const meta = TYPE_LABELS[a.type] ?? { icon: '•', label: a.type, color: 'var(--text-dim)' };
           const statusMeta = a.type === 'status_changed' && a.metadata;
           const isDraftEmail = a.type === 'draft_email';
+          const isReply = a.type === 'email_reply';
+          const replyMeta = isReply ? (a.metadata as Record<string, unknown>) : null;
+          const replyIntent = replyMeta?.intent as string | undefined;
+          const INTENT_BADGE: Record<string, { label: string; color: string }> = {
+            interested:      { label: 'Interested',        color: '#10b981' },
+            meeting_request: { label: 'Meeting Request',   color: '#3b82f6' },
+            price_question:  { label: 'Price Question',    color: '#f59e0b' },
+            referral:        { label: 'Referral',          color: '#a78bfa' },
+            not_now:         { label: 'Not Right Now',     color: '#94a3b8' },
+            unsubscribe:     { label: 'Unsubscribe',       color: '#ef4444' },
+            negative:        { label: 'Negative',          color: '#ef4444' },
+            out_of_office:   { label: 'Out of Office',     color: '#94a3b8' },
+          };
+          const badge = replyIntent ? INTENT_BADGE[replyIntent] : null;
           return (
             <div key={a.id} className="activity-item">
               <div className="activity-icon" style={{ color: meta.color, background: meta.color + '18' }}>
@@ -194,6 +209,16 @@ export default function ActivityTab({ lead }: Props) {
                   <span className="activity-label" style={{ color: meta.color }}>{meta.label}</span>
                   <span className="activity-time">{fmtDate(a.created_at)}</span>
                 </div>
+                {badge && (
+                  <div style={{ marginBottom: 6 }}>
+                    <span style={{
+                      display: 'inline-block', fontSize: 11, fontWeight: 600,
+                      padding: '2px 8px', borderRadius: 20,
+                      background: badge.color + '22', color: badge.color,
+                      border: `1px solid ${badge.color}44`,
+                    }}>{badge.label}</span>
+                  </div>
+                )}
                 {statusMeta && (
                   <div className="activity-detail">
                     {String((a.metadata as Record<string,unknown>)?.from ?? '').replace(/_/g, ' ')}
@@ -203,6 +228,11 @@ export default function ActivityTab({ lead }: Props) {
                 )}
                 {a.subject && (
                   <div className="activity-detail" style={{ fontWeight: 600 }}>{a.subject}</div>
+                )}
+                {!!replyMeta?.summary && (
+                  <div className="activity-detail" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    {String(replyMeta.summary)}
+                  </div>
                 )}
                 {isDraftEmail && a.body ? (
                   <div className="activity-draft-email">
@@ -216,6 +246,21 @@ export default function ActivityTab({ lead }: Props) {
                       }}
                     >
                       Copy draft to clipboard
+                    </button>
+                  </div>
+                ) : isReply && replyMeta?.suggestedReply ? (
+                  <div className="activity-draft-email" style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Suggested reply</div>
+                    <pre className="activity-draft-email-body">{String(replyMeta.suggestedReply)}</pre>
+                    <button
+                      className="btn"
+                      style={{ fontSize: 12, padding: '6px 12px', marginTop: 8 }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(String(replyMeta.suggestedReply));
+                        showToast('Reply copied — paste into your email client');
+                      }}
+                    >
+                      Copy suggested reply
                     </button>
                   </div>
                 ) : a.body && (

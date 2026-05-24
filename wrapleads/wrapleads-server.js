@@ -1884,6 +1884,18 @@ app.post('/leads/bulk-tag', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Intent → CRM status + follow-up days
+const REPLY_INTENT_STATUS = {
+  interested:      { status: 'replied',   followupDays: 1  },
+  meeting_request: { status: 'meeting',   followupDays: 1  },
+  price_question:  { status: 'replied',   followupDays: 1  },
+  referral:        { status: 'replied',   followupDays: 2  },
+  not_now:         { status: 'cold',      followupDays: 30 },
+  unsubscribe:     { status: 'lost',      followupDays: null },
+  negative:        { status: 'lost',      followupDays: null },
+  out_of_office:   { status: null,        followupDays: 7  },
+};
+
 // Inbound email reply webhook (Resend forwards inbound to this URL)
 app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, res) => {
   try {
@@ -1904,23 +1916,90 @@ app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, r
     const lead = leads[0];
     const uid = lead.user_id;
 
-    // Only advance if not already past replied
-    const advanceStatuses = ['new', 'cold', 'contacted'];
-    if (advanceStatuses.includes(lead.status)) {
-      await pool.query(`UPDATE leads SET status='replied', followup_due_at=CURRENT_DATE, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
-      await logActivity(pool, { leadId: lead.id, userId: uid, type: 'status_changed', subject: `Reply received: ${subject}`, body: text.slice(0, 500), metadata: { inbound: true, from } });
-      await createNotification(uid, {
-        type: 'email_reply',
-        title: `📬 ${lead.company} replied to your email!`,
-        body: subject ? `Subject: ${subject}` : 'Inbound reply received.',
-        metadata: { lead_id: lead.id },
-      });
+    // AI intent classification — runs async, falls back to 'interested' on failure
+    let intent = 'interested';
+    let summary = '';
+    let suggestedReply = '';
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (apiKey && text.trim()) {
+      try {
+        const raw = await claudeHaiku(apiKey, [{
+          role: 'user',
+          content: `Classify this email reply from a vehicle wrap sales prospect. Return JSON only, no markdown.
+
+Reply from: ${from}
+Subject: ${subject}
+Body: ${text.slice(0, 1500)}
+
+Return exactly:
+{"intent":"<value>","summary":"<1-sentence summary>","suggested_reply":"<2-3 sentence response the sales rep should send>"}
+
+intent must be one of: interested | meeting_request | price_question | referral | not_now | unsubscribe | negative | out_of_office`
+        }], 350);
+        const parsed = JSON.parse(raw.replace(/```(?:json)?\n?|\n?```/g, '').trim());
+        intent = REPLY_INTENT_STATUS[parsed.intent] ? parsed.intent : 'interested';
+        summary = parsed.summary || '';
+        suggestedReply = parsed.suggested_reply || '';
+      } catch (e) {
+        console.warn('[inbound] AI classification failed:', e.message);
+      }
     }
-    // Auto-cancel any pending drip sequences for this lead — they replied, stop the drip
-    await pool.query(
-      `UPDATE email_queue SET status='cancelled', updated_at=NOW() WHERE lead_id=$1 AND status='pending'`,
-      [lead.id]
-    ).catch(() => {});
+
+    const { status: newStatus, followupDays } = REPLY_INTENT_STATUS[intent];
+
+    // Update lead status + follow-up date if the intent warrants a change
+    const terminalStatuses = ['won', 'lost'];
+    const shouldUpdateStatus = newStatus && !terminalStatuses.includes(lead.status);
+    if (shouldUpdateStatus) {
+      const followupClause = followupDays != null
+        ? `followup_due_at = CURRENT_DATE + INTERVAL '${followupDays} days',`
+        : `followup_due_at = NULL,`;
+      await pool.query(
+        `UPDATE leads SET status=$1, ${followupClause} updated_at=NOW() WHERE id=$2 AND user_id=$3`,
+        [newStatus, lead.id, uid]
+      );
+      await logActivity(pool, {
+        leadId: lead.id, userId: uid, type: 'status_changed',
+        subject: `${lead.status} → ${newStatus}`,
+        metadata: { from: lead.status, to: newStatus, inbound: true },
+      });
+    } else if (!newStatus && followupDays != null) {
+      // out_of_office: push follow-up without changing status
+      await pool.query(
+        `UPDATE leads SET followup_due_at = CURRENT_DATE + INTERVAL '${followupDays} days', updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+        [lead.id, uid]
+      );
+    }
+
+    // Log dedicated email_reply activity with AI analysis
+    await logActivity(pool, {
+      leadId: lead.id, userId: uid, type: 'email_reply',
+      subject: subject || '(no subject)',
+      body: text.slice(0, 800),
+      metadata: { from, intent, summary, suggestedReply, inbound: true },
+    });
+
+    // Notify the user
+    const INTENT_LABELS = {
+      interested: 'interested', meeting_request: 'requesting a meeting',
+      price_question: 'asking about pricing', referral: 'sending a referral',
+      not_now: 'not ready yet', unsubscribe: 'unsubscribing',
+      negative: 'declining', out_of_office: 'out of office',
+    };
+    await createNotification(uid, {
+      type: 'email_reply',
+      title: `${lead.company} replied — ${INTENT_LABELS[intent] || 'new reply'}`,
+      body: summary || (subject ? `Subject: ${subject}` : 'Inbound reply received.'),
+      metadata: { lead_id: lead.id, intent },
+    });
+
+    // Cancel pending drip sequences when they've replied (all intents except OOO)
+    if (intent !== 'out_of_office') {
+      await pool.query(
+        `UPDATE email_queue SET status='cancelled', updated_at=NOW() WHERE lead_id=$1 AND status='pending'`,
+        [lead.id]
+      ).catch(() => {});
+    }
   } catch (e) { console.error('[inbound webhook]', e.message); }
 });
 
