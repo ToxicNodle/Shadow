@@ -14,7 +14,8 @@ try {
   const { LEADS: designers } = require(path.join(__dirname, '../seed-designers'));
   const { LEADS: schools }   = require(path.join(__dirname, '../seed-schools'));
   const { LEADS: racing }    = require(path.join(__dirname, '../seed-racing'));
-  ALL_LEADS = [...(leads||[]), ...(gc||[]), ...(designers||[]), ...(schools||[]), ...(racing||[])];
+  const { LEADS: solar }     = require(path.join(__dirname, '../seed-solar'));
+  ALL_LEADS = [...(leads||[]), ...(gc||[]), ...(designers||[]), ...(schools||[]), ...(racing||[]), ...(solar||[])];
   console.log(`[autoSeed] Loaded ${ALL_LEADS.length} total leads from seed files`);
 } catch (e) {
   console.warn('[autoSeed] Could not load seed files:', e.message);

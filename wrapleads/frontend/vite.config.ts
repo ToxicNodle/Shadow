@@ -42,6 +42,8 @@ export default defineConfig({
       '/activity':      API,
       '/onboarding':    API,
       '/admin':         API,
+      '/solar':         API,
+      '/u':             API,
     },
   },
 });

@@ -1,5 +1,5 @@
 export type LeadStatus = 'new' | 'cold' | 'contacted' | 'replied' | 'meeting' | 'proposal' | 'won' | 'lost';
-export type LeadCategory = 'fleet' | 'design' | 'construction' | 'dinoc' | 'reatec' | 'colorchange' | 'wallgraphics' | 'gc_referral' | 'racing';
+export type LeadCategory = 'fleet' | 'design' | 'construction' | 'dinoc' | 'reatec' | 'colorchange' | 'wallgraphics' | 'gc_referral' | 'racing' | 'commercial_solar';
 export type SubStatus = 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled';
 
 export interface Lead {
@@ -187,16 +187,183 @@ export interface CarrierStats {
 }
 
 export const CATEGORIES: Record<LeadCategory, string> = {
-  fleet:        'Fleet / Logistics',
-  design:       'Interior Design',
-  construction: 'Construction',
-  dinoc:        'DI-NOC (Architectural Film)',
-  reatec:       'Rea Tec (Architectural Film)',
-  colorchange:  'Color Change Wraps',
-  wallgraphics: 'Wall Graphics / Wallpaper',
-  gc_referral:  'GC Referral Partner',
-  racing:       'Motorsport / Race Teams',
+  fleet:            'Fleet / Logistics',
+  design:           'Interior Design',
+  construction:     'Construction',
+  dinoc:            'DI-NOC (Architectural Film)',
+  reatec:           'Rea Tec (Architectural Film)',
+  colorchange:      'Color Change Wraps',
+  wallgraphics:     'Wall Graphics / Wallpaper',
+  gc_referral:      'GC Referral Partner',
+  racing:           'Motorsport / Race Teams',
+  commercial_solar: 'Commercial Solar',
 };
+
+// ── Commercial Solar Scout types ─────────────────────────────────────────
+
+export interface SolarEconomics {
+  system_kw: number;
+  annual_kwh: number;
+  annual_savings_usd: number;
+  gross_cost_usd: number;
+  payback_years_gross: number | null;
+  insolation: number;
+  rate_per_kwh: number;
+}
+
+export interface SolarIncentiveLine {
+  label: string;
+  amount: number;
+  notes: string | null;
+}
+
+export interface SolarIncentiveStack {
+  gross_cost: number;
+  federal_credit: number;
+  federal_credit_rate: number;
+  depreciation_benefit: number;
+  state_incentive: number;
+  state_program: string | null;
+  usda_grant: number;
+  total_incentives: number;
+  net_cost: number;
+  effective_subsidy_pct: number;
+  line_items: SolarIncentiveLine[];
+  municipal?: { name: string; per_kw?: number; amount: number; notes: string };
+  srec?: { npv: number; annual: number; market: { market: string; price_per_mwh: number } };
+}
+
+export interface SolarTariff {
+  name: string | null;
+  state?: string;
+  nem_version: string;
+  export_basis: string;
+  avg_export_credit_per_kwh: number;
+  retail_rate_commercial: number;
+  notes: string;
+  storage_recommended?: boolean;
+  deadline_message?: string;
+}
+
+export interface NaicsFitProfile {
+  fit: number;
+  load_profile: string;
+  energy_intensity: string;
+  tax_appetite: 'corporate' | 'pass_through' | 'mixed' | 'tax_exempt';
+  ownership_model: string;
+  esg_pressure: 'extreme' | 'high' | 'moderate' | 'low' | 'none';
+  kwhDriver: string;
+  pitchHook: string;
+  sales_script?: string;
+  code: string;
+  generic?: boolean;
+  load_profile_details?: { label: string; pitch: string; self_consumption_match: number };
+  ownership_model_explainer?: string;
+  esg_explainer?: string;
+}
+
+export interface SolarLead {
+  id: number;
+  source: string;
+  source_id?: string;
+  name: string;
+  street?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  building_sqft?: number | null;
+  roof_type?: string | null;
+  utility_provider?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  naics_code?: string | null;
+  industry?: string | null;
+  solar_score: number;
+  economics: SolarEconomics;
+  incentive_stack?: SolarIncentiveStack;
+  net_payback_years?: number | null;
+  urgency?: string;
+  naics_fit?: NaicsFitProfile | null;
+  tariff?: SolarTariff;
+  permit_signal?: string | null;
+  already_imported?: boolean;
+  satellite_url?: string | null;
+}
+
+export interface SolarSearchParams {
+  states?: string[];
+  minSqft?: number | null;
+  maxSqft?: number | null;
+  roofTypes?: string[];
+  naicsPrefix?: string;
+  withContact?: boolean;
+  query?: string;
+  limit?: number;
+  offset?: number;
+  sort?: 'solar_score' | 'sqft_desc' | 'name' | 'recent';
+}
+
+export interface PilotInstaller {
+  id: number;
+  user_id: string;
+  installer_name: string;
+  installer_email: string;
+  installer_phone?: string | null;
+  company_name?: string | null;
+  territory_states: string[];
+  territory_zips: string[];
+  lead_quota: number;
+  price_per_lead: number;
+  accept_token: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  total_assignments?: number;
+  won_count?: number;
+}
+
+export interface SolarAuctionBid {
+  id: number;
+  auction_id: number;
+  installer_id: number;
+  bid_mode: 'fixed' | 'commission' | 'hybrid';
+  amount: number;
+  commission_pct: number;
+  message?: string;
+  submitted_at: string;
+  score?: number | null;
+  installer_name?: string;
+  company_name?: string | null;
+}
+
+export interface SolarAuction {
+  id: number;
+  user_id: string;
+  lead_id: number;
+  public_token: string;
+  status: 'open' | 'closed_no_bids' | 'awarded' | 'cancelled';
+  bid_modes: ('fixed' | 'commission' | 'hybrid')[];
+  floor_price: number;
+  opens_at: string;
+  closes_at: string;
+  winning_bid_id?: number | null;
+  winner_installer_id?: number | null;
+  award_notes?: string | null;
+  snapshot: {
+    company: string; city?: string; state?: string;
+    building_sqft?: number; roof_type?: string; utility_provider?: string;
+    economics?: SolarEconomics;
+    incentive_stack?: SolarIncentiveStack | null;
+    satellite_url?: string | null;
+  };
+  company?: string;
+  city?: string;
+  state?: string;
+  bids?: SolarAuctionBid[];
+}
 
 export const STATUSES: Record<LeadStatus, string> = {
   new: 'New',

@@ -57,7 +57,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink, SolarLead, SolarSearchParams, PilotInstaller, SolarAuction } from './types';
 
 export const api = {
   // Auth
@@ -807,4 +807,97 @@ export const api = {
     authFetch<{ ok: boolean; quote: import('./types').ShopQuote }>(`/quotes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteQuote: (id: number) =>
     authFetch<{ ok: boolean }>(`/quotes/${id}`, { method: 'DELETE' }),
+
+  // ── Commercial Solar Scout ───────────────────────────────────────────
+  searchSolarLeads: (params: SolarSearchParams) =>
+    authFetch<{ total: number; results: SolarLead[]; limit: number; offset: number }>('/solar/discover', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  getQualifiedSolarLeads: (params?: { state?: string; limit?: number }) =>
+    authFetch<{ qualified: SolarLead[]; total: number; gates_applied: string[] }>(
+      `/solar/qualified${params?.state || params?.limit ? '?' + new URLSearchParams(Object.entries(params).map(([k,v]) => [k, String(v)])).toString() : ''}`
+    ),
+  getSolarCompany: (id: number) =>
+    authFetch<{
+      company: Record<string, unknown>;
+      economics: import('./types').SolarEconomics;
+      incentive_stack: import('./types').SolarIncentiveStack | null;
+      net_payback_years: number | null;
+      naics_fit: import('./types').NaicsFitProfile | null;
+      satellite_url: string | null;
+      suggested_titles: string[];
+    }>(`/solar/companies/${id}`),
+  importSolarLead: (companyId: number) =>
+    authFetch<{ ok: boolean; leadId: number | null }>('/solar/import', {
+      method: 'POST', body: JSON.stringify({ companyId }),
+    }),
+  qualifyLead: (input: { domain?: string; company?: string; street?: string; city?: string; state?: string; zip?: string; latitude?: number; longitude?: number; building_sqft?: number; roof_type?: string }) =>
+    authFetch<{
+      qualified_at: string;
+      status: 'Ultra-Qualified' | 'Qualified' | 'Marginal' | 'Disqualified';
+      score: number;
+      gates: Record<string, boolean>;
+      lead_alert: string;
+      economics: import('./types').SolarEconomics;
+      incentive_stack: import('./types').SolarIncentiveStack;
+      net_payback_years: number | null;
+      urgency: string;
+      naics_fit: import('./types').NaicsFitProfile | null;
+      tariff: import('./types').SolarTariff;
+      utility: { name: string | null; rate_per_kwh: number; source: string };
+    }>('/solar/qualify', { method: 'POST', body: JSON.stringify(input) }),
+
+  // Pilot installers (requireWrapOS)
+  getPilotInstallers: () =>
+    authFetch<{ installers: PilotInstaller[] }>('/solar/pilot/installers'),
+  createPilotInstaller: (data: Partial<PilotInstaller>) =>
+    authFetch<{ installer: PilotInstaller }>('/solar/pilot/installers', {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+  updatePilotInstaller: (id: number, patch: Partial<PilotInstaller>) =>
+    authFetch<{ installer: PilotInstaller }>(`/solar/pilot/installers/${id}`, {
+      method: 'PUT', body: JSON.stringify(patch),
+    }),
+  deletePilotInstaller: (id: number) =>
+    authFetch<{ ok: boolean }>(`/solar/pilot/installers/${id}`, { method: 'DELETE' }),
+  assignSolarLeads: (installerId: number, leadIds: number[]) =>
+    authFetch<{ ok: boolean; assigned: number }>('/solar/pilot/assign', {
+      method: 'POST', body: JSON.stringify({ installer_id: installerId, lead_ids: leadIds }),
+    }),
+  exportSolarPilotCsv: (params?: { state?: string; minScore?: number }) =>
+    `${window.location.origin}/solar/pilot/export.csv?${new URLSearchParams(Object.entries(params || {}).map(([k,v]) => [k, String(v)])).toString()}`,
+
+  // Auction marketplace
+  getSolarAuctions: () =>
+    authFetch<{ auctions: SolarAuction[] }>('/solar/auctions'),
+  openSolarAuction: (params: { lead_id: number; hours?: number; floor_price?: number; bid_modes?: string[] }) =>
+    authFetch<{ auction: SolarAuction; invited: number }>('/solar/auctions', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  awardSolarAuction: (auctionId: number, bidId: number) =>
+    authFetch<{ auction: SolarAuction; winner: unknown }>(`/solar/auctions/${auctionId}/award`, {
+      method: 'POST', body: JSON.stringify({ bid_id: bidId }),
+    }),
+  cancelSolarAuction: (auctionId: number) =>
+    authFetch<{ auction: SolarAuction }>(`/solar/auctions/${auctionId}/cancel`, {
+      method: 'POST', body: '{}',
+    }),
+  getPublicAuction: (token: string) =>
+    fetch(`/solar/auctions/${token}`).then(r => r.json()) as Promise<{ auction: SolarAuction; snapshot: SolarAuction['snapshot']; bids: unknown[]; bid_count: number }>,
+
+  // Speed-to-lead webhook config
+  getSolarIntakeSecret: () =>
+    authFetch<{ secret: string | null }>('/solar/intake/secret'),
+  rotateSolarIntakeSecret: () =>
+    authFetch<{ secret: string; hint: string }>('/solar/intake/rotate-secret', { method: 'POST', body: '{}' }),
+
+  // Speed-to-lead SLA dashboard
+  getSolarSla: () =>
+    authFetch<{
+      total_leads: number;
+      avg_seconds_to_first_touch: number | null;
+      median_seconds_to_first_touch: number | null;
+      under_one_minute: number;
+      under_five_minutes: number;
+    }>('/solar/sla'),
 };

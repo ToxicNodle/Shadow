@@ -27,6 +27,7 @@ import MissionView from '../components/mission/MissionView';
 import JobsView from '../components/jobs/JobsView';
 import ContentView from '../components/content/ContentView';
 import AnalyticsView from '../components/analytics/AnalyticsView';
+import SolarScoutView from '../components/solar/SolarScoutView';
 import CSVImportModal from '../components/modals/CSVImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
@@ -70,7 +71,7 @@ export default function CRMPage() {
   const MODE_KEYS: Record<string, typeof mode> = {
     '1': 'mission', '2': 'leads', '3': 'discover',
     '4': 'pipeline', '5': 'bids', '6': 'jobs',
-    '7': 'content', '8': 'analytics',
+    '7': 'content', '8': 'analytics', '9': 'solar_scout',
   };
 
   useEffect(() => {
@@ -137,7 +138,7 @@ export default function CRMPage() {
       <div className="crm-body">
         <NavRail />
         {mode === 'leads' && leadView === 'list' && <Sidebar />}
-        <main key={`${mode}-${leadView}`} className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}${mode === 'analytics' ? ' analytics-main' : ''}`}>
+        <main key={`${mode}-${leadView}`} className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}${mode === 'analytics' ? ' analytics-main' : ''}${mode === 'solar_scout' ? ' solar-scout-main' : ''}`}>
           {mode === 'leads'
             ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
             : mode === 'pipeline'
@@ -152,6 +153,8 @@ export default function CRMPage() {
             ? <ContentView />
             : mode === 'analytics'
             ? <AnalyticsView />
+            : mode === 'solar_scout'
+            ? <SolarScoutView />
             : <DiscoverPage />}
         </main>
         {mode === 'leads' && <LeadDetail />}
