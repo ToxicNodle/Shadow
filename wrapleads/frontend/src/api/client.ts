@@ -303,6 +303,38 @@ export const api = {
     });
   },
 
+  // Pitch Mode — in-person sales demo
+  brandLookup: (companyName: string) =>
+    authFetch<{
+      ok: boolean;
+      brand: { name: string; domain: string; logo_url: string; primary_color: string; secondary_color: string; tagline: string };
+    }>('/vision/brand-lookup', { method: 'POST', body: JSON.stringify({ companyName }) }),
+  pitchPreview: (file: File, params: { companyName: string; primary_color: string; secondary_color: string; tagline?: string; styles?: string[]; style?: string }) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    form.append('companyName', params.companyName);
+    form.append('primary_color', params.primary_color);
+    form.append('secondary_color', params.secondary_color);
+    if (params.tagline) form.append('tagline', params.tagline);
+    if (params.styles && params.styles.length) form.append('styles', params.styles.join(','));
+    else if (params.style) form.append('style', params.style);
+    return fetch('/vision/pitch-preview', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Pitch preview failed');
+      return data as {
+        ok: boolean;
+        variants: { style: string; label: string; image_url: string }[];
+        original_url: string;
+        image_url: string;
+      };
+    });
+  },
+
   // AR / Wrap Mockup Preview
   arPreview: (
     file: File,
@@ -466,8 +498,8 @@ export const api = {
     authFetch<{ ok: boolean; total: number; queued: number; estimatedMinutes: number }>(`/calls/campaigns/${id}/launch`, { method: 'POST', body: '{}' }),
 
   // Proposals (shareable client HTML pages)
-  createProposal: (leadId: number, extraNotes?: string) =>
-    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '' }) }),
+  createProposal: (leadId: number, extraNotes?: string, mockupUrl?: string, roiHtml?: string) =>
+    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '', mockup_url: mockupUrl || null, roi_html: roiHtml || null }) }),
   getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
