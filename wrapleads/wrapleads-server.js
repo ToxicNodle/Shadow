@@ -7336,6 +7336,113 @@ app.delete('/proposals/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Proposal Heat Score — surface proposals with recent view activity ranked
+// by urgency.  Heat = view_count × recency_factor.  Recency_factor decays
+// exponentially with a 12-hour half-life from the last view.
+app.get('/proposals/heat', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(`
+      SELECT
+        p.id, p.title, p.token, p.view_count, p.last_viewed_at, p.created_at,
+        l.id AS lead_server_id, l.client_id AS lead_client_id, l.company AS lead_company,
+        l.status AS lead_status, l.category AS lead_category, l.fleet_size, l.email,
+        EXTRACT(EPOCH FROM (NOW() - p.last_viewed_at)) / 3600.0 AS hours_since_view
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id
+      WHERE p.user_id = $1
+        AND p.view_count > 0
+        AND p.last_viewed_at IS NOT NULL
+        AND p.status NOT IN ('approved', 'rejected')
+        AND p.last_viewed_at > NOW() - INTERVAL '14 days'
+      ORDER BY p.last_viewed_at DESC
+      LIMIT 25
+    `, [uid]);
+
+    const hot = rows.map((r) => {
+      const hours = Math.max(0, parseFloat(r.hours_since_view) || 0);
+      const recencyFactor = Math.exp(-hours / 12);  // 12h half-life
+      const heat = Math.round((parseInt(r.view_count, 10) || 0) * recencyFactor * 100);
+      const tier = heat >= 200 ? 'blazing' : heat >= 80 ? 'hot' : heat >= 30 ? 'warm' : 'cool';
+      return {
+        id: r.id,
+        title: r.title,
+        token: r.token,
+        viewCount: r.view_count,
+        lastViewedAt: r.last_viewed_at,
+        hoursSinceView: Math.round(hours * 10) / 10,
+        heatScore: heat,
+        tier,
+        lead: r.lead_server_id ? {
+          id: r.lead_server_id,
+          clientId: r.lead_client_id,
+          company: r.lead_company,
+          status: r.lead_status,
+          category: r.lead_category,
+          fleetSize: r.fleet_size,
+          email: r.email,
+        } : null,
+      };
+    }).sort((a, b) => b.heatScore - a.heatScore);
+
+    res.json({ hot, count: hot.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Email Permutator — generate plausible emails from contact name + domain
+// and (optionally) verify via MX + SMTP RCPT.  Free alternative to Apollo
+// enrichment for the common case of "I know who and where, just need email".
+app.post('/leads/:id/find-email', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (!leadId) return res.status(400).json({ error: 'invalid_lead_id' });
+
+    const { rows } = await pool.query(
+      'SELECT id, contact_name, website, company FROM leads WHERE id=$1 AND user_id=$2',
+      [leadId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not_found' });
+    const lead = rows[0];
+
+    const name = (req.body?.name || lead.contact_name || '').trim();
+    let domain = (req.body?.domain || lead.website || '').trim();
+    if (!name || !domain) {
+      return res.status(400).json({
+        error: 'missing_name_or_domain',
+        hint: 'Need contact_name + website on the lead, or pass {name, domain} in body.',
+      });
+    }
+    // Sanitize domain
+    domain = domain.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/^www\./i, '');
+
+    const { findEmails } = require('./lib/emailPermutator');
+    const probe = !!req.body?.probe;  // default false — RCPT is unreliable
+    const result = await findEmails(name, domain, { probe });
+
+    // Log activity so it shows up in the timeline
+    if (result.candidates.length > 0) {
+      await pool.query(
+        `INSERT INTO lead_activities (user_id, lead_id, type, description)
+         VALUES ($1, $2, 'email_generated', $3)`,
+        [uid, leadId, `Generated ${result.candidates.length} email candidates for ${name} @ ${domain}`]
+      ).catch(() => {});
+    }
+
+    res.json({
+      lead: { id: lead.id, company: lead.company, contactName: lead.contact_name },
+      domain,
+      name,
+      mx: result.mx,
+      candidates: result.candidates,
+      error: result.error,
+    });
+  } catch (e) {
+    console.error('[find-email] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Quote / Invoice Builder ────────────────────────────────────────────────
 
 app.get('/leads/:id/quotes', authMiddleware, async (req, res) => {

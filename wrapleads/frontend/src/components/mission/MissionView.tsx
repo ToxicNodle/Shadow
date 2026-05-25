@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useLeads } from '../../hooks/useLeads';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
+import HotProposalsCard from './HotProposalsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1819,6 +1820,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Proposal Heat — surfaces prospects actively viewing your work ── */}
+      <HotProposalsCard />
 
       {/* ── WrapLeads ROI Impact ── */}
       <ImpactStrip />

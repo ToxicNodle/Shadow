@@ -8,6 +8,7 @@ import Sidebar from '../components/layout/Sidebar';
 import TrialBanner from '../components/layout/TrialBanner';
 import NotificationPanel from '../components/layout/NotificationPanel';
 import ChangelogPanel from '../components/layout/ChangelogPanel';
+import LivePulse from '../components/layout/LivePulse';
 import PipelineStats from '../components/layout/PipelineStats';
 import LeadList from '../components/leads/LeadList';
 import KanbanBoard from '../components/leads/KanbanBoard';
@@ -211,6 +212,7 @@ export default function CRMPage() {
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <PasteImportModal />
       <Toast />
+      <LivePulse />
     </div>
   );
 }

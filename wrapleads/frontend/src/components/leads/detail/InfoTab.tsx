@@ -7,6 +7,7 @@ import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
+import FindEmailPanel from './FindEmailPanel';
 
 // ── AI Call Script Panel ──────────────────────────────────────────────────────
 // ── Wrap ROI Calculator ───────────────────────────────────────────────────────
@@ -1009,6 +1010,12 @@ export default function InfoTab({ lead }: Props) {
           onChange={(e) => setLocal({ ...local, email: e.target.value })}
           onBlur={(e) => patch('email', e.target.value)}
         />
+        {!local.email && (
+          <FindEmailPanel
+            lead={lead}
+            onSelectEmail={(email) => { setLocal({ ...local, email }); patch('email', email); }}
+          />
+        )}
       </div>
 
       <div className="field-row">

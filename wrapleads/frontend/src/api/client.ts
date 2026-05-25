@@ -505,6 +505,26 @@ export const api = {
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
   getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
+
+  // Proposal Heat — ranked list of proposals with active engagement
+  getProposalHeat: () => authFetch<{ count: number; hot: Array<{
+    id: number; title: string; token: string; viewCount: number;
+    lastViewedAt: string; hoursSinceView: number; heatScore: number;
+    tier: 'blazing' | 'hot' | 'warm' | 'cool';
+    lead: { id: number; clientId: string; company: string; status: string; category: string; fleetSize: string | null; email: string | null } | null;
+  }> }>('/proposals/heat'),
+
+  // Email Permutator — find candidate emails from name + domain
+  findEmail: (leadId: number, opts?: { name?: string; domain?: string; probe?: boolean }) =>
+    authFetch<{
+      lead: { id: number; company: string; contactName: string };
+      domain: string;
+      name: string;
+      mx: { ok: boolean; provider?: string; records?: Array<{ exchange: string; priority: number }>; error?: string } | null;
+      candidates: Array<{ email: string; confidence: number; format: string; smtp?: string }>;
+      error?: string;
+    }>(`/leads/${leadId}/find-email`, { method: 'POST', body: JSON.stringify(opts || {}) }),
+
   suggestAction: (leadId: number) =>
     authFetch<{ ok: boolean; suggestion: { action: string; channel: string; urgency: string; reasoning: string } }>(`/leads/${leadId}/suggest`, { method: 'POST', body: '{}' }),
   generateSocialPost: (jobData: { company: string; vehicle_type: string; vehicle_count: number; wrap_category: string; material?: string; notes?: string }) =>
