@@ -1,29 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppStore } from '../../store/useAppStore';
 import { useLeads } from '../../hooks/useLeads';
 import { api } from '../../api/client';
-import VisionQuoteModal from '../modals/VisionQuoteModal';
-import ARPreviewModal from '../modals/ARPreviewModal';
-import PitchModeModal from '../modals/PitchModeModal';
-import CardScanModal from '../modals/CardScanModal';
-import NotificationPanel from './NotificationPanel';
-import ChangelogPanel, { getChangelogBadge } from './ChangelogPanel';
+import { getChangelogBadge } from './ChangelogPanel';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
-  const [visionOpen, setVisionOpen] = useState(false);
-  const [arOpen, setArOpen] = useState(false);
-  const [pitchOpen, setPitchOpen] = useState(false);
-  const [cardScanOpen, setCardScanOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [changelogOpen, setChangelogOpen] = useState(false);
   const [changelogBadge, setChangelogBadge] = useState(false);
 
   useEffect(() => {
     setChangelogBadge(getChangelogBadge());
   }, []);
+
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => api.getNotifications(),
@@ -31,12 +21,15 @@ export default function Topbar() {
     refetchInterval: 60_000,
   });
   const unreadCount = notifData?.unread ?? 0;
+
   const {
     mode,
     leadView, setLeadView,
     setCommandPaletteOpen,
     setAddLeadOpen, setSettingsOpen, setBlueprintOpen,
-    currentLeadId,
+    setVisionOpen, setArOpen, setPitchOpen, setCardScanOpen,
+    setNotifOpen, setChangelogOpen,
+    notifOpen, changelogOpen,
   } = useAppStore((s) => ({
     mode: s.mode,
     leadView: s.leadView,
@@ -45,24 +38,30 @@ export default function Topbar() {
     setAddLeadOpen: s.setAddLeadOpen,
     setSettingsOpen: s.setSettingsOpen,
     setBlueprintOpen: s.setBlueprintOpen,
-    currentLeadId: s.currentLeadId,
+    setVisionOpen: s.setVisionOpen,
+    setArOpen: s.setArOpen,
+    setPitchOpen: s.setPitchOpen,
+    setCardScanOpen: s.setCardScanOpen,
+    setNotifOpen: s.setNotifOpen,
+    setChangelogOpen: s.setChangelogOpen,
+    notifOpen: s.notifOpen,
+    changelogOpen: s.changelogOpen,
   }));
 
   const { leads } = useLeads();
+  const currentLeadId = useAppStore((s) => s.currentLeadId);
   const arLead = currentLeadId ? leads.find((l) => String(l.id) === String(currentLeadId) || String(l.serverId) === String(currentLeadId)) : undefined;
+  void arLead; // used by CRMPage which passes it to ARPreviewModal
 
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() ?? 'U';
 
-  const brandName = 'WrapOS';
-  const brandSuffix = null;
-
   return (
     <header className="topbar">
       <div className="topbar-brand">
         <div className="topbar-logo">W</div>
-        <span className="topbar-name">{brandName}{brandSuffix && <span>{brandSuffix}</span>}</span>
+        <span className="topbar-name">WrapOS</span>
       </div>
 
       <div className="topbar-spacer" />
@@ -111,27 +110,27 @@ export default function Topbar() {
       </button>
 
       <div className="topbar-actions">
-        <button className="btn btn-primary" onClick={() => setPitchOpen(true)} title="Pitch Mode — in-person AR demo: type a company, snap their vehicle, see the wrap">
+        <button className="btn btn-primary" onClick={() => setPitchOpen(true)} title="Pitch Mode — in-person AR demo">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <rect x="5" y="2" width="14" height="20" rx="2" />
             <line x1="12" y1="18" x2="12" y2="18" />
           </svg>
           Pitch Mode
         </button>
-        <button className="btn" onClick={() => setArOpen(true)} title="AR Wrap Preview — apply a wrap design to any vehicle photo">
+        <button className="btn" onClick={() => setArOpen(true)} title="AR Wrap Preview">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
           </svg>
           AR Preview
         </button>
-        <button className="btn" onClick={() => setCardScanOpen(true)} title="Scan a business card to create a lead instantly">
+        <button className="btn" onClick={() => setCardScanOpen(true)} title="Scan a business card to create a lead">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <rect x="2" y="5" width="20" height="14" rx="2" />
             <line x1="2" y1="10" x2="22" y2="10" />
           </svg>
           Card Scan
         </button>
-        <button className="btn" onClick={() => setVisionOpen(true)} title="Vision quote — photograph a vehicle for instant estimate">
+        <button className="btn" onClick={() => setVisionOpen(true)} title="Vision Quote — photograph a vehicle for instant estimate">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <circle cx="12" cy="12" r="3" />
             <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
@@ -155,7 +154,11 @@ export default function Topbar() {
             Add Lead
           </button>
         )}
-        <button className="btn btn-icon notif-bell-btn" title="Notifications" onClick={() => setNotifOpen((o) => !o)}>
+        <button
+          className="btn btn-icon notif-bell-btn"
+          title="Notifications"
+          onClick={() => setNotifOpen(!notifOpen)}
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
             <path d="M13.73 21a2 2 0 0 1-3.46 0" />
@@ -165,7 +168,7 @@ export default function Topbar() {
         <button
           className="btn btn-icon"
           title="What's New"
-          onClick={() => { setChangelogOpen((o) => !o); setChangelogBadge(false); }}
+          onClick={() => { setChangelogOpen(!changelogOpen); setChangelogBadge(false); }}
           style={{ position: 'relative' }}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
@@ -182,13 +185,7 @@ export default function Topbar() {
           </svg>
         </button>
 
-        {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
-        {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
-        {pitchOpen && <PitchModeModal onClose={() => setPitchOpen(false)} />}
-        {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
-        {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
-        {changelogOpen && <ChangelogPanel onClose={() => { setChangelogOpen(false); setChangelogBadge(false); }} />}
-      <div className="user-pill">
+        <div className="user-pill">
           <div className="user-pill-avatar">{initials}</div>
           <span>{user?.companyName ?? user?.name ?? user?.email?.split('@')[0] ?? ''}</span>
           <button

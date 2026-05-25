@@ -5015,12 +5015,23 @@ body {
   border-radius: 7px !important;
 }
 
-/* ── Topbar v3 — glass surface ────────────────────────────────────────────── */
+/* ── Topbar v3 — glass surface via ::before (avoids fixed-position containing-block bug) */
 .topbar {
-  background: rgba(10, 12, 20, 0.92) !important;
-  backdrop-filter: blur(28px) saturate(180%) brightness(1.05) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(180%) brightness(1.05) !important;
+  background: transparent !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  position: relative !important;
+  isolation: isolate !important;
+}
+
+.topbar::before {
+  content: '' !important;
+  position: absolute !important;
+  inset: 0 !important;
+  background: rgba(10, 12, 20, 0.88) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+  z-index: -1 !important;
+  pointer-events: none !important;
 }
 
 .topbar-name {
@@ -5417,5 +5428,265 @@ body {
 .status-won .kanban-dot,
 .status-badge-won {
   background: var(--ghost-green) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   SPRINT 2 — Architecture Fix + Deep Design Pass
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Modal z-index fix — render above everything ─────────────────────────── */
+.modal-backdrop {
+  z-index: 9000 !important;
+}
+
+.modal-overlay {
+  z-index: 9000 !important;
+}
+
+.modal-box {
+  z-index: 9001 !important;
+}
+
+/* ── NavRail — premium depth + glass background ──────────────────────────── */
+.nav-rail {
+  background: rgba(12, 14, 22, 0.85) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+/* ── Sidebar — ghost glass ───────────────────────────────────────────────── */
+.sidebar {
+  background: rgba(14, 16, 24, 0.6) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.04) !important;
+}
+
+/* ── Pipeline stats bar — instrument cluster style ───────────────────────── */
+.pipeline-stats {
+  background: rgba(10, 12, 20, 0.7) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.ps-stat {
+  border-right: 1px solid rgba(255, 255, 255, 0.04) !important;
+  transition: background 0.15s ease !important;
+}
+
+.ps-stat:hover {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+
+.ps-stat-value {
+  font-family: var(--mono) !important;
+  font-size: 20px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.04em !important;
+  line-height: 1 !important;
+}
+
+.ps-stat-label {
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  color: var(--text-faint) !important;
+}
+
+/* ── Lead list — tighter data density ────────────────────────────────────── */
+.lead-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+  transition: background 0.1s ease !important;
+}
+
+.lead-row:hover {
+  background: rgba(255, 255, 255, 0.025) !important;
+}
+
+.lead-row.selected {
+  background: rgba(244, 85, 28, 0.06) !important;
+  border-left: 2px solid var(--accent) !important;
+}
+
+/* ── Command palette — sharp and fast ────────────────────────────────────── */
+.command-palette-overlay {
+  z-index: 9999 !important;
+  background: rgba(4, 6, 12, 0.88) !important;
+  backdrop-filter: blur(24px) !important;
+}
+
+.command-palette {
+  background: var(--bg-elev) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 4px 8px rgba(0, 0, 0, 0.3),
+    0 32px 80px rgba(0, 0, 0, 0.8) !important;
+  border-radius: 14px !important;
+}
+
+/* ── Score badges — monospace data feel ──────────────────────────────────── */
+.score-badge {
+  font-family: var(--mono) !important;
+  font-size: 11px !important;
+  letter-spacing: -0.02em !important;
+}
+
+/* ── Tag chips — compact and color-coded ─────────────────────────────────── */
+.lead-tag {
+  font-size: 9.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
+  border-radius: 4px !important;
+  padding: 2px 6px !important;
+}
+
+/* ── Analytics view — stat cards ─────────────────────────────────────────── */
+.an-stat-card {
+  border-left: 3px solid rgba(255, 255, 255, 0.06) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease !important;
+}
+
+.an-stat-card:hover {
+  border-left-color: var(--accent) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* ── Pipeline hero cards — trading terminal numbers ──────────────────────── */
+.pv-hero-card {
+  border-left: 3px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.pv-hero-num {
+  font-family: var(--mono) !important;
+  font-size: 36px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.04em !important;
+  line-height: 1 !important;
+}
+
+.pv-hero-label {
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  color: var(--text-faint) !important;
+}
+
+/* ── View transition — crossfade on mode switch ──────────────────────────── */
+@keyframes viewEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.crm-main {
+  animation: viewEnter 0.15s ease forwards !important;
+}
+
+/* ── Notification panel — fixed position, proper z-index ────────────────── */
+.notif-panel {
+  z-index: 9500 !important;
+}
+
+.notif-backdrop {
+  z-index: 9499 !important;
+}
+
+/* ── Changelog panel ─────────────────────────────────────────────────────── */
+.changelog-panel {
+  z-index: 9500 !important;
+}
+
+/* ── User pill — refined ─────────────────────────────────────────────────── */
+.user-pill {
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-radius: 20px !important;
+  transition: background 0.12s ease, border-color 0.12s ease !important;
+}
+
+.user-pill:hover {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.user-pill-avatar {
+  font-family: var(--display) !important;
+  font-weight: 700 !important;
+}
+
+/* ── Mission view cards — command center style ───────────────────────────── */
+.mission-card {
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-left: 3px solid rgba(244, 85, 28, 0.4) !important;
+  background: rgba(20, 23, 32, 0.8) !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease !important;
+}
+
+.mission-card:hover {
+  border-left-color: var(--accent) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* ── Bid cards ────────────────────────────────────────────────────────────── */
+.bid-card {
+  border-left: 3px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+/* ── Activity timeline — cleaner dots ───────────────────────────────────── */
+.activity-dot {
+  border: 2px solid var(--bg-elev) !important;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── Forms inside modals ─────────────────────────────────────────────────── */
+.input, .select, .textarea {
+  background: var(--bg-elev-2) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
+}
+
+.input:focus, .select:focus, .textarea:focus {
+  border-color: rgba(244, 85, 28, 0.5) !important;
+  box-shadow: 0 0 0 3px rgba(244, 85, 28, 0.1) !important;
+  outline: none !important;
+}
+
+/* ── Buttons — consistent sizing ─────────────────────────────────────────── */
+.btn {
+  font-family: var(--body) !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em !important;
+}
+
+/* ── Tab navigation — precise underline style ───────────────────────────── */
+.tab-btn.active, .tab-btn[aria-selected="true"] {
+  color: var(--accent) !important;
+  border-bottom-color: var(--accent) !important;
+}
+
+/* ── Kanban column header — monospace count ──────────────────────────────── */
+.kanban-count {
+  font-family: var(--mono) !important;
+  font-weight: 600 !important;
+}
+
+.kanban-value {
+  font-family: var(--mono) !important;
+}
+
+/* ── Lead avatar — consistent 28px ──────────────────────────────────────── */
+.lead-avatar {
+  font-family: var(--display) !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+}
+
+/* ── Global link color ────────────────────────────────────────────────────── */
+a {
+  color: var(--signal-blue) !important;
+}
+
+a:hover {
+  color: #6fa0ff !important;
 }
 

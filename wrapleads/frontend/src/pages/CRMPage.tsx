@@ -6,6 +6,8 @@ import Topbar from '../components/layout/Topbar';
 import NavRail from '../components/layout/NavRail';
 import Sidebar from '../components/layout/Sidebar';
 import TrialBanner from '../components/layout/TrialBanner';
+import NotificationPanel from '../components/layout/NotificationPanel';
+import ChangelogPanel from '../components/layout/ChangelogPanel';
 import PipelineStats from '../components/layout/PipelineStats';
 import LeadList from '../components/leads/LeadList';
 import KanbanBoard from '../components/leads/KanbanBoard';
@@ -21,6 +23,10 @@ import PaywallModal from '../components/modals/PaywallModal';
 import OnboardingModal from '../components/modals/OnboardingModal';
 import BlueprintScanner from '../components/modals/BlueprintScanner';
 import BulkOutreachModal from '../components/modals/BulkOutreachModal';
+import VisionQuoteModal from '../components/modals/VisionQuoteModal';
+import ARPreviewModal from '../components/modals/ARPreviewModal';
+import PitchModeModal from '../components/modals/PitchModeModal';
+import CardScanModal from '../components/modals/CardScanModal';
 import PipelineView from '../components/pipeline/PipelineView';
 import BidsView from '../components/bids/BidsView';
 import MissionView from '../components/mission/MissionView';
@@ -31,6 +37,7 @@ import CSVImportModal from '../components/modals/CSVImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
 import { useGlobalDraggableModals } from '../hooks/useGlobalDraggableModals';
+import { useLeads } from '../hooks/useLeads';
 
 export default function CRMPage() {
   useGlobalDraggableModals();
@@ -41,6 +48,13 @@ export default function CRMPage() {
     bulkOutreachOpen, csvImportOpen, proposalOpen,
     leadView,
     commandPaletteOpen, setCommandPaletteOpen,
+    visionOpen, setVisionOpen,
+    arOpen, setArOpen,
+    pitchOpen, setPitchOpen,
+    cardScanOpen, setCardScanOpen,
+    notifOpen, setNotifOpen,
+    changelogOpen, setChangelogOpen,
+    currentLeadId,
   } = useAppStore((s) => ({
     mode: s.mode,
     setMode: s.setMode,
@@ -53,7 +67,25 @@ export default function CRMPage() {
     leadView: s.leadView,
     commandPaletteOpen: s.commandPaletteOpen,
     setCommandPaletteOpen: s.setCommandPaletteOpen,
+    visionOpen: s.visionOpen,
+    setVisionOpen: s.setVisionOpen,
+    arOpen: s.arOpen,
+    setArOpen: s.setArOpen,
+    pitchOpen: s.pitchOpen,
+    setPitchOpen: s.setPitchOpen,
+    cardScanOpen: s.cardScanOpen,
+    setCardScanOpen: s.setCardScanOpen,
+    notifOpen: s.notifOpen,
+    setNotifOpen: s.setNotifOpen,
+    changelogOpen: s.changelogOpen,
+    setChangelogOpen: s.setChangelogOpen,
+    currentLeadId: s.currentLeadId,
   }));
+
+  const { leads } = useLeads();
+  const arLead = currentLeadId
+    ? leads.find((l) => String(l.id) === String(currentLeadId) || String(l.serverId) === String(currentLeadId))
+    : undefined;
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -159,7 +191,7 @@ export default function CRMPage() {
         {mode === 'leads' && <LeadDetail />}
       </div>
 
-      {/* Modals */}
+      {/* Modals — all rendered at root level, outside topbar stacking context */}
       <AddLeadModal />
       <SettingsModal />
       <ApolloModal />
@@ -169,6 +201,12 @@ export default function CRMPage() {
       {bulkOutreachOpen && <BulkOutreachModal />}
       {csvImportOpen && <CSVImportModal />}
       {proposalOpen && <ProposalModal />}
+      {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
+      {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
+      {pitchOpen && <PitchModeModal onClose={() => setPitchOpen(false)} />}
+      {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
+      {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
+      {changelogOpen && <ChangelogPanel onClose={() => { setChangelogOpen(false); }} />}
       {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <PasteImportModal />

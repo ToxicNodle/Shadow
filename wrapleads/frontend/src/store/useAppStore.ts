@@ -100,6 +100,12 @@ interface AppStore {
   csvImportOpen: boolean;
   proposalOpen: boolean;
   proposalLeadId: string | null;
+  visionOpen: boolean;
+  arOpen: boolean;
+  pitchOpen: boolean;
+  cardScanOpen: boolean;
+  notifOpen: boolean;
+  changelogOpen: boolean;
   setAddLeadOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setApolloOpen: (open: boolean) => void;
@@ -108,6 +114,12 @@ interface AppStore {
   setBulkOutreachOpen: (open: boolean) => void;
   setCsvImportOpen: (open: boolean) => void;
   setProposalOpen: (open: boolean, leadId?: string) => void;
+  setVisionOpen: (open: boolean) => void;
+  setArOpen: (open: boolean) => void;
+  setPitchOpen: (open: boolean) => void;
+  setCardScanOpen: (open: boolean) => void;
+  setNotifOpen: (open: boolean) => void;
+  setChangelogOpen: (open: boolean) => void;
 
   // Pre-filled Discover search (set from lead detail "Find Similar")
   pendingDiscoverSearch: CarrierSearchParams | null;
@@ -240,6 +252,12 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       csvImportOpen: false,
       proposalOpen: false,
       proposalLeadId: null,
+      visionOpen: false,
+      arOpen: false,
+      pitchOpen: false,
+      cardScanOpen: false,
+      notifOpen: false,
+      changelogOpen: false,
       setAddLeadOpen: (open) => set({ addLeadOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setApolloOpen: (open) => set({ apolloOpen: open }),
@@ -248,6 +266,12 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       setBulkOutreachOpen: (open) => set({ bulkOutreachOpen: open }),
       setCsvImportOpen: (open) => set({ csvImportOpen: open }),
       setProposalOpen: (open, leadId) => set({ proposalOpen: open, proposalLeadId: leadId ?? null }),
+      setVisionOpen: (open) => set({ visionOpen: open }),
+      setArOpen: (open) => set({ arOpen: open }),
+      setPitchOpen: (open) => set({ pitchOpen: open }),
+      setCardScanOpen: (open) => set({ cardScanOpen: open }),
+      setNotifOpen: (open) => set({ notifOpen: open }),
+      setChangelogOpen: (open) => set({ changelogOpen: open }),
 
       // Pending discover search
       pendingDiscoverSearch: null,
