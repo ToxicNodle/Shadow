@@ -9367,6 +9367,68 @@ app.get('/analytics/revenue-attribution', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Market White Space Map ────────────────────────────────────────────────────
+app.get('/analytics/market-map', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [wonR, pipelineR, carriersR] = await Promise.all([
+      // Won deals by state
+      pool.query(
+        `SELECT UPPER(TRIM(state)) AS state, COUNT(*)::INT AS won
+         FROM leads
+         WHERE user_id=$1 AND status='won' AND state IS NOT NULL AND TRIM(state)!=''
+         GROUP BY UPPER(TRIM(state))`,
+        [uid]
+      ),
+      // Active pipeline by state
+      pool.query(
+        `SELECT UPPER(TRIM(state)) AS state, COUNT(*)::INT AS pipeline
+         FROM leads
+         WHERE user_id=$1 AND status NOT IN ('won','lost','cold')
+           AND state IS NOT NULL AND TRIM(state)!=''
+         GROUP BY UPPER(TRIM(state))`,
+        [uid]
+      ),
+      // Carrier density by state from companies dataset
+      pool.query(
+        `SELECT UPPER(TRIM(state)) AS state, COUNT(*)::INT AS carriers
+         FROM companies
+         WHERE state IS NOT NULL AND TRIM(state)!='' AND LENGTH(TRIM(state))=2
+         GROUP BY UPPER(TRIM(state))`
+      ),
+    ]);
+
+    const byState = {};
+    for (const r of carriersR.rows) {
+      byState[r.state] = { won: 0, pipeline: 0, carriers: r.carriers };
+    }
+    for (const r of wonR.rows) {
+      byState[r.state] = { ...(byState[r.state] || { carriers: 0, pipeline: 0 }), won: r.won };
+    }
+    for (const r of pipelineR.rows) {
+      byState[r.state] = { ...(byState[r.state] || { carriers: 0, won: 0 }), pipeline: r.pipeline };
+    }
+
+    const totalCarriers = carriersR.rows.reduce((s, r) => s + r.carriers, 0);
+
+    // Opportunity score: high carriers, low coverage = big white space
+    const topOpportunityStates = Object.entries(byState)
+      .filter(([, d]) => d.carriers > 100)
+      .map(([state, d]) => ({
+        state,
+        score: d.carriers / Math.max(d.pipeline + d.won * 2 + 1, 1),
+        carriers: d.carriers,
+        pipeline: d.pipeline,
+        won: d.won,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map((r) => r.state);
+
+    res.json({ byState, totalCarriers, topOpportunityStates });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {

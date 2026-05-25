@@ -1146,6 +1146,43 @@
   font-size: 11px; color: var(--text-muted); margin: 12px 0 0; line-height: 1.5;
 }
 
+/* ── Market White Space Map ── */
+.pv-map-card { grid-column: 1 / -1; }
+.pv-map-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
+.pv-map-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.pv-map-filters { display: flex; gap: 4px; flex-shrink: 0; }
+.pv-map-filter-btn {
+  padding: 4px 10px; font-size: 11px; font-weight: 600; border-radius: 4px;
+  border: 1px solid var(--border); background: none; color: var(--text-muted);
+  cursor: pointer; transition: all 0.12s;
+}
+.pv-map-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+.pv-map-filter-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pv-map-wrap { position: relative; border-radius: 8px; overflow: hidden; background: #111827; }
+.pv-map-loading { padding: 0; }
+.pv-map-tooltip {
+  position: absolute; pointer-events: none; z-index: 10;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; min-width: 130px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.pv-map-tt-state { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.pv-map-tt-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.pv-map-tt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.pv-map-tt-opportunity { font-size: 11px; font-weight: 700; color: var(--accent); margin-top: 4px; }
+.pv-map-legend { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+.pv-map-legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-muted); }
+.pv-map-legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.pv-map-top-opp { margin-top: 12px; }
+.pv-map-top-opp-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 6px; }
+.pv-map-top-opp-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.pv-map-opp-chip {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  background: rgba(244,85,28,0.08); border: 1px solid rgba(244,85,28,0.2);
+  border-radius: 4px;
+}
+.pv-map-opp-state { font-size: 12px; font-weight: 700; color: var(--accent); font-family: var(--mono); }
+.pv-map-opp-count { font-size: 10px; color: var(--text-muted); }
+
 /* ═══════════════════════════════════════════════════════════
    BID TRACKER
    ═══════════════════════════════════════════════════════════ */

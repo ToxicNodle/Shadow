@@ -866,4 +866,12 @@ export const api = {
     authFetch<{ ok: boolean; quote: import('./types').ShopQuote }>(`/quotes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteQuote: (id: number) =>
     authFetch<{ ok: boolean }>(`/quotes/${id}`, { method: 'DELETE' }),
+
+  // Market White Space Map
+  getMarketMap: () =>
+    authFetch<{
+      byState: Record<string, { won: number; pipeline: number; carriers: number }>;
+      totalCarriers: number;
+      topOpportunityStates: string[];
+    }>('/analytics/market-map'),
 };

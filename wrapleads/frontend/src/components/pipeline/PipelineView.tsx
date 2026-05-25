@@ -7,6 +7,7 @@ import { useLeads } from '../../hooks/useLeads';
 import { winProbability, scoreLead, SCORE_COLORS, scoreLabel } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 import InstallCapacityCard from './InstallCapacityCard';
+import MarketWhiteSpaceMap from './MarketWhiteSpaceMap';
 
 const STATUS_LABELS: Record<string, string> = {
   new: 'New', contacted: 'Contacted', replied: 'Replied',
@@ -1306,6 +1307,9 @@ export default function PipelineView() {
             GC spec relationships often unlock $50K+ annual contracts.
           </p>
         </section>
+
+        {/* ── Market White Space Map ── */}
+        <MarketWhiteSpaceMap />
       </div>
     </div>
   );
