@@ -6126,3 +6126,97 @@ a:hover {
   border-top: 1px solid rgba(255, 255, 255, 0.04) !important;
 }
 
+/* ── Streak Badge — daily action gamification ────────────────────────────── */
+.streak-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 6px 12px 6px 10px !important;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--streak-color) 14%, transparent),
+    color-mix(in srgb, var(--streak-color) 6%, transparent)) !important;
+  border: 1px solid color-mix(in srgb, var(--streak-color) 25%, transparent) !important;
+  border-radius: 20px !important;
+  position: relative !important;
+  overflow: hidden !important;
+  cursor: default !important;
+  user-select: none !important;
+}
+
+.streak-flame {
+  font-size: 14px !important;
+  filter: drop-shadow(0 0 4px var(--streak-color)) !important;
+}
+
+.streak-meta {
+  display: inline-flex !important;
+  align-items: baseline !important;
+  gap: 3px !important;
+}
+
+.streak-num {
+  font-family: var(--mono) !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: var(--streak-color) !important;
+  letter-spacing: -0.02em !important;
+  line-height: 1 !important;
+}
+
+.streak-label {
+  font-size: 9px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--text-muted) !important;
+}
+
+.streak-badge.milestone .streak-shine {
+  position: absolute !important;
+  inset: 0 !important;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 70%
+  ) !important;
+  animation: shine-sweep 2.4s ease-in-out infinite !important;
+  pointer-events: none !important;
+}
+
+@keyframes shine-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* ── AI Whisper — quiet pattern observation on lead detail ─────────────── */
+.ai-whisper {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 8px 14px !important;
+  background: linear-gradient(90deg,
+    rgba(77, 138, 245, 0.06),
+    rgba(77, 138, 245, 0.02) 60%,
+    transparent) !important;
+  border-bottom: 1px solid rgba(77, 138, 245, 0.12) !important;
+  border-left: 2px solid var(--signal-blue) !important;
+}
+
+.ai-whisper-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--signal-blue) !important;
+  flex-shrink: 0 !important;
+  filter: drop-shadow(0 0 4px rgba(77, 138, 245, 0.4)) !important;
+}
+
+.ai-whisper-text {
+  font-size: 11.5px !important;
+  font-style: italic !important;
+  color: var(--text-dim) !important;
+  line-height: 1.45 !important;
+  letter-spacing: 0.01em !important;
+}
+

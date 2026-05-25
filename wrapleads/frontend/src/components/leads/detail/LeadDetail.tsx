@@ -12,6 +12,7 @@ import NotesTab from './NotesTab';
 import ActivityTab from './ActivityTab';
 import DesignStudioTab from './DesignStudioTab';
 import QuotesTab from './QuotesTab';
+import AIWhisper from './AIWhisper';
 
 // ── Deal Metrics Strip ────────────────────────────────────────────────────────
 // Conservative avg revenue per lead category (mirrors REV_EST in other files)
@@ -597,6 +598,7 @@ export default function LeadDetail() {
       </div>
       <DealMetricsStrip lead={lead} />
       <NextActionBar lead={lead} onTabChange={setActiveTab} />
+      <AIWhisper lead={lead} />
       {showScoreModal && <ScoreBreakdownModal lead={lead} onClose={() => setShowScoreModal(false)} />}
 
       <div className="lead-detail-tabs">
