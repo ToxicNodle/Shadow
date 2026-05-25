@@ -287,6 +287,27 @@ export const api = {
   deleteJob: (id: number) =>
     authFetch<{ ok: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
 
+  getCaseStudy: (jobId: number) =>
+    authFetch<{
+      caseStudy: {
+        id: number; job_id: number; token: string; headline: string; narrative: string;
+        stats_json: { vehicles: number; lifespanYears: number; installMonth: string; impressionsPerYear: number };
+        created_at: string;
+        photos: Array<{ id: number; url: string; caption: string | null }>;
+      } | null;
+    }>(`/jobs/${jobId}/case-study`),
+
+  generateCaseStudy: (jobId: number) =>
+    authFetch<{
+      ok: boolean;
+      caseStudy: {
+        id: number; job_id: number; token: string; headline: string; narrative: string;
+        stats_json: { vehicles: number; lifespanYears: number; installMonth: string; impressionsPerYear: number };
+        created_at: string;
+        photos: Array<{ id: number; url: string; caption: string | null }>;
+      };
+    }>(`/jobs/${jobId}/case-study`, { method: 'POST' }),
+
   // Computer Vision Quoting
   quoteVehicle: (file: File) => {
     const token = getToken();

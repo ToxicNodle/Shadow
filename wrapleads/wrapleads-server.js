@@ -618,6 +618,26 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create shop_quotes table:', e.message);
   }
+
+  // Case studies — auto-generated from completed jobs
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS case_studies (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        job_id     BIGINT REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        token      TEXT NOT NULL UNIQUE DEFAULT encode(gen_random_bytes(16), 'hex'),
+        headline   TEXT NOT NULL,
+        narrative  TEXT NOT NULL,
+        stats_json JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_studies_user ON case_studies(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_studies_job  ON case_studies(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create case_studies table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1197,11 +1217,43 @@ app.post('/apollo/search', authMiddleware, subMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Try Hunter.io /v2/email-finder before spending Apollo credits.
+// Returns null if Hunter is not configured or finds nothing with adequate confidence.
+async function tryHunterEnrich(firstName, lastName, domain) {
+  const hunterKey = process.env.HUNTER_API_KEY;
+  if (!hunterKey || !firstName || !lastName || !domain) return null;
+  try {
+    const url = `https://api.hunter.io/v2/email-finder?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&domain=${encodeURIComponent(domain)}&api_key=${hunterKey}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const email = j?.data?.email;
+    const confidence = j?.data?.score ?? 0;
+    if (email && confidence >= 60) {
+      return { email, confidence, source: 'hunter' };
+    }
+  } catch { /* timeout or network error — fall through */ }
+  return null;
+}
+
 app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
-  const apiKey = await resolveApolloKey(req);
-  if (!apiKey) return res.status(400).json({ error: 'No Apollo API key.' });
   const { firstName, lastName, company, domain, email, linkedinUrl } = req.body || {};
   if (!firstName && !lastName && !email) return res.status(400).json({ error: 'Need firstName + lastName, or email' });
+
+  // Waterfall: Hunter (free) → Apollo (credits)
+  if (firstName && lastName && domain && !email) {
+    const hunterResult = await tryHunterEnrich(firstName, lastName, domain);
+    if (hunterResult) {
+      return res.json({
+        person: { email: hunterResult.email, first_name: firstName, last_name: lastName },
+        source: 'hunter',
+        confidence: hunterResult.confidence,
+      });
+    }
+  }
+
+  const apiKey = await resolveApolloKey(req);
+  if (!apiKey) return res.status(400).json({ error: 'No Apollo API key — configure APOLLO_API_KEY or add it in Settings. Hunter.io also did not match.' });
   const payload = { reveal_personal_emails: true };
   if (firstName) payload.first_name = firstName;
   if (lastName) payload.last_name = lastName;
@@ -5485,6 +5537,112 @@ app.delete('/jobs/:id', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /jobs/:id/case-study — generate a shareable case study narrative
+app.post('/jobs/:id/case-study', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+
+  try {
+    // Load job + photos + user settings
+    const { rows: jobRows } = await pool.query(
+      `SELECT j.*, u.company_name, u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::TEXT = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobRows[0];
+
+    const { rows: photos } = await pool.query(
+      `SELECT id, url, caption FROM job_photos WHERE job_id = $1 LIMIT 6`,
+      [jobId]
+    );
+
+    const settings = job.settings_json || {};
+    const shopName = settings.companyName || job.company_name || 'our shop';
+
+    const VEHICLE_LABELS = {
+      cargo_van_standard: 'cargo vans', cargo_van_high_roof: 'high-roof vans',
+      box_truck_16: '16ft box trucks', box_truck_24: '24ft box trucks',
+      semi_full: 'semi-trucks and trailers', semi_cab_only: 'semi cabs',
+      pickup_truck: 'pickup trucks', suv_large: 'large SUVs', bus_school: 'buses',
+      other: 'vehicles',
+    };
+    const vehicleLabel = VEHICLE_LABELS[job.vehicle_type] || job.vehicle_type;
+    const CAT_LABELS = {
+      fleet: 'fleet wrap', dinoc: 'DI-NOC architectural film', gc_referral: 'general contractor wrap spec',
+      construction: 'construction fleet wrap', colorchange: 'color-change wrap',
+      racing: 'motorsport livery', reatec: 'Rea Tec architectural film',
+      design: 'custom vehicle design', wallgraphics: 'wall graphics', other: 'vehicle wrap',
+    };
+    const wrapType = CAT_LABELS[job.wrap_category] || 'wrap';
+
+    const prompt = `You are a copywriter for a professional vehicle wrap shop called "${shopName}".
+Write a compelling case study for this completed project.
+
+JOB DETAILS:
+- Client: ${job.company}
+- Project type: ${wrapType}
+- Vehicles: ${job.vehicle_count} ${vehicleLabel}
+- Material: ${job.material || 'premium cast vinyl film'}
+- Install date: ${new Date(job.install_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+- Wrap lifespan: ${job.life_years} years
+- Notes: ${job.notes || 'none'}
+${photos.length > 0 ? `- Photos available: ${photos.map((p) => p.caption || p.url).join(', ')}` : ''}
+
+Write EXACTLY this JSON structure (no markdown, pure JSON):
+{
+  "headline": "<punchy 8-12 word headline about the project outcome>",
+  "intro": "<2-sentence project context and client need>",
+  "execution": "<2-sentence explanation of materials, process, and craftsmanship>",
+  "outcome": "<2-sentence result — what the client got, ROI angle, fleet visibility impact>",
+  "stats": {
+    "vehicles": ${job.vehicle_count},
+    "lifespanYears": ${job.life_years},
+    "installMonth": "${new Date(job.install_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}",
+    "impressionsPerYear": ${job.vehicle_count * 36500 * 600}
+  }
+}`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 1200);
+    const parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+    const narrative = [parsed.intro, parsed.execution, parsed.outcome].join('\n\n');
+
+    // Upsert — one case study per job
+    await pool.query(`DELETE FROM case_studies WHERE job_id = $1 AND user_id = $2`, [jobId, uid]);
+    const { rows: [cs] } = await pool.query(
+      `INSERT INTO case_studies (user_id, job_id, headline, narrative, stats_json)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [uid, jobId, parsed.headline, narrative, JSON.stringify(parsed.stats || {})]
+    );
+
+    res.json({ ok: true, caseStudy: { ...cs, photos } });
+  } catch (e) {
+    console.error('[case-study]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/:id/case-study — fetch existing case study for a job
+app.get('/jobs/:id/case-study', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { rows } = await pool.query(
+    `SELECT cs.*, COALESCE(json_agg(jp.*) FILTER (WHERE jp.id IS NOT NULL), '[]') AS photos
+     FROM case_studies cs
+     LEFT JOIN job_photos jp ON jp.job_id = cs.job_id
+     WHERE cs.job_id = $1 AND cs.user_id = $2
+     GROUP BY cs.id`,
+    [jobId, uid]
+  );
+  if (!rows.length) return res.json({ caseStudy: null });
+  res.json({ caseStudy: rows[0] });
+});
+
 // ── Computer Vision Vehicle Quoting ──────────────────────────────────────────
 
 const VEHICLE_DIMENSIONS = {
@@ -9227,6 +9385,7 @@ app.listen(PORT, async () => {
   console.log(banner);
   console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
+  console.log(process.env.HUNTER_API_KEY ? '· Hunter.io: configured (email waterfall active)' : '· Hunter.io: not configured (set HUNTER_API_KEY for free enrichment)');
   // Run migrations first so checkDb works on a fresh database
   try { await migrateDb(); } catch (e) { console.error('migrateDb error:', e.message); }
   const db = await checkDb();

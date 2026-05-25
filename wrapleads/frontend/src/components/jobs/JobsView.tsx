@@ -6,6 +6,117 @@ import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../ap
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
 import MaterialCatalogModal from '../modals/MaterialCatalogModal';
 
+// ── Case Study Generator ──────────────────────────────────────────────────────
+function CaseStudyPanel({ job }: { job: InstalledJob }) {
+  const qc = useQueryClient();
+  const [copied, setCopied] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['case-study', job.id],
+    queryFn: () => api.getCaseStudy(job.id),
+    staleTime: 5 * 60_000,
+  });
+
+  const genMut = useMutation({
+    mutationFn: () => api.generateCaseStudy(job.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['case-study', job.id] }); showToast('Case study generated!'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const cs = data?.caseStudy;
+
+  function copyText() {
+    if (!cs) return;
+    const stats = cs.stats_json;
+    const text = [
+      cs.headline.toUpperCase(),
+      '',
+      cs.narrative,
+      '',
+      `── STATS ──`,
+      `Vehicles wrapped: ${stats?.vehicles ?? job.vehicle_count}`,
+      `Installed: ${stats?.installMonth ?? job.install_date}`,
+      `Wrap lifespan: ${stats?.lifespanYears ?? job.life_years} years`,
+      `Est. annual impressions: ${(stats?.impressionsPerYear ?? 0).toLocaleString()}`,
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      showToast('Case study copied!');
+    });
+  }
+
+  if (isLoading) {
+    return <div className="loading"><span className="spinner" /></div>;
+  }
+
+  if (!cs) {
+    return (
+      <div style={{ textAlign: 'center', padding: '24px 0' }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>No case study yet</div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+          Claude will write a professional 3-paragraph case study from this job's data.
+        </div>
+        <button
+          className="btn btn-primary"
+          onClick={() => genMut.mutate()}
+          disabled={genMut.isPending}
+        >
+          {genMut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Generating…</> : '✦ Generate Case Study'}
+        </button>
+        {genMut.isError && <div className="error-box" style={{ marginTop: 10 }}>{(genMut.error as Error).message}</div>}
+      </div>
+    );
+  }
+
+  const stats = cs.stats_json;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{
+        padding: '14px 16px', background: 'var(--surface)', borderRadius: 10,
+        border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)',
+      }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', marginBottom: 10, lineHeight: 1.3 }}>{cs.headline}</div>
+        <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-line' }}>{cs.narrative}</div>
+      </div>
+
+      {/* Stats strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+        {[
+          { val: stats?.vehicles ?? job.vehicle_count, label: 'Vehicles' },
+          { val: `${stats?.lifespanYears ?? job.life_years}yr`, label: 'Lifespan' },
+          { val: stats?.installMonth?.split(' ')?.[0] ?? '—', label: 'Month' },
+          { val: `${Math.round((stats?.impressionsPerYear ?? 0) / 1_000_000 * 10) / 10}M`, label: 'Impr/yr' },
+        ].map(({ val, label }) => (
+          <div key={label} style={{ textAlign: 'center', padding: '8px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--accent)' }}>{val}</div>
+            <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.06em' }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Photos */}
+      {cs.photos.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+          {cs.photos.slice(0, 4).map((p) => (
+            <img key={p.id} src={p.url} alt={p.caption ?? ''} style={{ height: 80, width: 120, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }} onClick={copyText}>
+          {copied ? '✓ Copied!' : 'Copy Case Study'}
+        </button>
+        <button className="btn" style={{ fontSize: 12 }} onClick={() => genMut.mutate()} disabled={genMut.isPending}>
+          {genMut.isPending ? <span className="spinner" style={{ width: 11, height: 11 }} /> : '↻ Regenerate'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Social Post Generator ─────────────────────────────────────────────────────
 
 function SocialPostPanel({ job }: { job: InstalledJob }) {
@@ -173,7 +284,7 @@ interface JobModalProps {
 function JobModal({ job, onClose }: JobModalProps) {
   const isNew = job === 'new';
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -217,6 +328,7 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'details' ? 'active' : ''}`} onClick={() => setActiveTab('details')}>Details</button>
             <button className={`jobs-tab ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}>Photos</button>
             <button className={`jobs-tab ${activeTab === 'social' ? 'active' : ''}`} onClick={() => setActiveTab('social')}>Social Posts</button>
+            <button className={`jobs-tab ${activeTab === 'case-study' ? 'active' : ''}`} onClick={() => setActiveTab('case-study')}>Case Study</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -224,6 +336,8 @@ function JobModal({ job, onClose }: JobModalProps) {
           <PhotoGallery jobId={(job as InstalledJob).id} />
         ) : (!isNew && activeTab === 'social') ? (
           <SocialPostPanel job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'case-study') ? (
+          <CaseStudyPanel job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">
