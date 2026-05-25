@@ -38,6 +38,14 @@
   --red:    #f87171;
   --purple: #a78bfa;
 
+  /* ── Extended palette — Signal Blue + Ghost Green ─ */
+  --signal-blue:       #4d8af5;
+  --signal-blue-glow:  rgba(77, 138, 245, 0.18);
+  --signal-blue-subtle: rgba(77, 138, 245, 0.08);
+  --ghost-green:       #00d97e;
+  --ghost-green-glow:  rgba(0, 217, 126, 0.18);
+  --ghost-green-subtle: rgba(0, 217, 126, 0.08);
+
   /* ── Typography ────────────────────────────────── */
   --display: 'Bricolage Grotesque', -apple-system, system-ui, sans-serif;
   --body:    'DM Sans', -apple-system, system-ui, sans-serif;
