@@ -9116,6 +9116,12 @@ app.listen(PORT, async () => {
     startStalledDealWorker();
     startAnniversaryWorker();
     email.startTrialCron(pool);
+    try {
+      const { startSignalWorker } = require('./lib/signalWorker');
+      startSignalWorker(pool, { intervalHours: 6, lookbackHours: 36 });
+    } catch (e) {
+      console.warn('· News Signal worker not started:', e.message);
+    }
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {
       console.log('· Companies table empty — seeding sample carriers...');

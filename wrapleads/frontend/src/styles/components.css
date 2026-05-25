@@ -6220,3 +6220,37 @@ a:hover {
   letter-spacing: 0.01em !important;
 }
 
+/* ── Live Clock (topbar) — Bloomberg-terminal feel ──────────────────────── */
+.live-clock {
+  display: inline-flex !important;
+  align-items: baseline !important;
+  gap: 6px !important;
+  margin-left: 8px !important;
+  padding: 4px 10px !important;
+  background: rgba(255, 255, 255, 0.025) !important;
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+  border-radius: 6px !important;
+  font-family: var(--mono) !important;
+  letter-spacing: 0.04em !important;
+  user-select: none !important;
+}
+
+.live-clock-date {
+  font-size: 9.5px !important;
+  font-weight: 600 !important;
+  color: var(--text-faint) !important;
+  text-transform: uppercase !important;
+}
+
+.live-clock-sep {
+  color: rgba(255, 255, 255, 0.15) !important;
+  font-size: 9px !important;
+}
+
+.live-clock-time {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: var(--accent) !important;
+  letter-spacing: -0.02em !important;
+}
+

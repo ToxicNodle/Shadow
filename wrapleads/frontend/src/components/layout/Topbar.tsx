@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useLeads } from '../../hooks/useLeads';
 import { api } from '../../api/client';
 import { getChangelogBadge } from './ChangelogPanel';
+import LiveClock from './LiveClock';
 
 export default function Topbar() {
   const { user, logout } = useAuth();
@@ -63,6 +64,8 @@ export default function Topbar() {
         <div className="topbar-logo">W</div>
         <span className="topbar-name">WrapOS</span>
       </div>
+
+      <LiveClock />
 
       <div className="topbar-spacer" />
 
