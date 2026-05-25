@@ -1,23 +1,28 @@
 /**
- * WrapLeads — State SOS Registry Ingest  (v0.3)
+ * WrapLeads — State SOS Registry Ingest  (v0.4)
  * -----------------------------------------------
- * Ingests business entity CSV exports from Indiana and Ohio Secretary of State
- * portals into the companies table with source='sos_in' or 'sos_oh'.
+ * Ingests business entity CSV exports from six Midwest/South Secretary of State
+ * portals into the companies table.
  *
  * Where to get the files:
- *   Indiana: https://bsd.sos.in.gov/publicbusiness (search → export CSV)
- *            Filter by entity status "Active" and entity type "Domestic/Foreign LLC"
- *            or "For-Profit Corporation" to focus on real operating businesses.
- *   Ohio:    https://businesssearch.ohiosos.gov (search → export)
- *            Filter by agent state, entity type, and status "Active".
+ *   Indiana:   https://bsd.sos.in.gov/publicbusiness (search → export CSV)
+ *   Ohio:      https://businesssearch.ohiosos.gov (search → export)
+ *   Illinois:  https://www.ilsos.gov/data/bus_corp_data.html (free bulk BCA download)
+ *   Michigan:  https://cofs.lara.state.mi.us/CorpWeb/CorpSearch/CorpSearch.aspx (bulk data)
+ *   Kentucky:  https://apps.sos.ky.gov/business/obdb/
+ *   Tennessee: https://tnbear.tn.gov/ECommerce/FilingSearch.aspx (bulk data download)
  *
  * Usage:
- *   node ingest-sos.js indiana path/to/indiana-sos.csv
- *   node ingest-sos.js ohio    path/to/ohio-sos.csv
+ *   node ingest-sos.js indiana    path/to/indiana-sos.csv
+ *   node ingest-sos.js ohio       path/to/ohio-sos.csv
+ *   node ingest-sos.js illinois   path/to/illinois-sos.csv
+ *   node ingest-sos.js michigan   path/to/michigan-sos.csv
+ *   node ingest-sos.js kentucky   path/to/kentucky-sos.csv
+ *   node ingest-sos.js tennessee  path/to/tennessee-sos.csv
  *
- * Column aliasing handles both export formats and catches variations across
- * portal versions.  The script is idempotent — re-running with the same file
- * updates existing rows by (source, source_id).
+ * Column aliasing handles portal-specific CSV formats and catches header
+ * variations across portal versions.  The script is idempotent — re-running
+ * with the same file updates existing rows by (source, source_id).
  */
 
 require('dotenv').config();
@@ -35,6 +40,7 @@ const BATCH_SIZE   = 500;
 const FIELD_MAPS = {
   sos_in: {
     // Indiana SOS CSV headers (as of 2024 portal export)
+    // https://bsd.sos.in.gov/publicbusiness → search → export CSV
     source_id:  ['Entity Number', 'ENTITY_NUMBER', 'BUSINESS_ID', 'ID'],
     name:       ['Entity Name', 'ENTITY_NAME', 'BUSINESS_NAME', 'NAME'],
     city:       ['Principal City', 'CITY', 'PRINCIPAL_CITY', 'BUSINESS_CITY'],
@@ -47,6 +53,7 @@ const FIELD_MAPS = {
   },
   sos_oh: {
     // Ohio SOS CSV headers
+    // https://businesssearch.ohiosos.gov → search → export CSV
     source_id:  ['Charter Number', 'CHARTER_NUMBER', 'CHARTER_NO', 'ID'],
     name:       ['Name', 'ENTITY_NAME', 'BUSINESS_NAME', 'COMPANY_NAME'],
     city:       ['City', 'CITY', 'AGENT_CITY'],
@@ -56,6 +63,58 @@ const FIELD_MAPS = {
     status:     ['Status', 'ENTITY_STATUS', 'STATUS'],
     type:       ['Type', 'ENTITY_TYPE', 'COMPANY_TYPE'],
     formed:     ['Filing Date', 'FILING_DATE', 'DATE_FILED', 'FORMED'],
+  },
+  sos_il: {
+    // Illinois SOS CSV headers
+    // https://www.ilsos.gov/data/bus_corp_data.html → BCA downloads (free bulk)
+    source_id:  ['FILE NUMBER', 'File Number', 'FILE_NUMBER', 'ID'],
+    name:       ['CORPORATION NAME', 'Corporation Name', 'ENTITY_NAME', 'NAME'],
+    city:       ['CITY', 'City', 'PRINCIPAL_CITY'],
+    state:      ['STATE', 'State', 'PRINCIPAL_STATE'],
+    zip:        ['ZIP CODE', 'Zip Code', 'ZIP'],
+    street:     ['ADDRESS 1', 'Address 1', 'STREET', 'ADDRESS'],
+    status:     ['STATUS', 'Status', 'ENTITY_STATUS'],
+    type:       ['CORP TYPE', 'Corp Type', 'ENTITY_TYPE'],
+    formed:     ['DATE INCORPORATED', 'Date Incorporated', 'INCORPORATION_DATE', 'FORMED'],
+  },
+  sos_mi: {
+    // Michigan SOS / LARA CSV headers
+    // https://cofs.lara.state.mi.us/CorpWeb/CorpSearch/CorpSearch.aspx → bulk data
+    source_id:  ['ID Number', 'ID_NUMBER', 'CORP_ID', 'CID'],
+    name:       ['Name', 'ENTITY_NAME', 'CORP_NAME', 'CORPORATION_NAME'],
+    city:       ['City', 'CITY', 'REGISTERED_CITY'],
+    state:      ['State', 'STATE', 'REGISTERED_STATE'],
+    zip:        ['Zip', 'ZIP', 'REGISTERED_ZIP'],
+    street:     ['Street', 'STREET', 'ADDRESS'],
+    status:     ['Status', 'STATUS', 'ENTITY_STATUS'],
+    type:       ['Type', 'TYPE', 'ENTITY_TYPE'],
+    formed:     ['Date Filed', 'DATE_FILED', 'FILING_DATE', 'FORMED'],
+  },
+  sos_ky: {
+    // Kentucky SOS CSV headers
+    // https://apps.sos.ky.gov/business/obdb/
+    source_id:  ['Organization Number', 'ORGANIZATION_NUMBER', 'ORG_NUMBER', 'ID'],
+    name:       ['Organization Name', 'ORGANIZATION_NAME', 'ENTITY_NAME', 'NAME'],
+    city:       ['Principal City', 'CITY', 'PRINCIPAL_CITY'],
+    state:      ['Principal State', 'STATE', 'PRINCIPAL_STATE'],
+    zip:        ['Principal Zip', 'ZIP', 'PRINCIPAL_ZIP'],
+    street:     ['Principal Address', 'ADDRESS', 'PRINCIPAL_ADDRESS'],
+    status:     ['Status', 'STATUS', 'ENTITY_STATUS'],
+    type:       ['Organization Type', 'ORGANIZATION_TYPE', 'ENTITY_TYPE'],
+    formed:     ['Organization Date', 'ORGANIZATION_DATE', 'DATE_FORMED', 'FORMED'],
+  },
+  sos_tn: {
+    // Tennessee SOS CSV headers
+    // https://tnbear.tn.gov/ECommerce/FilingSearch.aspx → bulk data download
+    source_id:  ['Control Number', 'CONTROL_NUMBER', 'SOS_ID', 'ID'],
+    name:       ['Name', 'ENTITY_NAME', 'BUSINESS_NAME', 'FILING_NAME'],
+    city:       ['Principal City', 'CITY', 'PRINCIPAL_OFFICE_CITY'],
+    state:      ['Principal State', 'STATE', 'PRINCIPAL_OFFICE_STATE'],
+    zip:        ['Principal Zip', 'ZIP', 'PRINCIPAL_OFFICE_ZIP'],
+    street:     ['Principal Street', 'STREET', 'ADDRESS'],
+    status:     ['Status', 'STATUS', 'ENTITY_STATUS'],
+    type:       ['Business Type', 'BUSINESS_TYPE', 'ENTITY_TYPE'],
+    formed:     ['Formation Date', 'FORMATION_DATE', 'DATE_FORMED', 'FORMED'],
   },
 };
 
@@ -158,14 +217,26 @@ async function main() {
   const stateArg = (process.argv[2] || '').toLowerCase();
   const csvPath  = process.argv[3];
 
-  const SOURCE_MAP = { indiana: 'sos_in', ohio: 'sos_oh', in: 'sos_in', oh: 'sos_oh' };
+  const SOURCE_MAP = {
+    indiana:   'sos_in',  in:  'sos_in',
+    ohio:      'sos_oh',  oh:  'sos_oh',
+    illinois:  'sos_il',  il:  'sos_il',
+    michigan:  'sos_mi',  mi:  'sos_mi',
+    kentucky:  'sos_ky',  ky:  'sos_ky',
+    tennessee: 'sos_tn',  tn:  'sos_tn',
+  };
   const source = SOURCE_MAP[stateArg];
 
   if (!source || !csvPath) {
-    console.error('Usage: node ingest-sos.js <indiana|ohio> <path-to-csv>');
+    console.error('Usage: node ingest-sos.js <state> <path-to-csv>');
     console.error('');
-    console.error('Get Indiana data: https://bsd.sos.in.gov/publicbusiness');
-    console.error('Get Ohio data:    https://businesssearch.ohiosos.gov');
+    console.error('Supported states:');
+    console.error('  indiana    https://bsd.sos.in.gov/publicbusiness');
+    console.error('  ohio       https://businesssearch.ohiosos.gov');
+    console.error('  illinois   https://www.ilsos.gov/data/bus_corp_data.html');
+    console.error('  michigan   https://cofs.lara.state.mi.us/CorpWeb/CorpSearch/CorpSearch.aspx');
+    console.error('  kentucky   https://apps.sos.ky.gov/business/obdb/');
+    console.error('  tennessee  https://tnbear.tn.gov/ECommerce/FilingSearch.aspx');
     process.exit(1);
   }
 
@@ -177,7 +248,17 @@ async function main() {
 
   const fields   = FIELD_MAPS[source];
   const fileSize = fs.statSync(absPath).size;
-  const label    = source === 'sos_in' ? 'Indiana SOS' : 'Ohio SOS';
+  const STATE_LABELS = {
+    sos_in: 'Indiana SOS',   sos_oh: 'Ohio SOS',
+    sos_il: 'Illinois SOS',  sos_mi: 'Michigan SOS',
+    sos_ky: 'Kentucky SOS',  sos_tn: 'Tennessee SOS',
+  };
+  const STATE_ABBR = {
+    sos_in: 'IN', sos_oh: 'OH', sos_il: 'IL',
+    sos_mi: 'MI', sos_ky: 'KY', sos_tn: 'TN',
+  };
+  const label     = STATE_LABELS[source];
+  const stateAbbr = STATE_ABBR[source];
 
   console.log(`\n📋 WrapLeads — ${label} Ingest`);
   console.log(`   File: ${absPath}`);
@@ -234,7 +315,7 @@ async function main() {
         name,
         street:           pickField(row, fields.street),
         city:             pickField(row, fields.city),
-        state:            source === 'sos_in' ? 'IN' : 'OH',
+        state:            pickField(row, fields.state) || stateAbbr,
         zip:              pickField(row, fields.zip),
         country:          'US',
         industry:         classifySosIndustry(name),
