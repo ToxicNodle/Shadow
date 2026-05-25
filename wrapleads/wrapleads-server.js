@@ -843,6 +843,13 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/portal/'))        return true;
     if (p.startsWith('/portfolio/'))     return true;
     if (p.startsWith('/quote-request/')) return true;
+    // Solar Scout: speed-to-lead intake + public auction bid pages must
+    // not be throttled — installers hit them from email links and external
+    // webhooks need consistent sub-5s response times.
+    if (p === '/solar/intake')                 return true;
+    if (p.startsWith('/solar/auctions/') &&
+        (p.endsWith('/bid') || /^\/solar\/auctions\/[^/]+$/.test(p))) return true;
+    if (p.startsWith('/solar/__unsubscribe/')) return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
@@ -3974,7 +3981,7 @@ async function processEmailQueue() {
           try {
             const { url } = await compliance.generateUnsubscribeToken(pool, {
               leadId: item.lead_id, userId: item.user_id, email: item.to_email,
-              baseUrl: `${baseUrl}/solar/__unsubscribe`,
+              baseUrl, pathPrefix: '/solar/__unsubscribe',
             });
             bodyWithFooter = compliance.withComplianceFooter(item.body, {
               unsubscribeUrl: url,
@@ -9221,7 +9228,7 @@ async function sendCompliantEmail({ to, toName = null, subject, body, leadId = n
   if (!skipCompliance && leadId && userId) {
     const baseUrl = process.env.APP_BASE_URL || APP_URL;
     const { url } = await compliance.generateUnsubscribeToken(pool, {
-      leadId, userId, email: to, baseUrl: `${baseUrl}/solar/__unsubscribe`,
+      leadId, userId, email: to, baseUrl, pathPrefix: '/solar/__unsubscribe',
     }).catch(() => ({ url: null }));
     unsubUrl = url;
     if (unsubUrl) {
@@ -9292,13 +9299,8 @@ app.use('/solar', buildSolarRouter({
   queueSolarFollowups,
 }));
 
-// Also expose /webhooks/solar-intake as a convenience alias for /solar/intake
-// so external webhook configs can target a /webhooks/* path like everything
-// else.
-app.post('/webhooks/solar-intake', express.json(), (req, res, next) => {
-  req.url = '/intake';
-  app._router.handle(Object.assign(req, { url: '/intake', baseUrl: '/solar' }), res, next);
-});
+// Speed-to-lead intake lives at POST /solar/intake (rate-limit-exempted
+// below). External webhook configs should target that path directly.
 
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));

@@ -43,10 +43,10 @@ async function run({ pool, limit = 200, log = console.log }) {
   const { rows } = await pool.query(`
     SELECT id, latitude, longitude
     FROM companies
-    WHERE source LIKE 'google_places_solar' OR source = 'osm_industrial'
-       OR source LIKE 'commercial_csv_%' OR source = 'permit_feed'
-    AND latitude IS NOT NULL AND longitude IS NOT NULL
-    AND utility_provider IS NULL
+    WHERE (source IN ('google_places_solar','osm_industrial','permit_feed')
+        OR source LIKE 'commercial_csv_%')
+      AND latitude IS NOT NULL AND longitude IS NOT NULL
+      AND utility_provider IS NULL
     LIMIT $1
   `, [limit]);
 

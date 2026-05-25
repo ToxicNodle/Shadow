@@ -18,6 +18,7 @@ const incentives = require('./solar-incentives');
 const naicsFit = require('./naics-solar-fit');
 const compliance = require('./compliance');
 const qualifyLead = require('./qualify-lead');
+const tariffs = require('./solar-tariffs');
 
 // ── Solar score SQL ──────────────────────────────────────────────────────
 // 0–100 multi-factor score. Returned alongside the row so it matches the
@@ -401,7 +402,7 @@ function buildSolarRouter(deps) {
         SELECT l.id, l.company, l.city, l.state, l.email, l.phone, l.website,
                l.status, c.building_sqft, c.roof_type, c.utility_provider,
                c.latitude, c.longitude,
-               COALESCE(${SOLAR_SCORE_SQL.replace(/\b(building_sqft|roof_type|est_annual_kwh|phone|email|naics_code|industry|source)\b/g, m => `c.${m}`)}, 0) AS solar_score
+               COALESCE(${SOLAR_SCORE_SQL.replace(/\b(building_sqft|roof_type|est_annual_kwh|phone|email|naics_code|industry|source|is_owner_occupied|intent_signal)\b/g, m => `c.${m}`)}, 0) AS solar_score
         FROM leads l
         LEFT JOIN companies c ON c.id = l.source_company_id
         WHERE ${conds.join(' AND ')}
@@ -880,7 +881,7 @@ function buildSolarRouter(deps) {
         });
         if (econ.system_kw < 25) continue; // gate #2 — too small to bother
 
-        const tariff = require('./solar-tariffs').lookup(c.utility_provider);
+        const tariff = tariffs.lookup(c.utility_provider);
         const intel = incentives.buildPropertyIntel({
           state: c.state, city: c.city, zip: c.zip,
           systemKw: econ.system_kw, annualKwh: econ.annual_kwh, grossCost: econ.gross_cost_usd,
@@ -943,10 +944,23 @@ function buildSolarRouter(deps) {
 
 // Auction auto-close + winner scoring.
 async function closeAuction(pool, { auctionId, userId, manualBidId = null, deps }) {
-  const aR = await pool.query(`SELECT * FROM solar_auctions WHERE id = $1 AND user_id = $2 FOR UPDATE`, [auctionId, userId]);
-  if (!aR.rows.length) throw new Error('Auction not found');
+  // Atomically transition status open → closing so concurrent workers (or a
+  // racing manual-award click) can't both close the same auction. The status
+  // becomes 'awarded' or 'closed_no_bids' below; until then, 'closing' acts
+  // as a soft lock without needing an explicit transaction.
+  const aR = await pool.query(
+    `UPDATE solar_auctions SET status = 'closing', updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND status = 'open'
+     RETURNING *`,
+    [auctionId, userId]
+  );
+  if (!aR.rows.length) {
+    // Either someone else already closed it, or the auction doesn't exist.
+    const existing = await pool.query(`SELECT * FROM solar_auctions WHERE id = $1 AND user_id = $2`, [auctionId, userId]);
+    if (!existing.rows.length) throw new Error('Auction not found');
+    return { auction: existing.rows[0], message: 'Already closed' };
+  }
   const auction = aR.rows[0];
-  if (auction.status !== 'open') return { auction, message: 'Already closed' };
 
   const bR = await pool.query(`
     SELECT b.*, i.installer_name, i.installer_email, i.accept_token, i.price_per_lead

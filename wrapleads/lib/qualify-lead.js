@@ -94,8 +94,12 @@ async function qualify(input = {}) {
   const gates = {
     has_naics_fit:       Boolean(fit && fit.fit >= 70),
     has_real_geometry:   Boolean(econ.system_kw >= 25),
-    incentive_coverage:  intel.stack.total_incentives >= econ.gross_cost_usd * 0.35,
-    payback_under_10y:   netPayback !== null && netPayback <= 10,
+    // Guard against the vacuous case where gross_cost = 0 (no system size)
+    // making 0 >= 0 * 0.35 trivially true. The gate must reflect a real
+    // dollar comparison.
+    incentive_coverage:  econ.gross_cost_usd > 0 &&
+                          intel.stack.total_incentives >= econ.gross_cost_usd * 0.35,
+    payback_under_10y:   netPayback !== null && netPayback > 0 && netPayback <= 10,
     has_contactable:     Boolean(firmo?.company_name) || Boolean(input.company),
   };
   const score = Object.values(gates).filter(Boolean).length;

@@ -21,6 +21,15 @@ export class ApiError extends Error {
   }
 }
 
+// Build a query string from a partial-record params object, omitting any
+// undefined / null / empty entries so we never stamp "?state=undefined".
+function buildQueryString(params?: Record<string, unknown>): string {
+  if (!params) return '';
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  if (!entries.length) return '';
+  return '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
+}
+
 export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -813,10 +822,12 @@ export const api = {
     authFetch<{ total: number; results: SolarLead[]; limit: number; offset: number }>('/solar/discover', {
       method: 'POST', body: JSON.stringify(params),
     }),
-  getQualifiedSolarLeads: (params?: { state?: string; limit?: number }) =>
-    authFetch<{ qualified: SolarLead[]; total: number; gates_applied: string[] }>(
-      `/solar/qualified${params?.state || params?.limit ? '?' + new URLSearchParams(Object.entries(params).map(([k,v]) => [k, String(v)])).toString() : ''}`
-    ),
+  getQualifiedSolarLeads: (params?: { state?: string; limit?: number }) => {
+    const qs = buildQueryString(params);
+    return authFetch<{ qualified: SolarLead[]; total: number; gates_applied: string[] }>(
+      `/solar/qualified${qs}`
+    );
+  },
   getSolarCompany: (id: number) =>
     authFetch<{
       company: Record<string, unknown>;
@@ -865,7 +876,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ installer_id: installerId, lead_ids: leadIds }),
     }),
   exportSolarPilotCsv: (params?: { state?: string; minScore?: number }) =>
-    `${window.location.origin}/solar/pilot/export.csv?${new URLSearchParams(Object.entries(params || {}).map(([k,v]) => [k, String(v)])).toString()}`,
+    `${window.location.origin}/solar/pilot/export.csv${buildQueryString(params)}`,
 
   // Auction marketplace
   getSolarAuctions: () =>

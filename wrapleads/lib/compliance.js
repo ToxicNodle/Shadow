@@ -32,14 +32,15 @@ function canEmail(lead) {
  * Returns `{ token, url }`. Persists to unsubscribe_tokens so the /u/:token
  * route can look it up later.
  */
-async function generateUnsubscribeToken(pool, { leadId, userId, email, baseUrl }) {
+async function generateUnsubscribeToken(pool, { leadId, userId, email, baseUrl, pathPrefix = '/u' }) {
   const token = crypto.randomBytes(20).toString('hex');
   await pool.query(
     `INSERT INTO unsubscribe_tokens (token, lead_id, user_id, email) VALUES ($1, $2, $3, $4)`,
     [token, leadId, String(userId), (email || '').toLowerCase()]
   );
   const base = (baseUrl || process.env.APP_BASE_URL || process.env.APP_URL || 'http://localhost:3001').replace(/\/$/, '');
-  return { token, url: `${base}/u/${token}` };
+  const path = pathPrefix.replace(/\/$/, '');
+  return { token, url: `${base}${path}/${token}` };
 }
 
 /**
