@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import type { Lead } from '../../api/types';
 import { CATEGORIES, STATUSES } from '../../api/types';
 import { useAppStore } from '../../store/useAppStore';
@@ -30,6 +30,15 @@ export default function LeadRow({ lead, selected, checked }: Props) {
   }));
 
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [faviconFailed, setFaviconFailed] = useState(false);
+  const handleFaviconError = useCallback(() => setFaviconFailed(true), []);
+
+  const faviconDomain = lead.website
+    ? lead.website.replace(/^https?:\/\//, '').split('/')[0]
+    : null;
+  const faviconUrl = faviconDomain && !faviconFailed
+    ? `https://${faviconDomain}/favicon.ico`
+    : null;
   const breakdown = scoreBreakdown(lead);
   const score = breakdown.total;
   const label = scoreLabel(score);
@@ -100,13 +109,26 @@ export default function LeadRow({ lead, selected, checked }: Props) {
         <div
           className="lead-avatar"
           style={{
-            background: `${catColor}1a`,
+            background: faviconUrl ? 'var(--bg-elev-2)' : `${catColor}1a`,
             color: catColor,
             border: `1px solid ${catColor}33`,
             flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: faviconUrl ? 4 : undefined,
           }}
         >
-          {initials}
+          {faviconUrl ? (
+            <img
+              src={faviconUrl}
+              alt=""
+              width={16}
+              height={16}
+              style={{ borderRadius: 2, objectFit: 'contain', display: 'block' }}
+              onError={handleFaviconError}
+            />
+          ) : initials}
         </div>
         <div style={{ minWidth: 0 }}>
           <div className="lead-company">{lead.company}</div>

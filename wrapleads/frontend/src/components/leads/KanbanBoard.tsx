@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import { scoreLead, scoreLabel, scoreBreakdown, SCORE_COLORS, winProbability, winProbabilityColor } from '../../utils/scoring';
@@ -57,6 +57,36 @@ function fmtMoney(n: number): string {
 function daysSince(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+}
+
+// Favicon with letter fallback for kanban cards
+function KanbanFavicon({ lead }: { lead: Lead }) {
+  const [failed, setFailed] = useState(false);
+  const handleError = useCallback(() => setFailed(true), []);
+  const domain = lead.website?.replace(/^https?:\/\//, '').split('/')[0];
+  const catColor = CATEGORY_COLORS[lead.category] ?? '#6b7280';
+  const initial = lead.company?.[0]?.toUpperCase() ?? '?';
+
+  if (domain && !failed) {
+    return (
+      <img
+        src={`https://${domain}/favicon.ico`}
+        alt=""
+        width={16}
+        height={16}
+        className="kanban-favicon"
+        onError={handleError}
+      />
+    );
+  }
+  return (
+    <span
+      className="kanban-favicon-letter"
+      style={{ background: `${catColor}22`, color: catColor }}
+    >
+      {initial}
+    </span>
+  );
 }
 
 // Score badge with hover breakdown popover
@@ -182,6 +212,7 @@ export default function KanbanBoard() {
                   <div
                     key={lead.id}
                     className={`kanban-card${isDragging ? ' is-dragging' : ''}${isHot ? ' kanban-card-hot' : ''}`}
+                    style={{ borderLeft: `3px solid ${col.color}` }}
                     draggable
                     onDragStart={(e) => {
                       setDragLead(lead.id);
@@ -192,6 +223,7 @@ export default function KanbanBoard() {
                     onClick={() => setCurrentLeadId(lead.id)}
                   >
                     <div className="kanban-card-header">
+                      <KanbanFavicon lead={lead} />
                       <span className="kanban-company">{lead.company}</span>
                       <ScoreBadge lead={lead} />
                     </div>
@@ -225,6 +257,46 @@ export default function KanbanBoard() {
                           </span>
                         )}
                       </div>
+                    </div>
+                    {/* Hover quick actions */}
+                    <div className="kanban-card-actions" onClick={(e) => e.stopPropagation()}>
+                      {lead.email && (
+                        <a
+                          href={`mailto:${lead.email}`}
+                          className="kanban-action-btn"
+                          title={`Email ${lead.company}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                            <polyline points="22,6 12,13 2,6" />
+                          </svg>
+                          Email
+                        </a>
+                      )}
+                      {lead.phone && (
+                        <a
+                          href={`tel:${lead.phone}`}
+                          className="kanban-action-btn"
+                          title={`Call ${lead.company}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.42 2 2 0 0 1 3.58 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.54a16 16 0 0 0 6 6l.92-.92a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.72 16v.92z" />
+                          </svg>
+                          Call
+                        </a>
+                      )}
+                      <button
+                        className="kanban-action-btn"
+                        title="Open lead detail"
+                        onClick={(e) => { e.stopPropagation(); setCurrentLeadId(lead.id); }}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="11" height="11">
+                          <path d="M5 12h14M12 5l7 7-7 7" />
+                        </svg>
+                        Open
+                      </button>
                     </div>
                   </div>
                 );
