@@ -9129,6 +9129,86 @@ app.get('/analytics/market-opportunity', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Revenue Attribution — which lead source / category drives the most won revenue.
+// Feeds the Analytics view attribution card.
+app.get('/analytics/revenue-attribution', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const REV_MAP = `CASE category
+      WHEN 'fleet'        THEN 4500
+      WHEN 'dinoc'        THEN 6000
+      WHEN 'gc_referral'  THEN 18000
+      WHEN 'construction' THEN 5000
+      WHEN 'colorchange'  THEN 3500
+      WHEN 'racing'       THEN 40000
+      WHEN 'reatec'       THEN 5500
+      WHEN 'design'       THEN 3000
+      WHEN 'wallgraphics' THEN 2500
+      ELSE 2500 END`;
+
+    const [bySourceR, byCatR, velocityR] = await Promise.all([
+      // Won revenue by lead source
+      pool.query(`
+        SELECT
+          COALESCE(source, 'manual') AS source,
+          COUNT(*)::INT AS won_count,
+          SUM(${REV_MAP})::INT AS estimated_revenue,
+          ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_close_days
+        FROM leads
+        WHERE user_id = $1 AND status = 'won'
+        GROUP BY COALESCE(source, 'manual')
+        ORDER BY estimated_revenue DESC
+        LIMIT 10
+      `, [uid]),
+
+      // Won revenue by category with close rate
+      pool.query(`
+        SELECT
+          category,
+          COUNT(*)::INT AS total,
+          COUNT(*) FILTER (WHERE status = 'won')::INT AS won,
+          SUM(${REV_MAP}) FILTER (WHERE status = 'won')::INT AS estimated_revenue,
+          ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)
+            FILTER (WHERE status = 'won'))::INT AS avg_close_days
+        FROM leads
+        WHERE user_id = $1
+        GROUP BY category
+        ORDER BY estimated_revenue DESC NULLS LAST
+        LIMIT 10
+      `, [uid]),
+
+      // Time-to-close by category (only won, last 12 months)
+      pool.query(`
+        SELECT
+          category,
+          ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_days,
+          COUNT(*)::INT AS sample
+        FROM leads
+        WHERE user_id = $1 AND status = 'won'
+          AND updated_at >= NOW() - INTERVAL '12 months'
+        GROUP BY category
+        HAVING COUNT(*) >= 1
+        ORDER BY avg_days
+      `, [uid]),
+    ]);
+
+    const totalWonRevenue = bySourceR.rows.reduce((s, r) => s + (r.estimated_revenue || 0), 0);
+
+    res.json({
+      bySource: bySourceR.rows.map((r) => ({
+        ...r,
+        sharePct: totalWonRevenue > 0 ? Math.round((r.estimated_revenue / totalWonRevenue) * 100) : 0,
+      })),
+      byCategory: byCatR.rows.map((r) => ({
+        ...r,
+        closeRate: r.total > 0 ? Math.round((r.won / r.total) * 100) : 0,
+      })),
+      velocity: velocityR.rows,
+      totalWonRevenue,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {

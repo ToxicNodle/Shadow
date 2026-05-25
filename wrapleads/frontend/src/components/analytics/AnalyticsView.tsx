@@ -5,6 +5,129 @@ import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { CATEGORIES, STATUSES } from '../../api/types';
 
+function fmtRev(n: number) {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+  return `$${n.toLocaleString()}`;
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  fmcsa: 'FMCSA Database', apollo: 'Apollo Enrichment', sos: 'State SOS Registry',
+  google_places: 'Google Places', manual: 'Manual Entry', news_signal: 'News Signal',
+  inbound: 'Inbound', referral: 'Referral', auto_seed: 'Starter Leads',
+  seed: 'Starter Leads',
+};
+const CAT_COLORS: Record<string, string> = {
+  fleet: '#3b82f6', dinoc: '#8b5cf6', gc_referral: '#f59e0b',
+  construction: '#f97316', colorchange: '#ec4899', racing: '#ef4444',
+  reatec: '#06b6d4', design: '#84cc16', wallgraphics: '#a78bfa', other: '#6b7280',
+};
+
+function RevenueAttributionCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['revenue-attribution'],
+    queryFn: () => api.getRevenueAttribution(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading || !data) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Revenue Attribution</div>
+        <div style={{ display: 'flex', gap: 16 }}>
+          {[1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 80, flex: 1, borderRadius: 8 }} />)}
+        </div>
+      </div>
+    );
+  }
+
+  const { bySource, byCategory, velocity, totalWonRevenue } = data;
+  const maxSource = Math.max(...bySource.map((s) => s.estimated_revenue), 1);
+  const maxCat = Math.max(...byCategory.map((c) => c.estimated_revenue ?? 0), 1);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="an-card-title">Revenue Attribution</div>
+      {totalWonRevenue === 0 ? (
+        <div style={{ color: 'var(--text-faint)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
+          Win your first deal to see revenue attribution.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
+          {/* By Source */}
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
+              By Lead Source
+            </div>
+            {bySource.map((s) => (
+              <div key={s.source} style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                  <span style={{ color: 'var(--text)' }}>{SOURCE_LABELS[s.source] ?? s.source}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{fmtRev(s.estimated_revenue)} · {s.sharePct}%</span>
+                </div>
+                <div style={{ height: 5, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ height: '100%', width: `${(s.estimated_revenue / maxSource) * 100}%`, background: 'var(--accent)', borderRadius: 99, transition: 'width 0.4s' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* By Category with close rate */}
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
+              By Vertical (won revenue)
+            </div>
+            {byCategory.filter((c) => (c.estimated_revenue ?? 0) > 0).map((c) => (
+              <div key={c.category} style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                  <span style={{ color: CAT_COLORS[c.category] ?? 'var(--text)', fontWeight: 600 }}>{CATEGORIES[c.category as keyof typeof CATEGORIES] ?? c.category}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{fmtRev(c.estimated_revenue ?? 0)} · {c.closeRate}%</span>
+                </div>
+                <div style={{ height: 5, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ height: '100%', width: `${((c.estimated_revenue ?? 0) / maxCat) * 100}%`, background: CAT_COLORS[c.category] ?? 'var(--accent)', borderRadius: 99, transition: 'width 0.4s' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Time-to-close by category */}
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
+              Avg Days to Close
+            </div>
+            {velocity.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Not enough data yet.</div>
+            ) : (
+              velocity.map((v) => {
+                const fastest = velocity[0]?.avg_days ?? 1;
+                const pct = fastest > 0 ? Math.min(100, (v.avg_days / (velocity[velocity.length - 1]?.avg_days ?? v.avg_days)) * 100) : 50;
+                return (
+                  <div key={v.category} style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                      <span style={{ color: 'var(--text)' }}>{CATEGORIES[v.category as keyof typeof CATEGORIES] ?? v.category}</span>
+                      <span style={{ color: v.avg_days <= 21 ? '#10b981' : v.avg_days <= 45 ? '#f59e0b' : '#ef4444' }}>{v.avg_days}d</span>
+                    </div>
+                    <div style={{ height: 5, background: 'var(--border)', borderRadius: 99 }}>
+                      <div style={{
+                        height: '100%', width: `${pct}%`,
+                        background: v.avg_days <= 21 ? '#10b981' : v.avg_days <= 45 ? '#f59e0b' : '#ef4444',
+                        borderRadius: 99, transition: 'width 0.4s',
+                      }} />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div style={{ marginTop: 10, fontSize: 10, color: 'var(--text-faint)' }}>
+              Total won revenue: <strong style={{ color: '#10b981' }}>{fmtRev(totalWonRevenue)}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Activity Heatmap ──────────────────────────────────────────────────────────
 function ActivityHeatmap({ data }: { data: { day: string; count: number }[] }) {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
@@ -1939,6 +2062,9 @@ export default function AnalyticsView() {
 
         {/* ── Pipeline Health Score ── */}
         <PipelineHealthCard />
+
+        {/* ── Revenue Attribution ── */}
+        <RevenueAttributionCard />
 
         {/* ── Ideal Customer Profile ── */}
         <ICPCard />

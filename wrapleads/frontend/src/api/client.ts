@@ -744,6 +744,14 @@ export const api = {
       totalUntapped: number;
     }>('/analytics/market-opportunity'),
 
+  // Revenue Attribution
+  getRevenueAttribution: () => authFetch<{
+    bySource: Array<{ source: string; won_count: number; estimated_revenue: number; avg_close_days: number | null; sharePct: number }>;
+    byCategory: Array<{ category: string; total: number; won: number; estimated_revenue: number | null; avg_close_days: number | null; closeRate: number }>;
+    velocity: Array<{ category: string; avg_days: number; sample: number }>;
+    totalWonRevenue: number;
+  }>('/analytics/revenue-attribution'),
+
   // Duplicate detection
   checkDuplicate: (q: string) =>
     authFetch<{ matches: Array<{ id: number; company: string; status: string; city: string; state: string }> }>(`/leads/check-duplicate?q=${encodeURIComponent(q)}`),
