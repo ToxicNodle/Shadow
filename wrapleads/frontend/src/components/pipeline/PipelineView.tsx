@@ -6,6 +6,7 @@ import { useCountUp } from '../../hooks/useCountUp';
 import { useLeads } from '../../hooks/useLeads';
 import { winProbability, scoreLead, SCORE_COLORS, scoreLabel } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
+import InstallCapacityCard from './InstallCapacityCard';
 
 const STATUS_LABELS: Record<string, string> = {
   new: 'New', contacted: 'Contacted', replied: 'Replied',
@@ -1109,6 +1110,8 @@ export default function PipelineView() {
   const { total, byStatus, byCategory, overdue, projectedRevenue, sequenceStats, recentLeads } = data;
 
   const activeLeads = total - (byStatus.won ?? 0) - (byStatus.lost ?? 0) - (byStatus.cold ?? 0);
+  const closedCount = (byStatus.won ?? 0) + (byStatus.lost ?? 0);
+  const closeRate = closedCount > 0 ? (byStatus.won ?? 0) / closedCount : 0.24;
 
   const animTotal = useCountUp(total);
   const animActive = useCountUp(activeLeads);
@@ -1195,6 +1198,12 @@ export default function PipelineView() {
 
         {/* ── Quick Win Predictor ── */}
         <QuickWinPredictor onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
+
+        {/* ── Install Capacity Intelligence ── */}
+        <InstallCapacityCard
+          proposalCount={byStatus.proposal ?? 0}
+          closeRate={closeRate}
+        />
 
         {/* ── Revenue by category ── */}
         <section className="pv-card">

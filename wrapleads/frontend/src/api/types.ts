@@ -158,6 +158,10 @@ export interface Settings {
   motiveApiKey: string;
   accentColor: string;
   monthlyRevenueGoal: string;
+  avgInstallDays: string;
+  crewSize: string;
+  workingDaysMonth: string;
+  avgDealValue: string;
 }
 
 export interface CarrierSearchParams {
@@ -282,6 +286,10 @@ export const DEFAULT_SETTINGS: Settings = {
   motiveApiKey: '',
   accentColor: '',
   monthlyRevenueGoal: '',
+  avgInstallDays: '2',
+  crewSize: '2',
+  workingDaysMonth: '20',
+  avgDealValue: '3500',
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────

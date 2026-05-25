@@ -514,6 +514,16 @@ export const api = {
     lead: { id: number; clientId: string; company: string; status: string; category: string; fleetSize: string | null; email: string | null } | null;
   }> }>('/proposals/heat'),
 
+  // Perfect Timing — leads who opened emails recently
+  getPerfectTiming: (hours?: number) => authFetch<{
+    windowHours: number;
+    leads: Array<{
+      leadId: number; clientId: string; company: string; subject: string | null;
+      openCount: number; openedAt: string; hoursAgo: number;
+      status: string; category: string; email: string | null; phone: string | null;
+    }>;
+  }>(`/mission/perfect-timing${hours ? `?hours=${hours}` : ''}`),
+
   // Email Permutator — find candidate emails from name + domain
   findEmail: (leadId: number, opts?: { name?: string; domain?: string; probe?: boolean }) =>
     authFetch<{

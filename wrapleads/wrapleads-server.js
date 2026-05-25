@@ -7389,6 +7389,52 @@ app.get('/proposals/heat', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Perfect Timing — leads who opened emails in the last 2 hours.
+// Refreshed every 90s on the Mission dashboard.
+app.get('/mission/perfect-timing', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const windowHours = Math.min(24, Math.max(1, parseInt(req.query.hours) || 2));
+    const { rows } = await pool.query(`
+      SELECT
+        et.lead_id,
+        et.subject,
+        et.open_count,
+        et.opened_at,
+        EXTRACT(EPOCH FROM (NOW() - et.opened_at)) / 3600.0 AS hours_ago,
+        l.company,
+        l.client_id,
+        l.status,
+        l.category,
+        l.email,
+        l.phone
+      FROM email_tracking et
+      JOIN leads l ON l.id = et.lead_id AND l.user_id = et.user_id
+      WHERE et.user_id = $1
+        AND et.opened_at > NOW() - ($2 || ' hours')::interval
+        AND l.status NOT IN ('won', 'lost')
+      ORDER BY et.opened_at DESC
+      LIMIT 15
+    `, [uid, windowHours]);
+
+    const leads = rows.map((r) => ({
+      leadId: r.lead_id,
+      clientId: r.client_id,
+      company: r.company,
+      subject: r.subject,
+      openCount: parseInt(r.open_count, 10) || 1,
+      openedAt: r.opened_at,
+      hoursAgo: Math.round(parseFloat(r.hours_ago) * 10) / 10,
+      status: r.status,
+      category: r.category,
+      email: r.email,
+      phone: r.phone,
+    }));
+
+    res.json({ leads, windowHours });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Email Permutator — generate plausible emails from contact name + domain
 // and (optionally) verify via MX + SMTP RCPT.  Free alternative to Apollo
 // enrichment for the common case of "I know who and where, just need email".

@@ -114,7 +114,7 @@ interface NBA {
   icon: string;
   text: string;
   cta: string;
-  tab: Tab | null;
+  tab: string | null;
   color: string;
   urgency: 'high' | 'medium' | 'low';
 }
@@ -237,7 +237,7 @@ function computeNBA(lead: Lead): NBA | null {
   return null;
 }
 
-function NextActionBar({ lead, onTabChange }: { lead: Lead; onTabChange: (t: Tab) => void }) {
+function NextActionBar({ lead, onTabChange }: { lead: Lead; onTabChange: (t: string) => void }) {
   const todayKey = new Date().toISOString().slice(0, 10);
   const dismissKey = `wl_nba_dismissed_${lead.id}_${todayKey}`;
   const [dismissed, setDismissed] = useState(() => !!localStorage.getItem(dismissKey));
@@ -266,7 +266,7 @@ function NextActionBar({ lead, onTabChange }: { lead: Lead; onTabChange: (t: Tab
       <span style={{ fontSize: 12, color: 'var(--text)', flex: 1, lineHeight: 1.4 }}>{nba.text}</span>
       {nba.tab && (
         <button
-          onClick={() => onTabChange(nba.tab!)}
+          onClick={() => nba.tab && onTabChange(nba.tab)}
           style={{
             fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
             padding: '4px 10px', borderRadius: 6, border: `1px solid ${nba.color}50`,
@@ -400,7 +400,7 @@ function ScoreBreakdownModal({ lead, onClose }: { lead: Lead; onClose: () => voi
   );
 }
 
-type Tab = 'info' | 'email' | 'quotes' | 'activity' | 'notes' | 'design';
+type Tab = 'timeline' | 'email' | 'quotes' | 'notes' | 'design';
 
 function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
   const qc = useQueryClient();
@@ -497,22 +497,26 @@ export default function LeadDetail() {
     setMode: s.setMode,
     setPendingDiscoverSearch: s.setPendingDiscoverSearch,
   }));
-  const [activeTab, setActiveTab] = useState<Tab>('info');
+  const [activeTab, setActiveTab] = useState<Tab>('timeline');
   const [showScoreModal, setShowScoreModal] = useState(false);
 
   const lead = leads.find((l) => l.id === currentLeadId);
 
-  // Consume quickOpenTab when a lead opens (e.g. from Mission "Email Now" shortcut)
+  // Map legacy quickOpenTab values into the new tab set
   useEffect(() => {
     if (!lead || !quickOpenTab) return;
-    setActiveTab(quickOpenTab);
+    const mapping: Record<string, Tab> = {
+      email: 'email', quotes: 'quotes', notes: 'notes',
+      design: 'design', activity: 'timeline', info: 'timeline',
+    };
+    setActiveTab(mapping[quickOpenTab] ?? 'timeline');
     setQuickOpenTab(null);
   }, [lead?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!lead) return;
     const TAB_KEYS: Record<string, Tab> = {
-      i: 'info', e: 'email', q: 'quotes', a: 'activity', n: 'notes', d: 'design',
+      t: 'timeline', e: 'email', q: 'quotes', n: 'notes', d: 'design',
     };
     function onKey(ev: KeyboardEvent) {
       const tag = (ev.target as HTMLElement).tagName;
@@ -530,16 +534,26 @@ export default function LeadDetail() {
     return <div className="lead-detail-panel closed" />;
   }
 
+  // Map NBA tab targets to our new tab set
+  function handleNBATab(t: string) {
+    const mapping: Record<string, Tab> = {
+      email: 'email', quotes: 'quotes', notes: 'notes',
+      design: 'design', activity: 'timeline', info: 'timeline',
+    };
+    setActiveTab(mapping[t] ?? 'timeline');
+  }
+
+  const scoreColor = SCORE_COLORS[scoreLabel(scoreLead(lead))];
+
   return (
-    <aside className="lead-detail-panel" style={{ position: 'relative' }}>
+    <aside className="lead-detail-panel lead-detail-panel--wide" style={{ position: 'relative' }}>
+      {/* ── Slim header ── */}
       <div className="lead-detail-header">
-        <button className="lead-detail-close" onClick={() => setCurrentLeadId(null)} title="Close">
+        <button className="lead-detail-close" onClick={() => setCurrentLeadId(null)} title="Close (Esc)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
-
         <div className="lead-detail-company">{lead.company}</div>
         <div className="lead-detail-meta">
           <span className={`status-tag ${lead.status}`}>{STATUSES[lead.status]}</span>
@@ -547,16 +561,13 @@ export default function LeadDetail() {
           {lead.city && lead.state && (
             <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{lead.city}, {lead.state}</span>
           )}
-          {/* Clickable score chip — opens breakdown modal */}
           <button
             onClick={() => setShowScoreModal(true)}
             title="View score breakdown"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: '2px 8px', borderRadius: 99, border: 'none', cursor: 'pointer',
-              background: SCORE_COLORS[scoreLabel(scoreLead(lead))] + '22',
-              color: SCORE_COLORS[scoreLabel(scoreLead(lead))],
-              fontSize: 11, fontWeight: 700,
+              background: scoreColor + '22', color: scoreColor, fontSize: 11, fontWeight: 700,
             }}
           >
             {scoreLead(lead)} pts
@@ -574,17 +585,12 @@ export default function LeadDetail() {
                 design: 'design_general', wallgraphics: 'design_general',
               };
               const fleet = parseInt(lead.fleetSize ?? '') || 0;
-              const minFleet = fleet > 0 ? Math.max(1, Math.floor(fleet * 0.5)) : null;
-              const maxFleet = fleet > 0 ? Math.ceil(fleet * 2) : null;
-              const industry = CAT_TO_INDUSTRY[lead.category];
               setPendingDiscoverSearch({
                 states: lead.state ? [lead.state] : null,
-                industries: industry ? [industry] : null,
-                minFleet,
-                maxFleet,
-                sort: 'wrap_score',
-                limit: 25,
-                offset: 0,
+                industries: CAT_TO_INDUSTRY[lead.category] ? [CAT_TO_INDUSTRY[lead.category]] : null,
+                minFleet: fleet > 0 ? Math.max(1, Math.floor(fleet * 0.5)) : null,
+                maxFleet: fleet > 0 ? Math.ceil(fleet * 2) : null,
+                sort: 'wrap_score', limit: 25, offset: 0,
               });
               setMode('discover');
             }}
@@ -596,30 +602,46 @@ export default function LeadDetail() {
           </button>
         </div>
       </div>
+
       <DealMetricsStrip lead={lead} />
-      <NextActionBar lead={lead} onTabChange={setActiveTab} />
+      <NextActionBar lead={lead} onTabChange={handleNBATab} />
       <AIWhisper lead={lead} />
       {showScoreModal && <ScoreBreakdownModal lead={lead} onClose={() => setShowScoreModal(false)} />}
 
-      <div className="lead-detail-tabs">
-        {(['info', 'email', 'quotes', 'activity', 'notes', 'design'] as Tab[]).map((t) => (
-          <button
-            key={t}
-            className={`detail-tab ${activeTab === t ? 'active' : ''}`}
-            onClick={() => setActiveTab(t)}
-          >
-            {t === 'design' ? 'Design Studio' : t.charAt(0).toUpperCase() + t.slice(1)}
-          </button>
-        ))}
-      </div>
+      {/* ── Two-pane body ── */}
+      <div className="lead-detail-two-pane">
+        {/* Left — editable contact/info + AI tools */}
+        <div className="ld-left">
+          <InfoTab lead={lead} />
+        </div>
 
-      <div className="lead-detail-content" key={lead.id}>
-        {activeTab === 'info'     && <InfoTab lead={lead} />}
-        {activeTab === 'email'    && <EmailTab lead={lead} />}
-        {activeTab === 'quotes'   && <QuotesTab lead={lead} />}
-        {activeTab === 'activity' && <ActivityTab lead={lead} />}
-        {activeTab === 'notes'    && <NotesTab lead={lead} />}
-        {activeTab === 'design'   && <DesignStudioTab lead={lead} />}
+        {/* Right — activity timeline + communication tabs */}
+        <div className="ld-right">
+          <div className="ld-right-tabs">
+            {([
+              { id: 'timeline', label: 'Timeline' },
+              { id: 'email',    label: 'Email' },
+              { id: 'quotes',   label: 'Quotes' },
+              { id: 'notes',    label: 'Notes' },
+              { id: 'design',   label: 'Design' },
+            ] as { id: Tab; label: string }[]).map(({ id, label }) => (
+              <button
+                key={id}
+                className={`ld-tab ${activeTab === id ? 'active' : ''}`}
+                onClick={() => setActiveTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="ld-right-content" key={lead.id}>
+            {activeTab === 'timeline' && <ActivityTab lead={lead} />}
+            {activeTab === 'email'    && <EmailTab lead={lead} />}
+            {activeTab === 'quotes'   && <QuotesTab lead={lead} />}
+            {activeTab === 'notes'    && <NotesTab lead={lead} />}
+            {activeTab === 'design'   && <DesignStudioTab lead={lead} />}
+          </div>
+        </div>
       </div>
     </aside>
   );

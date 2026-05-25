@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useLeads } from '../../hooks/useLeads';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
 import HotProposalsCard from './HotProposalsCard';
+import PerfectTimingCard from './PerfectTimingCard';
 import StreakBadge from './StreakBadge';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
@@ -1822,6 +1823,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Perfect Timing — email opens in the last 2 hours ── */}
+      <PerfectTimingCard />
 
       {/* ── Proposal Heat — surfaces prospects actively viewing your work ── */}
       <HotProposalsCard />
