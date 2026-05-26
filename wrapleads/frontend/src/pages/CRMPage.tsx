@@ -34,6 +34,7 @@ import MissionView from '../components/mission/MissionView';
 import JobsView from '../components/jobs/JobsView';
 import ContentView from '../components/content/ContentView';
 import AnalyticsView from '../components/analytics/AnalyticsView';
+import GovOpportunitiesView from '../components/gov/GovOpportunitiesView';
 import CSVImportModal from '../components/modals/CSVImportModal';
 import ShopVoxImportModal from '../components/modals/ShopVoxImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
@@ -189,6 +190,8 @@ export default function CRMPage() {
             ? <ContentView />
             : mode === 'analytics'
             ? <AnalyticsView />
+            : mode === 'gov'
+            ? <GovOpportunitiesView />
             : <DiscoverPage />}
         </main>
         {mode === 'leads' && <LeadDetail />}

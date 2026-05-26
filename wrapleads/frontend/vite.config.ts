@@ -44,6 +44,11 @@ export default defineConfig({
       '/admin':         API,
       '/demo':          API,
       '/migrate':       API,
+      '/for':           API,
+      '/compare':       API,
+      '/calculator':    API,
+      '/stats.json':    API,
+      '/opportunities': API,
     },
   },
 });

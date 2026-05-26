@@ -112,6 +112,19 @@ export const api = {
     });
   },
 
+  // SAM.gov government opportunities
+  listOpportunities: (params: { state?: string; keyword?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.state) qs.set('state', params.state);
+    if (params.keyword) qs.set('keyword', params.keyword);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return authFetch<{ source: string; opportunities: Array<{ id: string; title: string; agency: string; state: string | null; value: number | null; deadline: string; naics: string; url: string; description?: string }>; message?: string }>('/opportunities?' + qs.toString());
+  },
+  importOpportunity: (id: string, opp: { title: string; agency: string; state?: string | null; value?: number | null; naics?: string; url?: string }) =>
+    authFetch<{ ok: boolean; lead: { id: number } }>(`/opportunities/${id}/import`, {
+      method: 'POST', body: JSON.stringify(opp),
+    }),
+
   importShopVoxCSV: (file: File) => {
     const token = getToken();
     const form = new FormData();

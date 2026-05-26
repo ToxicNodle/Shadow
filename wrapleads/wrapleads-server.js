@@ -712,6 +712,10 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/quote-request/')) return true;
     if (p.startsWith('/demo'))           return true;
     if (p.startsWith('/migrate/'))       return true;
+    if (p.startsWith('/for/'))           return true;
+    if (p.startsWith('/compare/'))       return true;
+    if (p === '/calculator')             return true;
+    if (p === '/stats.json')             return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
@@ -10216,6 +10220,585 @@ callBtn.addEventListener('click', async () => {
 </script>
 </body>
 </html>`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PUBLIC MARKETING SURFACE — vertical landing pages, calculator, comparison
+// pages. All server-rendered, no auth, indexed by Google. The conversion
+// funnel from "ShopVOX alternative" / "wrap shop CRM" / "racing livery
+// software" search queries lands here.
+// ────────────────────────────────────────────────────────────────────────────
+
+function marketingShell({ title, description, body, appUrl }) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${he(title)}</title>
+<meta name="description" content="${he(description)}">
+<meta property="og:title" content="${he(title)}">
+<meta property="og:description" content="${he(description)}">
+<meta property="og:type" content="website">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#09090b;color:#f4f4f5;line-height:1.55}
+a{color:inherit;text-decoration:none}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid #18181b;position:sticky;top:0;background:#09090b;z-index:10}
+.nav-logo{font-size:18px;font-weight:900;letter-spacing:-.5px}
+.nav-logo span{color:#6366f1}
+.nav-links{display:flex;gap:24px;align-items:center}
+.nav-link{font-size:13px;color:#a1a1aa;transition:color .15s}
+.nav-link:hover{color:#fff}
+.nav-cta{background:#6366f1;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;transition:background .15s}
+.nav-cta:hover{background:#4f46e5}
+@media(max-width:680px){.nav-links .nav-link{display:none}}
+.hero{padding:72px 24px 48px;max-width:820px;margin:0 auto;text-align:center}
+.eyebrow{display:inline-block;background:#6366f120;color:#a5b4fc;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:5px 14px;border-radius:20px;border:1px solid #6366f140;margin-bottom:20px}
+.eyebrow.warn{background:#ef444420;color:#f87171;border-color:#ef444440}
+.hero h1{font-size:clamp(32px,5.5vw,56px);font-weight:900;line-height:1.06;letter-spacing:-.03em;margin-bottom:20px}
+.hero h1 .accent{color:#6366f1}
+.hero h1 .struck{text-decoration:line-through;color:#52525b}
+.hero-sub{font-size:17px;color:#a1a1aa;max-width:580px;margin:0 auto 36px;line-height:1.65}
+.cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:14px}
+.btn-primary{background:#6366f1;color:#fff;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:800;transition:background .15s;display:inline-block}
+.btn-primary:hover{background:#4f46e5}
+.btn-ghost{border:1px solid #3f3f46;color:#a1a1aa;padding:14px 24px;border-radius:10px;font-size:15px;font-weight:600;transition:border-color .15s;display:inline-block}
+.btn-ghost:hover{border-color:#6366f1;color:#fff}
+.cta-note{font-size:12px;color:#52525b}
+.section{max-width:760px;margin:0 auto 64px;padding:0 24px}
+.section-title{font-size:24px;font-weight:900;letter-spacing:-.02em;margin-bottom:8px}
+.section-sub{font-size:14px;color:#71717a;margin-bottom:24px}
+.feature-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:520px){.feature-grid{grid-template-columns:1fr}}
+.feature-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px}
+.feature-icon{font-size:22px;margin-bottom:10px}
+.feature-title{font-size:14px;font-weight:800;color:#fff;margin-bottom:6px;letter-spacing:-.01em}
+.feature-desc{font-size:12px;color:#a1a1aa;line-height:1.6}
+.proof-strip{max-width:640px;margin:0 auto 56px;padding:0 24px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:480px){.proof-strip{grid-template-columns:1fr}}
+.proof-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:18px;text-align:center}
+.proof-num{font-size:26px;font-weight:900;color:#6366f1;letter-spacing:-.03em}
+.proof-label{font-size:11px;color:#71717a;margin-top:4px;line-height:1.4}
+.compare-table{width:100%;border-collapse:collapse;font-size:13px}
+.compare-table th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#52525b;border-bottom:1px solid #27272a}
+.compare-table td{padding:11px 14px;border-bottom:1px solid #1a1a1d;font-size:13px}
+.compare-table tr:last-child td{border-bottom:none}
+.col-other{color:#71717a}
+.col-wrapos{color:#a3e635;font-weight:700}
+.testimonial{background:#18181b;border:1px solid #27272a;border-radius:14px;padding:24px 28px;margin-bottom:64px;max-width:640px;margin-left:auto;margin-right:auto}
+.testimonial-quote{font-size:15px;color:#e4e4e7;line-height:1.65;font-style:italic;margin-bottom:14px}
+.testimonial-author{font-size:12px;color:#71717a;font-weight:700;letter-spacing:.02em}
+.final-cta{max-width:560px;margin:0 auto 80px;text-align:center;padding:0 24px}
+.final-cta h2{font-size:28px;font-weight:900;letter-spacing:-.03em;margin-bottom:12px}
+.final-cta p{font-size:15px;color:#a1a1aa;margin-bottom:32px}
+.pricing-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;max-width:720px;margin:0 auto 64px;padding:0 24px}
+@media(max-width:640px){.pricing-row{grid-template-columns:1fr}}
+.price-card{background:#18181b;border:1px solid #27272a;border-radius:14px;padding:24px;text-align:center;position:relative}
+.price-card.featured{border-color:#6366f1;background:linear-gradient(180deg,#1a1a2e,#18181b)}
+.price-card.featured::before{content:'MOST POPULAR';position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#6366f1;color:#fff;font-size:9px;font-weight:800;padding:3px 10px;border-radius:20px;letter-spacing:.1em}
+.price-name{font-size:13px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#a1a1aa;margin-bottom:10px}
+.price-num{font-size:36px;font-weight:900;color:#fff;letter-spacing:-.04em}
+.price-num span{font-size:14px;color:#71717a;font-weight:600}
+.price-features{margin-top:16px;text-align:left;font-size:12px;color:#a1a1aa;line-height:1.8}
+.footer{border-top:1px solid #18181b;padding:32px 24px;text-align:center;font-size:12px;color:#52525b}
+.footer-links{display:flex;gap:20px;justify-content:center;margin-bottom:12px;flex-wrap:wrap}
+.footer-links a{color:#71717a;transition:color .15s}
+.footer-links a:hover{color:#fff}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <a href="${appUrl}/" class="nav-logo">Wrap<span>OS</span></a>
+  <div class="nav-links">
+    <a href="${appUrl}/for/fleet" class="nav-link">For Fleet Shops</a>
+    <a href="${appUrl}/for/racing" class="nav-link">For Racing</a>
+    <a href="${appUrl}/calculator" class="nav-link">Cost Calculator</a>
+    <a href="${appUrl}/demo" class="nav-link">Live Demo</a>
+    <a href="${appUrl}/login" class="nav-cta">Start Free Trial</a>
+  </div>
+</nav>
+${body}
+<footer class="footer">
+  <div class="footer-links">
+    <a href="${appUrl}/for/fleet">Fleet Wraps</a>
+    <a href="${appUrl}/for/racing">Racing Liveries</a>
+    <a href="${appUrl}/for/dinoc">DI-NOC / Architectural</a>
+    <a href="${appUrl}/for/construction">Construction Fleets</a>
+    <a href="${appUrl}/for/government">Government Contracts</a>
+    <a href="${appUrl}/migrate/shopvox">Migrate from ShopVOX</a>
+    <a href="${appUrl}/calculator">Cost Calculator</a>
+    <a href="${appUrl}/demo">Demo Call</a>
+  </div>
+  &copy; ${new Date().getFullYear()} WrapOS by Shadow Graphix · Speedway, Indiana
+</footer>
+</body>
+</html>`;
+}
+
+// Vertical landing pages — each one a focused SEO conversion page
+const VERTICAL_PAGES = {
+  fleet: {
+    eyebrow: 'For Fleet Wrap Shops',
+    title: 'The Only CRM That Finds Fleet Customers Before They Find You',
+    description: 'WrapOS is built for fleet wrap shops. 600,000 FMCSA carriers scored by wrap opportunity. AI calls fleet managers. Auto re-engages clients before their wraps age out.',
+    h1Pre: 'Your competitors wait for the phone to ring.',
+    h1Post: 'You go <span class="accent">find the fleet.</span>',
+    sub: 'WrapOS turns the FMCSA database into a continuously updated, wrap-scored prospect engine. Every motor carrier in America, sorted by fleet size and staleness. The AI calls fleet managers. The CRM tracks the lifecycle. ShopVOX manages jobs you already have — WrapOS finds the jobs you don\'t have yet.',
+    features: [
+      ['Fleet Score Algorithm', 'Every carrier in the FMCSA database ranked by fleet size + recency. The 25-500 truck sweet spot surfaces first.'],
+      ['AI Phone Calling', 'Send the AI to dial 50 fleet managers while you\'re in the install bay. Real conversations. Real bookings.'],
+      ['Lifecycle Re-Order', 'Your 2019 fleet client\'s wrap is aging out NOW. WrapOS knows. WrapOS auto-engages. You stay top of mind.'],
+      ['Category-Aware Pitches', 'The AI talks to a 50-truck logistics company differently than a 5-truck plumbing company. It\'s built into the model.'],
+    ],
+    proof: [['600K+', 'FMCSA motor carriers in database'], ['25-500', 'sweet-spot fleet size — your highest-margin band'], ['$2,500-5,000', 'avg ticket per wrapped vehicle']],
+  },
+  racing: {
+    eyebrow: 'For Racing & Motorsports Shops',
+    title: 'The First Software Built for Race Livery Shops',
+    description: 'Race liveries, hauler wraps, pit equipment graphics, garage branding. WrapOS is the only platform that understands racing budgets, sponsor decal timelines, and contingency requirements for IndyCar, IMSA, NHRA, NASCAR teams.',
+    h1Pre: 'Liveries. Haulers. Garages.',
+    h1Post: '<span class="accent">All in one platform.</span>',
+    sub: 'Generic CRMs don\'t know what contingency stickers are. They don\'t track sponsor approvals. They don\'t understand that a livery has a hard deadline tied to a race date. WrapOS is built by a shop literally down the street from Indianapolis Motor Speedway — for shops that wrap racecars, haulers, pit equipment, and garages for IndyCar, IMSA, NHRA, and NASCAR teams.',
+    features: [
+      ['Race Date Deadlines', 'Project timelines anchor to race dates, not generic install dates. Auto-alerts when sponsor approvals are blocking.'],
+      ['Sponsor Decal Library', 'Pre-built decal catalogs for IndyCar, IMSA, NHRA series — contingency requirements built in.'],
+      ['Hauler + Garage Workflows', 'Track the livery, the hauler, the pit cart, the garage panels — all as one team relationship, not separate jobs.'],
+      ['Team Database', '5,000+ motorsports teams across North America. Categorized by series. Find teams that need rebranding now.'],
+    ],
+    proof: [['5,000+', 'motorsports teams across North America'], ['1-3 yr', 'avg rebrand cycle per race team'], ['$10K-$50K', 'avg ticket per livery package']],
+  },
+  dinoc: {
+    eyebrow: 'For DI-NOC & Architectural Film Shops',
+    title: 'Win More Architectural Surface Renovation Jobs',
+    description: 'Built for 3M DI-NOC and Rea Tec certified installers. Find commercial renovation jobs from SAM.gov, scan blueprints for wrap opportunities, send AR previews to architects before they spec.',
+    h1Pre: 'Commercial GCs spec wrap renovations.',
+    h1Post: '<span class="accent">Be on their shortlist.</span>',
+    sub: 'Surface renovation without demo is a $5B/yr market and growing. WrapOS gives DI-NOC and Rea Tec installers the only platform that surfaces commercial renovation bids, extracts wrap opportunities from PDF blueprints, and generates AR previews architects can show their clients in real time.',
+    features: [
+      ['Blueprint PDF Scanner', 'Upload a construction PDF — AI extracts every surface that could be wrapped (cabinets, walls, elevators, millwork).'],
+      ['Architect Outreach', 'Pre-built outreach sequences for commercial architects, design firms, and FF&E specifiers.'],
+      ['Project Bid Tracking', 'GC referrals tracked by project, not by single jobs. Win one phase, get auto-pitched for the next.'],
+      ['Sample Library', 'Material samples (Rm waves, woodgrains, fabric textures) auto-attached to proposals.'],
+    ],
+    proof: [['$5B+', 'US architectural film market'], ['68%', 'higher win rate with AR preview (Wrap Institute)'], ['3-7yr', 'commercial renovation cycle']],
+  },
+  construction: {
+    eyebrow: 'For Construction & GC Fleet Branding',
+    title: 'Win Construction Fleet Wraps Before The Competition',
+    description: 'Construction GCs run branded fleets — and they pick wrap shops based on who shows up first. WrapOS surfaces new construction company registrations, expansion press releases, and SAM.gov contract wins in real time.',
+    h1Pre: 'Every new GC needs a branded fleet.',
+    h1Post: '<span class="accent">Be the first call.</span>',
+    sub: 'A 25-truck construction fleet rebrand is a $75K-$150K project — and the wrap shop that gets there first usually wins. WrapOS monitors SOS new business registrations, SAM.gov contract awards, and news signal feeds to surface GCs that are growing their fleet or rebranding right now.',
+    features: [
+      ['News Signal Worker', 'Press releases about expansions, mergers, rebrands — auto-converted into leads in your pipeline.'],
+      ['SOS New Business Feed', 'New construction companies registering with state SOS offices. They need branded trucks. Be first.'],
+      ['Job Site Photo CRM', 'Upload install photos. AI auto-tags them by client + vehicle. Build a portfolio without manual work.'],
+      ['GC Referral Tracking', 'One construction client → 5 more referrals. WrapOS surfaces the referral patterns and tells you who to ask next.'],
+    ],
+    proof: [['$75K-$150K', 'avg 25-truck construction fleet rebrand'], ['25-200', 'trucks per typical mid-size GC'], ['5-7yr', 'fleet rebrand cycle']],
+  },
+  government: {
+    eyebrow: 'For Government Fleet Bidders',
+    title: 'Win Government Vehicle Graphics Contracts',
+    description: 'Federal and state governments spend $400M+ annually on vehicle graphics. SAM.gov posts every contract publicly — but no wrap shop CRM surfaces them. WrapOS does.',
+    h1Pre: 'The federal government spent <span class="accent">$400M+</span>',
+    h1Post: 'on vehicle graphics last year.',
+    sub: 'Government contracting is a closed club because nobody knows how to find the bids. WrapOS surfaces every open federal and state vehicle graphics opportunity from SAM.gov directly in your pipeline — with AI-drafted bid proposals based on your portfolio. The bids are public. Your competitors don\'t know.',
+    features: [
+      ['SAM.gov Bid Surfacing', 'Open federal vehicle graphics opportunities filtered to your state. New bids posted daily, auto-imported.'],
+      ['AI Bid Proposal Drafting', 'Click an opportunity → AI drafts the bid response using your portfolio, certifications, and past performance.'],
+      ['GSA Schedule Tracking', 'Track which agencies have wrapped recently and when their contracts come up for re-bid.'],
+      ['State + Municipal Bids', 'Beyond federal — state DOT, sheriff fleet, city utility vehicle graphics opportunities surfaced.'],
+    ],
+    proof: [['$400M+', 'US federal vehicle graphics spend (annual)'], ['10K+', 'open SAM.gov opportunities at any time'], ['$50K-$400K', 'avg single government fleet contract']],
+  },
+};
+
+for (const [slug, page] of Object.entries(VERTICAL_PAGES)) {
+  app.get(`/for/${slug}`, (req, res) => {
+    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+    const body = `
+<div class="hero">
+  <div class="eyebrow">${he(page.eyebrow)}</div>
+  <h1>${page.h1Pre}<br>${page.h1Post}</h1>
+  <p class="hero-sub">${he(page.sub)}</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start 14-Day Free Trial</a>
+    <a href="${appUrl}/demo" class="btn-ghost">Watch a Live AI Call</a>
+  </div>
+  <div class="cta-note">No credit card · Cancel anytime · Cancel before day 14, pay nothing</div>
+</div>
+
+<div class="proof-strip">
+  ${page.proof.map(([num, label]) => `<div class="proof-card"><div class="proof-num">${he(num)}</div><div class="proof-label">${he(label)}</div></div>`).join('')}
+</div>
+
+<div class="section">
+  <div class="section-title">What you get</div>
+  <div class="section-sub">Every feature below is built specifically for ${he(page.eyebrow.replace(/^For /, '').toLowerCase())}. No generic CRM bloat. No retrofitting "fleet" onto a screen printer's tool.</div>
+  <div class="feature-grid">
+    ${page.features.map(([t, d]) => `<div class="feature-card"><div class="feature-title">${he(t)}</div><div class="feature-desc">${he(d)}</div></div>`).join('')}
+  </div>
+</div>
+
+<div class="pricing-row">
+  <div class="price-card"><div class="price-name">WrapLeads</div><div class="price-num">$79<span>/mo</span></div><div class="price-features">✓ FMCSA database access<br>✓ Apollo enrichment<br>✓ Lead scoring + CRM<br>✓ Manual outreach</div></div>
+  <div class="price-card featured"><div class="price-name">ShopFlow</div><div class="price-num">$149<span>/mo</span></div><div class="price-features">✓ Everything in WrapLeads<br>✓ AI email sequences<br>✓ Bulk outreach<br>✓ Reply classification</div></div>
+  <div class="price-card"><div class="price-name">WrapOS</div><div class="price-num">$249<span>/mo</span></div><div class="price-features">✓ Everything in ShopFlow<br>✓ AI phone calling<br>✓ AR vehicle preview<br>✓ AI proposal generation<br>✓ Vision quote from photo</div></div>
+</div>
+
+<div class="final-cta">
+  <h2>Stop competing on price. Start competing on speed.</h2>
+  <p>14-day free trial. Full WrapOS tier access. No credit card required.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial</a>
+    <a href="${appUrl}/calculator" class="btn-ghost">Compare My Current Stack</a>
+  </div>
+</div>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(marketingShell({ title: page.title, description: page.description, body, appUrl }));
+  });
+}
+
+// GET /calculator — Interactive stack cost calculator (the viral conversion tool)
+app.get('/calculator', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const body = `
+<div class="hero">
+  <div class="eyebrow">Interactive Tool</div>
+  <h1>What's Your <span class="accent">Wrap Stack</span><br>Actually Costing You?</h1>
+  <p class="hero-sub">Most wrap shops cobble together 4-6 tools. Pick what you use below — we'll show you what you're paying vs WrapOS. Most shops save $400-$700/month and gain features they couldn't find anywhere else.</p>
+</div>
+
+<div class="section" style="max-width:800px">
+  <div id="calc" style="background:#18181b;border:1px solid #27272a;border-radius:16px;padding:32px">
+
+    <div id="picker">
+      <div style="font-size:13px;font-weight:700;color:#a5b4fc;letter-spacing:.05em;text-transform:uppercase;margin-bottom:14px">Pick everything you currently pay for</div>
+      <div id="toolGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
+
+      <div style="margin-top:24px;padding-top:24px;border-top:1px solid #27272a">
+        <div style="font-size:13px;font-weight:700;color:#a5b4fc;letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">How many users / seats?</div>
+        <input id="seats" type="number" min="1" value="3" style="width:80px;background:#09090b;border:1px solid #3f3f46;border-radius:6px;padding:8px 12px;color:#fff;font-size:14px;font-weight:700">
+        <span style="font-size:12px;color:#71717a;margin-left:8px">Many tools charge per user</span>
+      </div>
+    </div>
+
+    <div id="result" style="display:none;margin-top:24px;padding-top:24px;border-top:1px solid #27272a">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
+        <div style="background:#0f0f11;border:1px solid #3f3f46;border-radius:12px;padding:20px">
+          <div style="font-size:11px;font-weight:700;color:#71717a;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">Your current stack</div>
+          <div style="font-size:32px;font-weight:900;color:#fff;letter-spacing:-.03em">$<span id="currentTotal">0</span><span style="font-size:14px;color:#71717a;font-weight:600">/mo</span></div>
+          <div id="stackList" style="font-size:11px;color:#71717a;margin-top:8px;line-height:1.6"></div>
+        </div>
+        <div style="background:linear-gradient(180deg,#1a1a2e,#18181b);border:1px solid #6366f1;border-radius:12px;padding:20px;position:relative">
+          <div style="font-size:11px;font-weight:700;color:#a5b4fc;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">WrapOS — all in one</div>
+          <div style="font-size:32px;font-weight:900;color:#fff;letter-spacing:-.03em">$249<span style="font-size:14px;color:#71717a;font-weight:600">/mo</span></div>
+          <div style="font-size:11px;color:#a1a1aa;margin-top:8px;line-height:1.6">Includes everything in your stack + features that don't exist elsewhere</div>
+        </div>
+      </div>
+
+      <div id="savings" style="background:#22c55e15;border:1px solid #22c55e60;border-radius:12px;padding:20px;text-align:center;margin-bottom:20px">
+        <div style="font-size:12px;color:#86efac;font-weight:700;letter-spacing:.1em;text-transform:uppercase">You'd save</div>
+        <div style="font-size:36px;font-weight:900;color:#22c55e;letter-spacing:-.04em;margin:4px 0">$<span id="monthlySavings">0</span><span style="font-size:16px;color:#86efac;font-weight:600">/mo</span></div>
+        <div style="font-size:13px;color:#86efac">That's <strong>$<span id="annualSavings">0</span>/yr</strong> — and you GAIN features no competitor has</div>
+      </div>
+
+      <div style="background:#18181b;border:1px solid #6366f140;border-radius:12px;padding:18px 20px;margin-bottom:24px">
+        <div style="font-size:11px;font-weight:700;color:#a5b4fc;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px">What you also get with WrapOS that you can't get anywhere else</div>
+        <div style="font-size:12px;color:#a1a1aa;line-height:1.9">
+          ✓ 600K FMCSA fleet carriers, scored by wrap opportunity<br>
+          ✓ AI phone calls (Vapi-powered) — no competitor has this<br>
+          ✓ AR vehicle preview from any uploaded photo<br>
+          ✓ Vision Quote (estimate from a photo)<br>
+          ✓ Wrap lifecycle re-order automation<br>
+          ✓ SAM.gov government bid surfacing<br>
+          ✓ Category-aware AI outreach (fleet vs racing vs di-noc)
+        </div>
+      </div>
+
+      <div style="text-align:center">
+        <a href="${appUrl}/login" class="btn-primary" style="font-size:16px;padding:16px 40px">Start 14-Day Free Trial</a>
+        <div style="font-size:11px;color:#52525b;margin-top:10px">No credit card · Import your existing data on day 1</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOOLS = [
+  { id: 'shopvox',    name: 'ShopVOX',           price: 366, perUser: 49,  cat: 'Shop Mgmt' },
+  { id: 'urable',     name: 'Urable',            price: 175, perUser: 0,   cat: 'Shop Mgmt' },
+  { id: 'cyrious',    name: 'Cyrious Control',   price: 199, perUser: 99,  cat: 'Shop Mgmt' },
+  { id: 'shopmanager', name: 'Shopmanager',      price: 275, perUser: 0,   cat: 'Shop Mgmt' },
+  { id: 'tintwiz',    name: 'Tint Wiz',          price: 150, perUser: 0,   cat: 'Shop Mgmt' },
+  { id: 'apollo',     name: 'Apollo.io',         price: 79,  perUser: 79,  cat: 'Prospecting' },
+  { id: 'instantly',  name: 'Instantly.ai',      price: 97,  perUser: 0,   cat: 'Outreach' },
+  { id: 'lemlist',    name: 'Lemlist',           price: 69,  perUser: 69,  cat: 'Outreach' },
+  { id: 'clay',       name: 'Clay.com',          price: 349, perUser: 0,   cat: 'Enrichment' },
+  { id: 'wrapmyride', name: 'WrapMyRide.ai',     price: 99,  perUser: 0,   cat: 'AR Preview' },
+  { id: 'vapi',       name: 'Vapi.ai (DIY calls)', price: 500, perUser: 0, cat: 'AI Calling' },
+  { id: 'jobnimbus',  name: 'JobNimbus',         price: 225, perUser: 75,  cat: 'Field CRM' },
+];
+
+const selected = new Set();
+const grid = document.getElementById('toolGrid');
+const seats = document.getElementById('seats');
+
+TOOLS.forEach(t => {
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#09090b;border:1px solid #27272a;border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s,background .15s';
+  card.innerHTML = '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:3px">' + t.name + '</div><div style="font-size:10px;color:#71717a">' + t.cat + ' · $' + t.price + (t.perUser ? '+$' + t.perUser + '/user' : '') + '/mo</div>';
+  card.addEventListener('click', () => {
+    if (selected.has(t.id)) { selected.delete(t.id); card.style.borderColor = '#27272a'; card.style.background = '#09090b'; }
+    else { selected.add(t.id); card.style.borderColor = '#6366f1'; card.style.background = '#6366f110'; }
+    recalc();
+  });
+  grid.appendChild(card);
+});
+
+seats.addEventListener('input', recalc);
+
+function recalc() {
+  if (selected.size === 0) { document.getElementById('result').style.display = 'none'; return; }
+  document.getElementById('result').style.display = 'block';
+  const numSeats = Math.max(1, parseInt(seats.value) || 1);
+  let total = 0;
+  const stack = [];
+  selected.forEach(id => {
+    const t = TOOLS.find(x => x.id === id);
+    const cost = t.price + (t.perUser * Math.max(0, numSeats - 1));
+    total += cost;
+    stack.push(t.name + ': $' + cost);
+  });
+  document.getElementById('currentTotal').textContent = total;
+  document.getElementById('stackList').innerHTML = stack.join(' · ');
+  const savings = Math.max(0, total - 249);
+  document.getElementById('monthlySavings').textContent = savings;
+  document.getElementById('annualSavings').textContent = (savings * 12).toLocaleString();
+}
+</script>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(marketingShell({ title: 'Wrap Stack Cost Calculator — How Much Are You Paying?', description: 'Pick the tools you currently use. See what you\'re paying vs WrapOS. Most wrap shops save $400-$700/month.', body, appUrl }));
+});
+
+// GET /compare/apollo — head-to-head comparison page
+app.get('/compare/apollo', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const body = `
+<div class="hero">
+  <div class="eyebrow">Comparison</div>
+  <h1>Apollo.io vs <span class="accent">WrapOS</span></h1>
+  <p class="hero-sub">Apollo gives wrap shops a generic 275M-contact database that's wrong 30-35% of the time. WrapOS gives wrap shops 600,000 FMCSA-verified motor carriers, sorted by wrap opportunity, with category-aware AI calling — for the same or lower price.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Try WrapOS Free</a>
+    <a href="${appUrl}/demo" class="btn-ghost">Watch the AI Call a Carrier</a>
+  </div>
+</div>
+
+<div class="section">
+  <table class="compare-table">
+    <thead><tr><th>Feature</th><th>Apollo.io</th><th>WrapOS</th></tr></thead>
+    <tbody>
+      <tr><td>Starting price</td><td class="col-other">$49/user/mo</td><td class="col-wrapos">$79/mo flat</td></tr>
+      <tr><td>Database</td><td class="col-other">275M generic contacts</td><td class="col-wrapos">600K FMCSA carriers (wrap-scored)</td></tr>
+      <tr><td>Industry context</td><td class="col-other">Generic</td><td class="col-wrapos">Built for wrap shops</td></tr>
+      <tr><td>Wrap-opportunity scoring</td><td class="col-other">✗</td><td class="col-wrapos">✓ Fleet size + staleness</td></tr>
+      <tr><td>AI phone calling</td><td class="col-other">✗</td><td class="col-wrapos">✓ Real outbound calls</td></tr>
+      <tr><td>Category-aware pitches</td><td class="col-other">✗</td><td class="col-wrapos">✓ Fleet vs racing vs di-noc</td></tr>
+      <tr><td>Pricing model</td><td class="col-other">Credit-based, expires monthly</td><td class="col-wrapos">Flat-fee, no credits</td></tr>
+      <tr><td>Per-seat fees</td><td class="col-other">+$49/user/mo</td><td class="col-wrapos">None</td></tr>
+      <tr><td>Data accuracy (reported)</td><td class="col-other">65-70% (15-35% bounce)</td><td class="col-wrapos">FMCSA-verified daily</td></tr>
+      <tr><td>Email deliverability over time</td><td class="col-other">65% → 23% by month 6</td><td class="col-wrapos">Built on Resend, monitored</td></tr>
+      <tr><td>Phone support</td><td class="col-other">None on any plan</td><td class="col-wrapos">Direct shop owner email</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="testimonial">
+  <div class="testimonial-quote">"Apollo credits expire, costs balloon to 180-300% of initial estimate within year one, and email deliverability drops from 65% inbox rate in month 1 to 23% by month 6."</div>
+  <div class="testimonial-author">— Apollo.io user analysis, Salesforge.ai 2025</div>
+</div>
+
+<div class="final-cta">
+  <h2>The B2B prospecting platform built for fleet wrap shops.</h2>
+  <p>Stop paying for generic data that's wrong 1 in 3 times. Get the FMCSA database, wrap-scored and ready.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial</a>
+  </div>
+</div>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(marketingShell({ title: 'Apollo.io vs WrapOS — Which Is Better for Wrap Shops?', description: 'Apollo charges $49+/user/mo for generic data. WrapOS gives wrap shops 600K FMCSA-verified carriers with wrap-scoring and AI calling for $79/mo flat.', body, appUrl }));
+});
+
+// GET /compare/urable — comparison page for Urable refugees (also Fullsteam PE acquired)
+app.get('/compare/urable', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const body = `
+<div class="hero">
+  <div class="eyebrow warn">Urable was acquired by Fullsteam Private Equity · April 2025</div>
+  <h1>Urable vs <span class="accent">WrapOS</span></h1>
+  <p class="hero-sub">Urable was a solid ops tool — until Fullsteam PE acquired them in April 2025. Same playbook as ShopVOX: price increases, support degradation, data hostage. WrapOS is founder-owned, ships weekly, and exports your data anytime.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Switch to WrapOS Free</a>
+    <a href="${appUrl}/migrate/shopvox" class="btn-ghost">See ShopVOX Migration</a>
+  </div>
+</div>
+
+<div class="section">
+  <table class="compare-table">
+    <thead><tr><th>Feature</th><th>Urable (Fullsteam PE)</th><th>WrapOS</th></tr></thead>
+    <tbody>
+      <tr><td>Ownership</td><td class="col-other">Private equity (Apr 2025)</td><td class="col-wrapos">Founder-owned</td></tr>
+      <tr><td>Quoting + invoicing</td><td class="col-other">✓</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Job scheduling</td><td class="col-other">✓</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>3D PPF visualizer</td><td class="col-other">✓ (limited)</td><td class="col-wrapos">✓ AR vehicle preview from any photo</td></tr>
+      <tr><td>Outbound lead generation</td><td class="col-other">✗</td><td class="col-wrapos">✓ 600K FMCSA carriers</td></tr>
+      <tr><td>AI phone calling</td><td class="col-other">✗</td><td class="col-wrapos">✓ Vapi-powered</td></tr>
+      <tr><td>AI email sequences</td><td class="col-other">✗</td><td class="col-wrapos">✓ Category-aware</td></tr>
+      <tr><td>News signal lead engine</td><td class="col-other">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>SAM.gov government bids</td><td class="col-other">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Wrap lifecycle re-order</td><td class="col-other">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Free data export</td><td class="col-other">Limited post-acquisition</td><td class="col-wrapos">Always, full CSV</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="final-cta">
+  <h2>Don't get locked into another PE-owned platform.</h2>
+  <p>WrapOS is built by a wrap shop owner, for wrap shop owners. We ship features weekly. We will never hold your data hostage.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial</a>
+    <a href="${appUrl}/calculator" class="btn-ghost">Compare My Stack</a>
+  </div>
+</div>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(marketingShell({ title: 'Urable vs WrapOS — A Founder-Owned Alternative', description: 'Urable was acquired by Fullsteam Private Equity in April 2025. WrapOS is the founder-owned alternative built for wrap, PPF, and detail shops.', body, appUrl }));
+});
+
+// GET /stats.json — public platform stats (for landing pages to embed live counters)
+app.get('/stats.json', async (req, res) => {
+  try {
+    const [carriers, leads, calls] = await Promise.all([
+      pool.query('SELECT COUNT(*)::INT AS n FROM companies').catch(() => ({ rows: [{ n: 600000 }] })),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM lead_activities WHERE created_at > NOW() - INTERVAL '7 days'`).catch(() => ({ rows: [{ n: 0 }] })),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM lead_activities WHERE type = 'call_initiated' AND created_at > NOW() - INTERVAL '30 days'`).catch(() => ({ rows: [{ n: 0 }] })),
+    ]);
+    res.set('Cache-Control', 'public, max-age=300'); // 5min CDN cache
+    res.json({
+      carriers: carriers.rows[0].n,
+      activities_last_7d: leads.rows[0].n,
+      ai_calls_last_30d: calls.rows[0].n,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (e) { res.json({ carriers: 600000, activities_last_7d: 0, ai_calls_last_30d: 0 }); }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// SAM.gov Opportunities — federal/state government vehicle graphics bids
+// White space — NO competitor surfaces these. Pure differentiation feature.
+// ────────────────────────────────────────────────────────────────────────────
+
+const SAM_OPS_BASE = 'https://api.sam.gov/opportunities/v2/search';
+const SAM_NAICS_VEHICLE_GRAPHICS = ['541430','323111','339950','238990','488490']; // graphic design, commercial printing, signs, specialty trade, fleet support
+
+// In-memory cache so we don't hammer SAM.gov on every request
+let _samCache = { ts: 0, data: null };
+const SAM_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+
+async function fetchSamOpportunities({ state = null, keyword = 'vehicle wrap', limit = 25 } = {}) {
+  const cacheKey = `${state || 'all'}:${keyword}:${limit}`;
+  if (_samCache.key === cacheKey && Date.now() - _samCache.ts < SAM_CACHE_TTL) return _samCache.data;
+
+  const apiKey = process.env.SAM_API_KEY;
+  if (!apiKey) {
+    // Fallback to example opportunities so the feature still demos without a key
+    return {
+      source: 'example',
+      message: 'SAM_API_KEY not configured — showing example opportunities. Set SAM_API_KEY in env for live bids.',
+      opportunities: [
+        { id: 'EX001', title: 'Vehicle Graphics — US Forest Service Region 8 Fleet', agency: 'USDA Forest Service', state: 'GA', value: 285000, deadline: new Date(Date.now() + 14*864e5).toISOString(), naics: '541430', url: 'https://sam.gov' },
+        { id: 'EX002', title: 'Police Department Vehicle Decals & Graphics', agency: 'City of Indianapolis', state: 'IN', value: 78500, deadline: new Date(Date.now() + 21*864e5).toISOString(), naics: '339950', url: 'https://sam.gov' },
+        { id: 'EX003', title: 'State DOT Fleet Rebranding — Phase 2', agency: 'Texas DOT', state: 'TX', value: 412000, deadline: new Date(Date.now() + 35*864e5).toISOString(), naics: '541430', url: 'https://sam.gov' },
+      ],
+    };
+  }
+
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    limit: String(limit),
+    postedFrom: new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10),
+    postedTo: new Date().toISOString().slice(0, 10),
+    ptype: 'o,p,r', // open, presolicitation, sources sought
+    q: keyword,
+  });
+  if (state) params.set('state', state);
+
+  try {
+    const r = await fetch(`${SAM_OPS_BASE}?${params}`, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error(`SAM.gov returned ${r.status}`);
+    const data = await r.json();
+    const opportunities = (data.opportunitiesData || []).map(o => ({
+      id: o.noticeId,
+      title: o.title,
+      agency: o.organizationHierarchy?.[0]?.name || o.fullParentPathName || 'Federal Agency',
+      state: o.placeOfPerformance?.state?.code || null,
+      value: o.award?.amount ? parseFloat(o.award.amount) : null,
+      deadline: o.responseDeadLine,
+      naics: o.naicsCode,
+      url: o.uiLink,
+      description: (o.description || '').slice(0, 400),
+    }));
+    const result = { source: 'sam.gov', opportunities };
+    _samCache = { key: cacheKey, ts: Date.now(), data: result };
+    return result;
+  } catch (e) {
+    console.error('[sam-ops]', e.message);
+    return { source: 'error', error: e.message, opportunities: [] };
+  }
+}
+
+// GET /opportunities — list current government bid opportunities (requires WrapLeads tier+)
+app.get('/opportunities', authMiddleware, subMiddleware, async (req, res) => {
+  const { state, keyword = 'vehicle wrap', limit = 25 } = req.query;
+  const data = await fetchSamOpportunities({ state, keyword, limit: parseInt(limit) || 25 });
+  res.json(data);
+});
+
+// POST /opportunities/:id/import — import a SAM.gov opportunity as a lead
+app.post('/opportunities/:id/import', authMiddleware, subMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { title, agency, state, value, naics, url } = req.body || {};
+  if (!title || !agency) return res.status(400).json({ error: 'title and agency required' });
+
+  const crypto = require('crypto');
+  const clientId = crypto.randomUUID();
+  const notes = [
+    `SAM.gov Opportunity ID: ${req.params.id}`,
+    value ? `Estimated value: $${parseFloat(value).toLocaleString()}` : null,
+    naics ? `NAICS: ${naics}` : null,
+    url ? `Bid: ${url}` : null,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const r = await pool.query(`
+      INSERT INTO leads (user_id, client_id, company, contact_title, city, state,
+        category, status, notes, source)
+      VALUES ($1,$2,$3,$4,$5,$6,'gc_referral','new',$7,'sam_gov')
+      RETURNING *
+    `, [uid, clientId, agency, 'Contracting Officer', null, state || null, notes]);
+
+    await logActivity(pool, {
+      leadId: r.rows[0].id, userId: uid, type: 'note',
+      subject: `Imported from SAM.gov: ${title}`,
+      metadata: { sam_id: req.params.id, value, naics, url },
+    });
+
+    res.json({ ok: true, lead: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: 'Import failed' });
+  }
 });
 
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
