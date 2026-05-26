@@ -52,7 +52,8 @@ const PORT              = parseInt(process.env.PORT || '3001', 10);
 const DATABASE_URL      = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
 const APOLLO_BASE       = 'https://api.apollo.io/v1';
 const ENV_APOLLO_KEY    = process.env.APOLLO_API_KEY || null;
-const JWT_SECRET        = process.env.JWT_SECRET || 'change-me-in-production';
+const JWT_SECRET        = process.env.JWT_SECRET;
+if (!JWT_SECRET) { console.error('FATAL: JWT_SECRET env var is required — generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"'); process.exit(1); }
 const TRIAL_DAYS        = parseInt(process.env.TRIAL_DAYS || '14', 10);
 const APP_URL           = process.env.APP_URL || `http://localhost:${PORT}`;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
@@ -649,9 +650,10 @@ const app = express();
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '4mb' }));
 
-// CORS first so 429 / 5xx responses still carry the headers the browser needs.
+// CORS — restrict to the known app origin; never wildcard.
+const CORS_ORIGIN = process.env.APP_URL || `http://localhost:${PORT}`;
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -672,6 +674,23 @@ const authLimiter = rateLimit({
   skip: (req) => req.path === '/me',
 });
 app.use('/auth', authLimiter);
+
+// HTML escaper for public-facing server-rendered pages — prevents XSS from user-submitted data.
+function he(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Strip unsafe tags/attributes from AI-generated HTML (pricing_html, roi_section, etc.)
+// Only called for content that is intentionally HTML (not escaped).
+function sanitizeProposalHtml(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/\bon\w+\s*=/gi, 'data-removed=')
+    .replace(/javascript\s*:/gi, '#');
+}
 
 // Generous global limiter. Inbound webhooks (Stripe/Vapi/Resend) and the
 // public token-based pages a client can land on without a JWT are exempted —
@@ -1190,7 +1209,9 @@ async function callApollo(apiPath, body, apiKey) {
 }
 
 async function resolveApolloKey(req) {
-  if (req.body?.apiKey) return String(req.body.apiKey).trim();
+  // Server env key takes precedence; fall back to per-user key stored in settings.
+  // Never accept an API key from the request body — that would allow the server
+  // to proxy arbitrary third-party credentials.
   if (ENV_APOLLO_KEY) return ENV_APOLLO_KEY;
   if (req.user?.id) {
     const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(req.user.id)]);
@@ -2003,13 +2024,17 @@ intent must be one of: interested | meeting_request | price_question | referral 
     const terminalStatuses = ['won', 'lost'];
     const shouldUpdateStatus = newStatus && !terminalStatuses.includes(lead.status);
     if (shouldUpdateStatus) {
-      const followupClause = followupDays != null
-        ? `followup_due_at = CURRENT_DATE + INTERVAL '${followupDays} days',`
-        : `followup_due_at = NULL,`;
-      await pool.query(
-        `UPDATE leads SET status=$1, ${followupClause} updated_at=NOW() WHERE id=$2 AND user_id=$3`,
-        [newStatus, lead.id, uid]
-      );
+      if (followupDays != null) {
+        await pool.query(
+          `UPDATE leads SET status=$1, followup_due_at = CURRENT_DATE + ($4 * INTERVAL '1 day'), updated_at=NOW() WHERE id=$2 AND user_id=$3`,
+          [newStatus, lead.id, uid, followupDays]
+        );
+      } else {
+        await pool.query(
+          `UPDATE leads SET status=$1, followup_due_at = NULL, updated_at=NOW() WHERE id=$2 AND user_id=$3`,
+          [newStatus, lead.id, uid]
+        );
+      }
       await logActivity(pool, {
         leadId: lead.id, userId: uid, type: 'status_changed',
         subject: `${lead.status} → ${newStatus}`,
@@ -2018,8 +2043,8 @@ intent must be one of: interested | meeting_request | price_question | referral 
     } else if (!newStatus && followupDays != null) {
       // out_of_office: push follow-up without changing status
       await pool.query(
-        `UPDATE leads SET followup_due_at = CURRENT_DATE + INTERVAL '${followupDays} days', updated_at=NOW() WHERE id=$1 AND user_id=$2`,
-        [lead.id, uid]
+        `UPDATE leads SET followup_due_at = CURRENT_DATE + ($3 * INTERVAL '1 day'), updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+        [lead.id, uid, followupDays]
       );
     }
 
@@ -2214,7 +2239,7 @@ ${body.replace(/\n/g, '<br>')}
         followup_due_at = CURRENT_DATE + INTERVAL '3 days',
         status = CASE WHEN status = 'cold' THEN 'contacted' ELSE status END,
         updated_at = NOW()
-       WHERE id=$1`, [id]
+       WHERE id=$1 AND user_id=$2`, [id, uid]
     );
     res.json({ ok: true, resend_id: data.id });
   } catch (e) {
@@ -3614,6 +3639,8 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
     const leadId = Number(req.params.id);
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
     const { factor = 'other', notes = '', competitor = '' } = req.body || {};
     await logActivity(pool, {
       leadId, userId: uid, type: 'status_changed',
@@ -3946,7 +3973,7 @@ async function processEmailQueue() {
             `UPDATE leads SET last_contacted=CURRENT_DATE,
               followup_due_at=CURRENT_DATE,
               status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
-              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+              updated_at=NOW() WHERE id=$1 AND user_id=$2`, [item.lead_id, item.user_id]
           );
           await logActivity(pool, {
             leadId: item.lead_id, userId: item.user_id, type: 'sequence_activated',
@@ -3960,7 +3987,7 @@ async function processEmailQueue() {
             `UPDATE leads SET last_contacted=CURRENT_DATE,
               followup_due_at=CURRENT_DATE + INTERVAL '3 days',
               status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
-              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+              updated_at=NOW() WHERE id=$1 AND user_id=$2`, [item.lead_id, item.user_id]
           );
         }
         console.log(`[drip] Sent Day ${item.sequence_day} to ${item.to_email} (lead ${item.lead_id})`);
@@ -5040,10 +5067,13 @@ ${personalitySection}`;
 async function researchCompany(lead, anthropicKey) {
   if (!anthropicKey || !lead.website) return null;
   try {
+    // Validate the website is a plausible public domain (prevent SSRF)
+    const rawHost = lead.website.replace(/^https?:\/\//, '').split('/')[0].toLowerCase();
+    if (!rawHost || rawHost.includes('localhost') || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.)/.test(rawHost)) return null;
     // Fetch the company website (5s timeout)
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
-    const webRes = await fetch(`https://${lead.website}`, { signal: controller.signal }).catch(() => null);
+    const webRes = await fetch(`https://${rawHost}`, { signal: controller.signal }).catch(() => null);
     clearTimeout(timer);
     const html = webRes ? (await webRes.text().catch(() => '')).slice(0, 6000) : '';
 
@@ -5189,9 +5219,14 @@ app.post('/calls/initiate', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /calls/webhook — Vapi sends call events here
-// No auth — Vapi calls this endpoint directly. Validate via lead lookup.
-app.post('/calls/webhook', async (req, res) => {
+// POST /calls/webhook — Vapi sends call events here.
+// Guard with a shared secret in the query string: ?secret=VAPI_WEBHOOK_SECRET
+// Register the URL in Vapi as: https://your-domain.com/calls/webhook?secret=<secret>
+app.post('/calls/webhook', (req, res, next) => {
+  const secret = process.env.VAPI_WEBHOOK_SECRET;
+  if (secret && req.query.secret !== secret) return res.status(403).end();
+  next();
+}, async (req, res) => {
   const event = req.body;
   res.json({ ok: true }); // always ACK immediately
 
@@ -5718,6 +5753,9 @@ app.post('/vision/ar-print-ready', authMiddleware, async (req, res) => {
       if (comma === -1) throw new Error('Invalid data URL');
       imageBuffer = Buffer.from(imageUrl.slice(comma + 1), 'base64');
     } else {
+      let parsedUrl;
+      try { parsedUrl = new URL(imageUrl); } catch { throw new Error('Invalid image URL'); }
+      if (parsedUrl.protocol !== 'https:') throw new Error('Only HTTPS image URLs are allowed');
       const r = await fetch(imageUrl);
       if (!r.ok) throw new Error('Could not fetch image URL');
       imageBuffer = Buffer.from(await r.arrayBuffer());
@@ -7184,8 +7222,8 @@ app.get('/portal/:token', async (req, res) => {
 <div class="hero">
   <div class="hero-inner">
     <div>
-      <div class="brand-name">${s.companyName || 'our shop'}<span>.</span></div>
-      <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps & Fleet Graphics'}</div>
+      <div class="brand-name">${he(s.companyName) || 'our shop'}<span>.</span></div>
+      <div class="brand-tag">${he(s.companyTagline) || 'Vehicle Wraps & Fleet Graphics'}</div>
     </div>
     <span class="portal-badge">CLIENT PORTAL</span>
   </div>
@@ -7196,11 +7234,11 @@ app.get('/portal/:token', async (req, res) => {
   <!-- Project Header -->
   <div class="section">
     <div class="section-body">
-      <div class="project-name">${link.company}</div>
+      <div class="project-name">${he(link.company)}</div>
       <div class="project-meta">
-        ${link.category ? `<span class="meta-chip accent">${link.category.toUpperCase()}</span>` : ''}
-        ${link.city || link.state ? `<span class="meta-chip">📍 ${[link.city, link.state].filter(Boolean).join(', ')}</span>` : ''}
-        ${link.contact_name ? `<span class="meta-chip">👤 ${link.contact_name}</span>` : ''}
+        ${link.category ? `<span class="meta-chip accent">${he(link.category).toUpperCase()}</span>` : ''}
+        ${link.city || link.state ? `<span class="meta-chip">📍 ${he([link.city, link.state].filter(Boolean).join(', '))}</span>` : ''}
+        ${link.contact_name ? `<span class="meta-chip">👤 ${he(link.contact_name)}</span>` : ''}
       </div>
     </div>
   </div>
@@ -7246,9 +7284,9 @@ app.get('/portal/:token', async (req, res) => {
   <div class="section">
     <div class="section-header"><span class="section-title">Install Documentation</span></div>
     <div class="section-body photo-section">
-      ${beforePhotos.length > 0 ? `<div class="photo-group-label">Before</div><div class="photo-row">${beforePhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Before'}"></div>`).join('')}</div>` : ''}
-      ${afterPhotos.length > 0 ? `<div class="photo-group-label">After</div><div class="photo-row">${afterPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'After'}"></div>`).join('')}</div>` : ''}
-      ${detailPhotos.length > 0 ? `<div class="photo-group-label">Detail</div><div class="photo-row">${detailPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Detail'}"></div>`).join('')}</div>` : ''}
+      ${beforePhotos.length > 0 ? `<div class="photo-group-label">Before</div><div class="photo-row">${beforePhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${he(p.caption)||'Before'}"></div>`).join('')}</div>` : ''}
+      ${afterPhotos.length > 0 ? `<div class="photo-group-label">After</div><div class="photo-row">${afterPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${he(p.caption)||'After'}"></div>`).join('')}</div>` : ''}
+      ${detailPhotos.length > 0 ? `<div class="photo-group-label">Detail</div><div class="photo-row">${detailPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${he(p.caption)||'Detail'}"></div>`).join('')}</div>` : ''}
     </div>
   </div>` : ''}
 
@@ -7817,10 +7855,10 @@ app.get('/proposals/:token', async (req, res) => {
 </head><body>
 <div class="wrap">
   <div class="header">
-    <div class="logo">${shopName}</div>
+    <div class="logo">${he(shopName)}</div>
     <div class="tagline">Vehicle Wraps · Fleet Graphics · Architectural Film</div>
-    <div class="prop-title">${p.title}</div>
-    <div class="prop-meta">Prepared for ${p.contact_name || p.company} · ${new Date(p.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+    <div class="prop-title">${he(p.title)}</div>
+    <div class="prop-meta">Prepared for ${he(p.contact_name || p.company)} · ${new Date(p.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
   </div>
 
   <div class="body-wrap">
@@ -7828,38 +7866,38 @@ app.get('/proposals/:token', async (req, res) => {
     <div class="section mockup-section">
       <div class="section-label">Your Vehicle, Wrapped</div>
       <div class="mockup-frame">
-        <img src="${p.mockup_url}" alt="Wrap concept for ${p.company || 'your vehicle'}" />
+        <img src="${he(p.mockup_url)}" alt="Wrap concept for ${he(p.company || 'your vehicle')}" />
         <div class="mockup-tag">AI-rendered concept · final design subject to approval</div>
       </div>
     </div>` : ''}
 
     <div class="section">
       <div class="section-label">Introduction</div>
-      ${(p.intro || '').split('\n\n').map(par => `<p>${par}</p>`).join('')}
+      ${(p.intro || '').split('\n\n').map(par => `<p>${he(par)}</p>`).join('')}
     </div>
 
     <div class="section">
       <div class="section-label">Recommended Services</div>
-      <ul>${p.services || ''}</ul>
+      <ul>${he(p.services || '')}</ul>
     </div>
 
     <div class="section">
       <div class="section-label">Investment</div>
-      ${p.pricing_html || ''}
+      ${sanitizeProposalHtml(p.pricing_html || '')}
     </div>
 
     ${p.roi_section ? `
     <div class="section">
       <div class="section-label">Your Rolling Billboard — The Numbers</div>
-      ${p.roi_section}
+      ${sanitizeProposalHtml(p.roi_section)}
     </div>` : ''}
 
     <div class="section">
       <div class="section-label">Project Timeline</div>
-      <ol>${(p.timeline || '').replace(/<li>/g,'<li>').replace(/<\/li>/g,'</li>')}</ol>
+      <ol>${he(p.timeline || '').replace(/&lt;li&gt;/g,'<li>').replace(/&lt;\/li&gt;/g,'</li>')}</ol>
     </div>
 
-    ${portfolio ? `<div class="section"><div class="section-label">Our Work</div><p>View our portfolio: <a href="${portfolio}" target="_blank">${portfolio}</a></p></div>` : ''}
+    ${portfolio ? `<div class="section"><div class="section-label">Our Work</div><p>View our portfolio: <a href="${he(portfolio)}" target="_blank">${he(portfolio)}</a></p></div>` : ''}
 
     ${approved
       ? `<div class="approved-badge">✓ Proposal Approved — Thank you! We will be in touch shortly.</div>`
@@ -7871,8 +7909,8 @@ app.get('/proposals/:token', async (req, res) => {
   </div>
 
   <div class="footer">
-    <span>${shopName}${senderName ? ' · ' + senderName : ''}</span>
-    <span>${[senderPhone, senderEmail].filter(Boolean).join(' · ')}</span>
+    <span>${he(shopName)}${senderName ? ' · ' + he(senderName) : ''}</span>
+    <span>${[senderPhone, senderEmail].filter(Boolean).map(he).join(' · ')}</span>
   </div>
 </div>
 <script>
@@ -8139,11 +8177,11 @@ app.get('/portfolio/:shopToken', async (req, res) => {
       const vehName = VEHICLE_NAMES[j.vehicle_type] || j.vehicle_type || 'Vehicle';
       return `
         <div class="job-card">
-          ${thumb ? `<div class="job-thumb"><img src="${thumb}" alt="${j.company} wrap" loading="lazy"></div>` : `<div class="job-thumb job-thumb-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" style="opacity:0.3"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`}
+          ${thumb ? `<div class="job-thumb"><img src="${thumb}" alt="${he(j.company)} wrap" loading="lazy"></div>` : `<div class="job-thumb job-thumb-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" style="opacity:0.3"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`}
           <div class="job-info">
-            <div class="job-company">${j.company || 'Client'}</div>
-            <div class="job-meta">${j.vehicle_count || 1}× ${vehName} · ${catName}</div>
-            ${j.material ? `<div class="job-material">${j.material}</div>` : ''}
+            <div class="job-company">${he(j.company || 'Client')}</div>
+            <div class="job-meta">${j.vehicle_count || 1}× ${he(vehName)} · ${he(catName)}</div>
+            ${j.material ? `<div class="job-material">${he(j.material)}</div>` : ''}
             <div class="job-date">${j.install_date ? new Date(j.install_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : ''}</div>
           </div>
         </div>`;
@@ -8153,7 +8191,7 @@ app.get('/portfolio/:shopToken', async (req, res) => {
 
     res.send(`<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${shopName} — Our Work</title>
+<title>${he(shopName)} — Our Work</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0}
