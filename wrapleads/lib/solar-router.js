@@ -19,6 +19,7 @@ const naicsFit = require('./naics-solar-fit');
 const compliance = require('./compliance');
 const qualifyLead = require('./qualify-lead');
 const tariffs = require('./solar-tariffs');
+const solarProposal = require('./solar-proposal');
 
 // ── Solar score SQL ──────────────────────────────────────────────────────
 // 0–100 multi-factor score. Returned alongside the row so it matches the
@@ -819,6 +820,39 @@ function buildSolarRouter(deps) {
     } catch (e) {
       res.status(500).send('Error processing unsubscribe.');
     }
+  });
+
+  // ── PROPOSAL GENERATOR (customer-facing shareable HTML) ──────────────
+  // POST /solar/leads/:leadId/proposal  → creates a tokenized public page
+  router.post('/leads/:leadId/proposal', authMiddleware, requireShopFlow, async (req, res) => {
+    const uid = String(req.user.id);
+    try {
+      const baseUrl = appBaseUrl();
+      const result = await solarProposal.createProposal({
+        pool, userId: uid, leadId: parseInt(req.params.leadId, 10), baseUrl,
+      });
+      try {
+        await logActivity(pool, {
+          leadId: parseInt(req.params.leadId, 10), userId: uid,
+          type: 'quote_sent', subject: 'Solar proposal generated',
+          metadata: { token: result.token, url: result.url },
+        });
+      } catch { /* non-fatal */ }
+      res.json(result);
+    } catch (e) {
+      console.error('[solar/proposal]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /solar/proposal/:token  → public-facing HTML page
+  router.get('/proposal/:token', async (req, res) => {
+    try {
+      const html = await solarProposal.getProposalHtmlByToken(pool, req.params.token);
+      if (!html) return res.status(404).send('<h1>Proposal not found</h1>');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (e) { res.status(500).send(`Error: ${e.message}`); }
   });
 
   // ── QUALIFY A SINGLE LEAD (firmographic + Google Solar + DSIRE + ROI) ─

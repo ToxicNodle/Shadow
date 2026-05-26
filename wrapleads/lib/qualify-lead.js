@@ -24,6 +24,7 @@ const naicsFit = require('./naics-solar-fit');
 const tariffs = require('./solar-tariffs');
 const googleSolar = require('./google-solar-api');
 const enrichFirmo = require('./enrich-firmographic');
+const dsire = require('./dsire-api');
 const { lookupRate } = require('./scrapers/utility-rate');
 
 /**
@@ -75,6 +76,13 @@ async function qualify(input = {}) {
 
   // ── 5. Incentive stack + 7. Tariff intel ───────────────────────────
   const tariff = tariffs.lookup(utilityInfo.utility);
+  // Live DSIRE lookup gives us real expiration-date urgency from federal
+  // and state programs. Returns a single sentence usable in the AI prompt.
+  const dsirePrograms = input.state ? await dsire.programsForLead({
+    state: input.state,
+    taxAppetite: naicsFit.profileFor({ naics_code: naicsCode, industry: firmo?.industry || input.industry })?.tax_appetite,
+  }) : { financial: [], regulatory: [] };
+  const dsireUrgency = dsire.urgencyFromDsire(dsirePrograms);
   const intel = incentives.buildPropertyIntel({
     state: input.state,
     city:  input.city,
@@ -84,6 +92,7 @@ async function qualify(input = {}) {
     grossCost: econ.gross_cost_usd,
     tariff,
     bonuses: { energy_community: false, domestic_content: false, low_income: false },
+    dsireUrgency,
   });
   const netPayback = incentives.netPaybackYears(intel.stack.net_cost, econ.annual_savings_usd);
 
@@ -136,6 +145,7 @@ async function qualify(input = {}) {
     incentive_stack:     intel.stack,
     net_payback_years:   netPayback,
     urgency:             intel.urgency,
+    dsire_programs:      dsirePrograms.financial?.slice(0, 5).map(p => ({ name: p.name, end_date: p.end_date, administrator: p.administrator })) || [],
     firmographic:        firmo ? { provider: firmo.provider, employees: firmo.employees, annual_revenue: firmo.annual_revenue } : null,
     lead_alert:          alert,
   };

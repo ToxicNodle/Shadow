@@ -856,7 +856,16 @@ export const api = {
       naics_fit: import('./types').NaicsFitProfile | null;
       tariff: import('./types').SolarTariff;
       utility: { name: string | null; rate_per_kwh: number; source: string };
+      dsire_programs?: Array<{ name: string; end_date?: string | null; administrator?: string | null }>;
     }>('/solar/qualify', { method: 'POST', body: JSON.stringify(input) }),
+
+  // Customer-ready solar proposal HTML (publicly shareable URL).
+  createSolarProposal: (leadId: number) =>
+    authFetch<{
+      token: string;
+      url: string;
+      summary: { company: string; system_kw: number; net_payback: number | null; net_cost: number; annual_savings: number };
+    }>(`/solar/leads/${leadId}/proposal`, { method: 'POST', body: '{}' }),
 
   // Pilot installers (requireWrapOS)
   getPilotInstallers: () =>

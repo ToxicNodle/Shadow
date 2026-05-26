@@ -25,13 +25,16 @@ const { Pool } = require('pg');
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
 
 const ADAPTERS = {
-  places:   () => require('./lib/scrapers/places-commercial'),
-  osm:      () => require('./lib/scrapers/osm-overpass'),
-  csv:      () => require('./lib/scrapers/csv-commercial'),
-  permits:  () => require('./lib/scrapers/permit-feeds'),
-  utility:  () => require('./lib/scrapers/utility-rate'),
-  assessor: () => require('./lib/scrapers/assessor-scrape'),
-  intent:   () => require('./lib/scrapers/intent-signals'),
+  places:        () => require('./lib/scrapers/places-commercial'),
+  osm:           () => require('./lib/scrapers/osm-overpass'),
+  csv:           () => require('./lib/scrapers/csv-commercial'),
+  permits:       () => require('./lib/scrapers/permit-feeds'),
+  utility:       () => require('./lib/scrapers/utility-rate'),
+  assessor:      () => require('./lib/scrapers/assessor-scrape'),
+  intent:        () => require('./lib/scrapers/intent-signals'),
+  // Free government lead sources
+  'epa-ghgrp':   () => require('./lib/scrapers/epa-ghgrp'),
+  'usa-spending':() => require('./lib/scrapers/usa-spending'),
 };
 
 function parseArgs() {
@@ -60,14 +63,26 @@ function parseArgs() {
     else if (arg === '--city')           out.city   = args[++i] || 'all';
     else if (arg.startsWith('--county='))   out.county = arg.slice(9);
     else if (arg === '--county')         out.county = args[++i] || '';
+    else if (arg.startsWith('--state='))  out.state  = arg.slice(8);
+    else if (arg === '--state')          out.state  = args[++i] || '';
     else if (arg.startsWith('--days='))   out.days   = parseInt(arg.slice(7), 10);
     else if (arg === '--days')           out.days   = parseInt(args[++i], 10);
     else if (arg.startsWith('--limit='))  out.limit  = parseInt(arg.slice(8), 10);
     else if (arg === '--limit')          out.limit  = parseInt(args[++i], 10);
     else if (arg.startsWith('--radius=')) out.radius = parseInt(arg.slice(9), 10);
     else if (arg === '--radius')         out.radius = parseInt(args[++i], 10);
-    else if (arg.startsWith('--max='))    out.maxPerQuery = parseInt(arg.slice(6), 10);
-    else if (arg === '--max')            out.maxPerQuery = parseInt(args[++i], 10);
+    else if (arg.startsWith('--max='))    out.max    = parseInt(arg.slice(6), 10);
+    else if (arg === '--max')            out.max    = parseInt(args[++i], 10);
+    else if (arg.startsWith('--year='))   out.year   = parseInt(arg.slice(7), 10);
+    else if (arg === '--year')           out.year   = parseInt(args[++i], 10);
+    else if (arg.startsWith('--min-tons='))   out.minTons = parseInt(arg.slice(11), 10);
+    else if (arg === '--min-tons')        out.minTons = parseInt(args[++i], 10);
+    else if (arg.startsWith('--min-amount=')) out.minAmount = parseFloat(arg.slice(13));
+    else if (arg === '--min-amount')      out.minAmount = parseFloat(args[++i]);
+    else if (arg.startsWith('--naics='))  out.naicsPrefix = arg.slice(8);
+    else if (arg === '--naics')           out.naicsPrefix = args[++i] || '';
+    else if (arg.startsWith('--awarding='))   out.awarding = arg.slice(11);
+    else if (arg === '--awarding')        out.awarding = args[++i] || '';
     else if (arg.startsWith('--queries=')) out.queries = arg.slice(10).split(',').map(s => s.trim()).filter(Boolean);
     else if (arg === '--queries')        out.queries = (args[++i] || '').split(',').map(s => s.trim()).filter(Boolean);
   }
@@ -79,12 +94,15 @@ async function main() {
   if (!args.source || !ADAPTERS[args.source]) {
     console.error(`\n❌ --source is required. One of: ${Object.keys(ADAPTERS).join(', ')}\n`);
     console.error('Examples:');
-    console.error('  --source=places  --region="Phoenix, AZ"');
-    console.error('  --source=osm     --region="bbox:33.3,-112.3,33.7,-111.9"');
-    console.error('  --source=csv     --file=./loopnet-export.csv');
-    console.error('  --source=permits --city=la --days=60');
-    console.error('  --source=utility --limit=200');
-    console.error('  --source=assessor --county=maricopa-az\n');
+    console.error('  --source=places       --region="Phoenix, AZ"');
+    console.error('  --source=osm          --region="bbox:33.3,-112.3,33.7,-111.9"');
+    console.error('  --source=csv          --file=./loopnet-export.csv');
+    console.error('  --source=permits      --city=la --days=60');
+    console.error('  --source=utility      --limit=200');
+    console.error('  --source=assessor     --county=maricopa-az');
+    console.error('  --source=epa-ghgrp    --state=AZ --min-tons=25000 --max=500');
+    console.error('  --source=usa-spending --state=TX --naics=311 --min-amount=250000');
+    console.error('  --source=intent       --limit=2000\n');
     process.exit(1);
   }
 
@@ -113,10 +131,17 @@ async function main() {
       file:        args.file,
       city:        args.city,
       county:      args.county,
+      state:       args.state,
       days:        args.days,
       limit:       args.limit,
       radius:      args.radius,
-      maxPerQuery: args.maxPerQuery,
+      maxPerQuery: args.maxPerQuery || args.max,
+      max:         args.max,
+      year:        args.year,
+      minTons:     args.minTons,
+      minAmount:   args.minAmount,
+      naicsPrefix: args.naicsPrefix,
+      awarding:    args.awarding,
       queries:     args.queries,
       log:         console.log,
     });

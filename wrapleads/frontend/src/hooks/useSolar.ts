@@ -97,3 +97,7 @@ export function useRotateSolarIntakeSecret() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['solar', 'intake-secret'] }),
   });
 }
+
+export function useCreateSolarProposal() {
+  return useMutation({ mutationFn: (leadId: number) => api.createSolarProposal(leadId) });
+}

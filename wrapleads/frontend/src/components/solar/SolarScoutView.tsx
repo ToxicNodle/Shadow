@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSolarLeads, useQualifiedSolarLeads, useSolarCompany, useImportSolarLead, useQualifyLead, useOpenSolarAuction, useSolarAuctions, useAwardSolarAuction, usePilotInstallers, useCreatePilotInstaller, useSolarSla } from '../../hooks/useSolar';
+import { useSolarLeads, useQualifiedSolarLeads, useSolarCompany, useImportSolarLead, useQualifyLead, useOpenSolarAuction, useSolarAuctions, useAwardSolarAuction, usePilotInstallers, useCreatePilotInstaller, useSolarSla, useCreateSolarProposal } from '../../hooks/useSolar';
 import { useAppStore } from '../../store/useAppStore';
 import type { SolarLead, SolarSearchParams, SolarAuction } from '../../api/types';
 
@@ -287,7 +287,7 @@ function CompanyDetail({ id, onClose }: { id: number; onClose: () => void }) {
             {data.suggested_titles.join(' · ')}
           </div>
         </Section>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <button onClick={() => importMut.mutate(id)} style={primaryButtonStyle()}>Import to CRM</button>
           <button
             onClick={async () => {
@@ -302,6 +302,7 @@ function CompanyDetail({ id, onClose }: { id: number; onClose: () => void }) {
             }}
             style={secondaryButtonStyle()}
           >Open auction</button>
+          <ProposalButton companyId={id} importMut={importMut} />
         </div>
       </div>
     </DetailPanel>
@@ -396,6 +397,14 @@ function QualifyTab() {
                 <Badge key={k} color={v ? '#22c55e' : '#ef4444'} label={`${v ? '✓' : '✗'} ${k.replace(/_/g, ' ')}`} />
               ))}
             </div>
+            {qualify.data.dsire_programs && qualify.data.dsire_programs.length > 0 && (
+              <Section title="Live DSIRE programs">
+                {qualify.data.dsire_programs.map((p, i) => (
+                  <Row key={i} k={p.name} v={p.end_date ? `expires ${p.end_date}` : 'ongoing'} />
+                ))}
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 8 }}>Source: dsireusa.org · NC State University</div>
+              </Section>
+            )}
           </div>
         )}
         {qualify.error && <ErrorBanner error={String((qualify.error as Error).message)} />}
@@ -616,4 +625,27 @@ function StatusBadge({ status }: { status: string }) {
   };
   const c = colors[status] || '#94a3b8';
   return <span style={{ display: 'inline-block', padding: '4px 10px', background: c + '22', color: c, borderRadius: 6, fontSize: 11, fontWeight: 700 }}>{status}</span>;
+}
+
+// One-click: import the company to CRM (if not already), then generate a
+// shareable proposal HTML page. Opens the page in a new tab.
+function ProposalButton({ companyId, importMut }: { companyId: number; importMut: ReturnType<typeof useImportSolarLead> }) {
+  const proposal = useCreateSolarProposal();
+  const toast = useAppStore(s => s.showToast);
+  async function onClick() {
+    try {
+      const r = await importMut.mutateAsync(companyId);
+      if (!r.leadId) { toast('Could not import lead', 'error'); return; }
+      const p = await proposal.mutateAsync(r.leadId);
+      window.open(p.url, '_blank', 'noopener');
+      toast('Proposal generated — opening in a new tab', 'success');
+    } catch (e) {
+      toast(String((e as Error).message || 'Failed to generate proposal'), 'error');
+    }
+  }
+  return (
+    <button onClick={onClick} disabled={proposal.isPending || importMut.isPending} style={secondaryButtonStyle()}>
+      {proposal.isPending ? 'Generating…' : '📄 Generate proposal'}
+    </button>
+  );
 }

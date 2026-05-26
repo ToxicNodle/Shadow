@@ -255,27 +255,32 @@ function municipalRebate(city, state, systemKw) {
 /**
  * Generate a localized urgency hook for AI email injection.
  *
- * Picks the most compelling time-sensitive narrative for a property based on
- * its state, utility, and which IRA bonus stack it likely qualifies for.
- * Returns a single sentence that reads like a human wrote it after looking
- * at the property's incentive structure.
+ * Order of preference:
+ *   1. Utility-specific deadline (from tariffs.js)
+ *   2. Live DSIRE urgency (when programs param is supplied)
+ *   3. Static state-program urgency
+ *   4. Generic IRA bonus hook
+ *   5. Federal ITC step-down (default)
  *
  * @param {Object} opts
  * @param {string} opts.state
  * @param {Object} opts.tariff  result of solar-tariffs.lookup(utility)
  * @param {Object} opts.bonuses { energy_community, domestic_content, low_income }
+ * @param {Object} [opts.dsireUrgency] string returned by lib/dsire-api.urgencyFromDsire()
  * @returns {string}
  */
-function urgencyHook({ state, tariff, bonuses = {} }) {
+function urgencyHook({ state, tariff, bonuses = {}, dsireUrgency = null }) {
   // 1. Utility-specific deadline beats state-level
   if (tariff?.deadline_message) return tariff.deadline_message;
-  // 2. State program urgency
+  // 2. Live DSIRE urgency (only when explicitly provided)
+  if (dsireUrgency) return dsireUrgency;
+  // 3. State program urgency (static fallback)
   const us = (state || '').toUpperCase();
   if (PROGRAM_URGENCY[us]) return PROGRAM_URGENCY[us].msg;
-  // 3. Generic IRA bonus hook
+  // 4. Generic IRA bonus hook
   if (bonuses?.energy_community) return DEADLINES.energy_community.urgency;
   if (bonuses?.domestic_content) return DEADLINES.domestic_content.urgency;
-  // 4. Federal ITC step-down (always true, but lowest urgency)
+  // 5. Federal ITC step-down (always true, but lowest urgency)
   return DEADLINES.federal.urgency;
 }
 
@@ -284,7 +289,7 @@ function urgencyHook({ state, tariff, bonuses = {} }) {
  * urgency hook, SREC revenue line, municipal rebate (if any), and the full
  * incentive stack. Composable from a single property fetch.
  */
-function buildPropertyIntel({ state, city, zip, systemKw, annualKwh, grossCost, tariff, bonuses = {} }) {
+function buildPropertyIntel({ state, city, zip, systemKw, annualKwh, grossCost, tariff, bonuses = {}, dsireUrgency = null }) {
   const stack = calculateStack({
     grossCost, systemKw, annualKwh, state, zip, bonuses,
   });
@@ -302,7 +307,7 @@ function buildPropertyIntel({ state, city, zip, systemKw, annualKwh, grossCost, 
   }
   return {
     stack,
-    urgency: urgencyHook({ state, tariff, bonuses }),
+    urgency: urgencyHook({ state, tariff, bonuses, dsireUrgency }),
     municipal: muni,
     srec,
   };
