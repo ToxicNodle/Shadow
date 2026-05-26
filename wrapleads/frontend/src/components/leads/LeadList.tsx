@@ -267,7 +267,7 @@ export default function LeadList() {
     activeFilter, currentLeadId, setCurrentLeadId, setFilter,
     leadSort, setLeadSort,
     selectedLeadIds, selectAllLeads, clearLeadSelection,
-    setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen,
+    setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen, setShopVoxImportOpen,
     pendingOpenLeadServerId, setPendingOpenLeadServerId,
   } = useAppStore((s) => ({
     activeFilter: s.activeFilter,
@@ -282,6 +282,7 @@ export default function LeadList() {
     setBulkOutreachOpen: s.setBulkOutreachOpen,
     setCsvImportOpen: s.setCsvImportOpen,
     setPasteImportOpen: s.setPasteImportOpen,
+    setShopVoxImportOpen: s.setShopVoxImportOpen,
     pendingOpenLeadServerId: s.pendingOpenLeadServerId,
     setPendingOpenLeadServerId: s.setPendingOpenLeadServerId,
   }));
@@ -465,6 +466,18 @@ export default function LeadList() {
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
           Import CSV
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', borderColor: 'rgba(239,68,68,0.4)', color: '#f87171' }}
+          onClick={() => setShopVoxImportOpen(true)}
+          title="Migrate your ShopVOX customer list"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M5 12h14M12 5l7 7-7 7" />
+          </svg>
+          From ShopVOX
         </button>
 
         <button

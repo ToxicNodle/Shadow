@@ -98,6 +98,7 @@ interface AppStore {
   blueprintOpen: boolean;
   bulkOutreachOpen: boolean;
   csvImportOpen: boolean;
+  shopvoxImportOpen: boolean;
   proposalOpen: boolean;
   proposalLeadId: string | null;
   visionOpen: boolean;
@@ -113,6 +114,7 @@ interface AppStore {
   setBlueprintOpen: (open: boolean) => void;
   setBulkOutreachOpen: (open: boolean) => void;
   setCsvImportOpen: (open: boolean) => void;
+  setShopVoxImportOpen: (open: boolean) => void;
   setProposalOpen: (open: boolean, leadId?: string) => void;
   setVisionOpen: (open: boolean) => void;
   setArOpen: (open: boolean) => void;
@@ -250,6 +252,7 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       blueprintOpen: false,
       bulkOutreachOpen: false,
       csvImportOpen: false,
+      shopvoxImportOpen: false,
       proposalOpen: false,
       proposalLeadId: null,
       visionOpen: false,
@@ -265,6 +268,7 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       setBlueprintOpen: (open) => set({ blueprintOpen: open }),
       setBulkOutreachOpen: (open) => set({ bulkOutreachOpen: open }),
       setCsvImportOpen: (open) => set({ csvImportOpen: open }),
+      setShopVoxImportOpen: (open) => set({ shopvoxImportOpen: open }),
       setProposalOpen: (open, leadId) => set({ proposalOpen: open, proposalLeadId: leadId ?? null }),
       setVisionOpen: (open) => set({ visionOpen: open }),
       setArOpen: (open) => set({ arOpen: open }),

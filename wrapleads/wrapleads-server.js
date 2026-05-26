@@ -711,6 +711,7 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/portfolio/'))     return true;
     if (p.startsWith('/quote-request/')) return true;
     if (p.startsWith('/demo'))           return true;
+    if (p.startsWith('/migrate/'))       return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
@@ -3240,6 +3241,345 @@ app.post('/leads/import-csv', authMiddleware, upload.single('file'), async (req,
   }
 
   res.json({ ok: true, imported, skipped, errors, total: rows.length - 1 });
+});
+
+// POST /leads/import-shopvox — ShopVOX-specific CSV importer
+// Handles split first/last names, ShopVOX status vocabulary, deterministic
+// dedup so re-importing the same export is always safe.
+app.post('/leads/import-shopvox', authMiddleware, upload.single('file'), async (req, res) => {
+  const uid = String(req.user.id);
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const text = req.file.buffer.toString('utf-8');
+  const rows = parseCSV(text);
+  if (rows.length < 2) return res.status(400).json({ error: 'CSV must have a header row and at least one data row' });
+
+  const rawHeaders = rows[0];
+  const headers = rawHeaders.map(normalizeHeader);
+
+  // ShopVOX-aware column aliases (their export uses verbose names)
+  const SHOPVOX_FIELD_MAP = {
+    company:       ['company','companyname','businessname','accountname','organization','clientname'],
+    first_name:    ['firstname','first'],
+    last_name:     ['lastname','last'],
+    contact_name:  ['contactname','contact','fullname','name'],
+    contact_title: ['title','jobtitle','contacttitle','position','role'],
+    email:         ['email','emailaddress','primaryemail','contactemail'],
+    phone:         ['phone','primaryphone','workphone','mobilephone','officephone','telephone','mobile','cell'],
+    city:          ['city','town'],
+    state:         ['state','province','st'],
+    website:       ['website','web','url','domain'],
+    fleet_size:    ['fleetsize','fleet','vehicles','trucks','vehiclecount','truckcount','units'],
+    category:      ['category','customertype','type','industry','segment','accounttype'],
+    status:        ['status','accountstatus','leadstatus','stage','accountstage'],
+    notes:         ['notes','note','internalnotes','externalnotes','description','comments','comment','tags'],
+    pitch_angle:   ['pitchangle','pitch'],
+  };
+
+  const colMap = {};
+  for (const [field, aliases] of Object.entries(SHOPVOX_FIELD_MAP)) {
+    for (let i = 0; i < headers.length; i++) {
+      if (aliases.includes(headers[i])) { colMap[i] = field; break; }
+    }
+  }
+
+  const hasCompany = Object.values(colMap).includes('company');
+  const hasFirst   = Object.values(colMap).includes('first_name');
+  if (!hasCompany) {
+    return res.status(400).json({ error: 'Could not find a Company or Company Name column in this CSV.' });
+  }
+
+  // ShopVOX status → WrapOS status
+  function mapShopVoxStatus(raw) {
+    const s = raw.toLowerCase().replace(/[^a-z]/g, '');
+    if (['prospect','lead','new','potential','opportunity'].some(v => s.includes(v))) return 'new';
+    if (['activecustomer','currentcustomer','customer','active','existing'].some(v => s.includes(v))) return 'contacted';
+    if (['inactive','formercustomer','oldcustomer','pastcustomer','lapsed'].some(v => s.includes(v))) return 'cold';
+    if (['proposalsent','quotesent','proposal'].some(v => s.includes(v))) return 'proposal';
+    if (['meetingscheduled','meeting','appointment'].some(v => s.includes(v))) return 'meeting';
+    if (['won','closed','closedwon'].some(v => s.includes(v))) return 'won';
+    if (['lost','closedlost','declined','rejected'].some(v => s.includes(v))) return 'lost';
+    if (['contacted','inprogress','followup','follow'].some(v => s.includes(v))) return 'contacted';
+    return 'new';
+  }
+
+  // ShopVOX type → WrapOS category
+  function mapShopVoxCategory(raw) {
+    const s = raw.toLowerCase().replace(/[^a-z]/g, '');
+    if (s.includes('fleet') || s.includes('commercial') || s.includes('truck')) return 'fleet';
+    if (s.includes('color') || s.includes('retail') || s.includes('personal')) return 'colorchange';
+    if (s.includes('construct') || s.includes('contractor') || s.includes('builder')) return 'construction';
+    if (s.includes('dinoc') || s.includes('architectural') || s.includes('surface')) return 'dinoc';
+    if (s.includes('reatec') || s.includes('rea')) return 'reatec';
+    if (s.includes('wall') || s.includes('graphic')) return 'wallgraphics';
+    if (s.includes('gc') || s.includes('general')) return 'gc_referral';
+    if (s.includes('racing') || s.includes('race') || s.includes('motorsport')) return 'racing';
+    if (s.includes('design') || s.includes('branding') || s.includes('logo')) return 'design';
+    return 'fleet';
+  }
+
+  const crypto = require('crypto');
+  let imported = 0; let skipped = 0; let errors = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.every((c) => !c)) continue;
+
+    const field = (f) => {
+      const idx = Object.entries(colMap).find(([, v]) => v === f)?.[0];
+      return idx !== undefined ? (row[parseInt(idx)] ?? '').trim() : '';
+    };
+
+    const company = field('company');
+    if (!company) { skipped++; continue; }
+
+    // Merge first + last name if separate columns exist; fall back to combined column
+    let contactName = field('contact_name');
+    if (!contactName && hasFirst) {
+      const first = field('first_name');
+      const last  = field('last_name');
+      contactName = [first, last].filter(Boolean).join(' ');
+    }
+
+    const email    = field('email').toLowerCase() || null;
+    const status   = mapShopVoxStatus(field('status'));
+    const category = mapShopVoxCategory(field('category'));
+
+    // Deterministic client_id: same email → same UUID across re-imports
+    const seed = email
+      ? `shopvox:${uid}:email:${email}`
+      : `shopvox:${uid}:company:${company.toLowerCase()}`;
+    const hash = crypto.createHash('sha256').update(seed).digest('hex');
+    const clientId = `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(12,15)}-${hash.slice(15,19)}-${hash.slice(19,31)}`;
+
+    try {
+      const r = await pool.query(`
+        INSERT INTO leads (user_id, client_id, company, contact_name, contact_title, email, phone,
+          city, state, website, fleet_size, category, status, notes, pitch_angle, source)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'shopvox_import')
+        ON CONFLICT (user_id, client_id) DO NOTHING
+        RETURNING id
+      `, [
+        uid, clientId, company,
+        contactName || null, field('contact_title') || null,
+        email, field('phone') || null,
+        field('city') || null, field('state') || null,
+        field('website') || null, parseInt(field('fleet_size')) || null,
+        category, status,
+        field('notes') || null, field('pitch_angle') || null,
+      ]);
+      if (r.rows.length) imported++;
+      else skipped++;
+    } catch (e) {
+      errors++;
+      console.warn(`[shopvox-import] Row ${i}: ${e.message}`);
+    }
+  }
+
+  res.json({ ok: true, imported, skipped, errors, total: rows.length - 1 });
+});
+
+// GET /migrate/shopvox — public marketing landing page for ShopVOX refugees
+app.get('/migrate/shopvox', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Free ShopVOX Migration — WrapOS</title>
+<meta name="description" content="ShopVOX was acquired by private equity. Your prices are going up. We'll migrate your entire customer list to WrapOS in under 5 minutes, for free.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#09090b;color:#f4f4f5;line-height:1.5}
+a{color:inherit;text-decoration:none}
+
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid #18181b;position:sticky;top:0;background:#09090b;z-index:10}
+.nav-logo{font-size:18px;font-weight:900;letter-spacing:-.5px}
+.nav-logo span{color:#6366f1}
+.nav-cta{background:#6366f1;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700}
+.nav-cta:hover{background:#4f46e5}
+
+.hero{padding:72px 24px 56px;max-width:800px;margin:0 auto;text-align:center}
+.hero-tag{display:inline-block;background:#ef444420;color:#f87171;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:5px 14px;border-radius:20px;border:1px solid #ef444440;margin-bottom:20px}
+.hero-title{font-size:clamp(30px,5.5vw,54px);font-weight:900;line-height:1.08;letter-spacing:-.03em;margin-bottom:20px}
+.hero-title .accent{color:#6366f1}
+.hero-title .struck{text-decoration:line-through;color:#52525b}
+.hero-sub{font-size:17px;color:#a1a1aa;max-width:580px;margin:0 auto 40px;line-height:1.65}
+
+.cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:20px}
+.btn-primary{background:#6366f1;color:#fff;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:800;transition:background .15s}
+.btn-primary:hover{background:#4f46e5}
+.btn-ghost{border:1px solid #3f3f46;color:#a1a1aa;padding:14px 24px;border-radius:10px;font-size:15px;font-weight:600;transition:border-color .15s}
+.btn-ghost:hover{border-color:#6366f1;color:#fff}
+.cta-note{font-size:12px;color:#52525b;text-align:center}
+
+/* The bad news card */
+.bad-news{background:#18181b;border:1px solid #ef444430;border-radius:16px;max-width:720px;margin:0 auto 64px;padding:32px}
+.bad-news-title{font-size:16px;font-weight:800;color:#f87171;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.complaint{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #27272a}
+.complaint:last-child{border-bottom:none;padding-bottom:0}
+.complaint-quote{font-size:13px;color:#a1a1aa;font-style:italic;flex:1}
+.complaint-src{font-size:10px;color:#52525b;white-space:nowrap;margin-top:2px}
+
+/* What you keep */
+.what-section{max-width:720px;margin:0 auto 64px;padding:0 24px}
+.section-title{font-size:22px;font-weight:900;letter-spacing:-.02em;margin-bottom:8px}
+.section-sub{font-size:14px;color:#71717a;margin-bottom:24px}
+.import-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:520px){.import-grid{grid-template-columns:1fr}}
+.import-item{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:10px}
+.import-check{color:#22c55e;font-size:16px;flex-shrink:0}
+.import-label{font-size:13px;font-weight:600;color:#e4e4e7}
+.import-sub{font-size:11px;color:#52525b;margin-top:2px}
+
+/* What you gain */
+.gain-section{max-width:720px;margin:0 auto 64px;padding:0 24px}
+.gain-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:640px){.gain-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:380px){.gain-grid{grid-template-columns:1fr}}
+.gain-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:18px}
+.gain-icon{font-size:22px;margin-bottom:10px}
+.gain-title{font-size:13px;font-weight:800;color:#fff;margin-bottom:4px}
+.gain-desc{font-size:11px;color:#71717a;line-height:1.5}
+
+/* Pricing compare */
+.compare-section{max-width:720px;margin:0 auto 64px;padding:0 24px}
+.compare-table{width:100%;border-collapse:collapse;font-size:13px}
+.compare-table th{padding:10px 14px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#52525b;border-bottom:1px solid #27272a}
+.compare-table td{padding:11px 14px;border-bottom:1px solid #1a1a1d}
+.compare-table tr:last-child td{border-bottom:none}
+.col-shopvox{color:#a1a1aa}
+.col-wrapos{color:#a3e635;font-weight:700}
+.badge-pe{display:inline-block;background:#ef444420;color:#f87171;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:6px;vertical-align:middle;letter-spacing:.05em}
+
+/* Bottom CTA */
+.final-cta{max-width:560px;margin:0 auto 80px;text-align:center;padding:0 24px}
+.final-title{font-size:26px;font-weight:900;letter-spacing:-.02em;margin-bottom:12px}
+.final-sub{font-size:15px;color:#a1a1aa;margin-bottom:32px}
+
+.footer{border-top:1px solid #18181b;padding:24px;text-align:center;font-size:12px;color:#52525b}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">Wrap<span>OS</span></div>
+  <a href="${appUrl}/login" class="nav-cta">Start Free Trial</a>
+</nav>
+
+<div class="hero">
+  <div class="hero-tag">ShopVOX was acquired by private equity · August 2025</div>
+  <h1 class="hero-title">
+    Your <span class="struck">shop software</span><br>
+    just got <span class="accent">bought and flipped.</span>
+  </h1>
+  <p class="hero-sub">
+    Fullsteam PE acquired ShopVOX in August 2025. That means price increases, support cuts, and your data held hostage. We've seen this playbook before. We'll migrate your entire customer list to WrapOS for free — today.
+  </p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial &amp; Import</a>
+    <a href="#what-you-keep" class="btn-ghost">See what gets imported</a>
+  </div>
+  <div class="cta-note">14-day trial · No credit card · Cancel anytime</div>
+</div>
+
+<div class="bad-news" style="max-width:720px;margin:0 auto 64px;padding:32px 32px 24px">
+  <div class="bad-news-title">
+    <span>⚠</span> What ShopVOX customers are already saying
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"Prices nearly doubled with no added benefit after the acquisition. Support response time went from hours to days."</div>
+      <div class="complaint-src">— G2 review, Q4 2025</div>
+    </div>
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"Export function does not export line items and notes for quotes and Sales Orders. You literally cannot get your own data out."</div>
+      <div class="complaint-src">— Capterra review</div>
+    </div>
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"Dev team doesn't listen to users at all. Updates roll out broken at 12:30pm on a Wednesday — mid-business-day."</div>
+      <div class="complaint-src">— Signs101 forum</div>
+    </div>
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"SaaS vulnerability — you stop paying and you lose all access to your client history. You own nothing."</div>
+      <div class="complaint-src">— Capterra review</div>
+    </div>
+  </div>
+</div>
+
+<div class="what-section" id="what-you-keep">
+  <div class="section-title">What gets imported — automatically</div>
+  <div class="section-sub">Export your contacts from ShopVOX, upload the CSV, done. Your entire customer history maps over in under 5 minutes.</div>
+  <div class="import-grid">
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Company names</div><div class="import-sub">Every client, every prospect</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Contact names &amp; titles</div><div class="import-sub">First + Last merged automatically</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Emails &amp; phone numbers</div><div class="import-sub">Deduped so re-importing is always safe</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">City &amp; state</div><div class="import-sub">Geographic context preserved</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Notes &amp; internal notes</div><div class="import-sub">All your deal history comes with you</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Status &amp; stage</div><div class="import-sub">Prospect, Active, Inactive → mapped to WrapOS pipeline</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Customer type / industry</div><div class="import-sub">Fleet, Color Change, Di-NOC etc. auto-detected</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Website &amp; fleet size</div><div class="import-sub">Enrichment data preserved where available</div></div></div>
+  </div>
+</div>
+
+<div class="gain-section">
+  <div class="section-title">What you gain the moment you're in</div>
+  <div class="section-sub">ShopVOX manages the jobs you already have. WrapOS finds you the jobs you don't have yet.</div>
+  <div class="gain-grid">
+    <div class="gain-card"><div class="gain-icon">📡</div><div class="gain-title">600K FMCSA Fleet Carriers</div><div class="gain-desc">Scored and ranked by wrap opportunity. ShopVOX has never heard of FMCSA.</div></div>
+    <div class="gain-card"><div class="gain-icon">📞</div><div class="gain-title">AI Phone Calls</div><div class="gain-desc">The AI dials fleet managers while you're in the install bay. No competitor can do this.</div></div>
+    <div class="gain-card"><div class="gain-icon">🎯</div><div class="gain-title">3-Email AI Sequences</div><div class="gain-desc">Category-aware pitches auto-sent to your pipeline. ShopVOX has zero outbound capability.</div></div>
+    <div class="gain-card"><div class="gain-icon">📸</div><div class="gain-title">Vision Quote from Photo</div><div class="gain-desc">Upload a vehicle photo and get a quote estimate. Nobody else does this.</div></div>
+    <div class="gain-card"><div class="gain-icon">🔄</div><div class="gain-title">Lifecycle Re-Order Engine</div><div class="gain-desc">Automatically re-engages fleet clients when their wraps are aging out.</div></div>
+    <div class="gain-card"><div class="gain-icon">📊</div><div class="gain-title">Proposal Heat Scoring</div><div class="gain-desc">Know which prospects are reading your proposals in real time. Act at the right moment.</div></div>
+  </div>
+</div>
+
+<div class="compare-section">
+  <div class="section-title">Price comparison — same tier, 10x more capability</div>
+  <div class="section-sub" style="margin-bottom:20px">ShopVOX PRO starts at $249/mo before you add a single user seat.</div>
+  <table class="compare-table">
+    <thead>
+      <tr><th>Feature</th><th>ShopVOX PRO<span class="badge-pe">PE owned</span></th><th>WrapOS $249/mo</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Shop management (jobs, quoting, invoicing)</td><td class="col-shopvox">✓</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>CRM / lead tracking</td><td class="col-shopvox">✓ (PRO only)</td><td class="col-wrapos">✓ All tiers</td></tr>
+      <tr><td>FMCSA fleet carrier database (600K+)</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>AI phone calls (outbound dialing)</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>AI email sequences</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>AR vehicle preview</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Vision Quote from photo</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Wrap lifecycle re-order sequences</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Per-user seat fees</td><td class="col-shopvox">+$49/user/mo</td><td class="col-wrapos">None</td></tr>
+      <tr><td>Owned by private equity</td><td class="col-shopvox" style="color:#f87171">Yes (Fullsteam, Aug 2025)</td><td class="col-wrapos">No — founder owned</td></tr>
+      <tr><td>Export your data anytime</td><td class="col-shopvox">Broken for line items</td><td class="col-wrapos">Always, full CSV</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="final-cta">
+  <h2 class="final-title">Your data. Your clients. Your shop.</h2>
+  <p class="final-sub">Start a 14-day free trial. Import your ShopVOX customers on day one. If WrapOS isn't worth it, export everything and leave — no friction, no hostage data.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial &amp; Import</a>
+  </div>
+  <div class="cta-note" style="margin-top:12px">Need help migrating? Email us: <a href="mailto:shadow@shadowgraphix.com" style="color:#818cf8">shadow@shadowgraphix.com</a></div>
+</div>
+
+<div class="footer">
+  &copy; ${new Date().getFullYear()} WrapOS by Shadow Graphix · Speedway, Indiana · Not affiliated with ShopVOX or Fullsteam Operations
+</div>
+</body>
+</html>`);
 });
 
 // Drip engine — activate a 3-email sequence for a lead

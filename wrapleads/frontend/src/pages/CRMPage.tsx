@@ -35,6 +35,7 @@ import JobsView from '../components/jobs/JobsView';
 import ContentView from '../components/content/ContentView';
 import AnalyticsView from '../components/analytics/AnalyticsView';
 import CSVImportModal from '../components/modals/CSVImportModal';
+import ShopVoxImportModal from '../components/modals/ShopVoxImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
 import { useGlobalDraggableModals } from '../hooks/useGlobalDraggableModals';
@@ -46,7 +47,7 @@ export default function CRMPage() {
   const {
     mode, setMode, setPaywallOpen,
     blueprintOpen, setBlueprintOpen,
-    bulkOutreachOpen, csvImportOpen, proposalOpen,
+    bulkOutreachOpen, csvImportOpen, shopvoxImportOpen, proposalOpen,
     leadView,
     commandPaletteOpen, setCommandPaletteOpen,
     visionOpen, setVisionOpen,
@@ -64,6 +65,7 @@ export default function CRMPage() {
     setBlueprintOpen: s.setBlueprintOpen,
     bulkOutreachOpen: s.bulkOutreachOpen,
     csvImportOpen: s.csvImportOpen,
+    shopvoxImportOpen: s.shopvoxImportOpen,
     proposalOpen: s.proposalOpen,
     leadView: s.leadView,
     commandPaletteOpen: s.commandPaletteOpen,
@@ -201,6 +203,7 @@ export default function CRMPage() {
       {blueprintOpen && <BlueprintScanner onClose={() => setBlueprintOpen(false)} />}
       {bulkOutreachOpen && <BulkOutreachModal />}
       {csvImportOpen && <CSVImportModal />}
+      {shopvoxImportOpen && <ShopVoxImportModal />}
       {proposalOpen && <ProposalModal />}
       {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
       {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
