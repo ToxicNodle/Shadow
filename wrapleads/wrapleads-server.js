@@ -716,6 +716,7 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/compare/'))       return true;
     if (p === '/calculator')             return true;
     if (p === '/stats.json')             return true;
+    if (p === '/robots.txt' || p === '/sitemap.xml') return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
@@ -10240,6 +10241,28 @@ function marketingShell({ title, description, body, appUrl }) {
 <meta property="og:title" content="${he(title)}">
 <meta property="og:description" content="${he(description)}">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="WrapOS">
+<meta property="og:url" content="${he(appUrl)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${he(title)}">
+<meta name="twitter:description" content="${he(description)}">
+<meta name="theme-color" content="#6366f1">
+<link rel="canonical" href="${he(appUrl)}">
+<script type="application/ld+json">${JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "WrapOS",
+  "applicationCategory": "BusinessApplication",
+  "applicationSubCategory": "CRM",
+  "description": description,
+  "operatingSystem": "Web",
+  "offers": [
+    { "@type": "Offer", "name": "WrapLeads", "price": "79.00", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "ShopFlow",  "price": "149.00", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "WrapOS",    "price": "249.00", "priceCurrency": "USD" }
+  ],
+  "publisher": { "@type": "Organization", "name": "Shadow Graphix", "address": "Speedway, Indiana" }
+})}</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#09090b;color:#f4f4f5;line-height:1.55}
@@ -10799,6 +10822,72 @@ app.post('/opportunities/:id/import', authMiddleware, subMiddleware, async (req,
   } catch (e) {
     res.status(500).json({ error: 'Import failed' });
   }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// SEO INFRASTRUCTURE — robots.txt + sitemap.xml so Google can actually
+// crawl and rank the 12+ public marketing pages we built.
+// ────────────────────────────────────────────────────────────────────────────
+
+app.get('/robots.txt', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# WrapOS — robots.txt
+User-agent: *
+Allow: /
+
+# Block authenticated app surface from crawl
+Disallow: /api/
+Disallow: /auth/
+Disallow: /admin/
+Disallow: /portal/
+Disallow: /portfolio/
+Disallow: /proposals/
+Disallow: /quote-request/
+
+# Allow all public marketing pages
+Allow: /for/
+Allow: /compare/
+Allow: /migrate/
+Allow: /demo
+Allow: /calculator
+Allow: /stats.json
+
+Sitemap: ${appUrl}/sitemap.xml
+`);
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const pages = [
+    { loc: '/',                      priority: '1.0', freq: 'weekly' },
+    { loc: '/welcome',               priority: '1.0', freq: 'weekly' },
+    { loc: '/demo',                  priority: '0.9', freq: 'monthly' },
+    { loc: '/calculator',            priority: '0.9', freq: 'monthly' },
+    { loc: '/migrate/shopvox',       priority: '0.9', freq: 'monthly' },
+    { loc: '/for/fleet',             priority: '0.85', freq: 'monthly' },
+    { loc: '/for/racing',            priority: '0.85', freq: 'monthly' },
+    { loc: '/for/dinoc',             priority: '0.85', freq: 'monthly' },
+    { loc: '/for/construction',      priority: '0.85', freq: 'monthly' },
+    { loc: '/for/government',        priority: '0.85', freq: 'monthly' },
+    { loc: '/compare/apollo',        priority: '0.8', freq: 'monthly' },
+    { loc: '/compare/urable',        priority: '0.8', freq: 'monthly' },
+  ];
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${pages.map(p => `  <url>
+    <loc>${appUrl}${p.loc}</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>${p.freq}</changefreq>
+    <priority>${p.priority}</priority>
+  </url>`).join('\n')}
+</urlset>`;
+
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.send(xml);
 });
 
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
