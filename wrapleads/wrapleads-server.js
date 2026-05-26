@@ -710,6 +710,7 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/portal/'))        return true;
     if (p.startsWith('/portfolio/'))     return true;
     if (p.startsWith('/quote-request/')) return true;
+    if (p.startsWith('/demo'))           return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
@@ -9465,6 +9466,416 @@ app.get('/analytics/market-map', authMiddleware, async (req, res) => {
 
     res.json({ byState, totalCarriers, topOpportunityStates });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Public Demo Call Feature ──────────────────────────────────────────────────
+// Visitors pick a real FMCSA carrier, enter their own phone, and the AI calls
+// THEM (not the carrier) — they experience the call firsthand, first-person.
+// Uses dedicated DEMO_VAPI_* credentials so user API keys are never exposed.
+
+const demoCallLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,
+  keyGenerator: (req) => req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ error: 'Maximum 3 demo calls per hour. Sign up for unlimited.' }),
+});
+
+// GET /demo/carriers?state=IN — top wrap-score carriers for the demo carrier picker
+app.get('/demo/carriers', async (req, res) => {
+  try {
+    const state = (req.query.state || '').toUpperCase().slice(0, 2);
+    const conditions = state ? `WHERE state = $1 AND fleet_size BETWEEN 10 AND 500 AND phone IS NOT NULL` : `WHERE fleet_size BETWEEN 25 AND 500 AND phone IS NOT NULL`;
+    const params = state ? [state] : [];
+    const wrapScore = `CASE WHEN fleet_size BETWEEN 25 AND 500 THEN 40 WHEN fleet_size > 500 THEN 20 WHEN fleet_size BETWEEN 10 AND 24 THEN 15 ELSE 5 END + CASE WHEN last_reported IS NULL THEN 0 WHEN last_reported < NOW() - INTERVAL '4 years' THEN 25 WHEN last_reported < NOW() - INTERVAL '2 years' THEN 15 WHEN last_reported < NOW() - INTERVAL '1 year' THEN 8 ELSE 3 END`;
+    const { rows } = await pool.query(
+      `SELECT source_id AS dot_number, name, city, state, fleet_size, industry, ${wrapScore} AS wrap_score FROM companies ${conditions} ORDER BY ${wrapScore} DESC, fleet_size DESC NULLS LAST LIMIT 12${params.length ? '' : ' OFFSET (RANDOM() * 500)::INT'}`,
+      params
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: 'Carrier lookup failed' }); }
+});
+
+// POST /demo/call — fire the AI call using DEMO Vapi credentials
+app.post('/demo/call', demoCallLimiter, async (req, res) => {
+  const DEMO_VAPI_KEY   = process.env.DEMO_VAPI_API_KEY;
+  const DEMO_PHONE_ID   = process.env.DEMO_VAPI_PHONE_NUMBER_ID;
+  if (!DEMO_VAPI_KEY || !DEMO_PHONE_ID) {
+    return res.status(503).json({ error: 'Demo calling not configured on this server.' });
+  }
+
+  const { phone, dot_number, carrier_name, carrier_city, carrier_state, fleet_size } = req.body || {};
+  if (!phone) return res.status(400).json({ error: 'phone required' });
+  const cleaned = String(phone).replace(/\D/g, '');
+  if (cleaned.length < 10) return res.status(400).json({ error: 'Invalid US phone number' });
+  const e164 = cleaned.length === 10 ? `+1${cleaned}` : `+${cleaned}`;
+
+  const company   = carrier_name  || 'this company';
+  const location  = [carrier_city, carrier_state].filter(Boolean).join(', ') || 'the area';
+  const fleetNote = fleet_size ? `They run ${fleet_size} vehicles.` : '';
+
+  const systemPrompt = `You are Shadow, a sales rep from Shadow Graphix — a vehicle wrap and fleet graphics shop based in Speedway, Indiana, right next to Indianapolis Motor Speedway.
+
+You sound like a real person. Short sentences. Natural. Not reading a script.
+
+You're calling the owner or fleet manager of ${company} (based in ${location}). ${fleetNote}
+
+━━ YOUR ONE JOB ━━
+Get one of these (in order):
+1. Their email — so you can send the portfolio and a quote
+2. A scheduled callback
+3. A yes to a site visit or virtual consult
+
+Keep it under 3 minutes. Stop after 2 soft asks.
+
+━━ YOUR OPENING ━━
+"Hey, this is Shadow calling from Shadow Graphix over in Speedway — we do fleet wraps, color-change wraps, and vehicle graphics for companies across Indiana and the Midwest. I'm reaching out to ${company} because your fleet looked like a solid fit for what we do. Are you the one who handles branding and vehicle decisions, or would that be someone else?"
+
+━━ VALUE HOOKS (pick one that fits naturally) ━━
+- "A fully wrapped fleet truck gets 30,000 to 70,000 impressions a day — it's the most cost-effective advertising most businesses ever run. We turn most fleet wraps around within 48 hours of print."
+- "We're 3M and Avery certified, so the material warranty is backed by the manufacturer — not just us."
+- "We do everything in-house — design, print, install — so there's one point of contact and no handoffs."
+
+━━ IMPORTANT ━━
+This is a DEMO call. You are demonstrating WrapOS — an AI sales platform for wrap shops. After you complete your sales pitch naturally, you may briefly mention: "By the way — this call was powered by WrapOS, an AI sales platform for wrap shops. If you're a shop owner who wants to automate outreach like this, check out wrapos.com."
+
+Stay in character as Shadow throughout. Be real. Be warm. Be brief.`;
+
+  try {
+    const vapiRes = await fetch(`${VAPI_BASE}/call`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${DEMO_VAPI_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        assistant: {
+          name: 'Shadow — Demo',
+          model: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', messages: [{ role: 'system', content: systemPrompt }] },
+          voice: { provider: 'playht', voiceId: 'jennifer', stability: 0.6, similarityBoost: 0.75 },
+          firstMessage: `Hey, this is Shadow calling from Shadow Graphix over in Speedway — we do fleet wraps and vehicle graphics for businesses across the Midwest. Am I reaching the right person for ${company}?`,
+          endCallMessage: "Great talking to you — have a good one!",
+          maxDurationSeconds: 180,
+        },
+        phoneNumberId: DEMO_PHONE_ID,
+        customer: { number: e164, name: `Demo — ${company}` },
+      }),
+    });
+    if (!vapiRes.ok) {
+      const err = await vapiRes.json().catch(() => ({}));
+      return res.status(vapiRes.status).json({ error: err.message || 'Call failed' });
+    }
+    const call = await vapiRes.json();
+    console.log(`[demo] Call initiated → ${e164} (carrier: ${company}, DOT: ${dot_number}) call_id: ${call.id}`);
+    res.json({ ok: true, call_id: call.id });
+  } catch (e) {
+    console.error('[demo] Call error:', e.message);
+    res.status(500).json({ error: 'Call failed — please try again.' });
+  }
+});
+
+// GET /demo — the public demo page
+app.get('/demo', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WrapOS — Watch the AI Make a Real Sales Call</title>
+<meta name="description" content="Pick a real fleet carrier. Give us your number. Our AI calls you in 30 seconds — using live company data. No acting. No recording. The real thing.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#09090b;color:#f4f4f5;min-height:100vh;line-height:1.5}
+a{color:inherit;text-decoration:none}
+
+/* ── Nav ── */
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid #18181b;position:sticky;top:0;background:#09090b;z-index:10}
+.nav-logo{font-size:18px;font-weight:900;letter-spacing:-.5px;color:#fff}
+.nav-logo span{color:#6366f1}
+.nav-cta{background:#6366f1;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;transition:background .15s}
+.nav-cta:hover{background:#4f46e5}
+
+/* ── Hero ── */
+.hero{padding:80px 24px 40px;text-align:center;max-width:760px;margin:0 auto}
+.hero-eyebrow{font-size:12px;font-weight:700;letter-spacing:.12em;color:#6366f1;text-transform:uppercase;margin-bottom:16px}
+.hero-title{font-size:clamp(32px,6vw,58px);font-weight:900;line-height:1.08;letter-spacing:-.03em;color:#fff;margin-bottom:20px}
+.hero-title .accent{color:#6366f1}
+.hero-sub{font-size:18px;color:#a1a1aa;line-height:1.6;max-width:560px;margin:0 auto 48px}
+
+/* ── Steps ── */
+.steps{display:flex;gap:0;align-items:center;justify-content:center;margin-bottom:56px;flex-wrap:wrap;gap:4px}
+.step{display:flex;align-items:center;gap:10px;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:10px 18px;font-size:13px;color:#a1a1aa}
+.step-num{width:22px;height:22px;border-radius:50%;background:#6366f1;color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-arrow{color:#3f3f46;margin:0 4px;font-size:18px}
+
+/* ── Demo card ── */
+.demo-card{background:#18181b;border:1px solid #27272a;border-radius:16px;max-width:640px;margin:0 auto 48px;overflow:hidden}
+.demo-section{padding:28px 32px;border-bottom:1px solid #27272a}
+.demo-section:last-child{border-bottom:none}
+.section-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#6366f1;margin-bottom:16px}
+
+/* State picker */
+.state-select{width:100%;background:#09090b;border:1px solid #3f3f46;border-radius:8px;color:#f4f4f5;padding:10px 14px;font-size:14px;cursor:pointer;transition:border-color .15s}
+.state-select:focus{outline:none;border-color:#6366f1}
+
+/* Carrier grid */
+.carrier-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+@media(max-width:480px){.carrier-grid{grid-template-columns:1fr}}
+.carrier-card{background:#09090b;border:1px solid #27272a;border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .15s,background .15s;text-align:left}
+.carrier-card:hover{border-color:#6366f180;background:#0f0f11}
+.carrier-card.selected{border-color:#6366f1;background:#6366f110}
+.carrier-name{font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+.carrier-meta{font-size:11px;color:#71717a;display:flex;gap:8px}
+.score-badge{background:#6366f115;color:#818cf8;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;white-space:nowrap}
+.carrier-loading{color:#52525b;font-size:13px;text-align:center;padding:24px 0}
+
+/* Phone input */
+.phone-wrap{display:flex;align-items:center;gap:12px}
+.phone-prefix{font-size:14px;color:#71717a;white-space:nowrap}
+.phone-input{flex:1;background:#09090b;border:1px solid #3f3f46;border-radius:8px;color:#f4f4f5;padding:10px 14px;font-size:16px;transition:border-color .15s}
+.phone-input:focus{outline:none;border-color:#6366f1}
+.phone-note{font-size:11px;color:#52525b;margin-top:8px}
+
+/* CTA button */
+.call-btn{width:100%;background:#6366f1;color:#fff;border:none;border-radius:10px;padding:16px;font-size:16px;font-weight:800;cursor:pointer;transition:background .15s,transform .1s;letter-spacing:-.3px;display:flex;align-items:center;justify-content:center;gap:10px}
+.call-btn:hover:not(:disabled){background:#4f46e5;transform:translateY(-1px)}
+.call-btn:disabled{background:#27272a;color:#52525b;cursor:not-allowed;transform:none}
+.call-btn .btn-icon{font-size:18px}
+.call-disclaimer{font-size:11px;color:#52525b;text-align:center;margin-top:10px}
+
+/* Status states */
+.status-box{border-radius:10px;padding:18px 20px;text-align:center;margin-top:0;display:none}
+.status-box.calling{display:block;background:#6366f115;border:1px solid #6366f140}
+.status-box.success{display:block;background:#22c55e15;border:1px solid #22c55e40}
+.status-box.error{display:block;background:#ef444415;border:1px solid #ef444440}
+.status-title{font-size:15px;font-weight:800;margin-bottom:4px}
+.status-sub{font-size:13px;color:#a1a1aa}
+.pulse{animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── Proof strip ── */
+.proof-strip{max-width:640px;margin:0 auto 64px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:480px){.proof-strip{grid-template-columns:1fr}}
+.proof-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px;text-align:center}
+.proof-num{font-size:28px;font-weight:900;color:#6366f1;letter-spacing:-.03em}
+.proof-label{font-size:12px;color:#71717a;margin-top:4px}
+
+/* ── CTA section ── */
+.cta-section{max-width:560px;margin:0 auto 80px;text-align:center;padding:0 24px}
+.cta-title{font-size:28px;font-weight:900;letter-spacing:-.03em;margin-bottom:12px}
+.cta-sub{font-size:15px;color:#a1a1aa;margin-bottom:32px}
+.cta-buttons{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn-primary{background:#6366f1;color:#fff;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:800;transition:background .15s}
+.btn-primary:hover{background:#4f46e5}
+.btn-ghost{background:transparent;color:#a1a1aa;padding:14px 24px;border-radius:10px;font-size:15px;font-weight:600;border:1px solid #27272a;transition:border-color .15s}
+.btn-ghost:hover{border-color:#6366f1;color:#fff}
+.pricing-note{font-size:12px;color:#52525b;margin-top:16px}
+
+/* ── Footer ── */
+.footer{border-top:1px solid #18181b;padding:24px 32px;text-align:center;font-size:12px;color:#52525b}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">Wrap<span>OS</span></div>
+  <a href="${appUrl}/login" class="nav-cta">Start Free Trial</a>
+</nav>
+
+<div class="hero">
+  <div class="hero-eyebrow">Live Demo — No Recording</div>
+  <h1 class="hero-title">Watch Our AI Book You<br>a Meeting. <span class="accent">Right Now.</span></h1>
+  <p class="hero-sub">Pick a real carrier from the FMCSA database. Give us your number. Our AI calls you in 30 seconds — using that company's real fleet data to build the pitch. Live. No actors.</p>
+</div>
+
+<div class="steps" style="max-width:640px;margin:0 auto 40px">
+  <div class="step"><span class="step-num">1</span> Pick a fleet carrier</div>
+  <div class="step-arrow">›</div>
+  <div class="step"><span class="step-num">2</span> Enter your number</div>
+  <div class="step-arrow">›</div>
+  <div class="step"><span class="step-num">3</span> Get the call in 30s</div>
+</div>
+
+<div class="demo-card" id="demoCard">
+
+  <!-- Step 1: Carrier Picker -->
+  <div class="demo-section">
+    <div class="section-label">Step 1 — Pick a carrier to pitch</div>
+    <select class="state-select" id="stateSelect">
+      <option value="">Pick a state to see carriers...</option>
+      <option value="IN">Indiana</option><option value="TX">Texas</option>
+      <option value="FL">Florida</option><option value="CA">California</option>
+      <option value="OH">Ohio</option><option value="IL">Illinois</option>
+      <option value="PA">Pennsylvania</option><option value="GA">Georgia</option>
+      <option value="NC">North Carolina</option><option value="MI">Michigan</option>
+      <option value="TN">Tennessee</option><option value="MO">Missouri</option>
+      <option value="WI">Wisconsin</option><option value="MN">Minnesota</option>
+      <option value="AZ">Arizona</option><option value="CO">Colorado</option>
+      <option value="WA">Washington</option><option value="OR">Oregon</option>
+      <option value="VA">Virginia</option><option value="NY">New York</option>
+      <option value="NJ">New Jersey</option><option value="MA">Massachusetts</option>
+      <option value="KY">Kentucky</option><option value="AL">Alabama</option>
+      <option value="LA">Louisiana</option><option value="OK">Oklahoma</option>
+      <option value="KS">Kansas</option><option value="IA">Iowa</option>
+      <option value="AR">Arkansas</option><option value="MS">Mississippi</option>
+      <option value="SC">South Carolina</option><option value="UT">Utah</option>
+      <option value="NV">Nevada</option><option value="NM">New Mexico</option>
+    </select>
+    <div class="carrier-grid" id="carrierGrid">
+      <div class="carrier-loading" style="grid-column:1/-1">Select a state above to see top-scored fleet carriers</div>
+    </div>
+  </div>
+
+  <!-- Step 2: Phone -->
+  <div class="demo-section">
+    <div class="section-label">Step 2 — Your phone number</div>
+    <div class="phone-wrap">
+      <span class="phone-prefix">+1</span>
+      <input type="tel" class="phone-input" id="phoneInput" placeholder="(555) 867-5309" maxlength="14">
+    </div>
+    <div class="phone-note">We call YOU — not the carrier. You'll experience the pitch exactly as a fleet manager would.</div>
+  </div>
+
+  <!-- Step 3: Launch -->
+  <div class="demo-section">
+    <button class="call-btn" id="callBtn" disabled>
+      <span class="btn-icon">📞</span>
+      <span id="btnText">Select a carrier first</span>
+    </button>
+    <div class="call-disclaimer">By entering your number you consent to receive one AI demo call. Standard carrier rates apply.</div>
+    <div class="status-box" id="statusBox">
+      <div class="status-title" id="statusTitle"></div>
+      <div class="status-sub" id="statusSub"></div>
+    </div>
+  </div>
+</div>
+
+<div class="proof-strip">
+  <div class="proof-card">
+    <div class="proof-num">600K+</div>
+    <div class="proof-label">FMCSA carriers in the database</div>
+  </div>
+  <div class="proof-card">
+    <div class="proof-num">36%</div>
+    <div class="proof-label">higher meeting rate vs cold email</div>
+  </div>
+  <div class="proof-card">
+    <div class="proof-num">$249/mo</div>
+    <div class="proof-label">all-in — no per-seat fees</div>
+  </div>
+</div>
+
+<div class="cta-section">
+  <h2 class="cta-title">Ready to automate your outreach?</h2>
+  <p class="cta-sub">WrapOS finds the fleet, writes the pitch, makes the call, and books the meeting — while you're in the install bay.</p>
+  <div class="cta-buttons">
+    <a href="${appUrl}/login" class="btn-primary">Start 14-Day Free Trial</a>
+    <a href="mailto:shadow@shadowgraphix.com" class="btn-ghost">Talk to a human</a>
+  </div>
+  <div class="pricing-note">WrapLeads $79/mo · ShopFlow $149/mo · WrapOS $249/mo · Cancel anytime</div>
+</div>
+
+<div class="footer">
+  &copy; ${new Date().getFullYear()} WrapOS by Shadow Graphix · Speedway, Indiana
+</div>
+
+<script>
+let selected = null;
+
+const stateSelect  = document.getElementById('stateSelect');
+const carrierGrid  = document.getElementById('carrierGrid');
+const phoneInput   = document.getElementById('phoneInput');
+const callBtn      = document.getElementById('callBtn');
+const btnText      = document.getElementById('btnText');
+const statusBox    = document.getElementById('statusBox');
+const statusTitle  = document.getElementById('statusTitle');
+const statusSub    = document.getElementById('statusSub');
+
+function updateCallBtn() {
+  const hasCarrier = !!selected;
+  const phone = phoneInput.value.replace(/\\D/g,'');
+  const hasPhone = phone.length >= 10;
+  callBtn.disabled = !(hasCarrier && hasPhone);
+  if (!hasCarrier) btnText.textContent = 'Select a carrier first';
+  else if (!hasPhone) btnText.textContent = 'Enter your phone number';
+  else btnText.textContent = 'Call me now — hear the AI pitch';
+}
+
+phoneInput.addEventListener('input', () => {
+  let val = phoneInput.value.replace(/\\D/g,'');
+  if (val.length > 10) val = val.slice(0,10);
+  if (val.length > 6) val = '(' + val.slice(0,3) + ') ' + val.slice(3,6) + '-' + val.slice(6);
+  else if (val.length > 3) val = '(' + val.slice(0,3) + ') ' + val.slice(3);
+  else if (val.length) val = '(' + val;
+  phoneInput.value = val;
+  updateCallBtn();
+});
+
+stateSelect.addEventListener('change', async () => {
+  const state = stateSelect.value;
+  selected = null;
+  updateCallBtn();
+  if (!state) { carrierGrid.innerHTML = '<div class="carrier-loading" style="grid-column:1/-1">Select a state above</div>'; return; }
+  carrierGrid.innerHTML = '<div class="carrier-loading pulse" style="grid-column:1/-1">Loading top carriers...</div>';
+  try {
+    const r = await fetch('/demo/carriers?state=' + state);
+    const carriers = await r.json();
+    if (!carriers.length) { carrierGrid.innerHTML = '<div class="carrier-loading" style="grid-column:1/-1">No carriers found for this state — try another.</div>'; return; }
+    carrierGrid.innerHTML = carriers.map(c => \`
+      <div class="carrier-card" data-dot="\${c.dot_number}" data-name="\${c.name}" data-city="\${c.city||''}" data-state="\${c.state||''}" data-fleet="\${c.fleet_size||''}">
+        <div class="carrier-name">\${c.name}</div>
+        <div class="carrier-meta">
+          <span>\${[c.city,c.state].filter(Boolean).join(', ')}</span>
+          \${c.fleet_size ? '<span>' + c.fleet_size + ' vehicles</span>' : ''}
+          <span class="score-badge">score \${c.wrap_score}</span>
+        </div>
+      </div>
+    \`).join('');
+    carrierGrid.querySelectorAll('.carrier-card').forEach(card => {
+      card.addEventListener('click', () => {
+        carrierGrid.querySelectorAll('.carrier-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        selected = { dot_number: card.dataset.dot, name: card.dataset.name, city: card.dataset.city, state: card.dataset.state, fleet_size: card.dataset.fleet };
+        updateCallBtn();
+      });
+    });
+  } catch(e) {
+    carrierGrid.innerHTML = '<div class="carrier-loading" style="grid-column:1/-1">Error loading carriers — refresh and try again.</div>';
+  }
+});
+
+callBtn.addEventListener('click', async () => {
+  if (callBtn.disabled) return;
+  const phone = phoneInput.value.replace(/\\D/g,'');
+  callBtn.disabled = true;
+  btnText.textContent = 'Connecting...';
+  statusBox.className = 'status-box calling';
+  statusTitle.textContent = 'Connecting your call...';
+  statusSub.innerHTML = '<span class="pulse">Spinning up the AI · usually takes 15–30 seconds</span>';
+
+  try {
+    const r = await fetch('/demo/call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, dot_number: selected.dot_number, carrier_name: selected.name, carrier_city: selected.city, carrier_state: selected.state, fleet_size: selected.fleet_size }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) throw new Error(data.error || 'Call failed');
+    statusBox.className = 'status-box success';
+    statusTitle.textContent = 'Your phone is about to ring!';
+    statusSub.textContent = 'The AI is calling you now. It will pitch ' + selected.name + ' using their real fleet data. Answer and experience it firsthand.';
+    btnText.textContent = 'Call on its way';
+  } catch(e) {
+    statusBox.className = 'status-box error';
+    statusTitle.textContent = 'Something went wrong';
+    statusSub.textContent = e.message || 'Please try again.';
+    callBtn.disabled = false;
+    updateCallBtn();
+  }
+});
+</script>
+</body>
+</html>`);
 });
 
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
