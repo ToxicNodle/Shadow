@@ -52,7 +52,7 @@ async function generateProposalHtml({ pool, userId, leadId }) {
   // Pull user settings for sender info
   const uR = await pool.query(`SELECT settings_json, email AS owner_email, name AS owner_name FROM users WHERE id = $1`, [String(userId)]);
   const settings = uR.rows[0]?.settings_json || {};
-  const ownerName = settings.senderName || uR.rows[0]?.owner_name || 'WrapLeads Solar';
+  const ownerName = settings.senderName || uR.rows[0]?.owner_name || 'HelioScout';
   const companyName = settings.companyName || ownerName;
   const senderEmail = settings.senderEmail || uR.rows[0]?.owner_email || '';
   const senderPhone = settings.senderPhone || '';
@@ -118,12 +118,14 @@ function renderHtml({ lead, naics, tariff, econ, intel, netPayback, dsireProgram
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Solar Proposal — ${esc(lead.company)}</title>
+<title>HelioScout Proposal — ${esc(lead.company)}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f8fafc; color: #0f172a; line-height: 1.55; }
   .page { max-width: 880px; margin: 32px auto; background: #fff; border-radius: 16px; box-shadow: 0 4px 32px rgba(0,0,0,0.06); overflow: hidden; }
   .hero { padding: 48px 56px 32px; background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%); color: white; }
+  .hero .brand { font-size: 13px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.92; margin-bottom: 18px; }
+  .hero .brand-tag { font-weight: 500; opacity: 0.7; margin-left: 8px; letter-spacing: 0.04em; }
   .hero h1 { font-size: 32px; margin: 0 0 4px; font-weight: 800; letter-spacing: -0.02em; }
   .hero .sub { font-size: 16px; opacity: 0.92; margin-bottom: 24px; }
   .hero-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
@@ -170,6 +172,7 @@ function renderHtml({ lead, naics, tariff, econ, intel, netPayback, dsireProgram
 <body>
 <div class="page">
   <div class="hero">
+    <div class="brand">HelioScout<span class="brand-tag">commercial solar intelligence</span></div>
     <h1>Commercial Solar Proposal</h1>
     <div class="sub">${esc(lead.company)}${lead.city ? ` &middot; ${esc(lead.city)}, ${esc(lead.state || '')}` : ''}</div>
     <div class="hero-grid">

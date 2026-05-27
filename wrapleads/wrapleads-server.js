@@ -9220,7 +9220,7 @@ Return ONLY JSON: {"emails":[{"day":5,"subject":"...","body":"..."},{"day":12,"s
 // the unsubscribe footer + writes outreach_audit_log + email_tracking.
 async function sendCompliantEmail({ to, toName = null, subject, body, leadId = null, userId = null, settings = {}, skipCompliance = false }) {
   const resendKey = process.env.RESEND_API_KEY;
-  const fromName  = settings.senderName || 'WrapLeads Solar';
+  const fromName  = settings.senderName || 'HelioScout';
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
 
   let finalBody = body;

@@ -29,7 +29,8 @@ function Header() {
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16 }}>
       <div>
         <h1 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px', color: 'var(--text)' }}>
-          Commercial Solar Scout
+          HelioScout
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginLeft: 10, letterSpacing: '0.04em' }}>COMMERCIAL SOLAR INTELLIGENCE</span>
         </h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, maxWidth: 720 }}>
           Hyper-qualified commercial solar leads. NAICS-aware fit scoring, ITC + state-stack incentive math,

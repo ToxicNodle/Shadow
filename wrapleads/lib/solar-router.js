@@ -1,5 +1,5 @@
 /**
- * Commercial Solar Scout — Express router.
+ * HelioScout (Commercial Solar Scout) — Express router.
  *
  * Mounts everything net-new for the solar vertical: discover/search with
  * solar-score, pilot installer management, installer auction marketplace,
@@ -378,7 +378,7 @@ function buildSolarRouter(deps) {
         try {
           await sendCompliantEmail({
             to: inst.installer_email,
-            subject: `🌞 ${leadCount} new commercial solar lead${leadCount > 1 ? 's' : ''} assigned`,
+            subject: `[HelioScout] ${leadCount} new commercial solar lead${leadCount > 1 ? 's' : ''} assigned`,
             html: `<p>You have ${leadCount} new commercial solar lead${leadCount > 1 ? 's' : ''} ready for outreach.</p>
                    <p><a href="${ledLink}">View your lead inbox</a></p>
                    <p>Lead packets include building sqft, roof type, utility, estimated kW system size, and ITC + state-stack net cost. Each lead is exclusive to you.</p>`,
@@ -522,7 +522,7 @@ function buildSolarRouter(deps) {
         try {
           await sendCompliantEmail({
             to: inst.installer_email,
-            subject: `🌞 Auction open: ${lead.company} — ${econ.system_kw}kW commercial solar opportunity`,
+            subject: `[HelioScout] Auction open: ${lead.company} — ${econ.system_kw}kW opportunity`,
             html: `<p>An exclusive commercial solar lead just entered auction.</p>
                    <ul>
                      <li><strong>Property:</strong> ${escapeHtml(lead.company)} (${escapeHtml(lead.city || '')}, ${escapeHtml(lead.state || '')})</li>
@@ -1053,7 +1053,7 @@ async function closeAuction(pool, { auctionId, userId, manualBidId = null, deps 
     const baseUrl = deps.appBaseUrl();
     await deps.sendCompliantEmail({
       to: winner.installer_email,
-      subject: `🎉 You won the auction for ${auction.snapshot?.company}`,
+      subject: `[HelioScout] You won the auction for ${auction.snapshot?.company}`,
       html: `<p>You won! The lead packet for <strong>${escapeHtml(auction.snapshot?.company || '')}</strong> is now exclusively yours.</p>
              <p>Your bid: <strong>${winner.bid_mode}</strong> $${Number(winner.amount).toLocaleString()}${winner.commission_pct ? ' + ' + winner.commission_pct + '% commission' : ''}</p>
              <p><a href="${baseUrl}/installer/${winner.accept_token}">Open your lead inbox</a></p>
@@ -1064,7 +1064,7 @@ async function closeAuction(pool, { auctionId, userId, manualBidId = null, deps 
     for (const loser of scored.filter(b => b.id !== winner.id)) {
       await deps.sendCompliantEmail({
         to: loser.installer_email,
-        subject: `Auction closed: ${auction.snapshot?.company} — better luck next time`,
+        subject: `[HelioScout] Auction closed: ${auction.snapshot?.company} — better luck next time`,
         html: `<p>The auction for <strong>${escapeHtml(auction.snapshot?.company || '')}</strong> has closed and went to another installer in your territory.</p>
                <p>Stay tuned — more commercial solar opportunities are queued in your territory.</p>`,
         text: `Auction for ${auction.snapshot?.company} went to another installer. Keep watching for the next one.`,
