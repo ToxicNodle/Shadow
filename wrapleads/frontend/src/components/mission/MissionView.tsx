@@ -6,8 +6,10 @@ import { useLeads } from '../../hooks/useLeads';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
 import HotProposalsCard from './HotProposalsCard';
 import PerfectTimingCard from './PerfectTimingCard';
+import WinThisWeekCard from './WinThisWeekCard';
 import StreakBadge from './StreakBadge';
 import InboundRequestsCard from './InboundRequestsCard';
+import CallSessionModal from './CallSessionModal';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1691,6 +1693,7 @@ export default function MissionView() {
   const [showProspector, setShowProspector] = useState(false);
   const [showCampaigns, setShowCampaigns] = useState(false);
   const [showROI, setShowROI] = useState(false);
+  const [showCallSession, setShowCallSession] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mission'],
@@ -1828,6 +1831,9 @@ export default function MissionView() {
       {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
       <InboundRequestsCard />
 
+      {/* ── Win This Week — top 5 predicted closers this week ── */}
+      <WinThisWeekCard />
+
       {/* ── Perfect Timing — email opens in the last 2 hours ── */}
       <PerfectTimingCard />
 
@@ -1890,6 +1896,13 @@ export default function MissionView() {
               <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg></span>
               <span className="mission-card-title">Ready for Your Call — Sequence Complete</span>
               <span className="mission-badge mission-badge-green">{callReady!.length}</span>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 11, marginLeft: 'auto', padding: '4px 12px' }}
+                onClick={() => setShowCallSession(true)}
+              >
+                🎯 Start Calling Session
+              </button>
             </div>
             <p className="mission-call-desc">
               These leads received your full 3-email sequence and haven't replied yet.
@@ -2290,6 +2303,13 @@ export default function MissionView() {
         <ROICalculatorModal
           onClose={() => setShowROI(false)}
           companyName={settings.companyName}
+        />
+      )}
+
+      {showCallSession && callReady && callReady.length > 0 && (
+        <CallSessionModal
+          leads={callReady}
+          onClose={() => setShowCallSession(false)}
         />
       )}
     </div>
