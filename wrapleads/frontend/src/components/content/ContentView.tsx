@@ -1,5 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import QRCode from 'qrcode';
 import { api } from '../../api/client';
 import type { WrapContent, ContentSchedule, EinkDevice, EinkPushLog } from '../../api/types';
 
@@ -427,6 +428,106 @@ function DeviceDetail({ device, onClose, onPush, onDelete }: {
 
 // ── Device Grid ───────────────────────────────────────────────────────────────
 
+// ── Fleet QR Card ─────────────────────────────────────────────────────────────
+function FleetQRCard() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  const { data } = useQuery({
+    queryKey: ['my-quote-link'],
+    queryFn: () => api.getMyQuoteLink(),
+    staleTime: Infinity,
+  });
+
+  const quoteUrl = data ? `${window.location.origin}/quote-request/${data.token}` : null;
+
+  useEffect(() => {
+    if (!quoteUrl || !canvasRef.current) return;
+    QRCode.toCanvas(canvasRef.current, quoteUrl, {
+      width: 220,
+      margin: 2,
+      color: { dark: '#0a0a0a', light: '#ffffff' },
+    });
+  }, [quoteUrl]);
+
+  function downloadQR() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const url = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'fleet-quote-qr.png';
+    a.click();
+  }
+
+  function copyLink() {
+    if (!quoteUrl) return;
+    navigator.clipboard.writeText(quoteUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div style={{
+      background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 12,
+      padding: 20, marginBottom: 20, display: 'flex', gap: 24, alignItems: 'flex-start',
+      flexWrap: 'wrap',
+    }}>
+      <div style={{ flexShrink: 0, background: '#fff', borderRadius: 10, padding: 8, boxShadow: '0 2px 12px rgba(0,0,0,.3)' }}>
+        <canvas ref={canvasRef} style={{ display: 'block', borderRadius: 4 }} />
+        {!quoteUrl && (
+          <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 12 }}>
+            <span className="spinner" />
+          </div>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 6 }}>
+          Fleet Quote QR Code
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>
+          Instant Quotes from Any Vehicle
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 14, margin: '0 0 14px 0' }}>
+          Place this QR code on your fleet vehicles, service trucks, shop window, or E Ink displays.
+          When fleet managers or drivers scan it, they land directly on your personalized wrap quote form —
+          no app required.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={downloadQR} disabled={!quoteUrl}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5 }}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Download PNG
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={copyLink} disabled={!quoteUrl}>
+              {copied ? '✓ Copied!' : 'Copy Link'}
+            </button>
+            {quoteUrl && (
+              <a href={quoteUrl} target="_blank" rel="noopener" className="btn" style={{ fontSize: 12 }}>
+                Preview Form →
+              </a>
+            )}
+          </div>
+          {quoteUrl && (
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'monospace', background: 'var(--bg-elev-2)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all' }}>
+              {quoteUrl}
+            </div>
+          )}
+        </div>
+        <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {['Print on vehicle magnets', 'Add to E Ink displays', 'Put on shop window', 'Include in email signature'].map((tip) => (
+            <span key={tip} style={{ fontSize: 10, color: 'var(--text-faint)', background: 'var(--bg-elev-2)', borderRadius: 99, padding: '3px 10px' }}>
+              {tip}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DeviceGrid({ contentList }: { contentList: WrapContent[] }) {
   const qc = useQueryClient();
   const [showRegister, setShowRegister] = useState(false);
@@ -786,7 +887,10 @@ export default function ContentView() {
 
       {/* ── Devices Tab ── */}
       {tab === 'devices' && (
-        <DeviceGrid contentList={contentList} />
+        <>
+          <FleetQRCard />
+          <DeviceGrid contentList={contentList} />
+        </>
       )}
 
       {showUpload && <UploadModal onClose={() => setShowUpload(false)} />}

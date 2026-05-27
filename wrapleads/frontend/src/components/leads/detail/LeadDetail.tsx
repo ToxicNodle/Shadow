@@ -13,6 +13,7 @@ import ActivityTab from './ActivityTab';
 import DesignStudioTab from './DesignStudioTab';
 import QuotesTab from './QuotesTab';
 import AIWhisper from './AIWhisper';
+import CompetitiveIntelTab from './CompetitiveIntelTab';
 
 // ── Deal Metrics Strip ────────────────────────────────────────────────────────
 // Conservative avg revenue per lead category (mirrors REV_EST in other files)
@@ -400,7 +401,7 @@ function ScoreBreakdownModal({ lead, onClose }: { lead: Lead; onClose: () => voi
   );
 }
 
-type Tab = 'timeline' | 'email' | 'quotes' | 'notes' | 'design';
+type Tab = 'timeline' | 'email' | 'quotes' | 'notes' | 'design' | 'intel';
 
 function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
   const qc = useQueryClient();
@@ -516,7 +517,7 @@ export default function LeadDetail() {
   useEffect(() => {
     if (!lead) return;
     const TAB_KEYS: Record<string, Tab> = {
-      t: 'timeline', e: 'email', q: 'quotes', n: 'notes', d: 'design',
+      t: 'timeline', e: 'email', q: 'quotes', n: 'notes', d: 'design', i: 'intel',
     };
     function onKey(ev: KeyboardEvent) {
       const tag = (ev.target as HTMLElement).tagName;
@@ -624,6 +625,7 @@ export default function LeadDetail() {
               { id: 'quotes',   label: 'Quotes' },
               { id: 'notes',    label: 'Notes' },
               { id: 'design',   label: 'Design' },
+              { id: 'intel',    label: '⚔ Intel' },
             ] as { id: Tab; label: string }[]).map(({ id, label }) => (
               <button
                 key={id}
@@ -640,6 +642,7 @@ export default function LeadDetail() {
             {activeTab === 'quotes'   && <QuotesTab lead={lead} />}
             {activeTab === 'notes'    && <NotesTab lead={lead} />}
             {activeTab === 'design'   && <DesignStudioTab lead={lead} />}
+            {activeTab === 'intel'    && <CompetitiveIntelTab lead={lead} />}
           </div>
         </div>
       </div>
