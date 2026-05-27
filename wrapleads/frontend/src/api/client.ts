@@ -1021,4 +1021,10 @@ export const api = {
       worstMarginJobs: Array<{ company: string; wrap_category: string; job_revenue: number; material_cost: number; vehicle_count: number; install_date: string; margin_pct: number }>;
       hasData: boolean;
     }>('/analytics/margin'),
+
+  // CAN-SPAM unsubscribe status for a lead's email
+  getUnsubscribeStatus: (leadId: number) =>
+    authFetch<{ unsubscribed: boolean; email: string | null; unsubscribed_at: string | null }>(
+      `/leads/${leadId}/unsubscribe-status`
+    ),
 };

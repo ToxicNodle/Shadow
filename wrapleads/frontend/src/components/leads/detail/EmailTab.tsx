@@ -4,6 +4,31 @@ import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 
+function UnsubscribedWarning({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['unsub-status', leadId],
+    queryFn: () => api.getUnsubscribeStatus(leadId),
+    staleTime: 5 * 60_000,
+  });
+  if (!data?.unsubscribed) return null;
+  return (
+    <div style={{
+      background: '#7f1d1d22', border: '1px solid #ef444450', borderRadius: 8,
+      padding: '10px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8,
+    }}>
+      <span style={{ fontSize: 16 }}>⊘</span>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>This contact has unsubscribed</div>
+        <div style={{ fontSize: 11, color: '#ef444499', marginTop: 2 }}>
+          {data.email} opted out of future emails
+          {data.unsubscribed_at ? ` on ${new Date(data.unsubscribed_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}` : ''}.
+          Sending will be blocked.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Email Engagement Timeline ─────────────────────────────────────────────────
 function EmailEngagementTimeline({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
@@ -314,9 +339,10 @@ export default function EmailTab({ lead }: Props) {
     } catch (e: unknown) {
       const msg = (e as Error).message;
       if (msg.includes('RESEND_API_KEY')) {
-        // Fall back to copying — log it anyway
         copy(`Subject: ${result.subject}\n\n${result.body}`);
         showToast('Resend not configured — copied to clipboard instead');
+      } else if (msg.includes('unsubscribed')) {
+        showToast('This contact has unsubscribed — email blocked', 'error');
       } else {
         showToast(msg, 'error');
       }
@@ -348,6 +374,9 @@ export default function EmailTab({ lead }: Props) {
 
   return (
     <div>
+      {/* CAN-SPAM: warn if contact has unsubscribed */}
+      {lead.serverId && <UnsubscribedWarning leadId={lead.serverId} />}
+
       {/* Email engagement tracking */}
       <EmailEngagementTimeline lead={lead} />
 

@@ -678,6 +678,66 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not add margin columns to installed_jobs:', e.message);
   }
+
+  // CAN-SPAM compliant unsubscribe records for outbound prospect emails
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_unsubscribes (
+        id             BIGSERIAL PRIMARY KEY,
+        user_id        TEXT NOT NULL,
+        email          TEXT NOT NULL,
+        token          TEXT NOT NULL UNIQUE,
+        lead_id        BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        unsubscribed_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at     TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unsub_user_email ON email_unsubscribes(user_id, LOWER(email))`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_unsub_token ON email_unsubscribes(token)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create email_unsubscribes table:', e.message);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Unsubscribe helpers — CAN-SPAM compliance for outbound prospect emails
+// ----------------------------------------------------------------------------
+
+async function isUnsubscribed(userId, email) {
+  if (!email) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM email_unsubscribes WHERE user_id=$1 AND LOWER(email)=LOWER($2) LIMIT 1`,
+      [String(userId), email]
+    );
+    return rows.length > 0;
+  } catch { return false; }
+}
+
+// Upserts an unsubscribe token record and returns the token (stable per user+email pair).
+async function getOrCreateUnsubToken(userId, email, leadId) {
+  const existing = await pool.query(
+    `SELECT token FROM email_unsubscribes WHERE user_id=$1 AND LOWER(email)=LOWER($2) LIMIT 1`,
+    [String(userId), email]
+  );
+  if (existing.rows.length) return existing.rows[0].token;
+  const token = require('crypto').randomBytes(20).toString('hex');
+  await pool.query(
+    `INSERT INTO email_unsubscribes (user_id, email, token, lead_id) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (user_id, LOWER(email)) DO NOTHING`,
+    [String(userId), email, token, leadId || null]
+  );
+  return token;
+}
+
+function buildUnsubFooter(unsubUrl, senderName) {
+  const text = `\n\n--\n${senderName}\n\nTo unsubscribe from future emails, visit: ${unsubUrl}`;
+  const html = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+<p style="font-size:11px;color:#999;margin:0">${he(senderName)}</p>
+<p style="font-size:10px;color:#bbb;margin:4px 0 0">
+  <a href="${unsubUrl}" style="color:#bbb;text-decoration:underline">Unsubscribe</a> from future emails.
+</p>`;
+  return { text, html };
 }
 
 // ----------------------------------------------------------------------------
@@ -873,6 +933,112 @@ const requireWrapOS     = requireTier('wrapos');
 app.get(['/test', '/apollo/test', '/health'], async (req, res) => {
   const db = await checkDb();
   res.json({ status: 'ok', server: 'wrapleads-server', version: '0.4', database: db });
+});
+
+// ----------------------------------------------------------------------------
+// PUBLIC — CAN-SPAM one-click unsubscribe (no auth required)
+// ----------------------------------------------------------------------------
+app.get('/unsubscribe/:token', async (req, res) => {
+  const { token } = req.params;
+  if (!token || !/^[a-f0-9]{40}$/.test(token)) {
+    return res.status(400).send('<h2>Invalid unsubscribe link.</h2>');
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, user_id, email, lead_id FROM email_unsubscribes WHERE token=$1 LIMIT 1`,
+      [token]
+    );
+    if (!rows.length) {
+      return res.status(404).send(`<!DOCTYPE html><html><head><title>Already unsubscribed</title>
+        <meta charset="utf-8"><style>body{font-family:system-ui;max-width:480px;margin:60px auto;text-align:center;color:#555}</style></head>
+        <body><h2>You're already unsubscribed</h2><p>Your email address is not receiving outreach from this sender.</p></body></html>`);
+    }
+    const row = rows[0];
+
+    // Cancel any pending outbound email_queue items for this lead/email combo
+    if (row.lead_id) {
+      await pool.query(
+        `UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE lead_id=$1 AND status='pending'`,
+        [row.lead_id]
+      );
+      // Mark lead as lost so it surfaces no further automated outreach
+      await pool.query(
+        `UPDATE leads SET status='lost', updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status NOT IN ('won','lost')`,
+        [row.lead_id, row.user_id]
+      );
+      await pool.query(
+        `INSERT INTO lead_activities (lead_id, user_id, type, subject, metadata, created_at)
+         VALUES ($1,$2,'note','Contact unsubscribed via email link',$3,NOW())`,
+        [row.lead_id, row.user_id, JSON.stringify({ source: 'unsubscribe_link', email: row.email })]
+      ).catch(() => {});
+    }
+
+    // The record stays in email_unsubscribes permanently (it IS the opt-out list)
+    // Make sure unsubscribed_at is set if somehow created without it
+    await pool.query(
+      `UPDATE email_unsubscribes SET unsubscribed_at=COALESCE(unsubscribed_at,NOW()) WHERE token=$1`,
+      [token]
+    );
+
+    return res.send(`<!DOCTYPE html><html><head><title>Unsubscribed</title>
+      <meta charset="utf-8">
+      <style>
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:480px;margin:80px auto;text-align:center;color:#374151;padding:0 20px}
+        h2{color:#111;font-size:24px;margin-bottom:8px}
+        p{color:#6b7280;line-height:1.6}
+        .check{width:56px;height:56px;background:#dcfce7;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:28px}
+      </style></head>
+      <body>
+        <div class="check">✓</div>
+        <h2>You've been unsubscribed</h2>
+        <p>${he(row.email)} will no longer receive outreach emails from this sender.</p>
+        <p style="font-size:13px;color:#9ca3af;margin-top:32px">If this was a mistake, contact the sender directly to re-opt in.</p>
+      </body></html>`);
+  } catch (e) {
+    console.error('[unsubscribe]', e.message);
+    res.status(500).send('<h2>Something went wrong. Please try again later.</h2>');
+  }
+});
+
+// POST /unsubscribe/:token — RFC 8058 one-click (List-Unsubscribe-Post header support)
+app.post('/unsubscribe/:token', async (req, res) => {
+  req.params; // reuse GET handler logic
+  const { token } = req.params;
+  if (!token || !/^[a-f0-9]{40}$/.test(token)) return res.sendStatus(400);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, user_id, lead_id, email FROM email_unsubscribes WHERE token=$1 LIMIT 1`,
+      [token]
+    );
+    if (!rows.length) return res.sendStatus(200); // already gone
+    const row = rows[0];
+    if (row.lead_id) {
+      await pool.query(`UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE lead_id=$1 AND status='pending'`, [row.lead_id]);
+      await pool.query(`UPDATE leads SET status='lost', updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status NOT IN ('won','lost')`, [row.lead_id, row.user_id]);
+    }
+    await pool.query(`UPDATE email_unsubscribes SET unsubscribed_at=COALESCE(unsubscribed_at,NOW()) WHERE token=$1`, [token]);
+    res.sendStatus(200);
+  } catch { res.sendStatus(500); }
+});
+
+// GET /leads/:id/unsubscribe-status — check if a lead's email is opted out (authed)
+app.get('/leads/:id/unsubscribe-status', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const { rows } = await pool.query(`SELECT email FROM leads WHERE id=$1 AND user_id=$2`, [id, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const email = rows[0].email;
+    if (!email) return res.json({ unsubscribed: false, email: null });
+    const { rows: sub } = await pool.query(
+      `SELECT unsubscribed_at FROM email_unsubscribes WHERE user_id=$1 AND LOWER(email)=LOWER($2) LIMIT 1`,
+      [uid, email]
+    );
+    res.json({ unsubscribed: sub.length > 0, email, unsubscribed_at: sub[0]?.unsubscribed_at ?? null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ----------------------------------------------------------------------------
@@ -2335,6 +2501,11 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   );
   if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
 
+  // CAN-SPAM: block send if recipient has opted out
+  if (await isUnsubscribed(uid, toEmail)) {
+    return res.status(422).json({ error: 'unsubscribed', message: `${toEmail} has unsubscribed from your outreach.` });
+  }
+
   // Get sender settings
   const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
   const settings = userR.rows[0]?.settings_json || {};
@@ -2361,13 +2532,17 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
     const baseUrl = process.env.APP_BASE_URL || APP_URL;
     const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
 
-    // Build HTML body with tracking pixel
+    // CAN-SPAM: generate (or reuse) unsubscribe token
+    const unsubToken = await getOrCreateUnsubToken(uid, toEmail, id).catch(() => null);
+    const unsubUrl = unsubToken ? `${baseUrl}/unsubscribe/${unsubToken}` : null;
+    const unsubFooter = buildUnsubFooter(unsubUrl || `${baseUrl}/unsubscribe/invalid`, fromName);
+
+    // Build HTML body with tracking pixel + unsubscribe footer
     const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">
 ${body.replace(/\n/g, '<br>')}
-<br><br>
-<hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-<p style="font-size:11px;color:#999;margin:0">${fromName} · Powered by <a href="https://wrapleads.io" style="color:#999">WrapLeads</a></p>
+${unsubFooter.html}
 </div><img src="${pixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+    const textBody = body + unsubFooter.text;
 
     const resp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -2377,7 +2552,11 @@ ${body.replace(/\n/g, '<br>')}
         to: toName ? `${toName} <${toEmail}>` : toEmail,
         subject,
         html: htmlBody,
-        text: body,
+        text: textBody,
+        headers: unsubUrl ? {
+          'List-Unsubscribe': `<${unsubUrl}>, <mailto:${fromEmail}?subject=unsubscribe>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        } : {},
       }),
     });
     const data = await resp.json();
@@ -4505,6 +4684,21 @@ async function processEmailQueue() {
         const fromName = s.senderName || 'WrapLeads';
         const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
 
+        // CAN-SPAM: skip if recipient has unsubscribed
+        if (await isUnsubscribed(item.user_id, item.to_email)) {
+          await pool.query(
+            `UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE id=$1`,
+            [item.id]
+          );
+          // Cancel rest of the sequence for this lead too
+          await pool.query(
+            `UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE lead_id=$1 AND status='pending'`,
+            [item.lead_id]
+          );
+          console.log(`[drip] Skipped lead ${item.lead_id} — ${item.to_email} has unsubscribed`);
+          continue;
+        }
+
         // Create tracking token for this drip email
         const dripTrackToken = require('crypto').randomBytes(16).toString('hex');
         await pool.query(
@@ -4513,7 +4707,14 @@ async function processEmailQueue() {
         ).catch(() => {});
         const baseUrl = process.env.APP_BASE_URL || APP_URL;
         const dripPixelUrl = `${baseUrl}/track/email/${dripTrackToken}`;
-        const dripHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">${item.body.replace(/\n/g,'<br>')}<br><br><hr style="border:none;border-top:1px solid #eee;margin:20px 0"><p style="font-size:11px;color:#999;margin:0">${fromName}</p></div><img src="${dripPixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+
+        // CAN-SPAM: generate (or reuse) unsubscribe token and build footer
+        const unsubToken = await getOrCreateUnsubToken(item.user_id, item.to_email, item.lead_id).catch(() => null);
+        const unsubUrl = unsubToken ? `${baseUrl}/unsubscribe/${unsubToken}` : null;
+        const unsubFooter = buildUnsubFooter(unsubUrl || `${baseUrl}/unsubscribe/invalid`, fromName);
+
+        const dripHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">${item.body.replace(/\n/g,'<br>')}${unsubFooter.html}</div><img src="${dripPixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+        const dripText = item.body + unsubFooter.text;
 
         const resp = await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -4523,7 +4724,11 @@ async function processEmailQueue() {
             to: item.to_name ? `${item.to_name} <${item.to_email}>` : item.to_email,
             subject: item.subject,
             html: dripHtml,
-            text: item.body,
+            text: dripText,
+            headers: unsubUrl ? {
+              'List-Unsubscribe': `<${unsubUrl}>, <mailto:${fromEmail}?subject=unsubscribe>`,
+              'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            } : {},
           }),
         });
         const data = await resp.json();
@@ -4741,7 +4946,7 @@ function buildDigestHtml({ shopName, firstName, actions, topLeads, hotOpens, won
         <tr>
           <td style="padding:16px 32px 28px;border-top:1px solid #f1f5f9;">
             <div style="font-size:11px;color:#94a3b8;">
-              You're receiving this because you have an active WrapLeads account. Reply "unsubscribe" to opt out of daily digests.
+              You're receiving this because you have an active WrapLeads account. <a href="${appUrl}/settings" style="color:#94a3b8">Manage email preferences</a>.
             </div>
           </td>
         </tr>

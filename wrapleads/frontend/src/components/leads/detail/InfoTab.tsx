@@ -10,6 +10,31 @@ import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 import FindEmailPanel from './FindEmailPanel';
 import SimilarWinsPanel from './SimilarWinsPanel';
 
+// ── Unsubscribed Badge ────────────────────────────────────────────────────────
+function UnsubscribedBadge({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['unsub-status', leadId],
+    queryFn: () => api.getUnsubscribeStatus(leadId),
+    staleTime: 5 * 60_000,
+  });
+  if (!data?.unsubscribed) return null;
+  return (
+    <div style={{
+      marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4,
+      background: '#7f1d1d22', border: '1px solid #ef444450', borderRadius: 4,
+      padding: '2px 7px', fontSize: 10, color: '#ef4444',
+    }}>
+      <span>⊘</span>
+      <span>Unsubscribed — do not email</span>
+      {data.unsubscribed_at && (
+        <span style={{ color: '#ef444480', marginLeft: 2 }}>
+          · {new Date(data.unsubscribed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── AI Call Script Panel ──────────────────────────────────────────────────────
 // ── Wrap ROI Calculator ───────────────────────────────────────────────────────
 const MEDIA_BENCHMARKS: { name: string; cpm: number; isWrap?: boolean }[] = [
@@ -1084,6 +1109,7 @@ export default function InfoTab({ lead }: Props) {
             onSelectEmail={(email) => { setLocal({ ...local, email }); patch('email', email); }}
           />
         )}
+        {local.email && lead.serverId && <UnsubscribedBadge leadId={lead.serverId} />}
       </div>
 
       <div className="field-row">
