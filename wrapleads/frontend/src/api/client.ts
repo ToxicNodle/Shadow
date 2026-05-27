@@ -979,4 +979,18 @@ export const api = {
       recentRate: number | null;
       priorRate: number | null;
     }>('/analytics/cohort'),
+
+  // Lost Lead Rescue Queue
+  getRescueQueue: () =>
+    authFetch<{
+      queued: Array<{ id: number; company: string; category: string; state: string; email: string; lost_at: string; send_at: string; subject: string }>;
+      candidates: Array<{ id: number; company: string; category: string; state: string; email: string; lost_at: string; days_lost: number }>;
+      total: number;
+    }>('/mission/rescue-queue'),
+
+  triggerRescue: (leadIds: number[]) =>
+    authFetch<{ ok: boolean; queued: number }>('/mission/rescue-queue/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ lead_ids: leadIds }),
+    }),
 };

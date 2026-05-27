@@ -1310,6 +1310,39 @@ async function tryHunterEnrich(firstName, lastName, domain) {
   return null;
 }
 
+// Try Hunter.io /v2/domain-search when we don't have a name.
+// Returns the highest-confidence email found for the domain's most senior contact.
+async function tryHunterDomainSearch(domain) {
+  const hunterKey = process.env.HUNTER_API_KEY;
+  if (!hunterKey || !domain) return null;
+  try {
+    const url = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&limit=5&api_key=${hunterKey}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const emails = j?.data?.emails || [];
+    // Prefer decision-maker positions, then highest confidence
+    const SENIOR = ['ceo', 'president', 'owner', 'director', 'manager', 'vp', 'founder'];
+    const sorted = emails
+      .filter((e) => e.type === 'professional' && e.confidence >= 60)
+      .sort((a, b) => {
+        const aRank = SENIOR.findIndex((t) => (a.position || '').toLowerCase().includes(t));
+        const bRank = SENIOR.findIndex((t) => (b.position || '').toLowerCase().includes(t));
+        const aR = aRank === -1 ? 99 : aRank;
+        const bR = bRank === -1 ? 99 : bRank;
+        if (aR !== bR) return aR - bR;
+        return (b.confidence ?? 0) - (a.confidence ?? 0);
+      });
+    const best = sorted[0];
+    if (!best) return null;
+    const firstName = best.first_name || null;
+    const lastName = best.last_name || null;
+    const name = [firstName, lastName].filter(Boolean).join(' ') || null;
+    return { email: best.value, confidence: best.confidence, name, position: best.position || null, source: 'hunter_domain' };
+  } catch { /* timeout or network error — fall through */ }
+  return null;
+}
+
 app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
   const { firstName, lastName, company, domain, email, linkedinUrl } = req.body || {};
   if (!firstName && !lastName && !email) return res.status(400).json({ error: 'Need firstName + lastName, or email' });
@@ -1442,6 +1475,39 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
   for (const lead of targets) {
     const result = { id: lead.id, company: lead.company, status: 'not_found', email: null };
     try {
+      const domain = lead.website ? lead.website.replace(/^https?:\/\//, '').split('/')[0] : null;
+
+      // Waterfall step 1: Hunter.io (free) — try name+domain first, fall back to domain search
+      if (domain && process.env.HUNTER_API_KEY) {
+        let hunterResult = null;
+        if (lead.contact_name) {
+          const [firstName, ...rest] = lead.contact_name.trim().split(' ');
+          hunterResult = await tryHunterEnrich(firstName, rest.join(' '), domain);
+        }
+        if (!hunterResult) {
+          hunterResult = await tryHunterDomainSearch(domain);
+        }
+        if (hunterResult) {
+          const contactName = hunterResult.name || lead.contact_name || null;
+          await pool.query(
+            `UPDATE leads SET email=$1, contact_name=COALESCE(NULLIF(contact_name,''), $2), updated_at=NOW() WHERE id=$3`,
+            [hunterResult.email, contactName, lead.id]
+          );
+          await logActivity(pool, {
+            leadId: lead.id, userId: uid, type: 'note_added',
+            subject: 'Email found via Hunter.io',
+            metadata: { email: hunterResult.email, name: contactName, source: 'hunter_bulk', confidence: hunterResult.confidence },
+          });
+          result.status = 'enriched';
+          result.email = hunterResult.email;
+          result.source = hunterResult.source;
+          enriched++;
+          results.push(result);
+          continue; // skip Apollo for this lead — saved a credit
+        }
+      }
+
+      // Waterfall step 2: Apollo (paid credits)
       // Choose best titles for this category
       const titles = APOLLO_TITLES[lead.category] || APOLLO_TITLES.default;
       const payload = {
@@ -1449,8 +1515,7 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
         person_titles: titles,
         page: 1, per_page: 3,
       };
-      if (lead.website) {
-        const domain = lead.website.replace(/^https?:\/\//, '').split('/')[0];
+      if (domain) {
         payload.q_organization_domains = domain;
       }
 
@@ -1476,7 +1541,7 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
             first_name: firstName,
             last_name: rest.join(' '),
             organization_name: lead.company,
-            domain: lead.website?.replace(/^https?:\/\//, '').split('/')[0],
+            domain,
             reveal_personal_emails: true,
           }, apolloKey);
           if (matchData?.person?.email) {
@@ -4481,6 +4546,30 @@ async function processEmailQueue() {
           [err.message, item.id]
         );
         console.error(`[drip] Failed queue item ${item.id}:`, err.message);
+
+        // If the failure looks like a bad email address, wipe it and queue re-enrichment
+        const errMsg = (err.message || '').toLowerCase();
+        const isBadAddress = errMsg.includes('invalid') || errMsg.includes('bounce')
+          || errMsg.includes('not exist') || errMsg.includes('does_not_exist')
+          || errMsg.includes('no such user') || errMsg.includes('550');
+        if (isBadAddress && item.lead_id) {
+          // Cancel remaining pending emails for this lead
+          await pool.query(
+            `UPDATE email_queue SET status='cancelled', error_msg='email_bounced' WHERE lead_id=$1 AND status='pending'`,
+            [item.lead_id]
+          ).catch(() => {});
+          // Clear the bad email address
+          await pool.query(
+            `UPDATE leads SET email=NULL, updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+            [item.lead_id, item.user_id]
+          ).catch(() => {});
+          await logActivity(pool, {
+            leadId: item.lead_id, userId: item.user_id, type: 'note_added',
+            subject: 'Email bounced — cleared for re-enrichment',
+            metadata: { bounced_email: item.to_email, error: err.message, auto: true },
+          });
+          console.log(`[drip] Bounce detected for lead ${item.lead_id} — email cleared, re-enrichment needed`);
+        }
       }
     }
   } catch (e) {
@@ -7647,6 +7736,101 @@ function startMaintenanceWorker() {
   console.log('· Maintenance check worker: running (daily check at 10:00 AM)');
 }
 
+// ── Lost Lead Rescue Worker ──────────────────────────────────────────────────
+// Scans for lost leads that went cold >90 days ago. For each, AI-drafts a
+// single re-engagement email and queues it for tomorrow. Fires at 9 AM daily.
+// Guards against duplicate rescues via lead_activities check.
+// No competitor does automated win-back on lost deals.
+
+async function processLostLeadRescues() {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicKey) return;
+
+  try {
+    // Find lost leads with email that haven't been rescued in the last 180 days
+    const { rows: targets } = await pool.query(`
+      SELECT l.id, l.company, l.category, l.contact_name, l.email, l.city, l.state,
+             l.pitch_angle, l.fleet_size, l.user_id,
+             u.settings_json AS settings
+      FROM leads l
+      JOIN users u ON u.id::text = l.user_id
+      WHERE l.status = 'lost'
+        AND l.email IS NOT NULL AND l.email != ''
+        AND l.updated_at < NOW() - INTERVAL '90 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM lead_activities a
+          WHERE a.lead_id = l.id AND a.type = 'email_queued'
+            AND a.subject ILIKE '%re-engagement%'
+            AND a.created_at > NOW() - INTERVAL '180 days'
+        )
+      ORDER BY l.updated_at ASC
+      LIMIT 20
+    `);
+
+    if (!targets.length) return;
+
+    for (const lead of targets) {
+      try {
+        const s = lead.settings || {};
+        const companyName = s.companyName || 'our shop';
+        const senderName = s.senderName || 'the team';
+        const daysAgo = Math.round((Date.now() - new Date(lead.updated_at || Date.now()).getTime()) / 86_400_000) || 90;
+
+        const prompt = `You are a sales expert for a vehicle wrap shop called "${companyName}".
+
+A prospect went cold ${daysAgo} days ago. Write a short, humble, non-pushy re-engagement email.
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Decision Maker'}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+${lead.fleet_size ? `Fleet size: ${lead.fleet_size}` : ''}
+
+Requirements:
+- Under 120 words
+- Acknowledge time has passed, don't pretend it hasn't
+- Reference 1 specific, believable reason they might reconsider now (seasonal fleet needs, new year budget, competitor just lost a client)
+- Soft ask: "Happy to share some recent work if timing is better now"
+- Sign off as ${senderName}
+
+Return raw JSON only: {"subject": "...", "body": "..."}`;
+
+        const raw = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 600);
+        const { subject, body } = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+        const sendAt = new Date(Date.now() + 86_400_000); // tomorrow
+        await pool.query(
+          `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+           VALUES ($1,$2,1,$3,$4,$5,$6,$7)`,
+          [lead.user_id, lead.id, subject, body, lead.email, lead.contact_name || null, sendAt]
+        );
+
+        await logActivity(pool, {
+          leadId: lead.id, userId: lead.user_id, type: 'email_queued',
+          subject: 're-engagement',
+          metadata: { subject, source: 'lost_lead_rescue', daysLost: daysAgo },
+        });
+
+        console.log(`[rescue] Queued re-engagement for lost lead #${lead.id} (${lead.company})`);
+      } catch (e) {
+        console.error(`[rescue] Lead #${lead.id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[rescue worker]', e.message);
+  }
+}
+
+function startRescueWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 9 && now.getMinutes() === 0) {
+      processLostLeadRescues();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Lost lead rescue worker: running (daily check at 9:00 AM)');
+}
+
 // ── Weather-Triggered E-Ink Content Worker ───────────────────────────────────
 // Checks weather for each shop's city once daily and auto-triggers relevant
 // E-Ink content pushes. Hot day = "Summer wrap special". Rain = "Indoor film work".
@@ -10299,6 +10483,119 @@ app.get('/mission/today-score', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /mission/rescue-queue — lost leads queued for AI re-engagement
+// Shows which lost deals have a rescue email scheduled, plus candidates not yet rescued.
+app.get('/mission/rescue-queue', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [queuedR, candidatesR] = await Promise.all([
+      // Already queued rescue emails
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.state, l.email, l.updated_at AS lost_at,
+               eq.send_at, eq.subject
+        FROM email_queue eq
+        JOIN leads l ON l.id = eq.lead_id
+        WHERE eq.user_id = $1
+          AND l.status = 'lost'
+          AND eq.status = 'pending'
+          AND eq.subject ILIKE '%re-engagement%'
+        ORDER BY eq.send_at ASC
+        LIMIT 10
+      `, [uid]),
+      // Lost leads that COULD be rescued (no recent rescue activity)
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.state, l.email, l.updated_at AS lost_at,
+               EXTRACT(DAY FROM NOW() - l.updated_at)::INT AS days_lost
+        FROM leads l
+        WHERE l.user_id = $1
+          AND l.status = 'lost'
+          AND l.email IS NOT NULL AND l.email != ''
+          AND l.updated_at < NOW() - INTERVAL '90 days'
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_activities a
+            WHERE a.lead_id = l.id AND a.type = 'email_queued'
+              AND a.subject ILIKE '%re-engagement%'
+              AND a.created_at > NOW() - INTERVAL '180 days'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM email_queue eq
+            WHERE eq.lead_id = l.id AND eq.status = 'pending'
+              AND eq.subject ILIKE '%re-engagement%'
+          )
+        ORDER BY l.updated_at ASC
+        LIMIT 5
+      `, [uid]),
+    ]);
+
+    res.json({
+      queued: queuedR.rows,
+      candidates: candidatesR.rows,
+      total: queuedR.rows.length + candidatesR.rows.length,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /mission/rescue-queue/trigger — manually trigger rescue drafts for specific leads
+app.post('/mission/rescue-queue/trigger', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { lead_ids } = req.body || {};
+  if (!Array.isArray(lead_ids) || !lead_ids.length) {
+    return res.status(400).json({ error: 'lead_ids required' });
+  }
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicKey) return res.status(400).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT l.*, u.settings_json AS settings
+       FROM leads l JOIN users u ON u.id::text = l.user_id
+       WHERE l.user_id = $1 AND l.id = ANY($2::bigint[]) AND l.status = 'lost' AND l.email IS NOT NULL`,
+      [uid, lead_ids]
+    );
+
+    let queued = 0;
+    for (const lead of leads) {
+      const s = lead.settings || {};
+      const daysAgo = Math.round((Date.now() - new Date(lead.updated_at || Date.now()).getTime()) / 86_400_000) || 90;
+      const prompt = `You are a sales expert for a vehicle wrap shop called "${s.companyName || 'our shop'}".
+
+A prospect went cold ${daysAgo} days ago. Write a short, humble, non-pushy re-engagement email.
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Decision Maker'}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+${lead.fleet_size ? `Fleet size: ${lead.fleet_size}` : ''}
+
+Requirements:
+- Under 120 words
+- Acknowledge time has passed, don't pretend it hasn't
+- Reference 1 specific, believable reason they might reconsider now
+- Soft ask: "Happy to share some recent work if timing is better now"
+- Sign off as ${s.senderName || 'the team'}
+
+Return raw JSON only: {"subject": "...", "body": "..."}`;
+
+      const raw = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 600);
+      const { subject, body } = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+      const sendAt = new Date(Date.now() + 86_400_000);
+      await pool.query(
+        `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+         VALUES ($1,$2,1,$3,$4,$5,$6,$7)`,
+        [uid, lead.id, subject, body, lead.email, lead.contact_name || null, sendAt]
+      );
+      await logActivity(pool, {
+        leadId: lead.id, userId: uid, type: 'email_queued',
+        subject: 're-engagement',
+        metadata: { subject, source: 'manual_rescue' },
+      });
+      queued++;
+    }
+
+    res.json({ ok: true, queued });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Market Penetration Analysis ───────────────────────────────────────────────
 // Returns, for each of the user's top states, how many FMCSA-registered fleet
 // carriers exist vs. how many they're already targeting — the "white space".
@@ -12305,6 +12602,7 @@ app.listen(PORT, async () => {
     startStalledDealWorker();
     startAnniversaryWorker();
     startMaintenanceWorker();
+    startRescueWorker();
     startWeatherWorker();
     email.startTrialCron(pool);
     try {

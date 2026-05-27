@@ -12,6 +12,7 @@ import InboundRequestsCard from './InboundRequestsCard';
 import CallSessionModal from './CallSessionModal';
 import TodayScoreCard from './TodayScoreCard';
 import ProposalHeatCard from './ProposalHeatCard';
+import RescueQueueCard from './RescueQueueCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1847,6 +1848,9 @@ export default function MissionView() {
 
       {/* ── Hot Proposals ── */}
       <HotProposalsCard />
+
+      {/* ── Lost Lead Rescue Queue ── */}
+      <RescueQueueCard />
 
       {/* ── WrapLeads ROI Impact ── */}
       <ImpactStrip />
