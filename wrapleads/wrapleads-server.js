@@ -1795,16 +1795,37 @@ app.post('/carriers/import', authMiddleware, subMiddleware, async (req, res) => 
     let leadId = null;
     if (coR.rows.length) {
       const c = coR.rows[0];
+
+      // AI pitch angle — generate a specific pitch before inserting (non-blocking: fires & forgets on error)
+      let pitchAngle = null;
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
+      if (anthropicKey && c.fleet_size && c.fleet_size > 5) {
+        try {
+          const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+          const settings = userR.rows[0]?.settings_json || {};
+          const prompt = `In 2 sentences, write a specific fleet wrap pitch angle for this company:
+Name: ${c.name}
+Fleet size: ${c.fleet_size} vehicles
+State: ${c.state}
+City: ${c.city || ''}
+Industry: ${c.industry || 'transportation/logistics'}
+
+Focus on their specific fleet size and operational region. Mention a concrete benefit (brand visibility, driver pride, fleet consistency). No generic phrases. Return ONLY the 2-sentence pitch angle, nothing else.`;
+          pitchAngle = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 150);
+          if (pitchAngle) pitchAngle = pitchAngle.replace(/^["']|["']$/g, '').trim();
+        } catch { /* pitch generation is a nice-to-have */ }
+      }
+
       const lr = await pool.query(`
         INSERT INTO leads
           (user_id, client_id, company, category, state, city, phone, email,
-           website, fleet_size, status, source_company_id, created_at, updated_at)
-        VALUES ($1, $2, $3, 'fleet', $4, $5, $6, $7, $8, $9, 'cold', $10, NOW(), NOW())
+           website, fleet_size, pitch_angle, status, source_company_id, created_at, updated_at)
+        VALUES ($1, $2, $3, 'fleet', $4, $5, $6, $7, $8, $9, $10, 'cold', $11, NOW(), NOW())
         ON CONFLICT (user_id, client_id) DO NOTHING
         RETURNING id
       `, [uid, `carrier-${companyId}`, c.name || c.dba_name, c.state, c.city,
           c.phone || null, c.email || null, c.website || null,
-          c.fleet_size ? String(c.fleet_size) : null, companyId]);
+          c.fleet_size ? String(c.fleet_size) : null, pitchAngle, companyId]);
       leadId = lr.rows[0]?.id ?? null;
     }
     res.json({ ok: true, leadId });
