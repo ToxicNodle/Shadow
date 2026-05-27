@@ -62,6 +62,28 @@ const STATUS_COLORS: Record<QuoteStatus, string> = {
 
 const UNIT_OPTIONS = ['vehicle', 'sqft', 'hour', 'flat', 'panel', 'set', 'item'];
 
+// Approximate wrap sq footage by vehicle type + coverage level
+// Based on 3M / Avery installer training specs + industry estimating guides
+const VEHICLE_SQFT: Record<string, { label: string; full: number; partial: number; spot: number }> = {
+  cargo_van: { label: 'Cargo Van', full: 380, partial: 200, spot: 80 },
+  cargo_van_hiRoof: { label: 'High-Roof Van', full: 430, partial: 230, spot: 90 },
+  sprinter: { label: 'Sprinter Van', full: 470, partial: 250, spot: 95 },
+  box_truck_16: { label: '16ft Box Truck', full: 650, partial: 350, spot: 130 },
+  box_truck_24: { label: '24ft Box Truck', full: 900, partial: 480, spot: 170 },
+  box_truck_26: { label: '26ft Box Truck', full: 980, partial: 520, spot: 190 },
+  semi_tractor: { label: 'Semi Tractor', full: 720, partial: 380, spot: 140 },
+  semi_trailer_48: { label: '48ft Semi Trailer', full: 1300, partial: 700, spot: 240 },
+  semi_trailer_53: { label: '53ft Semi Trailer', full: 1420, partial: 750, spot: 260 },
+  pickup_truck: { label: 'Pickup Truck', full: 280, partial: 150, spot: 60 },
+  suv: { label: 'SUV / Crossover', full: 320, partial: 170, spot: 65 },
+  sedan: { label: 'Sedan / Car', full: 240, partial: 130, spot: 50 },
+  flatbed_truck: { label: 'Flatbed Truck', full: 600, partial: 320, spot: 120 },
+  refrigerated_trailer: { label: 'Reefer Trailer', full: 1380, partial: 720, spot: 250 },
+  step_van: { label: 'Step Van / P-Truck', full: 580, partial: 310, spot: 115 },
+  transit_bus: { label: 'Transit Bus', full: 2200, partial: 1100, spot: 400 },
+  shuttle_bus: { label: 'Shuttle Bus', full: 900, partial: 480, spot: 170 },
+};
+
 const DEFAULT_LINE_ITEMS: QuoteLineItem[] = [
   { id: crypto.randomUUID(), description: 'Full vehicle wrap – labor & installation', qty: 1, unit: 'vehicle', unitPrice: 0, total: 0 },
   { id: crypto.randomUUID(), description: 'Material (vinyl film)', qty: 0, unit: 'sqft', unitPrice: 0, total: 0 },
@@ -138,6 +160,95 @@ function fmt(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function SqftCalculator({ onApply }: { onApply: (sqft: number, vehicleLabel: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [vehicleType, setVehicleType] = useState('cargo_van');
+  const [coverage, setCoverage] = useState<'full' | 'partial' | 'spot'>('full');
+  const [qty, setQty] = useState(1);
+
+  const spec = VEHICLE_SQFT[vehicleType];
+  const sqftPer = spec ? spec[coverage] : 0;
+  const totalSqft = sqftPer * qty;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5,
+          background: 'var(--bg-elev-2)', border: '1px solid var(--border)',
+          color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+        }}
+      >
+        📐 Sq Footage Helper {open ? '▲' : '▾'}
+      </button>
+
+      {open && (
+        <div style={{
+          marginTop: 6, padding: '10px 12px', borderRadius: 8,
+          background: 'rgba(77,138,245,0.06)', border: '1px solid rgba(77,138,245,0.2)',
+        }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 3 }}>Vehicle type</div>
+              <select
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px', minWidth: 160 }}
+                value={vehicleType}
+                onChange={e => setVehicleType(e.target.value)}
+              >
+                {Object.entries(VEHICLE_SQFT).map(([k, v]) => (
+                  <option key={k} value={k}>{v.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 3 }}>Coverage</div>
+              <select
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px' }}
+                value={coverage}
+                onChange={e => setCoverage(e.target.value as 'full' | 'partial' | 'spot')}
+              >
+                <option value="full">Full Wrap</option>
+                <option value="partial">Partial (~55%)</option>
+                <option value="spot">Spot / Decals (~20%)</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 3 }}>Vehicles</div>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={qty}
+                onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                className="input"
+                style={{ width: 60, fontSize: 12, padding: '4px 8px', textAlign: 'center' }}
+              />
+            </div>
+            <div style={{ paddingBottom: 2 }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: '#4d8af5' }}>
+                {totalSqft.toLocaleString()} sqft
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{sqftPer} × {qty} vehicle{qty !== 1 ? 's' : ''}</div>
+            </div>
+            <button
+              onClick={() => { onApply(totalSqft, `${qty}× ${spec?.label ?? vehicleType} ${coverage} wrap`); setOpen(false); }}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6,
+                background: '#4d8af5', color: '#fff', border: 'none', cursor: 'pointer',
+              }}
+            >
+              Apply to Material Line
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, quote, onClose, onSaved, onAccepted }: Props) {
   const qc = useQueryClient();
   const isEdit = !!quote;
@@ -156,6 +267,24 @@ export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, q
   function loadTemplate(tpl: QuoteTemplate) {
     setLineItems(tpl.items.map((item) => ({ ...item, id: crypto.randomUUID() })));
     if (!isEdit) setTitle(`${tpl.name} Wrap Quote`);
+  }
+
+  function applySqft(sqft: number, vehicleLabel: string) {
+    setLineItems((prev) => {
+      const matIdx = prev.findIndex(
+        (i) => i.unit === 'sqft' && (i.description.toLowerCase().includes('vinyl') || i.description.toLowerCase().includes('material') || i.description.toLowerCase().includes('film'))
+      );
+      const newDesc = `Material – ${vehicleLabel} (${sqft.toLocaleString()} sqft)`;
+      if (matIdx >= 0) {
+        return prev.map((item, idx) => {
+          if (idx !== matIdx) return item;
+          const updated = { ...item, qty: sqft, description: newDesc };
+          updated.total = Math.round(updated.qty * updated.unitPrice * 100) / 100;
+          return updated;
+        });
+      }
+      return [...prev, { id: crypto.randomUUID(), description: newDesc, qty: sqft, unit: 'sqft', unitPrice: 0, total: 0 }];
+    });
   }
 
   const subtotal = lineItems.reduce((s, i) => s + (i.total || 0), 0);
@@ -314,6 +443,9 @@ export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, q
 
           {/* Scrollable body */}
           <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
+
+            {/* Sq Footage Helper */}
+            <SqftCalculator onApply={applySqft} />
 
             {/* Line items table */}
             <div className="qb-table">

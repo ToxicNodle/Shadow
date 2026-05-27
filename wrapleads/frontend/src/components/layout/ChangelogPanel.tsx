@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Vehicle Sq Footage Calculator in Quote Builder',
+    body: 'The quote builder now has a "📐 Sq Footage Helper" — select vehicle type (cargo van, box truck, semi trailer, 18 types total), coverage level (full/partial/spot), and fleet count. The exact industry-standard square footage calculates instantly and one click fills in your material line item. No more looking up spec sheets or guessing.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Win Debrief + Pattern Library',
     body: 'Won a deal? Click "🏆 Generate Win Debrief" in the lead info tab and Claude analyzes the full activity timeline — how many touches, how many days, what signal preceded the win, what tactic closed it — and writes a structured brief. Over time, these accumulate into a "Win Pattern Library" in Analytics showing your top winning patterns, avg days to close by category, and the playbook you\'re actually using (even if you didn\'t know it).',
   },
