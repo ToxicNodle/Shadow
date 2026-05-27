@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Outreach Calendar — 12-Month Wrap Sales Planner',
+    body: 'Analytics now shows a full-year outreach calendar with AI-curated selling themes, hottest wrap categories, and tailored pitch angles for every month. Click any month to see the exact messaging to use, which categories to push, and how many active pipeline leads you have that month. Current month is highlighted with a "NOW" indicator.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Quote Follow-Up Intelligence',
     body: 'Proposals now show a "Quote Follow-Up Intelligence" panel with the exact days since the quote was sent, your category\'s industry benchmark (fleet=7d, construction=10d, GC=14d), an urgency indicator, and an AI-generated follow-up email draft tailored to the elapsed time. On track, follow up now, or overdue — you always know exactly what action to take.',
   },

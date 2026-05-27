@@ -6,6 +6,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { CATEGORIES, STATUSES } from '../../api/types';
 import PipelineDoctorCard from './PipelineDoctorCard';
 import TerritoryIntelCard from './TerritoryIntelCard';
+import OutreachCalendarCard from './OutreachCalendarCard';
 
 function fmtRev(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -2926,6 +2927,9 @@ export default function AnalyticsView() {
             }}
           />
         )}
+
+        {/* ── Outreach Calendar ── */}
+        <OutreachCalendarCard />
 
         {/* ── Seasonal Win Intelligence ── */}
         <SeasonalIntelligenceCard />

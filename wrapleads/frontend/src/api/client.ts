@@ -1262,4 +1262,19 @@ export const api = {
       benchmark?: { avg: number; fast: number; slow: number };
       followUpDraft?: { subject: string; body: string } | null;
     }>(`/leads/${leadId}/quote-timing-intel`),
+
+  getOutreachCalendar: () =>
+    authFetch<{
+      months: Array<{
+        month: number;
+        name: string;
+        themes: string[];
+        hot_categories: string[];
+        angle: string;
+        is_current: boolean;
+        is_future: boolean;
+        pipeline_count: number;
+      }>;
+      currentMonth: number;
+    }>('/analytics/outreach-calendar'),
 };
