@@ -8550,6 +8550,66 @@ app.post('/leads/:id/find-email', authMiddleware, async (req, res) => {
   }
 });
 
+// POST /leads/bulk-find-emails — run email permutation + optional SMTP probe
+// on up to 50 leads that have a website but no email.  Returns per-lead results.
+app.post('/leads/bulk-find-emails', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { leadIds } = req.body || {};
+
+  // If no specific IDs, auto-select leads with website but no email (max 50)
+  let ids = Array.isArray(leadIds) ? leadIds.slice(0, 50) : null;
+  let leads;
+  if (ids && ids.length) {
+    const r = await pool.query(
+      `SELECT id, contact_name, website, company FROM leads
+       WHERE id = ANY($1) AND user_id = $2 AND (email IS NULL OR email = '')
+         AND website IS NOT NULL AND website != ''`,
+      [ids, uid]
+    );
+    leads = r.rows;
+  } else {
+    const r = await pool.query(
+      `SELECT id, contact_name, website, company FROM leads
+       WHERE user_id = $1 AND (email IS NULL OR email = '')
+         AND website IS NOT NULL AND website != ''
+         AND contact_name IS NOT NULL AND contact_name != ''
+       ORDER BY created_at DESC LIMIT 50`,
+      [uid]
+    );
+    leads = r.rows;
+  }
+
+  if (!leads.length) return res.json({ ok: true, processed: 0, found: 0, results: [] });
+
+  const { findEmails } = require('./lib/emailPermutator');
+  const results = [];
+
+  for (const lead of leads) {
+    try {
+      let domain = (lead.website || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/^www\./i, '');
+      if (!domain || !lead.contact_name) { results.push({ leadId: lead.id, company: lead.company, found: false }); continue; }
+
+      const result = await findEmails(lead.contact_name, domain, { probe: false });
+      const best = result.candidates[0];
+      if (best) {
+        await pool.query('UPDATE leads SET email = $1 WHERE id = $2 AND user_id = $3 AND (email IS NULL OR email = \'\')', [best.email, lead.id, uid]);
+        await pool.query(
+          `INSERT INTO lead_activities (user_id, lead_id, type, description) VALUES ($1,$2,'email_generated',$3)`,
+          [uid, lead.id, `Email auto-discovered: ${best.email} (permutation, confidence ${best.confidence})`]
+        ).catch(() => {});
+        results.push({ leadId: lead.id, company: lead.company, email: best.email, found: true, confidence: best.confidence });
+      } else {
+        results.push({ leadId: lead.id, company: lead.company, found: false });
+      }
+    } catch {
+      results.push({ leadId: lead.id, company: lead.company, found: false, error: true });
+    }
+  }
+
+  const found = results.filter((r) => r.found).length;
+  res.json({ ok: true, processed: results.length, found, results });
+});
+
 // ─── Quote / Invoice Builder ────────────────────────────────────────────────
 
 app.get('/leads/:id/quotes', authMiddleware, async (req, res) => {

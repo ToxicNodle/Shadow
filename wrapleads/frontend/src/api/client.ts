@@ -608,6 +608,12 @@ export const api = {
       error?: string;
     }>(`/leads/${leadId}/find-email`, { method: 'POST', body: JSON.stringify(opts || {}) }),
 
+  bulkFindEmails: (leadIds?: number[]) =>
+    authFetch<{
+      ok: boolean; processed: number; found: number;
+      results: Array<{ leadId: number; company: string; email?: string; found: boolean; confidence?: number; error?: boolean }>;
+    }>('/leads/bulk-find-emails', { method: 'POST', body: JSON.stringify({ leadIds: leadIds ?? [] }) }),
+
   suggestAction: (leadId: number) =>
     authFetch<{ ok: boolean; suggestion: { action: string; channel: string; urgency: string; reasoning: string } }>(`/leads/${leadId}/suggest`, { method: 'POST', body: '{}' }),
   generateSocialPost: (jobData: { company: string; vehicle_type: string; vehicle_count: number; wrap_category: string; material?: string; notes?: string }) =>

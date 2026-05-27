@@ -269,6 +269,7 @@ export default function LeadList() {
     selectedLeadIds, selectAllLeads, clearLeadSelection,
     setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen, setShopVoxImportOpen,
     pendingOpenLeadServerId, setPendingOpenLeadServerId,
+    showToast,
   } = useAppStore((s) => ({
     activeFilter: s.activeFilter,
     currentLeadId: s.currentLeadId,
@@ -285,6 +286,7 @@ export default function LeadList() {
     setShopVoxImportOpen: s.setShopVoxImportOpen,
     pendingOpenLeadServerId: s.pendingOpenLeadServerId,
     setPendingOpenLeadServerId: s.setPendingOpenLeadServerId,
+    showToast: s.showToast,
   }));
 
   const qc = useQueryClient();
@@ -295,6 +297,7 @@ export default function LeadList() {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [bulkTagInput, setBulkTagInput] = useState('');
+  const [emailHuntRunning, setEmailHuntRunning] = useState(false);
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -412,6 +415,19 @@ export default function LeadList() {
     );
   }
 
+  async function runEmailHunt() {
+    setEmailHuntRunning(true);
+    try {
+      const r = await api.bulkFindEmails();
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast(`Email hunt complete — ${r.found} emails found out of ${r.processed} leads checked`, r.found > 0 ? 'success' : 'info');
+    } catch {
+      showToast('Email hunt failed', 'error');
+    } finally {
+      setEmailHuntRunning(false);
+    }
+  }
+
   return (
     <div className="lead-list-wrap">
       <div className="lead-list-toolbar">
@@ -492,6 +508,26 @@ export default function LeadList() {
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
           Export CSV
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#4d8af5', borderColor: 'rgba(77,138,245,0.4)' }}
+          onClick={runEmailHunt}
+          disabled={emailHuntRunning}
+          title="Auto-discover emails for leads with a website but no email address (free, uses name pattern matching)"
+        >
+          {emailHuntRunning ? (
+            <><span className="spinner" style={{ width: 10, height: 10, marginRight: 4, borderColor: 'rgba(77,138,245,0.3)', borderTopColor: '#4d8af5' }} />Hunting…</>
+          ) : (
+            <>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+              </svg>
+              Find Emails
+            </>
+          )}
         </button>
 
         <button
