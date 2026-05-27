@@ -13455,6 +13455,46 @@ app.get('/analytics/margin', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /analytics/pricing-benchmarks?category=X — per-category job pricing stats from user's history
+app.get('/analytics/pricing-benchmarks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { category } = req.query;
+    if (!category) return res.status(400).json({ error: 'category required' });
+    const { rows: stats } = await pool.query(`
+      SELECT
+        COUNT(*) AS job_count,
+        ROUND(AVG(job_revenue))::INT AS avg_total,
+        ROUND(MIN(job_revenue))::INT AS min_total,
+        ROUND(MAX(job_revenue))::INT AS max_total,
+        ROUND(AVG(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT AS avg_per_vehicle,
+        ROUND(MIN(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT AS min_per_vehicle,
+        ROUND(MAX(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT AS max_per_vehicle,
+        ROUND(AVG(vehicle_count))::INT AS avg_vehicle_count
+      FROM installed_jobs
+      WHERE user_id=$1 AND wrap_category=$2 AND job_revenue > 0
+    `, [uid, category]);
+    const { rows: recent } = await pool.query(`
+      SELECT company, job_revenue, vehicle_count, install_date
+      FROM installed_jobs
+      WHERE user_id=$1 AND wrap_category=$2 AND job_revenue > 0
+      ORDER BY install_date DESC LIMIT 5
+    `, [uid, category]);
+    const { rows: overall } = await pool.query(`
+      SELECT ROUND(AVG(job_revenue))::INT AS avg_all_cats, COUNT(*) AS total_all_jobs
+      FROM installed_jobs WHERE user_id=$1 AND job_revenue > 0
+    `, [uid]);
+    res.json({
+      ok: true,
+      category,
+      hasData: parseInt(stats[0]?.job_count || '0') > 0,
+      stats: stats[0] ?? null,
+      recentJobs: recent,
+      overallAvg: overall[0]?.avg_all_cats ?? null,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Warm Reference Engine ─────────────────────────────────────────────────────
 // For any lead, surface up to 3 WON customers in the same state or category
 // that a sales rep can name-drop as social proof during outreach.

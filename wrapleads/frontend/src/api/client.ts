@@ -1352,4 +1352,24 @@ export const api = {
     authFetch<{ ok: boolean; tasks: Array<{ id: number; title: string; type: string; priority: string; lead_company: string | null; notes: string | null }>; generated: number }>(
       '/tasks/generate-ai', { method: 'POST' }
     ),
+
+  // Pricing benchmarks from job history
+  getPricingBenchmarks: (category: string) =>
+    authFetch<{
+      ok: boolean;
+      category: string;
+      hasData: boolean;
+      stats: {
+        job_count: number;
+        avg_total: number;
+        min_total: number;
+        max_total: number;
+        avg_per_vehicle: number | null;
+        min_per_vehicle: number | null;
+        max_per_vehicle: number | null;
+        avg_vehicle_count: number | null;
+      } | null;
+      recentJobs: Array<{ company: string; job_revenue: number; vehicle_count: number; install_date: string }>;
+      overallAvg: number | null;
+    }>(`/analytics/pricing-benchmarks?category=${encodeURIComponent(category)}`),
 };

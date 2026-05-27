@@ -662,6 +662,7 @@ export default function QuotesTab({ lead }: Props) {
         <QuoteBuilderModal
           leadId={leadId}
           leadCompany={lead.company}
+          leadCategory={lead.category}
           quote={editQuote}
           onClose={() => setShowBuilder(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['quotes', leadId] })}

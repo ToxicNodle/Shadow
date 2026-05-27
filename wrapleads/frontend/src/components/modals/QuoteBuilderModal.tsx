@@ -1,8 +1,48 @@
 import { useState, useCallback } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { showToast } from '../../utils/toast';
 import type { ShopQuote, QuoteLineItem, QuoteStatus } from '../../api/types';
+
+function fmtK(n: number | null | undefined) {
+  if (!n) return '—';
+  if (n >= 1000) return `$${Math.round(n / 1000)}K`;
+  return `$${Math.round(n).toLocaleString()}`;
+}
+
+function PricingBenchmarkStrip({ category }: { category: string }) {
+  const { data } = useQuery({
+    queryKey: ['pricing-benchmarks', category],
+    queryFn: () => api.getPricingBenchmarks(category),
+    staleTime: 5 * 60_000,
+  });
+
+  if (!data?.hasData) return null;
+  const s = data.stats;
+  if (!s) return null;
+
+  return (
+    <div style={{
+      padding: '7px 24px', borderBottom: '1px solid var(--border)',
+      display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
+      background: 'rgba(77,138,245,0.04)',
+    }}>
+      <span style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#4d8af5', flexShrink: 0 }}>
+        Your {s.job_count} {category} job{Number(s.job_count) !== 1 ? 's' : ''}:
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+        Avg {fmtK(s.avg_total)}
+        {s.avg_per_vehicle ? ` · ${fmtK(s.avg_per_vehicle)}/vehicle` : ''}
+        {' · '}Range {fmtK(s.min_total)}–{fmtK(s.max_total)}
+      </span>
+      {data.recentJobs.length > 0 && (
+        <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 4 }}>
+          Last: {data.recentJobs.slice(0, 2).map(j => `${j.company} ${fmtK(j.job_revenue)}`).join(' · ')}
+        </span>
+      )}
+    </div>
+  );
+}
 
 const STATUS_LABELS: Record<QuoteStatus, string> = {
   draft: 'Draft',
@@ -87,6 +127,7 @@ const QUOTE_TEMPLATES: QuoteTemplate[] = [
 interface Props {
   leadId: number;
   leadCompany: string;
+  leadCategory?: string;
   quote?: ShopQuote;
   onClose: () => void;
   onSaved: () => void;
@@ -97,7 +138,7 @@ function fmt(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose, onSaved, onAccepted }: Props) {
+export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, quote, onClose, onSaved, onAccepted }: Props) {
   const qc = useQueryClient();
   const isEdit = !!quote;
 
@@ -267,6 +308,9 @@ export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose,
               </button>
             ))}
           </div>
+
+          {/* Pricing benchmarks from job history */}
+          {leadCategory && <PricingBenchmarkStrip category={leadCategory} />}
 
           {/* Scrollable body */}
           <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
