@@ -2112,6 +2112,9 @@ function leadRow(row) {
     createdAt: row.created_at, updatedAt: row.updated_at,
     tags: Array.isArray(row.tags) ? row.tags : [],
     referred_by: row.referred_by || null,
+    lost_reason: row.lost_reason || null,
+    lost_competitor: row.lost_competitor || null,
+    lost_at: row.lost_at ? row.lost_at.toISOString() : null,
   };
 }
 
@@ -2389,6 +2392,40 @@ intent must be one of: interested | meeting_request | price_question | referral 
         `UPDATE leads SET followup_due_at = CURRENT_DATE + ($3 * INTERVAL '1 day'), updated_at=NOW() WHERE id=$1 AND user_id=$2`,
         [lead.id, uid, followupDays]
       );
+    }
+
+    // Signature extraction — fill in missing contact fields from email signature
+    if (apiKey && text.trim()) {
+      try {
+        const sigText = text.slice(0, 1000);
+        const leadFields = await pool.query(
+          `SELECT contact_name, phone, contact_title FROM leads WHERE id=$1`, [lead.id]
+        );
+        const existing = leadFields.rows[0] || {};
+        const missingName  = !existing.contact_name || existing.contact_name.trim() === '';
+        const missingPhone = !existing.phone || existing.phone.trim() === '';
+        const missingTitle = !existing.contact_title || existing.contact_title.trim() === '';
+        if (missingName || missingPhone || missingTitle) {
+          const sigRaw = await claudeHaiku(
+            `Extract contact info from this email body/signature. Return ONLY valid JSON with keys: name (string|null), phone (string|null), title (string|null). Null if not found.\n\n${sigText}`,
+            120
+          );
+          const sigData = JSON.parse(sigRaw.replace(/```(?:json)?\n?|\n?```/g, '').trim());
+          const updates = [];
+          const vals = [];
+          if (missingName  && sigData.name)  { updates.push(`contact_name=$${vals.length+1}`);  vals.push(sigData.name.slice(0, 100)); }
+          if (missingPhone && sigData.phone) { updates.push(`phone=$${vals.length+1}`);          vals.push(sigData.phone.slice(0, 30)); }
+          if (missingTitle && sigData.title) { updates.push(`contact_title=$${vals.length+1}`);  vals.push(sigData.title.slice(0, 100)); }
+          if (updates.length) {
+            vals.push(lead.id, uid);
+            await pool.query(
+              `UPDATE leads SET ${updates.join(', ')}, updated_at=NOW() WHERE id=$${vals.length-1} AND user_id=$${vals.length}`,
+              vals
+            );
+            console.log(`[inbound] Signature enriched lead ${lead.id}: ${updates.map(u => u.split('=')[0]).join(', ')}`);
+          }
+        }
+      } catch (e) { /* non-critical */ }
     }
 
     // Log dedicated email_reply activity with AI analysis
