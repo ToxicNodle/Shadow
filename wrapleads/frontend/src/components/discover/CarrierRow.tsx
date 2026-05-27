@@ -28,6 +28,16 @@ function StaleTag({ years }: { years?: number }) {
   return <span className="carrier-stale" style={{ color }}>{label}</span>;
 }
 
+function AuthorityAge({ years }: { years?: number | null }) {
+  if (years == null) return <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>—</span>;
+  const color = years >= 10 ? '#22c55e' : years >= 5 ? '#f59e0b' : 'var(--text-faint)';
+  return (
+    <span title={`MC authority registered ~${years} years ago`} style={{ fontSize: 10, color }}>
+      {years}yr
+    </span>
+  );
+}
+
 // Reverse-engineer wrap score into human-readable factors
 function scoreFactors(carrier: Carrier): { label: string; pts: number; max: number }[] {
   const fleet = carrier.fleet_size ?? 0;
@@ -98,6 +108,9 @@ export default function CarrierRow({ carrier, checked }: Props) {
         <div className="carrier-fleet">
           <strong>{carrier.fleet_size ?? '—'}</strong>
           {carrier.fleet_size && <small> units</small>}
+        </div>
+        <div className="carrier-authority" title="Years on FMCSA registry — longer = more established">
+          <AuthorityAge years={carrier.authority_age_years} />
         </div>
         <div className="carrier-score-cell">
           <ScoreMeter score={carrier.wrap_score} />

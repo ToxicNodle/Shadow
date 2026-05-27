@@ -1669,11 +1669,14 @@ app.post('/carriers/search', authMiddleware, subMiddleware, async (req, res) => 
   const dataParams = [...params, safeLimit, safeOffset];
   const dataSql = `
     SELECT id, source, source_id AS dot_number, name, dba_name, street, city, state, zip,
-           phone, email, fleet_size, drivers, last_reported,
+           phone, email, fleet_size, drivers, last_reported, added_to_registry,
            ${wrapScoreExpr} AS wrap_score,
            CASE WHEN last_reported IS NOT NULL
                 THEN EXTRACT(YEAR FROM NOW())::INT - EXTRACT(YEAR FROM last_reported)::INT
-                ELSE NULL END AS years_since_report
+                ELSE NULL END AS years_since_report,
+           CASE WHEN added_to_registry IS NOT NULL
+                THEN EXTRACT(YEAR FROM NOW())::INT - EXTRACT(YEAR FROM added_to_registry)::INT
+                ELSE NULL END AS authority_age_years
     FROM companies
     WHERE ${where}
     ORDER BY ${orderBy}

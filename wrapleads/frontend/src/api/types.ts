@@ -99,6 +99,7 @@ export interface Carrier {
   source: string;
   wrap_score: number;
   years_since_report?: number;
+  authority_age_years?: number | null;
   already_imported?: boolean;
 }
 

@@ -61,6 +61,7 @@ export default function CarrierTable() {
         <input type="checkbox" className="carrier-cb" checked={allChecked} onChange={toggleAll} />
         <span>Carrier</span>
         <span>Fleet</span>
+        <span title="Years on FMCSA registry">Est.</span>
         <span>Score</span>
         <span>Location</span>
         <span>Phone</span>

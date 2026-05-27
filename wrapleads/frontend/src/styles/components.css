@@ -309,10 +309,11 @@
 /* === Carrier row === */
 .carrier-row {
   display: grid;
-  grid-template-columns: 32px 2.5fr 1fr 0.8fr 1.2fr 100px;
+  grid-template-columns: 32px 2.5fr 1fr 52px 0.8fr 1.2fr 100px;
   align-items: center; padding: 14px 18px; gap: 12px;
   border-bottom: 1px solid var(--border-soft); transition: background 0.1s;
 }
+.carrier-authority { font-family: var(--mono); font-size: 10px; text-align: center; }
 .carrier-row:hover { background: var(--bg-elev-2); }
 .carrier-row.header {
   background: var(--bg-elev-2); font-size: 10px; text-transform: uppercase;
@@ -4494,8 +4495,8 @@ textarea:focus {
 .vision-dropzone-icon { display: flex !important; align-items: center !important; justify-content: center !important; }
 .vision-dropzone-icon svg { width: 32px !important; height: 32px !important; color: var(--text-faint) !important; }
 
-/* v13 — carrier row score meter + enhanced columns */
-.carrier-row { grid-template-columns: 32px 2.5fr 0.8fr 1fr 0.8fr 1.1fr 90px !important; }
+/* v14 — carrier row: added authority age column */
+.carrier-row { grid-template-columns: 32px 2.5fr 0.8fr 52px 1fr 0.8fr 1.1fr 90px !important; }
 .carrier-cell-name { display: flex; flex-direction: column; gap: 2px; }
 .carrier-dba { font-size: 11px; color: var(--text-faint); }
 .carrier-dot { font-size: 10px; color: var(--text-faint); font-family: var(--mono); }
