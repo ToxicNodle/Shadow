@@ -13,6 +13,7 @@ import CallSessionModal from './CallSessionModal';
 import TodayScoreCard from './TodayScoreCard';
 import ProposalHeatCard from './ProposalHeatCard';
 import RescueQueueCard from './RescueQueueCard';
+import IntentSignalsCard from './IntentSignalsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1839,6 +1840,9 @@ export default function MissionView() {
 
       {/* ── Win This Week — top 5 predicted closers this week ── */}
       <WinThisWeekCard />
+
+      {/* ── Intent Signals — unified buying intent score ── */}
+      <IntentSignalsCard />
 
       {/* ── Perfect Timing — email opens in the last 2 hours ── */}
       <PerfectTimingCard />

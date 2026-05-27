@@ -103,7 +103,10 @@ const TYPE_LABELS: Record<ActivityType | string, { icon: ReactNode; label: strin
   quote_accepted: { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>,                                                                                                   label: 'Quote accepted!',      color: '#10b981' },
   email_reply:    { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>,                                                                  label: 'Reply received',       color: '#34d399' },
   design_approved:{ icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,                                                                                label: 'Design approved ✓',   color: '#10b981' },
-  call_logged:    { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg>, label: 'Call logged',         color: '#34d399' },
+  call_logged:      { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg>, label: 'Call logged',         color: '#34d399' },
+  call_initiated:   { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg>, label: 'AI call started',     color: '#fbbf24' },
+  call_completed:   { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg>, label: 'AI call completed',   color: '#34d399' },
+  news_intel:       { icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>, label: 'Company news',        color: '#4d8af5' },
 };
 
 function fmtDate(iso: string) {
@@ -188,6 +191,14 @@ export default function ActivityTab({ lead }: Props) {
           const statusMeta = a.type === 'status_changed' && a.metadata;
           const isDraftEmail = a.type === 'draft_email';
           const isReply = a.type === 'email_reply';
+          const callIntel = a.type === 'call_completed'
+            ? ((a.metadata as Record<string, unknown>)?.call_intel as {
+                objections?: string[];
+                key_info?: string[];
+                sentiment?: string;
+                best_next_action?: string;
+              } | undefined)
+            : undefined;
           const replyMeta = isReply ? (a.metadata as Record<string, unknown>) : null;
           const replyIntent = replyMeta?.intent as string | undefined;
           const INTENT_BADGE: Record<string, { label: string; color: string }> = {
@@ -268,6 +279,32 @@ export default function ActivityTab({ lead }: Props) {
                 ) : a.body && (
                   <div className="activity-detail activity-body-preview">
                     {a.body.slice(0, 120)}{a.body.length > 120 ? '…' : ''}
+                  </div>
+                )}
+                {callIntel && (callIntel.objections?.length || callIntel.key_info?.length || callIntel.best_next_action) && (
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {callIntel.objections && callIntel.objections.length > 0 && (
+                      <div style={{ padding: '5px 8px', borderRadius: 5, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color: '#fbbf24', letterSpacing: '0.06em', marginBottom: 3 }}>Objections raised</div>
+                        {callIntel.objections.map((obj, i) => (
+                          <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>• {obj}</div>
+                        ))}
+                      </div>
+                    )}
+                    {callIntel.key_info && callIntel.key_info.length > 0 && (
+                      <div style={{ padding: '5px 8px', borderRadius: 5, background: 'rgba(77,138,245,0.07)', border: '1px solid rgba(77,138,245,0.2)' }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color: '#4d8af5', letterSpacing: '0.06em', marginBottom: 3 }}>Key info captured</div>
+                        {callIntel.key_info.map((info, i) => (
+                          <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>• {info}</div>
+                        ))}
+                      </div>
+                    )}
+                    {callIntel.best_next_action && (
+                      <div style={{ padding: '5px 8px', borderRadius: 5, background: 'rgba(0,217,126,0.07)', border: '1px solid rgba(0,217,126,0.2)' }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color: '#00d97e', letterSpacing: '0.06em', marginBottom: 2 }}>Best next action</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{callIntel.best_next_action}</div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

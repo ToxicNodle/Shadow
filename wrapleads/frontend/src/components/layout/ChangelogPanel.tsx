@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Intent Signals Dashboard',
+    body: 'Mission now shows a real-time "buying intent" leaderboard across ALL signal types: email opens (3pts), proposal views (4pts), recent replies (10pts), and aging wrap lifecycle signals (6pts). Leads are scored and ranked so you always know exactly who to call first. Refreshes every 5 minutes.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Referral Mining — Automated 30-Day Win Follow-Up',
     body: 'A background worker runs daily and fires a notification exactly 30 days after you win a deal — while the client relationship is warmest. One click generates a personalized referral ask email and copies it to your clipboard. No manual tracking required.',
   },

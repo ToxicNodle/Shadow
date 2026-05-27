@@ -10383,6 +10383,110 @@ app.get('/proposals/heat', authMiddleware, async (req, res) => {
 
 // Perfect Timing — leads who opened emails in the last 2 hours.
 // Refreshed every 90s on the Mission dashboard.
+// GET /mission/intent-signals — unified buying intent score across email opens,
+// proposal views, recent replies, and aging wrap signals. No competitor has this.
+app.get('/mission/intent-signals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    // Email opens in last 48h (score: 3 per open, capped at 15)
+    const { rows: emailOpens } = await pool.query(`
+      SELECT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             COUNT(et.id) AS open_count,
+             MAX(et.opened_at) AS last_opened
+      FROM leads l
+      JOIN email_tracking et ON et.lead_id = l.id AND et.user_id = l.user_id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND et.opened_at > NOW() - INTERVAL '48 hours'
+      GROUP BY l.id, l.company, l.status, l.category, l.contact_name
+    `, [uid]);
+
+    // Proposal views in last 48h (score: 4 per view, capped at 20)
+    const { rows: propViews } = await pool.query(`
+      SELECT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             COUNT(pv.id) AS view_count,
+             MAX(pv.viewed_at) AS last_viewed
+      FROM leads l
+      JOIN proposals p ON p.lead_id = l.id::bigint
+      JOIN proposal_views pv ON pv.proposal_id = p.id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND pv.viewed_at > NOW() - INTERVAL '48 hours'
+      GROUP BY l.id, l.company, l.status, l.category, l.contact_name
+    `, [uid]);
+
+    // Replied in last 7 days (score: 10)
+    const { rows: recentReplies } = await pool.query(`
+      SELECT DISTINCT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             MAX(la.created_at) AS replied_at
+      FROM leads l
+      JOIN lead_activities la ON la.lead_id = l.id AND la.user_id = l.user_id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND la.type = 'email_reply'
+        AND la.created_at > NOW() - INTERVAL '7 days'
+      GROUP BY l.id, l.company, l.status, l.category, l.contact_name
+    `, [uid]);
+
+    // Aging wrap signal — installed jobs with wrap expiring in next 180 days (score: 6)
+    const { rows: agingWraps } = await pool.query(`
+      SELECT DISTINCT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             ij.days_until_expiry
+      FROM leads l
+      JOIN installed_jobs ij ON ij.lead_id = l.id AND ij.user_id = l.user_id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND ij.days_until_expiry BETWEEN 0 AND 180
+    `, [uid]);
+
+    // Build intent map
+    const intentMap = new Map();
+
+    function getOrCreate(row) {
+      if (!intentMap.has(row.lead_id)) {
+        intentMap.set(row.lead_id, {
+          leadId: row.lead_id, company: row.company, status: row.status,
+          category: row.category, contactName: row.contact_name,
+          score: 0, signals: [],
+        });
+      }
+      return intentMap.get(row.lead_id);
+    }
+
+    for (const r of emailOpens) {
+      const entry = getOrCreate(r);
+      const score = Math.min(15, r.open_count * 3);
+      entry.score += score;
+      entry.signals.push({ type: 'email_opened', count: parseInt(r.open_count), lastAt: r.last_opened });
+    }
+    for (const r of propViews) {
+      const entry = getOrCreate(r);
+      const score = Math.min(20, r.view_count * 4);
+      entry.score += score;
+      entry.signals.push({ type: 'proposal_viewed', count: parseInt(r.view_count), lastAt: r.last_viewed });
+    }
+    for (const r of recentReplies) {
+      const entry = getOrCreate(r);
+      entry.score += 10;
+      entry.signals.push({ type: 'replied', lastAt: r.replied_at });
+    }
+    for (const r of agingWraps) {
+      const entry = getOrCreate(r);
+      entry.score += 6;
+      entry.signals.push({ type: 'wrap_aging', daysUntilExpiry: r.days_until_expiry });
+    }
+
+    const results = [...intentMap.values()]
+      .filter(e => e.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    res.json({ leads: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/mission/perfect-timing', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);

@@ -1232,4 +1232,22 @@ export const api = {
 
   getReferralAsk: (leadId: number) =>
     authFetch<{ ok: boolean; subject: string; body: string }>(`/leads/${leadId}/referral-ask`),
+
+  getIntentSignals: () =>
+    authFetch<{
+      leads: Array<{
+        leadId: number;
+        company: string;
+        status: string;
+        category: string;
+        contactName: string | null;
+        score: number;
+        signals: Array<{
+          type: 'email_opened' | 'proposal_viewed' | 'replied' | 'wrap_aging';
+          count?: number;
+          lastAt?: string;
+          daysUntilExpiry?: number;
+        }>;
+      }>;
+    }>('/mission/intent-signals'),
 };
