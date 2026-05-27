@@ -3810,6 +3810,25 @@ app.put('/bids/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/bids/:id/clone', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows: src } = await pool.query(
+      `SELECT * FROM bids WHERE id=$1 AND user_id=$2`, [parseInt(req.params.id), uid]
+    );
+    if (!src.length) return res.status(404).json({ error: 'Not found' });
+    const s = src[0];
+    const { rows } = await pool.query(
+      `INSERT INTO bids (user_id, lead_id, project_name, gc_name, architect, project_type,
+         bid_due, estimated_value, source_platform, source_url, status, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'tracking',$11) RETURNING *`,
+      [uid, s.lead_id, `${s.project_name} (Copy)`, s.gc_name, s.architect,
+       s.project_type, s.bid_due, s.estimated_value, s.source_platform, s.source_url, s.notes]
+    );
+    res.status(201).json({ bid: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/bids/:id', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
@@ -6068,6 +6087,166 @@ app.get('/jobs/:id/case-study', authMiddleware, async (req, res) => {
   );
   if (!rows.length) return res.json({ caseStudy: null });
   res.json({ caseStudy: rows[0] });
+});
+
+// GET /case-studies/:token — public SEO page for a completed job case study
+// Every job that has AI-generated case study text gets a shareable public URL.
+// This turns each completed wrap project into an organic SEO landing page.
+app.get('/case-studies/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    if (!token || !/^[0-9a-f]{32,64}$/i.test(token)) return res.status(404).send('<h2>Not found</h2>');
+
+    const { rows } = await pool.query(`
+      SELECT cs.headline, cs.narrative, cs.stats_json,
+             j.company, j.vehicle_type, j.vehicle_count, j.wrap_category, j.material, j.install_date,
+             u.settings_json,
+             COALESCE(json_agg(
+               json_build_object('data', jp.image_data, 'type', jp.photo_type, 'caption', jp.caption)
+             ) FILTER (WHERE jp.id IS NOT NULL), '[]') AS photos
+      FROM case_studies cs
+      JOIN installed_jobs j ON j.id = cs.job_id
+      JOIN users u ON u.id = j.user_id::bigint
+      LEFT JOIN job_photos jp ON jp.job_id = j.id
+      WHERE cs.token = $1
+      GROUP BY cs.id, j.id, u.id
+    `, [token]);
+
+    if (!rows.length) return res.status(404).send('<h2>Case study not found.</h2>');
+    const r = rows[0];
+    const s = r.settings_json || {};
+    const shopName = s.companyName || 'a certified wrap shop';
+    const accent = s.accentColor || '#f4551c';
+    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+
+    const CAT_NAMES = {
+      fleet: 'Fleet Wraps', racing: 'Racing / Motorsport', dinoc: 'DI-NOC / Architectural',
+      construction: 'Construction Fleet', colorchange: 'Color Change', gc_referral: 'GC / Commercial',
+      reatec: 'Rea Tec Film', other: 'Vehicle Graphics',
+    };
+    const catName = CAT_NAMES[r.wrap_category] || r.wrap_category || 'Vehicle Wraps';
+    const stats = r.stats_json || {};
+    const photos = (r.photos || []).filter((p) => p && p.data);
+    const thumb = photos.find((p) => p.type === 'before' || p.type === 'after' || true)?.data;
+    const metaDesc = `${r.headline} — ${catName} project by ${shopName}. ${r.vehicle_count || 1} vehicles. See the full case study.`;
+
+    const photoGrid = photos.slice(0, 6).map((p) => `
+      <div class="photo-item">
+        <img src="${p.data}" alt="${he(p.caption || r.company + ' wrap')}" loading="lazy" />
+        ${p.caption ? `<div class="photo-caption">${he(p.caption)}</div>` : ''}
+        ${p.type && p.type !== 'other' ? `<span class="photo-type-badge">${he(p.type)}</span>` : ''}
+      </div>
+    `).join('');
+
+    const installDateStr = r.install_date
+      ? new Date(r.install_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : null;
+
+    // Structured data for SEO
+    const jsonLd = JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'Article',
+      headline: he(r.headline),
+      description: metaDesc,
+      author: { '@type': 'Organization', name: shopName },
+      publisher: { '@type': 'Organization', name: shopName },
+      datePublished: r.install_date || new Date().toISOString(),
+      about: { '@type': 'Service', name: catName },
+    });
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${he(r.headline)} · ${he(shopName)}</title>
+<meta name="description" content="${he(metaDesc)}">
+<meta property="og:title" content="${he(r.headline)}">
+<meta property="og:description" content="${he(metaDesc)}">
+${thumb ? `<meta property="og:image" content="${he(thumb.startsWith('data:') ? appUrl + '/case-studies/' + token : thumb)}">` : ''}
+<meta property="og:type" content="article">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="${he(appUrl)}/case-studies/${he(token)}">
+<script type="application/ld+json">${jsonLd}</script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--accent:${accent};--dark:#0d0f16;--card:#141720;--border:#1e2130;--text:#e2e8f0;--muted:#8892a4}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--dark);color:var(--text);line-height:1.6}
+a{color:var(--accent)}
+.hero{max-width:840px;margin:0 auto;padding:60px 24px 40px}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:var(--muted);font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:4px 12px;border-radius:99px;margin-bottom:20px}
+.hero h1{font-size:clamp(28px,5vw,50px);font-weight:900;letter-spacing:-2px;line-height:1.05;margin-bottom:16px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;color:var(--muted);margin-top:12px}
+.hero-meta span{display:flex;align-items:center;gap:5px}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;max-width:840px;margin:0 auto;padding:0 24px 40px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+.stat-n{font-size:32px;font-weight:900;color:var(--accent)}
+.stat-l{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-top:4px}
+.narrative{max-width:840px;margin:0 auto;padding:0 24px 40px;font-size:16px;color:#c4cad6;white-space:pre-line}
+.section{max-width:840px;margin:0 auto;padding:0 24px 40px}
+.section-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted);margin-bottom:16px}
+.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.photo-item{position:relative;border-radius:12px;overflow:hidden;background:#0a0c11}
+.photo-item img{width:100%;height:220px;object-fit:cover;display:block}
+.photo-caption{padding:8px 12px;font-size:11px;color:var(--muted)}
+.photo-type-badge{position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:3px 8px;border-radius:99px}
+.cta{text-align:center;padding:60px 24px;border-top:1px solid var(--border)}
+.cta h2{font-size:28px;font-weight:900;letter-spacing:-1px;margin-bottom:12px}
+.cta p{font-size:16px;color:var(--muted);max-width:440px;margin:0 auto 28px}
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;transition:opacity 0.15s}
+.btn:hover{opacity:0.88}
+.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.15);color:var(--muted);margin-left:12px}
+.footer{text-align:center;padding:32px;color:var(--muted);font-size:12px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-badge">${he(catName)}</div>
+  <h1>${he(r.headline)}</h1>
+  <div class="hero-meta">
+    ${r.company ? `<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> ${he(r.company)}</span>` : ''}
+    ${r.vehicle_count ? `<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> ${r.vehicle_count} vehicle${r.vehicle_count !== 1 ? 's' : ''}</span>` : ''}
+    ${installDateStr ? `<span>📅 ${installDateStr}</span>` : ''}
+    ${r.material ? `<span>🔧 ${he(r.material)}</span>` : ''}
+    <span>by <a href="/portfolio/${s.shopToken || ''}">${he(shopName)}</a></span>
+  </div>
+</div>
+
+${(stats.vehicles || stats.impressionsPerYear || stats.lifespanYears) ? `
+<div class="stats-row">
+  ${stats.vehicles ? `<div class="stat"><div class="stat-n">${stats.vehicles}</div><div class="stat-l">Vehicles Wrapped</div></div>` : ''}
+  ${stats.impressionsPerYear ? `<div class="stat"><div class="stat-n">${Number(stats.impressionsPerYear).toLocaleString()}</div><div class="stat-l">Est. Impressions/Year</div></div>` : ''}
+  ${stats.lifespanYears ? `<div class="stat"><div class="stat-n">${stats.lifespanYears}</div><div class="stat-l">Year Lifespan</div></div>` : ''}
+  ${stats.installMonth ? `<div class="stat"><div class="stat-n">${stats.installMonth}</div><div class="stat-l">Installed</div></div>` : ''}
+</div>` : ''}
+
+${r.narrative ? `<div class="narrative">${he(r.narrative)}</div>` : ''}
+
+${photoGrid ? `
+<div class="section">
+  <div class="section-label">Project Photos</div>
+  <div class="photo-grid">${photoGrid}</div>
+</div>` : ''}
+
+<div class="cta">
+  <h2>Ready to wrap your fleet?</h2>
+  <p>Get 3 free AI wrap concepts for your vehicles in 30 seconds.</p>
+  <a href="/wrap-my-fleet" class="btn">Get Free Concepts →</a>
+  <a href="/welcome" class="btn btn-ghost">Learn about WrapOS</a>
+</div>
+
+<div class="footer">
+  <p>Case study by <a href="/portfolio/${s.shopToken || ''}">${he(shopName)}</a> · Powered by <a href="/welcome">WrapOS</a></p>
+</div>
+
+</body>
+</html>`);
+  } catch (e) {
+    console.error('[case-study public]', e.message);
+    res.status(500).send('<h2>Error loading case study.</h2>');
+  }
 });
 
 // ── Computer Vision Vehicle Quoting ──────────────────────────────────────────
@@ -11533,6 +11712,7 @@ Allow: /demo
 Allow: /calculator
 Allow: /stats.json
 Allow: /wrap-my-fleet
+Allow: /case-studies/
 
 Sitemap: ${appUrl}/sitemap.xml
 `);

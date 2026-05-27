@@ -105,10 +105,23 @@ function CaseStudyPanel({ job }: { job: InstalledJob }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }} onClick={copyText}>
           {copied ? '✓ Copied!' : 'Copy Case Study'}
         </button>
+        {cs.token && (
+          <a
+            href={`/case-studies/${cs.token}`}
+            target="_blank"
+            rel="noopener"
+            className="btn"
+            style={{ fontSize: 12 }}
+            title="View public case study page"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Public Page
+          </a>
+        )}
         <button className="btn" style={{ fontSize: 12 }} onClick={() => genMut.mutate()} disabled={genMut.isPending}>
           {genMut.isPending ? <span className="spinner" style={{ width: 11, height: 11 }} /> : '↻ Regenerate'}
         </button>

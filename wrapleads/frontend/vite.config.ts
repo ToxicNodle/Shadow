@@ -51,6 +51,7 @@ export default defineConfig({
       '/opportunities':      API,
       '/wrap-my-fleet':     API,
       '/inbound-leads':     API,
+      '/case-studies':      API,
     },
   },
 });

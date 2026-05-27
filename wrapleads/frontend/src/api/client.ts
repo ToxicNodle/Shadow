@@ -744,6 +744,8 @@ export const api = {
     authFetch<{ bid: Bid }>(`/bids/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
   deleteBid: (id: number) =>
     authFetch<{ ok: boolean }>(`/bids/${id}`, { method: 'DELETE' }),
+  cloneBid: (id: number) =>
+    authFetch<{ bid: Bid }>(`/bids/${id}/clone`, { method: 'POST' }),
 
   broadcastEmail: (leadIds: number[], subject: string, body: string) =>
     authFetch<{ ok: boolean; sent: number; skipped: number; errors: number }>(

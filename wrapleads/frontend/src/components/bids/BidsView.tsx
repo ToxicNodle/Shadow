@@ -358,10 +358,11 @@ interface BidCardProps {
   bid: Bid;
   onEdit: (b: Bid) => void;
   onDelete: (id: number) => void;
+  onClone: (id: number) => void;
   onStatusChange: (id: number, status: BidStatus) => void;
 }
 
-function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
+function BidCard({ bid, onEdit, onDelete, onClone, onStatusChange }: BidCardProps) {
   const [confirmDel, setConfirmDel] = useState(false);
   const days = daysUntil(bid.bid_due);
   const isOverdue = days !== null && days < 0 && !['won', 'lost', 'no_bid'].includes(bid.status);
@@ -384,6 +385,9 @@ function BidCard({ bid, onEdit, onDelete, onStatusChange }: BidCardProps) {
             <>
               <button className="bid-card-btn" onClick={() => api.openQuote(bid.id)} title="Preview Quote">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </button>
+              <button className="bid-card-btn" onClick={() => onClone(bid.id)} title="Duplicate bid">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               </button>
               <button className="bid-card-btn" onClick={() => onEdit(bid)} title="Edit">✎</button>
               <button className="bid-card-btn bid-card-btn-del" onClick={() => setConfirmDel(true)} title="Delete">✕</button>
@@ -482,10 +486,11 @@ interface ColProps {
   bids: Bid[];
   onEdit: (b: Bid) => void;
   onDelete: (id: number) => void;
+  onClone: (id: number) => void;
   onStatusChange: (id: number, s: BidStatus) => void;
 }
 
-function BidColumn({ status: _status, label, color, bids, onEdit, onDelete, onStatusChange }: ColProps) {
+function BidColumn({ status: _status, label, color, bids, onEdit, onDelete, onClone, onStatusChange }: ColProps) {
   const totalValue = bids.reduce((s, b) => s + (b.estimated_value ?? 0), 0);
   return (
     <div className="bid-column">
@@ -498,7 +503,7 @@ function BidColumn({ status: _status, label, color, bids, onEdit, onDelete, onSt
         {bids.length === 0
           ? <div className="bid-col-empty">No bids</div>
           : bids.map((b) => (
-            <BidCard key={b.id} bid={b} onEdit={onEdit} onDelete={onDelete} onStatusChange={onStatusChange} />
+            <BidCard key={b.id} bid={b} onEdit={onEdit} onDelete={onDelete} onClone={onClone} onStatusChange={onStatusChange} />
           ))
         }
       </div>
@@ -829,6 +834,15 @@ export default function BidsView() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['bids'] }); qc.invalidateQueries({ queryKey: ['bids-summary'] }); },
   });
 
+  const cloneMut = useMutation({
+    mutationFn: (id: number) => api.cloneBid(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bids'] }); qc.invalidateQueries({ queryKey: ['bids-summary'] }); },
+  });
+
+  function handleClone(id: number) {
+    cloneMut.mutate(id);
+  }
+
   const bids = data?.bids ?? [];
   const saving = createMut.isPending || updateMut.isPending;
 
@@ -987,6 +1001,7 @@ export default function BidsView() {
               bids={colBids(col.status)}
               onEdit={setModalBid}
               onDelete={handleDelete}
+              onClone={handleClone}
               onStatusChange={handleStatusChange}
             />
           ))}
