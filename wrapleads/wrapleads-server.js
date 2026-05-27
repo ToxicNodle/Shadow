@@ -9936,6 +9936,49 @@ app.get('/mission/retention-radar', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Mission Today Score ───────────────────────────────────────────────────────
+// Tallies today's sales activities for the gamified "Today's Score" card.
+// Scored: call_logged=3pts, email_sent=1pt, status advance to meeting/replied=3pts,
+// status won=10pts. Capped at 100 for display purposes.
+app.get('/mission/today-score', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const [activitiesR, winsR, emailsR] = await Promise.all([
+      pool.query(
+        `SELECT type, COUNT(*)::INT AS count
+         FROM lead_activities
+         WHERE user_id = $1 AND created_at::date = $2
+         GROUP BY type`,
+        [uid, today]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INT AS count FROM leads
+         WHERE user_id = $1 AND status = 'won' AND updated_at::date = $2`,
+        [uid, today]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INT AS count FROM email_queue
+         WHERE user_id = $1 AND status = 'sent' AND sent_at::date = $2`,
+        [uid, today]
+      ),
+    ]);
+
+    const actMap = {};
+    for (const r of activitiesR.rows) actMap[r.type] = r.count;
+
+    const calls     = actMap['call_logged'] || 0;
+    const advances  = (actMap['status_changed'] || 0);
+    const notes     = (actMap['note_added'] || 0);
+    const wins      = winsR.rows[0]?.count || 0;
+    const emails    = emailsR.rows[0]?.count || 0;
+
+    const score = Math.min(100, calls * 3 + emails + advances * 3 + wins * 10 + notes);
+
+    res.json({ score, calls, emails, advances, wins, notes, date: today });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Market Penetration Analysis ───────────────────────────────────────────────
 // Returns, for each of the user's top states, how many FMCSA-registered fleet
 // carriers exist vs. how many they're already targeting — the "white space".

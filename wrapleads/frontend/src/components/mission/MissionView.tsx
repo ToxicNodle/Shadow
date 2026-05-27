@@ -10,6 +10,7 @@ import WinThisWeekCard from './WinThisWeekCard';
 import StreakBadge from './StreakBadge';
 import InboundRequestsCard from './InboundRequestsCard';
 import CallSessionModal from './CallSessionModal';
+import TodayScoreCard from './TodayScoreCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1830,6 +1831,9 @@ export default function MissionView() {
 
       {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
       <InboundRequestsCard />
+
+      {/* ── Today's Score — gamified daily activity tracker ── */}
+      <TodayScoreCard />
 
       {/* ── Win This Week — top 5 predicted closers this week ── */}
       <WinThisWeekCard />

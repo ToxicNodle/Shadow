@@ -775,6 +775,9 @@ export const api = {
       }[];
     }>('/mission/retention-radar'),
 
+  getTodayScore: () =>
+    authFetch<{ score: number; calls: number; emails: number; advances: number; wins: number; notes: number; date: string }>('/mission/today-score'),
+
   // Business card scanner
   scanBusinessCard: (file: File) => {
     const token = getToken();
