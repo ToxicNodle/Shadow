@@ -1112,4 +1112,32 @@ export const api = {
       hotPipelineLeads: Array<{ id: number; company: string; category: string; status: string; followup_due_at: string | null; fleet_size: string | null }>;
       series: Array<{ month: number; wins: number; topCat: string | null }>;
     }>('/analytics/seasonal'),
+
+  getEmailTiming: () =>
+    authFetch<{
+      ok: boolean;
+      byHour: Array<{ hour: number; opens: number }>;
+      byDow: Array<{ dow: number; label: string; opens: number }>;
+      bestHours: Array<{ hour: number; label: string; opens: number }>;
+      bestDow: { dow: number; label: string; opens: number } | null;
+      totalOpens: number;
+      activeReaders: Array<{ leadId: number; company: string; status: string; openedAt: string; hoursAgo: number }>;
+    }>('/analytics/email-timing'),
+
+  getRevenueForecast: () =>
+    authFetch<{
+      ok: boolean;
+      projections: Array<{
+        month: number;
+        label: string;
+        expected: number;
+        low: number;
+        high: number;
+        leads: Array<{ id: number; company: string; status: string; category: string; winRate: number }>;
+      }>;
+      monthlyGoal: number;
+      winRates: Record<string, number>;
+      hasHistory: boolean;
+      pipelineTotal: number;
+    }>('/analytics/revenue-forecast'),
 };

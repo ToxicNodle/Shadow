@@ -11732,6 +11732,224 @@ app.get('/analytics/seasonal', authMiddleware, async (req, res) => {
   }
 });
 
+// ── 3-Month Revenue Projection ───────────────────────────────────────────────
+// Combines current pipeline value × historical stage win rates × time-to-close
+// to project expected revenue for the next 3 months with low/mid/high ranges.
+app.get('/analytics/revenue-forecast', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    // Category-based average deal values (same as in other workers)
+    const CAT_REV = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+                      colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+
+    const [pipelineR, historyR, velocityR, settingsR] = await Promise.all([
+      // Active pipeline leads with estimated values
+      pool.query(`
+        SELECT id, company, category, status, followup_due_at, fleet_size, updated_at
+          FROM leads
+         WHERE user_id=$1 AND status IN ('contacted','replied','meeting','proposal')
+      `, [uid]),
+      // Historical stage-to-won transitions over last 12 months
+      pool.query(`
+        SELECT
+          status_from,
+          COUNT(*) FILTER (WHERE status_to='won')::FLOAT /
+            NULLIF(COUNT(*),0) AS win_rate,
+          COUNT(*) AS total
+        FROM (
+          SELECT
+            lag(status) OVER (PARTITION BY lead_id ORDER BY created_at) AS status_from,
+            status AS status_to
+          FROM (
+            SELECT lead_id, metadata->>'to' AS status, created_at
+            FROM lead_activities
+            WHERE user_id=$1 AND type='status_changed' AND metadata->>'to' IS NOT NULL
+              AND created_at >= NOW() - INTERVAL '12 months'
+          ) t
+        ) transitions
+        WHERE status_from IN ('contacted','replied','meeting','proposal')
+        GROUP BY status_from
+      `, [uid]),
+      // Avg days to close per stage
+      pool.query(`
+        SELECT
+          status,
+          AVG(EXTRACT(DAY FROM NOW() - updated_at))::INT AS avg_days_in_stage
+        FROM leads
+        WHERE user_id=$1 AND status IN ('contacted','replied','meeting','proposal')
+        GROUP BY status
+      `, [uid]),
+      // User's monthly revenue goal from settings
+      pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]),
+    ]);
+
+    // Build win rate map per stage (default conservative rates if no history)
+    const DEFAULT_WIN_RATES = { contacted: 0.08, replied: 0.20, meeting: 0.45, proposal: 0.65 };
+    const winRateMap = { ...DEFAULT_WIN_RATES };
+    for (const row of historyR.rows) {
+      if (row.total >= 3) { // need at least 3 data points
+        winRateMap[row.status_from] = parseFloat(row.win_rate) || DEFAULT_WIN_RATES[row.status_from] || 0.1;
+      }
+    }
+
+    // Build avg days in stage map
+    const daysMap = { contacted: 21, replied: 10, meeting: 7, proposal: 5 };
+    for (const row of velocityR.rows) {
+      daysMap[row.status] = row.avg_days_in_stage || daysMap[row.status];
+    }
+
+    // For each pipeline lead, estimate which month it's likely to close
+    const now = Date.now();
+    const months = [0, 1, 2]; // current month, next, month after
+    const projections = months.map(mOffset => {
+      const mStart = new Date(now);
+      mStart.setDate(1);
+      mStart.setMonth(mStart.getMonth() + mOffset);
+      const mEnd = new Date(mStart);
+      mEnd.setMonth(mEnd.getMonth() + 1);
+
+      let expectedRev = 0;
+      let lowRev = 0;
+      let highRev = 0;
+      const leads = [];
+
+      for (const lead of pipelineR.rows) {
+        const winRate = winRateMap[lead.status] || 0.1;
+        const avgDays = daysMap[lead.status] || 14;
+        const catRev = CAT_REV[lead.category] || 3500;
+
+        // Estimate close date from current stage and velocity
+        const estCloseMs = now + avgDays * 86_400_000;
+        const inWindow = estCloseMs >= mStart.getTime() && estCloseMs < mEnd.getTime();
+
+        if (inWindow || mOffset === 2) { // include stragglers in month 3
+          expectedRev += winRate * catRev;
+          lowRev     += winRate * 0.6 * catRev;
+          highRev    += Math.min(1, winRate * 1.4) * catRev;
+          leads.push({ id: lead.id, company: lead.company, status: lead.status, category: lead.category, winRate: Math.round(winRate * 100) });
+        }
+      }
+
+      const label = mOffset === 0 ? 'This Month'
+                  : mOffset === 1 ? 'Next Month'
+                  : ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][mEnd.getMonth() === 0 ? 11 : mEnd.getMonth() - 1];
+
+      return {
+        month: mOffset,
+        label,
+        expected: Math.round(expectedRev),
+        low: Math.round(lowRev),
+        high: Math.round(highRev),
+        leads: leads.slice(0, 5),
+      };
+    });
+
+    const settings = settingsR.rows[0]?.settings_json || {};
+    const monthlyGoal = parseFloat((settings.monthlyRevenueGoal || '0').replace(/[^0-9.]/g, '')) || 0;
+
+    const hasHistory = historyR.rows.some(r => r.total >= 3);
+
+    res.json({
+      ok: true,
+      projections,
+      monthlyGoal,
+      winRates: winRateMap,
+      hasHistory,
+      pipelineTotal: pipelineR.rows.reduce((s, l) => s + (CAT_REV[l.category] || 3500), 0),
+    });
+  } catch (e) {
+    console.error('[analytics/revenue-forecast]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// ── Email Send-Time Intelligence ─────────────────────────────────────────────
+// Analyzes email open timestamps to find the best hours/days for outreach.
+// Returns hour-of-day and day-of-week open distributions, best 3 windows,
+// and per-lead first-open times for "last opened at" display in lead detail.
+app.get('/analytics/email-timing', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [hourR, dowR, topLeadsR] = await Promise.all([
+      // Hour of day distribution (opens, 0-23)
+      pool.query(`
+        SELECT EXTRACT(HOUR FROM opened_at AT TIME ZONE 'America/New_York')::INT AS hour,
+               COUNT(*)::INT AS opens
+          FROM email_tracking
+         WHERE user_id=$1 AND opened_at IS NOT NULL
+           AND opened_at >= NOW() - INTERVAL '90 days'
+         GROUP BY hour
+         ORDER BY hour
+      `, [uid]),
+      // Day of week distribution (1=Sun, 7=Sat in Postgres)
+      pool.query(`
+        SELECT EXTRACT(DOW FROM opened_at AT TIME ZONE 'America/New_York')::INT AS dow,
+               COUNT(*)::INT AS opens
+          FROM email_tracking
+         WHERE user_id=$1 AND opened_at IS NOT NULL
+           AND opened_at >= NOW() - INTERVAL '90 days'
+         GROUP BY dow
+         ORDER BY dow
+      `, [uid]),
+      // Leads with recent open activity for "active readers" list
+      pool.query(`
+        SELECT DISTINCT ON (et.lead_id)
+               et.lead_id, l.company, l.status,
+               et.opened_at,
+               EXTRACT(EPOCH FROM (NOW() - et.opened_at)) / 3600.0 AS hours_ago
+          FROM email_tracking et
+          JOIN leads l ON l.id = et.lead_id AND l.user_id = et.user_id
+         WHERE et.user_id=$1 AND et.opened_at IS NOT NULL
+           AND l.status NOT IN ('won','lost')
+         ORDER BY et.lead_id, et.opened_at DESC
+         LIMIT 10
+      `, [uid]),
+    ]);
+
+    // Build full 24-hour array
+    const hourMap = new Map(hourR.rows.map(r => [r.hour, r.opens]));
+    const byHour = Array.from({ length: 24 }, (_, h) => ({ hour: h, opens: hourMap.get(h) ?? 0 }));
+
+    // Build full 7-day array (0=Sun ... 6=Sat)
+    const DOW_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dowMap = new Map(dowR.rows.map(r => [r.dow, r.opens]));
+    const byDow = Array.from({ length: 7 }, (_, d) => ({ dow: d, label: DOW_LABELS[d], opens: dowMap.get(d) ?? 0 }));
+
+    // Best 3 hours — highest open count during business hours (7am-8pm) first
+    const bestHours = [...byHour]
+      .filter(h => h.hour >= 7 && h.hour <= 20)
+      .sort((a, b) => b.opens - a.opens)
+      .slice(0, 3)
+      .map(h => ({
+        hour: h.hour,
+        label: h.hour === 0 ? '12am' : h.hour < 12 ? `${h.hour}am` : h.hour === 12 ? '12pm' : `${h.hour - 12}pm`,
+        opens: h.opens,
+      }));
+
+    // Best day of week
+    const bestDow = [...byDow].sort((a, b) => b.opens - a.opens)[0] ?? null;
+
+    res.json({
+      ok: true,
+      byHour,
+      byDow,
+      bestHours,
+      bestDow,
+      totalOpens: hourR.rows.reduce((s, r) => s + r.opens, 0),
+      activeReaders: topLeadsR.rows.map(r => ({
+        leadId: r.lead_id,
+        company: r.company,
+        status: r.status,
+        openedAt: r.opened_at,
+        hoursAgo: Math.round(r.hours_ago * 10) / 10,
+      })),
+    });
+  } catch (e) {
+    console.error('[analytics/email-timing]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
 // WrapLeads ROI Impact — current-month stats showing platform value
 app.get('/analytics/impact', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);

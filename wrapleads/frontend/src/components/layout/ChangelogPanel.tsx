@@ -9,6 +9,36 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '3-Month Revenue Projection',
+    body: 'Analytics now shows a confidence-range revenue forecast for the next three months, combining your current pipeline stages with actual historical win rates. Shows low/expected/high ranges, tracks progress against your monthly goal, and lists the specific deals driving each month\'s projection.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Email Send-Time Intelligence',
+    body: 'Analytics now shows exactly when your prospects open emails — hour-of-day bars and day-of-week breakdown for the last 90 days. Surfaces the optimal outreach windows and lists leads who have opened emails recently so you can strike while they\'re engaged.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Seasonal Win Intelligence',
+    body: 'A new Analytics card shows your month-by-month win history as a sparkline, identifies which service category is historically strongest in the current season, and surfaces the active pipeline leads you should push right now to ride that seasonal wave.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'improved',
+    title: 'Discover — Near My Shop + Signal Badges',
+    body: 'A new "Near My Shop" quick preset searches your home state plus adjacent states with one click. Carrier rows now show Signal and GOV badges for leads sourced from live news events or SAM.gov federal contracts, and expand to show the original article headline and link.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Quote Expiry Alerts',
+    body: 'A new background worker fires daily and notifies you when a sent quote is within 3 days of its validity window expiring — prompting a follow-up call before the client has to ask for a reprice.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Loss Intelligence + AI Win-Back Emails',
     body: 'When marking a deal lost, a structured modal now captures the loss reason (price, competitor, timing, etc.) and competitor name. Analytics view shows a "Loss Intelligence" card with why-we-lose breakdown, competitor rankings, and one-click AI win-back email generation for recoverable losses.',
   },

@@ -546,6 +546,145 @@ const TONE_COLOR: Record<string, string> = {
   professional: '#6366f1', casual: '#10b981', direct: '#f97316', local: '#f59e0b', unknown: '#94a3b8',
 };
 
+function EmailTimingCard() {
+  const { setCurrentLeadId, setMode } = useAppStore((s) => ({
+    setCurrentLeadId: s.setCurrentLeadId,
+    setMode: s.setMode,
+  }));
+  const { data, isLoading } = useQuery({
+    queryKey: ['email-timing'],
+    queryFn: () => api.getEmailTiming(),
+    staleTime: 15 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+    </div>
+  );
+
+  const d = data;
+  if (!d?.ok || d.totalOpens < 5) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+      <div className="an-card-title">Email Send-Time Intelligence</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+        Send at least 5 tracked emails to unlock open-time patterns. Once you do, WrapOS will tell you exactly when your prospects read their emails.
+      </p>
+    </div>
+  );
+
+  const maxHour = Math.max(...d.byHour.map(h => h.opens), 1);
+  const maxDow  = Math.max(...d.byDow.map(h => h.opens), 1);
+
+  const hourLabel = (h: number) => h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`;
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Email Send-Time Intelligence</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            When your prospects actually open emails — last 90 days, {d.totalOpens} opens tracked
+          </div>
+        </div>
+        {d.bestDow && d.bestHours.length > 0 && (
+          <div style={{
+            background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)',
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#10b981',
+          }}>
+            Best window: {d.bestDow.label} {d.bestHours[0]?.label}–{d.bestHours[1]?.label}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20, marginBottom: d.activeReaders.length > 0 ? 16 : 0 }}>
+        {/* Hour-of-day bars */}
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Hour of day (EST)
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 48 }}>
+            {d.byHour.map(h => {
+              const pct = (h.opens / maxHour) * 100;
+              const isBest = d.bestHours.some(b => b.hour === h.hour);
+              return (
+                <div key={h.hour} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}
+                  title={`${hourLabel(h.hour)}: ${h.opens} open${h.opens !== 1 ? 's' : ''}`}>
+                  <div style={{
+                    width: '100%', height: Math.max(2, Math.round(pct * 0.44)),
+                    background: isBest ? '#10b981' : h.opens > 0 ? '#10b98130' : 'var(--border)',
+                    borderRadius: '2px 2px 0 0',
+                  }} />
+                  {(h.hour % 4 === 0) && (
+                    <span style={{ fontSize: 8, color: 'var(--text-faint)', marginTop: 2 }}>{hourLabel(h.hour)}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Day-of-week bars */}
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Day of week
+          </div>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 48 }}>
+            {d.byDow.map(day => {
+              const pct = (day.opens / maxDow) * 100;
+              const isBest = d.bestDow?.dow === day.dow;
+              return (
+                <div key={day.dow} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}
+                  title={`${day.label}: ${day.opens} opens`}>
+                  <div style={{
+                    width: '100%', height: Math.max(2, Math.round(pct * 0.44)),
+                    background: isBest ? '#10b981' : day.opens > 0 ? '#10b98130' : 'var(--border)',
+                    borderRadius: '2px 2px 0 0',
+                  }} />
+                  <span style={{ fontSize: 9, color: isBest ? '#10b981' : 'var(--text-faint)', fontWeight: isBest ? 700 : 400 }}>
+                    {day.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Active readers */}
+      {d.activeReaders.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Recent openers — reach out now while you're top of mind
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {d.activeReaders.slice(0, 6).map(r => {
+              const when = r.hoursAgo < 24
+                ? `${Math.round(r.hoursAgo)}h ago`
+                : `${Math.round(r.hoursAgo / 24)}d ago`;
+              return (
+                <div
+                  key={r.leadId}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 7,
+                    background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)',
+                    borderRadius: 7, padding: '5px 10px', cursor: 'pointer',
+                  }}
+                  onClick={() => { setCurrentLeadId(String(r.leadId)); setMode('leads'); }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', flexShrink: 0, display: 'inline-block' }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{r.company}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{when}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SequencePerformanceCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['sequence-performance'],
@@ -671,6 +810,123 @@ function PipelineNarrativeCard() {
       )}
       {narrative && (
         <div className="pipeline-narrative">{narrative}</div>
+      )}
+    </div>
+  );
+}
+
+// ── 3-Month Revenue Forecast Card ────────────────────────────────────────────
+function RevenueForecastCard() {
+  const { setCurrentLeadId, setMode } = useAppStore((s) => ({
+    setCurrentLeadId: s.setCurrentLeadId,
+    setMode: s.setMode,
+  }));
+  const { data, isLoading } = useQuery({
+    queryKey: ['revenue-forecast'],
+    queryFn: () => api.getRevenueForecast(),
+    staleTime: 10 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 100, borderRadius: 8 }} />
+    </div>
+  );
+
+  const d = data;
+  if (!d?.ok) return null;
+
+  const fmtK = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n.toLocaleString()}`;
+  const maxHigh = Math.max(...d.projections.map(p => p.high), 1);
+
+  const STATUS_COLOR: Record<string, string> = {
+    proposal: '#22c55e', meeting: '#4d8af5', replied: '#f59e0b', contacted: 'var(--text-faint)',
+  };
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>3-Month Revenue Projection</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Pipeline × {d.hasHistory ? 'your historical' : 'industry'} win rates — confidence range by stage
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Pipeline total</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--text)', letterSpacing: '-0.5px' }}>
+            {fmtK(d.pipelineTotal)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+        {d.projections.map((proj) => {
+          const barPct = maxHigh > 0 ? (proj.high / maxHigh) * 100 : 0;
+          const expectedPct = maxHigh > 0 ? (proj.expected / maxHigh) * 100 : 0;
+          const goalPct = d.monthlyGoal > 0 ? Math.min(100, (proj.expected / d.monthlyGoal) * 100) : 0;
+          const atGoal = d.monthlyGoal > 0 && proj.expected >= d.monthlyGoal;
+
+          return (
+            <div key={proj.month} style={{
+              background: 'var(--bg-elev)', border: `1px solid ${proj.month === 0 ? 'var(--accent)' : 'var(--border)'}`,
+              borderRadius: 10, padding: '12px 14px',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: proj.month === 0 ? 'var(--accent)' : 'var(--text-faint)', marginBottom: 10 }}>
+                {proj.label} {proj.month === 0 && '(now)'}
+              </div>
+
+              {/* Stacked bar: low → expected → high */}
+              <div style={{ position: 'relative', height: 36, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${barPct}%`, background: 'rgba(77,138,245,0.2)', borderRadius: 4 }} />
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${expectedPct}%`, background: '#4d8af5', borderRadius: 4 }} />
+                {d.monthlyGoal > 0 && (
+                  <div style={{
+                    position: 'absolute', top: 0, bottom: 0, left: `${Math.min(99, d.monthlyGoal / maxHigh * 100)}%`,
+                    width: 1.5, background: atGoal ? '#22c55e' : '#ef4444',
+                  }} />
+                )}
+              </div>
+
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#4d8af5', letterSpacing: '-0.5px', marginBottom: 2 }}>
+                {fmtK(proj.expected)}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                {fmtK(proj.low)} – {fmtK(proj.high)} range
+              </div>
+              {d.monthlyGoal > 0 && (
+                <div style={{ fontSize: 10, color: atGoal ? '#22c55e' : '#ef4444', marginTop: 4, fontWeight: 600 }}>
+                  {atGoal ? `↑ ${fmtK(proj.expected - d.monthlyGoal)} over goal` : `${Math.round(goalPct)}% of ${fmtK(d.monthlyGoal)} goal`}
+                </div>
+              )}
+
+              {/* Top leads for this month */}
+              {proj.leads.length > 0 && (
+                <div style={{ marginTop: 10, borderTop: '1px solid var(--border-subtle)', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {proj.leads.slice(0, 3).map(l => (
+                    <div
+                      key={l.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                      onClick={() => { setCurrentLeadId(String(l.id)); setMode('leads'); }}
+                    >
+                      <div style={{ width: 4, height: 4, borderRadius: '50%', background: STATUS_COLOR[l.status] ?? 'var(--text-faint)', flexShrink: 0 }} />
+                      <span style={{ fontSize: 10, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {l.company}
+                      </span>
+                      <span style={{ fontSize: 9, color: 'var(--text-faint)', flexShrink: 0 }}>{l.winRate}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {!d.hasHistory && (
+        <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0, fontStyle: 'italic' }}>
+          Using industry-average win rates. Close more deals to unlock personalized projections based on your actual history.
+        </p>
       )}
     </div>
   );
@@ -2690,10 +2946,16 @@ export default function AnalyticsView() {
         {/* ── Sequence Performance Intelligence ── */}
         <SequencePerformanceCard />
 
+        {/* ── Email Send-Time Intelligence ── */}
+        <EmailTimingCard />
+
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />
 
         {/* ── Win Pattern Analysis ── */}
+        {/* ── 3-Month Revenue Projection ── */}
+        <RevenueForecastCard />
+
         <WinPatternCard />
 
         {/* ── Pipeline Health Score ── */}
