@@ -10,6 +10,7 @@ import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 import FindEmailPanel from './FindEmailPanel';
 import SimilarWinsPanel from './SimilarWinsPanel';
 import LossReasonModal from '../../modals/LossReasonModal';
+import DealCoachPanel from './DealCoachPanel';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -2133,6 +2134,7 @@ export default function InfoTab({ lead }: Props) {
       </button>
 
       {lead.serverId && <SimilarWinsPanel lead={local} />}
+      {lead.serverId && <DealCoachPanel lead={local} />}
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
       {lead.serverId && <WarmReferencesPanel lead={local} />}

@@ -16,6 +16,7 @@ import RescueQueueCard from './RescueQueueCard';
 import IntentSignalsCard from './IntentSignalsCard';
 import TaskQueueCard from './TaskQueueCard';
 import SpeedDialCard from './SpeedDialCard';
+import StalePipelineCard from './StalePipelineCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1839,6 +1840,9 @@ export default function MissionView() {
 
       {/* ── Speed Dial — top 5 leads to contact right now ── */}
       <SpeedDialCard />
+
+      {/* ── Stale Pipeline — deals going cold with no activity ── */}
+      <StalePipelineCard />
 
       {/* ── Daily Task Queue — AI-generated + manual task list ── */}
       <TaskQueueCard />

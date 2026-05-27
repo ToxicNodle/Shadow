@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Deal Coach — AI Closing Tactics Per Deal',
+    body: 'Every active lead (contacted/replied/meeting/proposal) now has a "🎯 Coach Me" button in the info tab. Click it and Claude analyzes all your activity with that specific company and returns 3 personalized closing tactics, a closing probability score, urgency level, and a single key insight. No generic advice — specific to THIS deal, THIS company, and what you\'ve already tried.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Stale Pipeline Recovery Card',
+    body: 'Mission now shows a "Stale Pipeline" card listing every active deal with no activity in 14+ days — ranked by how long they\'ve been silent. Click any row to jump straight to the lead. Deals at 30+ days show in red. A single follow-up today can revive a deal you thought was dead.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Speed Dial — AI-Ranked Call Queue',
     body: 'Mission now shows a "Speed Dial" card with your top 5 leads to contact right now, ranked by urgency score (email opens, proposal views, days overdue, follow-up timing). Each lead shows an AI-generated pitch angle, signal badges, and one-click Call / Email / Open / Done / Skip actions so you can blast through your call list without touching the CRM.',
   },

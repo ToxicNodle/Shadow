@@ -1366,6 +1366,31 @@ export const api = {
       }>;
     }>('/mission/speed-dial'),
 
+  // Deal Coach — AI closing tactics for a specific deal
+  getDealCoach: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      tactics: Array<{ title: string; action: string; rationale: string }>;
+      closingProbability: number;
+      urgencyLevel: 'low' | 'medium' | 'high' | 'critical';
+      keyInsight: string;
+      daysInPipeline: number;
+      daysInStage: number | null;
+    }>(`/leads/${leadId}/deal-coach`),
+
+  // Stale Pipeline — leads stuck with no activity for 14+ days
+  getStalePipeline: () =>
+    authFetch<{
+      ok: boolean;
+      leads: Array<{
+        leadId: number; clientId: string; company: string; contactName: string | null;
+        category: string; status: string; email: string | null; phone: string | null;
+        state: string | null; fleetSize: string | null; followupDueAt: string | null;
+        lastActivityAt: string; daysStale: number; activityCount: number;
+      }>;
+      thresholdDays: number;
+    }>('/mission/stale-pipeline'),
+
   // Pricing benchmarks from job history
   getPricingBenchmarks: (category: string) =>
     authFetch<{

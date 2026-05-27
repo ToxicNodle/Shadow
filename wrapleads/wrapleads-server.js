@@ -10531,6 +10531,77 @@ app.get('/mission/intent-signals', authMiddleware, async (req, res) => {
   }
 });
 
+// Speed Dial — top 5 leads to contact RIGHT NOW, ranked by urgency + opportunity
+app.get('/mission/speed-dial', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(`
+      WITH lead_signals AS (
+        SELECT
+          l.id, l.company, l.contact_name, l.phone, l.email, l.status, l.category,
+          l.fleet_size, l.state, l.city, l.notes, l.followup_due_at, l.updated_at,
+          l.client_id,
+          COALESCE((
+            SELECT COUNT(*) FROM email_tracking et
+            WHERE et.lead_id = l.id AND et.opened_at > NOW() - INTERVAL '48 hours'
+          ), 0) AS recent_opens,
+          COALESCE((
+            SELECT COUNT(*) FROM proposals p
+            WHERE p.lead_id = l.id AND p.last_viewed_at > NOW() - INTERVAL '48 hours'
+          ), 0) AS recent_proposal_views,
+          CASE
+            WHEN l.followup_due_at < NOW() THEN
+              EXTRACT(EPOCH FROM (NOW() - l.followup_due_at)) / 86400.0
+            ELSE 0
+          END AS days_overdue,
+          EXTRACT(EPOCH FROM (NOW() - l.updated_at)) / 86400.0 AS days_since_update
+        FROM leads l
+        WHERE l.user_id = $1 AND l.status NOT IN ('won', 'lost', 'cold')
+      )
+      SELECT *,
+        (days_overdue * 15 + recent_opens * 8 + recent_proposal_views * 12 +
+         CASE WHEN phone IS NOT NULL THEN 5 ELSE 0 END +
+         CASE status
+           WHEN 'proposal' THEN 20 WHEN 'meeting' THEN 15 WHEN 'replied' THEN 12
+           WHEN 'contacted' THEN 8 ELSE 5
+         END) AS urgency_score
+      FROM lead_signals
+      ORDER BY urgency_score DESC, followup_due_at ASC NULLS LAST
+      LIMIT 5
+    `, [uid]);
+
+    // Generate pitch angles via Claude if available — use cached notes otherwise
+    const anthropic = getAnthropic();
+    const leads = await Promise.all(rows.map(async (lead) => {
+      let pitchAngle = lead.notes ? lead.notes.slice(0, 100) : null;
+      if (anthropic && !pitchAngle) {
+        try {
+          const ctx = `${lead.company}, ${lead.city || ''}${lead.state ? ` ${lead.state}` : ''} | ${lead.category || 'fleet'} | Fleet: ${lead.fleet_size || 'unknown'} | Status: ${lead.status}`;
+          const msg = await anthropic.messages.create({
+            model: 'claude-haiku-4-5', max_tokens: 60,
+            messages: [{ role: 'user', content: `Give ONE specific, compelling reason to call this prospect NOW (max 15 words). Mention their category/location/fleet. No filler.\n\nProspect: ${ctx}\n\nReturn ONLY the single phrase.` }],
+          });
+          pitchAngle = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : null;
+        } catch { /* skip */ }
+      }
+      return {
+        leadId: lead.id, clientId: lead.client_id,
+        company: lead.company, contactName: lead.contact_name,
+        phone: lead.phone, email: lead.email,
+        status: lead.status, category: lead.category,
+        fleetSize: lead.fleet_size, state: lead.state,
+        urgencyScore: Math.round(parseFloat(lead.urgency_score)),
+        daysOverdue: Math.round(parseFloat(lead.days_overdue) * 10) / 10,
+        recentOpens: parseInt(lead.recent_opens, 10),
+        recentProposalViews: parseInt(lead.recent_proposal_views, 10),
+        pitchAngle,
+      };
+    }));
+
+    res.json({ ok: true, leads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/mission/perfect-timing', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
@@ -10572,6 +10643,135 @@ app.get('/mission/perfect-timing', authMiddleware, async (req, res) => {
     }));
 
     res.json({ leads, windowHours });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Deal Coach — AI gives 3 specific closing tactics for a specific lead ─────
+// Unique: reads ALL lead context + recent activity and returns personalized
+// tactics. No generic CRM advice — specific to THIS deal.
+app.get('/leads/:id/deal-coach', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.json({ ok: true, fallback: true, tactics: [
+      { title: 'Send a personalized ROI breakdown', action: 'Email them a fleet-specific cost-per-impression analysis showing wrap value vs. radio/billboard.', rationale: 'Fleet managers respond to hard numbers. An ROI email sets you apart from every other vendor.' },
+      { title: 'Request a 15-minute design call', action: 'Call or email asking for 15 minutes to walk through one design concept on their specific vehicle.', rationale: 'Getting them visually invested in a design dramatically increases close rate.' },
+      { title: 'Create urgency with a limited slot', action: 'Mention your install calendar is filling up — offer to hold their slot for 5 business days.', rationale: 'Install calendar scarcity is real for wrap shops and a legitimate reason to act now.' },
+    ] });
+
+    // Fetch lead + recent activity
+    const [leadR, activityR, settingsR] = await Promise.all([
+      pool.query(
+        `SELECT id, company, contact_name, category, status, fleet_size, city, state,
+                email, phone, notes, pitch_angle, lost_reason, last_contacted_at,
+                followup_due_at, created_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, created_at
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 12`, [leadId, uid]
+      ),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const activity = activityR.rows;
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+
+    const daysInStage = lead.last_contacted_at
+      ? Math.floor((Date.now() - new Date(lead.last_contacted_at).getTime()) / 86_400_000)
+      : null;
+    const daysInPipeline = Math.floor((Date.now() - new Date(lead.created_at).getTime()) / 86_400_000);
+
+    const activitySummary = activity.length
+      ? activity.map(a => `[${a.type}] ${a.subject || ''} (${new Date(a.created_at).toLocaleDateString()})`).join('\n')
+      : 'No activity logged yet';
+
+    const prompt = `You are a veteran wrap shop sales coach with 15 years closing fleet and commercial wrap deals. Analyze this specific deal and give 3 brutally specific, actionable closing tactics.
+
+DEAL CONTEXT:
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Unknown'}
+Category: ${lead.category}
+Status: ${lead.status}
+Fleet size: ${lead.fleet_size || 'not specified'}
+Location: ${lead.city || ''}${lead.state ? ', ' + lead.state : ''}
+Days in pipeline: ${daysInPipeline}
+${daysInStage != null ? `Days since last contact: ${daysInStage}` : ''}
+Follow-up due: ${lead.followup_due_at ? new Date(lead.followup_due_at).toLocaleDateString() : 'not set'}
+Notes: ${lead.notes || 'none'}
+
+RECENT ACTIVITY:
+${activitySummary}
+
+Respond ONLY with this exact JSON (no markdown, no explanation):
+{
+  "tactics": [
+    {"title": "Short action title (5-8 words)", "action": "Exactly what to say/do in 1-2 sentences. Be specific to this company.", "rationale": "Why this works for this specific deal. 1 sentence."},
+    {"title": "...", "action": "...", "rationale": "..."},
+    {"title": "...", "action": "...", "rationale": "..."}
+  ],
+  "closingProbability": <integer 0-100>,
+  "urgencyLevel": "low|medium|high|critical",
+  "keyInsight": "The single most important thing to know about closing this deal. 1 sentence."
+}`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const parsed = JSON.parse(match[0]);
+    res.json({ ok: true, fallback: false, ...parsed, daysInPipeline, daysInStage });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Stale Pipeline — leads stuck with no activity for 14+ days ────────────
+// Used by the Mission StalePipelineCard to surface deals at risk of dying.
+app.get('/mission/stale-pipeline', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const thresholdDays = parseInt(req.query.days) || 14;
+
+    const { rows } = await pool.query(`
+      SELECT
+        l.id AS lead_id, l.client_id, l.company, l.contact_name,
+        l.category, l.status, l.email, l.phone, l.state, l.fleet_size,
+        l.followup_due_at,
+        COALESCE(l.last_contacted_at, l.updated_at) AS last_activity_at,
+        EXTRACT(EPOCH FROM (NOW() - COALESCE(l.last_contacted_at, l.updated_at))) / 86400.0 AS days_stale,
+        (SELECT COUNT(*) FROM lead_activities la WHERE la.lead_id=l.id AND la.user_id=l.user_id) AS activity_count
+      FROM leads l
+      WHERE l.user_id = $1
+        AND l.status NOT IN ('won', 'lost', 'new', 'cold')
+        AND COALESCE(l.last_contacted_at, l.updated_at) < NOW() - ($2 || ' days')::interval
+      ORDER BY days_stale DESC
+      LIMIT 10
+    `, [uid, thresholdDays]);
+
+    const leads = rows.map(r => ({
+      leadId: parseInt(r.lead_id, 10),
+      clientId: r.client_id,
+      company: r.company,
+      contactName: r.contact_name,
+      category: r.category,
+      status: r.status,
+      email: r.email,
+      phone: r.phone,
+      state: r.state,
+      fleetSize: r.fleet_size,
+      followupDueAt: r.followup_due_at,
+      lastActivityAt: r.last_activity_at,
+      daysStale: Math.round(parseFloat(r.days_stale) * 10) / 10,
+      activityCount: parseInt(r.activity_count, 10) || 0,
+    }));
+
+    res.json({ ok: true, leads, thresholdDays });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
