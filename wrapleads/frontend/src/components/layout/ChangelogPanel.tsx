@@ -9,6 +9,24 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Truck Scan to Lead',
+    body: 'Photograph any commercial truck in the wild. Claude Vision extracts the company name and DOT number, cross-references 600K FMCSA carriers, and imports the match to your CRM in one tap. Works from Discover (🚛 Scan Truck button), the Command Palette, or a direct camera shot on mobile.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Competitive Intel — Counter-Pitch from Wrap Photo',
+    body: 'Upload a photo of a competitor\'s wrap to any lead record. AI analyzes design quality, identifies weaknesses, and generates a specific counter-pitch tailored to the fleet manager seeing that competitor\'s work. Rates competitor quality as budget/mid-range/premium and lists your winning selling points.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Re-Order Lead from Job Tracker',
+    body: 'Any logged install in the Wrap Lifecycle Tracker now has a "Create Re-Order Lead" button — both in the job detail modal and inline on aging/expiring jobs. Creates a pre-filled CRM lead with expiry context, logs an activity, and navigates directly to the leads view.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '3-Month Revenue Projection',
     body: 'Analytics now shows a confidence-range revenue forecast for the next three months, combining your current pipeline stages with actual historical win rates. Shows low/expected/high ranges, tracks progress against your monthly goal, and lists the specific deals driving each month\'s projection.',
   },

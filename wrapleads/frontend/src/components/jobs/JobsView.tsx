@@ -351,6 +351,8 @@ interface JobModalProps {
 function JobModal({ job, onClose }: JobModalProps) {
   const isNew = job === 'new';
   const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+  const setMode = useAppStore((s) => s.setMode);
   const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
@@ -387,6 +389,18 @@ function JobModal({ job, onClose }: JobModalProps) {
   const deleteMut = useMutation({
     mutationFn: () => api.deleteJob((job as InstalledJob).id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); onClose(); },
+  });
+
+  const reorderMut = useMutation({
+    mutationFn: () => api.createReorderLead((job as InstalledJob).id),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      showToast(data.existing ? 'Re-order lead already exists — opening leads view' : 'Re-order lead created!', 'success');
+      setMode('leads');
+      onClose();
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
   });
 
   const f = (k: keyof typeof form) => ({
@@ -510,6 +524,17 @@ function JobModal({ job, onClose }: JobModalProps) {
               <button className="btn" style={{ color: 'var(--red)', marginRight: 'auto' }}
                 onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending}>
                 Delete
+              </button>
+            )}
+            {!isNew && (
+              <button
+                className="btn"
+                style={{ color: 'var(--signal-blue, #4d8af5)', borderColor: 'rgba(77,138,245,0.35)', fontSize: 12 }}
+                onClick={() => reorderMut.mutate()}
+                disabled={reorderMut.isPending}
+                title="Create a re-order CRM lead for this client"
+              >
+                {reorderMut.isPending ? <span className="spinner" style={{ width: 11, height: 11 }} /> : '🔄 Create Re-Order Lead'}
               </button>
             )}
             <button className="btn" onClick={onClose}>Cancel</button>
@@ -658,8 +683,10 @@ function expiryLabel(days: number | undefined) {
 export default function JobsView() {
   const [tab, setTab] = useState<'all' | 'aging' | 'map'>('all');
   const [modal, setModal] = useState<InstalledJob | 'new' | null>(null);
+  const [creatingLeadFor, setCreatingLeadFor] = useState<number | null>(null);
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
+  const setMode = useAppStore((s) => s.setMode);
 
   const { data: allData, isLoading: loadingAll } = useQuery({
     queryKey: ['jobs'],
@@ -691,6 +718,22 @@ export default function JobsView() {
       showToast(`${job.company} queued for follow-up`, 'success');
     } catch {
       showToast('Failed to queue re-engagement', 'error');
+    }
+  }
+
+  async function quickCreateReorderLead(e: React.MouseEvent, job: InstalledJob) {
+    e.stopPropagation();
+    setCreatingLeadFor(job.id);
+    try {
+      const data = await api.createReorderLead(job.id);
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      showToast(data.existing ? 'Re-order lead already exists — going to leads' : `Re-order lead created for ${job.company}!`, 'success');
+      setMode('leads');
+    } catch {
+      showToast('Failed to create re-order lead', 'error');
+    } finally {
+      setCreatingLeadFor(null);
     }
   }
 
@@ -805,6 +848,17 @@ export default function JobsView() {
                     onClick={(e) => { e.stopPropagation(); reEngage(job); }}
                   >
                     Re-engage
+                  </button>
+                )}
+                {(job.days_until_expiry === undefined || job.days_until_expiry <= 180) && (
+                  <button
+                    className="btn"
+                    style={{ fontSize: 11, color: 'var(--signal-blue, #4d8af5)', borderColor: 'rgba(77,138,245,0.35)' }}
+                    onClick={(e) => quickCreateReorderLead(e, job)}
+                    disabled={creatingLeadFor === job.id}
+                    title="Create a re-order CRM lead"
+                  >
+                    {creatingLeadFor === job.id ? <span className="spinner" style={{ width: 10, height: 10 }} /> : '→ Lead'}
                   </button>
                 )}
               </div>

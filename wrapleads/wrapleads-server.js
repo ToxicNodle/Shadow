@@ -6611,6 +6611,73 @@ app.delete('/jobs/:id', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /jobs/:id/create-reorder-lead — manually convert an installed job into a re-order CRM lead
+app.post('/jobs/:id/create-reorder-lead', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows: jobRows } = await pool.query(
+      `SELECT * FROM installed_jobs WHERE id=$1 AND user_id=$2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobRows[0];
+
+    // Return existing recent reorder lead if one already exists
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM leads
+       WHERE user_id=$1 AND LOWER(company)=LOWER($2) AND source='reorder'
+         AND created_at > NOW() - INTERVAL '6 months'`,
+      [uid, job.company]
+    );
+    if (existing.length) return res.json({ leadId: existing[0].id, existing: true });
+
+    const daysLeft = Math.ceil(
+      ((new Date(job.install_date).getTime() + job.life_years * 365.25 * 86400000) - Date.now()) / 86400000
+    );
+    const expiryNote = daysLeft < 0
+      ? `Wrap expired ${Math.abs(daysLeft)} days ago`
+      : `${daysLeft} days until wrap expiry`;
+
+    const notes = `RE-ORDER OPPORTUNITY: ${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} installed ${job.install_date ? new Date(job.install_date).toISOString().slice(0, 10) : 'unknown'} · ${expiryNote}. Material: ${job.material || 'not specified'}. Lifespan: ${job.life_years} years.`;
+
+    const { rows: newLead } = await pool.query(
+      `INSERT INTO leads (user_id, company, category, status, source, notes, followup_due_at)
+       VALUES ($1, $2, $3, 'new', 'reorder', $4, CURRENT_DATE)
+       RETURNING id`,
+      [uid, job.company, job.wrap_category || 'fleet', notes]
+    );
+    const leadId = newLead[0].id;
+
+    // Link this new lead back to the job (only if job had no lead yet)
+    await pool.query(
+      `UPDATE installed_jobs SET lead_id=$1 WHERE id=$2 AND user_id=$3 AND lead_id IS NULL`,
+      [leadId, jobId, uid]
+    );
+
+    await logActivity(pool, {
+      leadId,
+      userId: uid,
+      type: 'note_added',
+      subject: 'Re-Order Lead Created from Job Tracker',
+      body: `Manually created from Wrap Lifecycle Tracker. ${job.vehicle_count} ${job.vehicle_type}(s) installed ${job.install_date ? new Date(job.install_date).toISOString().slice(0, 10) : 'unknown'}. ${expiryNote}.`,
+      metadata: { job_id: jobId },
+    });
+
+    await createNotification(uid, {
+      type: 'new_lead',
+      title: `🔄 Re-Order Lead — ${job.company}`,
+      body: `${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} — ${expiryNote}. Lead ready in pipeline.`,
+      metadata: { lead_id: leadId, job_id: jobId },
+    });
+
+    res.json({ leadId, existing: false });
+  } catch (e) {
+    console.error('[create-reorder-lead]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /jobs/:id/case-study — generate a shareable case study narrative
 app.post('/jobs/:id/case-study', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -7944,6 +8011,100 @@ Return ONLY the JSON, no other text.`;
     res.json({ ok: true, analysis });
   } catch (e) {
     console.error('[analyze-competitor-photo]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Truck Scan to Lead — photograph any truck, extract carrier info, import ───
+// Upload a photo of any truck/vehicle. Claude Vision extracts company name,
+// DOT number, phone, city/state. We cross-reference FMCSA database and return
+// the best matching carrier so the user can import it in one tap.
+app.post('/vision/scan-truck', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  const uid = String(req.user.id);
+
+  try {
+    const imgBase64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype || 'image/jpeg';
+
+    const prompt = `Analyze this truck/vehicle photo and extract visible business information.
+
+Return ONLY valid JSON with these keys:
+{
+  "companyName": "exact company name visible on the truck, or null",
+  "dotNumber": "DOT number (digits only) if visible, or null",
+  "mcNumber": "MC number (digits only) if visible, or null",
+  "phone": "phone number if visible, or null",
+  "city": "city if visible from markings or trailer info, or null",
+  "state": "2-letter state code if visible, or null",
+  "vehicleType": "box_truck|semi_trailer|cargo_van|pickup_truck|flatbed|tanker|other",
+  "fleetIndicators": "any visible text suggesting fleet size or company scale (e.g. unit numbers, 'truck 47 of 200'), or null",
+  "confidence": "high|medium|low — how confident you are in the company name extraction",
+  "notes": "any other relevant observations about the truck/branding"
+}
+
+If this is not a truck or commercial vehicle, set companyName to null and confidence to low.
+Return ONLY the JSON.`;
+
+    const aiResp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',
+        max_tokens: 600,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: imgBase64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+      }),
+    });
+
+    if (!aiResp.ok) throw new Error(`AI error ${aiResp.status}`);
+    const ai = await aiResp.json();
+    let extracted;
+    try { extracted = JSON.parse(ai.content?.[0]?.text ?? '{}'); } catch { extracted = {}; }
+
+    let matches = [];
+
+    // Cross-reference FMCSA database by DOT number first, then company name
+    if (extracted.dotNumber) {
+      const { rows } = await pool.query(
+        `SELECT id, source_id AS dot_number, name, city, state, fleet_size, phone, email, already_imported.lead_id IS NOT NULL AS already_imported
+         FROM companies
+         LEFT JOIN (
+           SELECT l.company, l.user_id, l.id AS lead_id FROM leads l WHERE l.user_id=$2
+         ) already_imported ON LOWER(already_imported.company) = LOWER(companies.name)
+         WHERE source = 'fmcsa' AND source_id = $1
+         LIMIT 1`,
+        [extracted.dotNumber, uid]
+      );
+      matches = rows;
+    }
+
+    if (!matches.length && extracted.companyName) {
+      const searchName = extracted.companyName.replace(/[%_]/g, '\\$&');
+      const { rows } = await pool.query(
+        `SELECT c.id, c.source_id AS dot_number, c.name, c.city, c.state, c.fleet_size, c.phone, c.email,
+                (l.id IS NOT NULL) AS already_imported
+         FROM companies c
+         LEFT JOIN leads l ON LOWER(l.company) = LOWER(c.name) AND l.user_id=$2
+         WHERE c.name ILIKE $1
+         ORDER BY c.fleet_size DESC NULLS LAST
+         LIMIT 5`,
+        [`%${searchName}%`, uid]
+      );
+      matches = rows;
+    }
+
+    res.json({ ok: true, extracted, matches });
+  } catch (e) {
+    console.error('[scan-truck]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

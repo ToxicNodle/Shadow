@@ -669,6 +669,197 @@ function CallScriptPanel({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Competitive Intel — analyze a competitor wrap photo, get counter-pitch ────
+function CompetitiveIntelPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<{
+    visualObservations: string[];
+    competitorStrengths: string[];
+    competitorWeaknesses: string[];
+    counterPitch: string;
+    keySellingPoints: string[];
+    estimatedQuality: 'budget' | 'mid-range' | 'premium';
+  } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const showToast = useAppStore((s) => s.showToast);
+
+  const QUALITY_COLOR = { budget: '#ef4444', 'mid-range': '#f59e0b', premium: '#22c55e' } as const;
+
+  async function analyze(file: File) {
+    setLoading(true);
+    setError(null);
+    setPreviewUrl(URL.createObjectURL(file));
+    try {
+      const res = await api.analyzeCompetitorPhoto(file);
+      setAnalysis(res.analysis);
+    } catch (e: unknown) {
+      setError((e as Error).message || 'Analysis failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) analyze(file);
+    e.target.value = '';
+  }
+
+  function reset() {
+    setAnalysis(null);
+    setPreviewUrl(null);
+    setError(null);
+  }
+
+  function copyPitch() {
+    if (!analysis) return;
+    const text = [
+      `COMPETITIVE COUNTER-PITCH — ${lead.company}`,
+      '',
+      `Competitor Wrap Quality: ${analysis.estimatedQuality.toUpperCase()}`,
+      '',
+      'COUNTER-PITCH:',
+      analysis.counterPitch,
+      '',
+      'KEY SELLING POINTS:',
+      ...analysis.keySellingPoints.map((p) => `• ${p}`),
+      '',
+      'COMPETITOR WEAKNESSES OBSERVED:',
+      ...analysis.competitorWeaknesses.map((w) => `• ${w}`),
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(() => showToast('Competitive pitch copied!'));
+  }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', justifyContent: 'space-between', fontSize: 12 }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
+          </svg>
+          Competitive Intel
+          {analysis && (
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(239,68,68,0.12)', color: '#ef4444' }}>
+              {analysis.estimatedQuality}
+            </span>
+          )}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▴' : '▾'}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {!analysis && !loading && (
+            <>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+                Upload a competitor's wrap photo. AI will analyze design quality, identify weaknesses, and generate a counter-pitch for {lead.company}.
+              </p>
+              <div
+                style={{
+                  border: '2px dashed var(--border)', borderRadius: 8, padding: '20px 16px',
+                  textAlign: 'center', cursor: 'pointer', transition: 'border-color 0.15s',
+                }}
+                onClick={() => fileRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) analyze(f); }}
+              >
+                <div style={{ fontSize: 22, marginBottom: 6 }}>📸</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Drop competitor photo here</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>or click to browse · JPG, PNG, WEBP</div>
+              </div>
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+            </>
+          )}
+
+          {loading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+              {previewUrl && <img src={previewUrl} alt="" style={{ width: 48, height: 36, objectFit: 'cover', borderRadius: 4 }} />}
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+              Analyzing competitor wrap…
+            </div>
+          )}
+
+          {error && <div className="error-box">{error}</div>}
+
+          {analysis && !loading && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {previewUrl && (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <img src={previewUrl} alt="Competitor wrap" style={{ width: 90, height: 66, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 4 }}>Estimated Quality</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: QUALITY_COLOR[analysis.estimatedQuality] }}>
+                      {analysis.estimatedQuality.charAt(0).toUpperCase() + analysis.estimatedQuality.slice(1)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Counter-pitch — most important */}
+              <div style={{ padding: '10px 12px', background: 'rgba(77,138,245,0.08)', borderRadius: 8, borderLeft: '3px solid #4d8af5' }}>
+                <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#4d8af5', marginBottom: 6 }}>Counter-Pitch</div>
+                <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6 }}>{analysis.counterPitch}</div>
+              </div>
+
+              {/* Key selling points */}
+              {analysis.keySellingPoints.length > 0 && (
+                <div style={{ padding: '8px 12px', background: 'rgba(0,217,126,0.07)', borderRadius: 8, borderLeft: '3px solid #00d97e' }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#00d97e', marginBottom: 6 }}>Your Advantages</div>
+                  {analysis.keySellingPoints.map((p, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#00d97e', flexShrink: 0 }}>✓</span>{p}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Weaknesses */}
+              {analysis.competitorWeaknesses.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-muted)', marginBottom: 6 }}>Competitor Weaknesses</div>
+                  {analysis.competitorWeaknesses.map((w, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#ef4444', flexShrink: 0 }}>✗</span>{w}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Strengths */}
+              {analysis.competitorStrengths.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-muted)', marginBottom: 6 }}>What They Did Right</div>
+                  {analysis.competitorStrengths.map((s, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#f59e0b', flexShrink: 0 }}>△</span>{s}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }} onClick={copyPitch}>
+                  Copy Pitch
+                </button>
+                <button className="btn" style={{ fontSize: 12 }} onClick={reset}>
+                  ↺ New Photo
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Lead Intelligence Brief ───────────────────────────────────────────────────
 function LeadIntelBriefPanel({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
@@ -1775,6 +1966,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
       {lead.serverId && <LeadIntelBriefPanel lead={local} />}
+      {lead.serverId && <CompetitiveIntelPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && local.status === 'won' && <ReferralAskPanel lead={local} />}

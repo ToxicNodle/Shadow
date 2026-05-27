@@ -338,6 +338,8 @@ export const api = {
     authFetch<{ job: InstalledJob }>(`/jobs/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
   deleteJob: (id: number) =>
     authFetch<{ ok: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
+  createReorderLead: (jobId: number) =>
+    authFetch<{ leadId: number; existing: boolean }>(`/jobs/${jobId}/create-reorder-lead`, { method: 'POST' }),
 
   getCaseStudy: (jobId: number) =>
     authFetch<{
@@ -831,6 +833,40 @@ export const api = {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || 'Card scan failed');
       return data as { ok: boolean; lead: Partial<import('./types').Lead> };
+    });
+  },
+
+  scanTruck: (file: File) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    return fetch('/vision/scan-truck', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Scan failed');
+      return data as {
+        ok: boolean;
+        extracted: {
+          companyName: string | null;
+          dotNumber: string | null;
+          mcNumber: string | null;
+          phone: string | null;
+          city: string | null;
+          state: string | null;
+          vehicleType: string;
+          fleetIndicators: string | null;
+          confidence: 'high' | 'medium' | 'low';
+          notes: string | null;
+        };
+        matches: Array<{
+          id: number; dot_number: string | null; name: string;
+          city: string | null; state: string | null; fleet_size: number | null;
+          phone: string | null; email: string | null; already_imported: boolean;
+        }>;
+      };
     });
   },
 
