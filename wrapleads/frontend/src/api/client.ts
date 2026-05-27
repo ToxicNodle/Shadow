@@ -1411,6 +1411,23 @@ export const api = {
       } | null;
     }>('/analytics/pricing-intel'),
 
+  // Account Health — relationship vitals for a won client
+  getAccountHealth: (leadId: number) =>
+    authFetch<{
+      ok: boolean; score: number; healthLabel: string; healthColor: string;
+      daysSinceWon: number; daysSinceContact: number;
+      jobCount: number; totalVehicles: number; totalRevenue: number;
+      referralSent: boolean; activityCount: number;
+      nearestExpiry: {
+        company: string; installDate: string; expiryDate: string;
+        daysToExpiry: number; vehicleCount: number; wrapCategory: string;
+      } | null;
+      jobs: Array<{
+        id: number; vehicleCount: number; wrapCategory: string;
+        installDate: string; expiryDate: string; daysToExpiry: number; revenue: number;
+      }>;
+    }>(`/leads/${leadId}/account-health`),
+
   // Win Debrief — AI "what worked" brief for a won deal
   generateWinDebrief: (leadId: number) =>
     authFetch<{

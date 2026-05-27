@@ -10793,6 +10793,119 @@ app.get('/mission/perfect-timing', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Account Health — relationship vitals for a won client ─────────────────────
+// Aggregates: jobs logged, vehicles wrapped, expiry status, last contact, referral,
+// and generates a 0-100 "relationship health" score.
+app.get('/leads/:id/account-health', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const [leadR, jobsR, activityR, referralR] = await Promise.all([
+      pool.query(
+        `SELECT company, status, category, fleet_size, last_contacted_at, created_at, updated_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT id, company, vehicle_count, wrap_category, install_date, life_years, job_revenue,
+                (install_date + (life_years||' years')::interval) AS expiry_date,
+                EXTRACT(EPOCH FROM (NOW() - (install_date + (life_years||' years')::interval))) / 86400.0 AS days_past_expiry
+         FROM installed_jobs WHERE user_id=$1 AND LOWER(company) = LOWER($2)
+         ORDER BY install_date DESC LIMIT 10`, [uid, '']
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INT AS count, MAX(created_at) AS last_activity
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT 1 FROM lead_activities WHERE lead_id=$1 AND user_id=$2 AND type='email_sent' AND subject ILIKE '%referral%'
+         LIMIT 1`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+
+    // Re-query jobs with company name
+    const jobsR2 = await pool.query(
+      `SELECT id, company, vehicle_count, wrap_category, install_date, life_years, job_revenue,
+              (install_date + (COALESCE(life_years,5)||' years')::interval) AS expiry_date,
+              EXTRACT(EPOCH FROM (NOW() - (install_date + (COALESCE(life_years,5)||' years')::interval))) / 86400.0 AS days_past_expiry
+       FROM installed_jobs WHERE user_id=$1 AND LOWER(company) = LOWER($2)
+       ORDER BY install_date DESC LIMIT 10`, [uid, lead.company]
+    );
+
+    const jobs = jobsR2.rows;
+    const totalVehicles = jobs.reduce((s, j) => s + (j.vehicle_count || 0), 0);
+    const totalRevenue = jobs.reduce((s, j) => s + parseFloat(j.job_revenue || '0'), 0);
+    const jobCount = jobs.length;
+
+    const daysSinceWon = Math.floor((Date.now() - new Date(lead.updated_at).getTime()) / 86_400_000);
+    const daysSinceContact = lead.last_contacted_at
+      ? Math.floor((Date.now() - new Date(lead.last_contacted_at).getTime()) / 86_400_000)
+      : daysSinceWon;
+
+    const referralSent = referralR.rows.length > 0;
+    const activityCount = activityR.rows[0]?.count || 0;
+
+    // Expiry analysis
+    const expiringJobs = jobs.filter(j => {
+      const daysLeft = -(parseFloat(j.days_past_expiry) || 0);
+      return daysLeft >= -180 && daysLeft <= 365; // expired up to 180 days ago, or within next year
+    });
+    const nearestExpiry = jobs.length > 0 ? jobs.reduce((best, j) => {
+      const days = -(parseFloat(j.days_past_expiry) || 0);
+      const bestDays = -(parseFloat(best.days_past_expiry) || 0);
+      return Math.abs(days) < Math.abs(bestDays) ? j : best;
+    }, jobs[0]) : null;
+
+    // Health score: 0-100
+    let score = 50;
+    if (daysSinceContact <= 30) score += 15;
+    else if (daysSinceContact <= 90) score += 5;
+    else score -= 15;
+    if (jobCount > 0) score += 10;
+    if (totalVehicles >= 5) score += 10;
+    if (referralSent) score += 10;
+    if (activityCount >= 5) score += 5;
+    if (nearestExpiry) {
+      const daysToExpiry = -(parseFloat(nearestExpiry.days_past_expiry) || 0);
+      if (daysToExpiry >= 0 && daysToExpiry <= 180) score += 5; // expiry approaching = opportunity
+    }
+    score = Math.max(0, Math.min(100, score));
+
+    const healthLabel = score >= 70 ? 'Strong' : score >= 40 ? 'At Risk' : 'Dormant';
+    const healthColor = score >= 70 ? '#00d97e' : score >= 40 ? '#f59e0b' : '#ef4444';
+
+    res.json({
+      ok: true,
+      score, healthLabel, healthColor,
+      daysSinceWon, daysSinceContact,
+      jobCount, totalVehicles,
+      totalRevenue: Math.round(totalRevenue),
+      referralSent, activityCount,
+      nearestExpiry: nearestExpiry ? {
+        company: nearestExpiry.company,
+        installDate: nearestExpiry.install_date,
+        expiryDate: nearestExpiry.expiry_date,
+        daysToExpiry: -Math.round(parseFloat(nearestExpiry.days_past_expiry) || 0),
+        vehicleCount: nearestExpiry.vehicle_count,
+        wrapCategory: nearestExpiry.wrap_category,
+      } : null,
+      jobs: jobs.slice(0, 5).map(j => ({
+        id: j.id,
+        vehicleCount: j.vehicle_count,
+        wrapCategory: j.wrap_category,
+        installDate: j.install_date,
+        expiryDate: j.expiry_date,
+        daysToExpiry: -Math.round(parseFloat(j.days_past_expiry) || 0),
+        revenue: parseFloat(j.job_revenue || '0'),
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Deal Coach — AI gives 3 specific closing tactics for a specific lead ─────
 // Unique: reads ALL lead context + recent activity and returns personalized
 // tactics. No generic CRM advice — specific to THIS deal.

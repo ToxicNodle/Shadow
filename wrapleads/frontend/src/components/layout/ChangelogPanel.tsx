@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Account Health Card for Won Clients',
+    body: 'Every won lead now shows a "🤝 Account Health" panel showing the relationship vitals: days since last contact, jobs logged, vehicles wrapped, total revenue, whether you\'ve asked for a referral, and upcoming wrap expiry dates — with a 0-100 health score. Green = strong relationship. Orange = at risk. Red = dormant. One click jumps to the Jobs view to log an install or create a re-order.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Vehicle Sq Footage Calculator in Quote Builder',
     body: 'The quote builder now has a "📐 Sq Footage Helper" — select vehicle type (cargo van, box truck, semi trailer, 18 types total), coverage level (full/partial/spot), and fleet count. The exact industry-standard square footage calculates instantly and one click fills in your material line item. No more looking up spec sheets or guessing.',
   },
