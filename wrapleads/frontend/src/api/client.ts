@@ -994,6 +994,15 @@ export const api = {
       body: JSON.stringify({ lead_ids: leadIds }),
     }),
 
+  // Similar won deals — social proof for cold outreach on a specific lead
+  getSimilarWins: (leadId: number) =>
+    authFetch<{
+      wins: Array<{ id: number; company: string; category: string; state: string; city: string | null; fleet_size: string | null; relevance_score: number; won_at: string }>;
+      jobs: Array<{ id: number; company: string; vehicle_count: number; vehicle_type: string; wrap_category: string; install_date: string; state: string | null; city: string | null }>;
+      leadCategory: string;
+      leadState: string;
+    }>(`/leads/${leadId}/similar-wins`),
+
   // Material Margin Analytics
   getMarginAnalytics: () =>
     authFetch<{

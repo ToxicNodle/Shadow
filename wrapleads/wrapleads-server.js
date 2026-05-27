@@ -7173,6 +7173,53 @@ app.get('/onboarding/status', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /leads/:id/similar-wins — find the user's won deals most similar to this lead
+// Used for social proof: "We wrapped 35 trucks for a similar fleet in Ohio last year."
+app.get('/leads/:id/similar-wins', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const { rows: [lead] } = await pool.query(
+      `SELECT category, state, city, fleet_size FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    // Find won leads sorted by relevance: same category + same state first, then same category
+    const { rows: wins } = await pool.query(`
+      SELECT id, company, category, state, city, fleet_size,
+        CASE
+          WHEN category = $2 AND state = $3 THEN 3
+          WHEN category = $2                THEN 2
+          WHEN state = $3                   THEN 1
+          ELSE 0
+        END AS relevance_score,
+        updated_at AS won_at
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'won'
+        AND id != $4
+      ORDER BY relevance_score DESC, updated_at DESC
+      LIMIT 5
+    `, [uid, lead.category, lead.state, leadId]);
+
+    // Also find relevant installed jobs (completed installs — even stronger proof)
+    const { rows: jobs } = await pool.query(`
+      SELECT j.id, j.company, j.vehicle_count, j.vehicle_type, j.wrap_category, j.install_date,
+             l.state, l.city
+      FROM installed_jobs j
+      LEFT JOIN leads l ON l.id = j.lead_id
+      WHERE j.user_id = $1
+        AND (j.wrap_category = $2 OR l.state = $3)
+      ORDER BY j.install_date DESC
+      LIMIT 3
+    `, [uid, lead.category, lead.state]);
+
+    res.json({ wins, jobs, leadCategory: lead.category, leadState: lead.state });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── AI Notes Summary ──────────────────────────────────────────────────────────
 // Condenses a lead's journal entries + pinned notes into an executive brief.
 app.post('/leads/:id/notes-summary', authMiddleware, async (req, res) => {

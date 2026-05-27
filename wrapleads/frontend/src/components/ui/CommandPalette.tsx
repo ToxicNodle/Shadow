@@ -175,6 +175,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: 'a:discover',  group: 'action', label: 'Discover Carriers', sub: 'Search the FMCSA carrier database',        icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>, action: () => { store.setMode('discover'); onClose(); } },
     { id: 'a:kanban',    group: 'action', label: 'Kanban Pipeline',   sub: 'Switch to drag-and-drop board view',       icon: '▦',  action: () => { store.setLeadView('kanban'); store.setMode('leads'); onClose(); } },
     { id: 'a:list',      group: 'action', label: 'List View',         sub: 'Switch to table list view',                icon: '≡',  action: () => { store.setLeadView('list'); store.setMode('leads'); onClose(); } },
+    { id: 'a:card-scan', group: 'action', label: 'Scan Business Card', sub: 'AI reads contact info from a card photo',  icon: '📇', action: () => { store.setCardScanOpen(true); onClose(); } },
   ];
 
   const NAV_ITEMS: CmdItem[] = [

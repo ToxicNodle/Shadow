@@ -8,6 +8,7 @@ import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 import FindEmailPanel from './FindEmailPanel';
+import SimilarWinsPanel from './SimilarWinsPanel';
 
 // ── AI Call Script Panel ──────────────────────────────────────────────────────
 // ── Wrap ROI Calculator ───────────────────────────────────────────────────────
@@ -1273,6 +1274,7 @@ export default function InfoTab({ lead }: Props) {
         Generate Quote / Proposal
       </button>
 
+      {lead.serverId && <SimilarWinsPanel lead={local} />}
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
