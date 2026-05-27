@@ -267,7 +267,7 @@ export default function LeadList() {
     activeFilter, currentLeadId, setCurrentLeadId, setFilter,
     leadSort, setLeadSort,
     selectedLeadIds, selectAllLeads, clearLeadSelection,
-    setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen, setShopVoxImportOpen,
+    setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen, setShopVoxImportOpen, setCardScanOpen,
     pendingOpenLeadServerId, setPendingOpenLeadServerId,
     showToast,
   } = useAppStore((s) => ({
@@ -284,6 +284,7 @@ export default function LeadList() {
     setCsvImportOpen: s.setCsvImportOpen,
     setPasteImportOpen: s.setPasteImportOpen,
     setShopVoxImportOpen: s.setShopVoxImportOpen,
+    setCardScanOpen: s.setCardScanOpen,
     pendingOpenLeadServerId: s.pendingOpenLeadServerId,
     setPendingOpenLeadServerId: s.setPendingOpenLeadServerId,
     showToast: s.showToast,
@@ -468,6 +469,19 @@ export default function LeadList() {
             <path d="M12 6v6l4 2" />
           </svg>
           AI Import
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px' }}
+          onClick={() => setCardScanOpen(true)}
+          title="Scan a business card photo — AI extracts name, company, email, phone instantly"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <rect x="2" y="5" width="20" height="14" rx="2" />
+            <line x1="2" y1="10" x2="22" y2="10" />
+          </svg>
+          Scan Card
         </button>
 
         <button
