@@ -7139,6 +7139,60 @@ Return ONLY the JSON, no other text.`;
   }
 });
 
+// ── Competitor Wrap Photo Analysis — Vision scan of a competitor's wrap photo ──
+// Upload a photo of a competitor's work; Claude Vision identifies strengths/weaknesses
+// and generates a counter-pitch angle specific to the vehicle wrap being shown.
+app.post('/ai/analyze-competitor-photo', authMiddleware, requireShopFlow, upload.single('photo'), async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  if (!req.file) return res.status(400).json({ error: 'photo required' });
+
+  try {
+    const imgBase64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype || 'image/jpeg';
+
+    const prompt = `You are an expert vehicle wrap designer and competitive sales strategist.
+
+Analyze this competitor vehicle wrap photo and provide a JSON response with these exact keys:
+{
+  "visualObservations": ["2-4 specific things you notice about the design quality, technique, or execution"],
+  "competitorStrengths": ["1-2 genuine strengths evident in this wrap"],
+  "competitorWeaknesses": ["2-3 specific weaknesses, quality issues, or missed opportunities in this wrap"],
+  "counterPitch": "A specific 2-3 sentence pitch you'd give to a fleet manager who showed you this photo — acknowledge what's decent, then explain why your shop's approach produces better results",
+  "keySellingPoints": ["2-3 specific selling points YOUR shop can emphasize based on what this competitor is missing"],
+  "estimatedQuality": "budget|mid-range|premium"
+}
+Return ONLY the JSON, no other text.`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: 800,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: imgBase64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+      }),
+    });
+
+    if (!resp.ok) throw new Error(`Anthropic ${resp.status}`);
+    const ai = await resp.json();
+    const raw = ai.content?.[0]?.text ?? '{}';
+    let analysis;
+    try { analysis = JSON.parse(raw); } catch { analysis = {}; }
+
+    res.json({ ok: true, analysis });
+  } catch (e) {
+    console.error('[analyze-competitor-photo]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Pipeline Narrative ─────────────────────────────────────────────────────
 app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;

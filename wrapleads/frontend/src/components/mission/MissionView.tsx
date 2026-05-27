@@ -11,6 +11,7 @@ import StreakBadge from './StreakBadge';
 import InboundRequestsCard from './InboundRequestsCard';
 import CallSessionModal from './CallSessionModal';
 import TodayScoreCard from './TodayScoreCard';
+import ProposalHeatCard from './ProposalHeatCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1841,7 +1842,10 @@ export default function MissionView() {
       {/* ── Perfect Timing — email opens in the last 2 hours ── */}
       <PerfectTimingCard />
 
-      {/* ── Proposal Heat — surfaces prospects actively viewing your work ── */}
+      {/* ── Proposal Heat Score — ranked by recency × view count ── */}
+      <ProposalHeatCard />
+
+      {/* ── Hot Proposals ── */}
       <HotProposalsCard />
 
       {/* ── WrapLeads ROI Impact ── */}

@@ -807,6 +807,73 @@ function tagColor(tag: string) {
   return TAG_PALETTE[Math.abs(h) % TAG_PALETTE.length];
 }
 
+function computeSmartTags(lead: Lead): string[] {
+  const suggestions: string[] = [];
+  const fleet = parseInt(lead.fleetSize || '0', 10) || 0;
+
+  // Fleet size signals
+  if (fleet >= 100) suggestions.push('large fleet', '100+ units');
+  else if (fleet >= 50) suggestions.push('mid-size fleet');
+  else if (fleet >= 25) suggestions.push('small fleet');
+
+  // Category signals
+  if (lead.category === 'fleet') suggestions.push('fleet ops', 'recurring potential');
+  if (lead.category === 'construction') suggestions.push('contractor', 'project-based');
+  if (lead.category === 'gc_referral') suggestions.push('referral source', 'gc partner');
+  if (lead.category === 'racing') suggestions.push('sponsorship', 'race team');
+  if (lead.category === 'colorchange') suggestions.push('enthusiast', 'premium buyer');
+  if (lead.category === 'dinoc') suggestions.push('architectural', 'commercial interior');
+  if (lead.category === 'wallgraphics') suggestions.push('interior branding');
+
+  // High-value fleet
+  if (fleet >= 50 && (lead.category === 'fleet' || lead.category === 'construction')) {
+    suggestions.push('high-value fleet');
+  }
+
+  // Status signals
+  if (lead.status === 'replied') suggestions.push('engaged', 'warm');
+  if (lead.status === 'won') suggestions.push('closed customer', 'repeat potential');
+  if (lead.status === 'proposal') suggestions.push('decision pending');
+  if (lead.status === 'meeting') suggestions.push('in conversation');
+  if (lead.status === 'cold') suggestions.push('needs re-engage');
+
+  // Contact quality signals
+  if (lead.email && lead.phone) suggestions.push('fully contactable');
+  if (!lead.email && !lead.phone) suggestions.push('needs contact info');
+  if (lead.referred_by) suggestions.push('referral');
+
+  return [...new Set(suggestions)];
+}
+
+function SmartTagSuggestions({ lead, onApply }: { lead: Lead; onApply: (tag: string) => void }) {
+  const existing = new Set(lead.tags ?? []);
+  const smart = computeSmartTags(lead).filter((t) => !existing.has(t));
+  if (smart.length === 0) return null;
+  return (
+    <div style={{ marginTop: 6, marginBottom: 4 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 5 }}>
+        Smart Suggestions
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+        {smart.map((tag) => (
+          <button
+            key={tag}
+            onClick={() => onApply(tag)}
+            style={{
+              fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+              border: '1px dashed var(--border)', background: 'transparent',
+              color: 'var(--text-faint)',
+            }}
+            title={`Add tag: ${tag}`}
+          >
+            + {tag}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TagEditor({ lead, onSave }: { lead: Lead; onSave: (tags: string[]) => void }) {
   const [tags, setTags] = useState<string[]>(lead.tags ?? []);
   const [input, setInput] = useState('');
@@ -1114,6 +1181,14 @@ export default function InfoTab({ lead }: Props) {
         onSave={(tags) => {
           setLocal({ ...local, tags });
           if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { tags } as Partial<Lead> });
+        }}
+      />
+      <SmartTagSuggestions
+        lead={local}
+        onApply={(tag) => {
+          const next = [...(local.tags ?? []), tag];
+          setLocal({ ...local, tags: next });
+          if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { tags: next } as Partial<Lead> });
         }}
       />
 

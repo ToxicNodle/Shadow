@@ -710,6 +710,31 @@ export const api = {
       };
     }>('/ai/counter-strategy', { method: 'POST', body: JSON.stringify({ competitor }) }),
 
+  analyzeCompetitorPhoto: (file: File) => {
+    const token = getToken();
+    const fd = new FormData();
+    fd.append('photo', file);
+    return fetch('/ai/analyze-competitor-photo', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Analysis failed');
+      return data as {
+        ok: boolean;
+        analysis: {
+          visualObservations: string[];
+          competitorStrengths: string[];
+          competitorWeaknesses: string[];
+          counterPitch: string;
+          keySellingPoints: string[];
+          estimatedQuality: 'budget' | 'mid-range' | 'premium';
+        };
+      };
+    });
+  },
+
   // Win/Loss capture
   captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
     authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),

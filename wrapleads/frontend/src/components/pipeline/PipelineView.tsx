@@ -8,6 +8,7 @@ import { winProbability, scoreLead, SCORE_COLORS, scoreLabel } from '../../utils
 import type { LeadStatus, LeadCategory } from '../../api/types';
 import InstallCapacityCard from './InstallCapacityCard';
 import MarketWhiteSpaceMap from './MarketWhiteSpaceMap';
+import RevenueThermometerCard from './RevenueThermometerCard';
 
 const STATUS_LABELS: Record<string, string> = {
   new: 'New', contacted: 'Contacted', replied: 'Replied',
@@ -1286,6 +1287,9 @@ export default function PipelineView() {
       </div>
 
       <div className="pv-grid">
+        {/* ── Revenue Thermometer ── */}
+        <RevenueThermometerCard />
+
         {/* ── Conversion Funnel ── */}
         <ConversionFunnel
           byStatus={byStatus}

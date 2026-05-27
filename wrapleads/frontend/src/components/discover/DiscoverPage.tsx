@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import FilterRow from './FilterRow';
 import CarrierTable from './CarrierTable';
 import SavedChips from './SavedChips';
+import DiscoverMapView from './DiscoverMapView';
 
 const CAT_LABEL: Record<string, string> = {
   fleet: 'Fleet Wraps', dinoc: 'DI-NOC', gc_referral: 'GC Referrals',
@@ -186,6 +187,7 @@ export default function DiscoverPage() {
     setPendingDiscoverSearch: s.setPendingDiscoverSearch,
   }));
   const [campaignLoading, setCampaignLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<'table' | 'map'>('table');
   const pendingSearch = useCarrierSearch();
 
   useEffect(() => {
@@ -276,9 +278,30 @@ export default function DiscoverPage() {
       <SavedChips />
       <FilterRow />
 
-      <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        <CarrierTable />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10, gap: 4 }}>
+        {(['table', 'map'] as const).map((mode) => (
+          <button
+            key={mode}
+            onClick={() => setViewMode(mode)}
+            style={{
+              fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6, cursor: 'pointer',
+              border: `1px solid ${viewMode === mode ? 'var(--accent)' : 'var(--border)'}`,
+              background: viewMode === mode ? 'var(--accent)18' : 'transparent',
+              color: viewMode === mode ? 'var(--accent)' : 'var(--text-faint)',
+            }}
+          >
+            {mode === 'table' ? '≡ Table' : '⊞ Map'}
+          </button>
+        ))}
       </div>
+
+      {viewMode === 'table' ? (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+          <CarrierTable />
+        </div>
+      ) : (
+        <DiscoverMapView />
+      )}
 
       {selectedCarrierIds.size > 0 && (
         <div className="bulk-action-bar">
