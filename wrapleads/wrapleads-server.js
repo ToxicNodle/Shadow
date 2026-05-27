@@ -4527,6 +4527,129 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /analytics/pricing-intel — win rate by price tier + sweet spot identification
+// Correlates quote amounts with deal outcomes to surface pricing sweet spots and risk zones.
+app.get('/analytics/pricing-intel', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+
+    // Get all quotes with lead outcome, grouped by category
+    const { rows: quoteRows } = await pool.query(`
+      SELECT
+        q.total,
+        q.status AS quote_status,
+        l.status AS lead_status,
+        l.category,
+        CASE
+          WHEN l.status = 'won' OR q.status = 'accepted' THEN 'won'
+          WHEN l.status = 'lost' THEN 'lost'
+          ELSE 'pending'
+        END AS outcome
+      FROM shop_quotes q
+      JOIN leads l ON l.id = q.lead_id AND l.user_id = q.user_id
+      WHERE q.user_id = $1
+        AND q.total > 0
+        AND q.status NOT IN ('draft')
+        AND (l.status IN ('won','lost') OR q.status = 'accepted')
+      ORDER BY q.total ASC
+    `, [uid]);
+
+    if (!quoteRows.length) {
+      return res.json({ ok: true, hasData: false, categories: [], overall: null });
+    }
+
+    // Group by category and compute price tier win rates
+    const byCategory: Record<string, { won: number[]; lost: number[] }> = {};
+    for (const r of quoteRows) {
+      const cat = r.category || 'other';
+      if (!byCategory[cat]) byCategory[cat] = { won: [], lost: [] };
+      if (r.outcome === 'won') byCategory[cat].won.push(parseFloat(r.total));
+      else if (r.outcome === 'lost') byCategory[cat].lost.push(parseFloat(r.total));
+    }
+
+    function computeTiers(won: number[], lost: number[]) {
+      const all = [...won.map(v => ({ v, won: true })), ...lost.map(v => ({ v, won: false }))];
+      if (all.length < 2) return null;
+      all.sort((a, b) => a.v - b.v);
+      const min = all[0].v;
+      const max = all[all.length - 1].v;
+      const range = max - min;
+      if (range < 100) return null;
+
+      // Split into 3 tiers: low/mid/high
+      const tierSize = range / 3;
+      const tiers = [
+        { label: 'Low', min: min, max: min + tierSize, won: 0, lost: 0 },
+        { label: 'Mid', min: min + tierSize, max: min + tierSize * 2, won: 0, lost: 0 },
+        { label: 'High', min: min + tierSize * 2, max: max + 1, won: 0, lost: 0 },
+      ];
+
+      for (const item of all) {
+        const tier = tiers.find(t => item.v >= t.min && item.v < t.max) ?? tiers[tiers.length - 1];
+        if (item.won) tier.won++;
+        else tier.lost++;
+      }
+
+      const sweetSpotTier = tiers.reduce((best, t) => {
+        const total = t.won + t.lost;
+        if (!total) return best;
+        const rate = t.won / total;
+        const bestTotal = best.won + best.lost;
+        const bestRate = bestTotal ? best.won / bestTotal : 0;
+        return rate > bestRate ? t : best;
+      }, tiers[0]);
+
+      return tiers.map(t => ({
+        label: t.label,
+        minPrice: Math.round(t.min),
+        maxPrice: Math.round(t.max),
+        wonCount: t.won,
+        lostCount: t.lost,
+        winRate: (t.won + t.lost) > 0 ? Math.round((t.won / (t.won + t.lost)) * 100) : null,
+        isSweetSpot: t.label === sweetSpotTier.label && (t.won + t.lost) > 0 && t.won > 0,
+      }));
+    }
+
+    const categories = Object.entries(byCategory).map(([category, { won, lost }]) => {
+      const all = [...won, ...lost];
+      const avgWon = won.length ? Math.round(won.reduce((s, v) => s + v, 0) / won.length) : null;
+      const avgLost = lost.length ? Math.round(lost.reduce((s, v) => s + v, 0) / lost.length) : null;
+      const winRate = (won.length + lost.length) > 0
+        ? Math.round((won.length / (won.length + lost.length)) * 100)
+        : null;
+      const tiers = computeTiers(won, lost);
+      const sweetSpot = tiers?.find(t => t.isSweetSpot);
+
+      return {
+        category,
+        wonCount: won.length,
+        lostCount: lost.length,
+        totalDeals: won.length + lost.length,
+        winRate,
+        avgWonPrice: avgWon,
+        avgLostPrice: avgLost,
+        priceDelta: avgWon != null && avgLost != null ? avgWon - avgLost : null,
+        tiers,
+        sweetSpotRange: sweetSpot ? { min: sweetSpot.minPrice, max: sweetSpot.maxPrice } : null,
+      };
+    }).filter(c => c.totalDeals >= 2).sort((a, b) => b.totalDeals - a.totalDeals);
+
+    // Overall sweet spot
+    const allWon = quoteRows.filter(r => r.outcome === 'won').map(r => parseFloat(r.total));
+    const allLost = quoteRows.filter(r => r.outcome === 'lost').map(r => parseFloat(r.total));
+    const overallAvgWon = allWon.length ? Math.round(allWon.reduce((s, v) => s + v, 0) / allWon.length) : null;
+    const overallAvgLost = allLost.length ? Math.round(allLost.reduce((s, v) => s + v, 0) / allLost.length) : null;
+    const overallWinRate = (allWon.length + allLost.length) > 0
+      ? Math.round((allWon.length / (allWon.length + allLost.length)) * 100)
+      : null;
+
+    res.json({
+      ok: true, hasData: true, categories,
+      overall: { wonCount: allWon.length, lostCount: allLost.length, winRate: overallWinRate, avgWonPrice: overallAvgWon, avgLostPrice: overallAvgLost },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /analytics/loss-analysis — breakdown of loss reasons, competitors, revenue impact
 app.get('/analytics/loss-analysis', authMiddleware, async (req, res) => {
   try {

@@ -1391,6 +1391,26 @@ export const api = {
       thresholdDays: number;
     }>('/mission/stale-pipeline'),
 
+  // Pricing Intelligence — win rate by price tier, sweet spot identification
+  getPricingIntel: () =>
+    authFetch<{
+      ok: boolean; hasData: boolean;
+      categories: Array<{
+        category: string; wonCount: number; lostCount: number; totalDeals: number;
+        winRate: number | null; avgWonPrice: number | null; avgLostPrice: number | null;
+        priceDelta: number | null;
+        tiers: Array<{
+          label: string; minPrice: number; maxPrice: number;
+          wonCount: number; lostCount: number; winRate: number | null; isSweetSpot: boolean;
+        }> | null;
+        sweetSpotRange: { min: number; max: number } | null;
+      }>;
+      overall: {
+        wonCount: number; lostCount: number; winRate: number | null;
+        avgWonPrice: number | null; avgLostPrice: number | null;
+      } | null;
+    }>('/analytics/pricing-intel'),
+
   // Pricing benchmarks from job history
   getPricingBenchmarks: (category: string) =>
     authFetch<{

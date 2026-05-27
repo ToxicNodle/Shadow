@@ -7,6 +7,7 @@ import { CATEGORIES, STATUSES } from '../../api/types';
 import PipelineDoctorCard from './PipelineDoctorCard';
 import TerritoryIntelCard from './TerritoryIntelCard';
 import OutreachCalendarCard from './OutreachCalendarCard';
+import PricingIntelCard from './PricingIntelCard';
 
 function fmtRev(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -2933,6 +2934,9 @@ export default function AnalyticsView() {
 
         {/* ── Seasonal Win Intelligence ── */}
         <SeasonalIntelligenceCard />
+
+        {/* ── Pricing Intelligence — win rates by price tier ── */}
+        <PricingIntelCard />
 
         {/* ── Loss Intelligence ── */}
         <LossAnalysisCard />

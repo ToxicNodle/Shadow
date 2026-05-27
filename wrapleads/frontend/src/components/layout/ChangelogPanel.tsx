@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Pricing Intelligence — Win Rate by Price Tier',
+    body: 'Analytics now shows a "Pricing Intelligence" card that correlates your quote amounts with deal outcomes to identify your sweet spot pricing by category. See average won vs. lost price for Fleet, GC Referral, DI-NOC, and every other category — then drill into low/mid/high tiers with win rates for each. Star ★ marks your highest-win-rate tier. Stop guessing on price.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Deal Coach — AI Closing Tactics Per Deal',
     body: 'Every active lead (contacted/replied/meeting/proposal) now has a "🎯 Coach Me" button in the info tab. Click it and Claude analyzes all your activity with that specific company and returns 3 personalized closing tactics, a closing probability score, urgency level, and a single key insight. No generic advice — specific to THIS deal, THIS company, and what you\'ve already tried.',
   },
