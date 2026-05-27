@@ -1353,6 +1353,19 @@ export const api = {
       '/tasks/generate-ai', { method: 'POST' }
     ),
 
+  // Speed Dial — top 5 leads to contact now
+  getSpeedDial: () =>
+    authFetch<{
+      ok: boolean;
+      leads: Array<{
+        leadId: number; clientId: string; company: string; contactName: string | null;
+        phone: string | null; email: string | null; status: string; category: string;
+        fleetSize: string | null; state: string | null; urgencyScore: number;
+        daysOverdue: number; recentOpens: number; recentProposalViews: number;
+        pitchAngle: string | null;
+      }>;
+    }>('/mission/speed-dial'),
+
   // Pricing benchmarks from job history
   getPricingBenchmarks: (category: string) =>
     authFetch<{

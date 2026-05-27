@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Speed Dial — AI-Ranked Call Queue',
+    body: 'Mission now shows a "Speed Dial" card with your top 5 leads to contact right now, ranked by urgency score (email opens, proposal views, days overdue, follow-up timing). Each lead shows an AI-generated pitch angle, signal badges, and one-click Call / Email / Open / Done / Skip actions so you can blast through your call list without touching the CRM.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Quote Pricing Benchmarks',
     body: 'The quote builder now shows a "Your Past Jobs" benchmark strip when creating a quote — average total, per-vehicle pricing, and min/max range pulled from your actual completed jobs in the same category. Gets smarter the more jobs you log. Lets you price with confidence instead of guessing.',
   },

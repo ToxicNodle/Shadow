@@ -15,6 +15,7 @@ import ProposalHeatCard from './ProposalHeatCard';
 import RescueQueueCard from './RescueQueueCard';
 import IntentSignalsCard from './IntentSignalsCard';
 import TaskQueueCard from './TaskQueueCard';
+import SpeedDialCard from './SpeedDialCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1835,6 +1836,9 @@ export default function MissionView() {
 
       {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
       <InboundRequestsCard />
+
+      {/* ── Speed Dial — top 5 leads to contact right now ── */}
+      <SpeedDialCard />
 
       {/* ── Daily Task Queue — AI-generated + manual task list ── */}
       <TaskQueueCard />
