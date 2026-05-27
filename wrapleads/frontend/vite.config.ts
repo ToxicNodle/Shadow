@@ -52,6 +52,7 @@ export default defineConfig({
       '/wrap-my-fleet':     API,
       '/inbound-leads':     API,
       '/case-studies':      API,
+      '/milestones':        API,
     },
   },
 });

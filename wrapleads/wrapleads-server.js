@@ -723,6 +723,27 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create roi_links table:', e.message);
   }
+
+  // Project milestone tracker — post-win project checklists
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_milestones (
+        id            BIGSERIAL PRIMARY KEY,
+        lead_id       BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id       TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        notes         TEXT,
+        completed     BOOLEAN DEFAULT FALSE,
+        completed_at  TIMESTAMPTZ,
+        due_date      DATE,
+        sort_order    INTEGER DEFAULT 0,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_milestones_lead ON project_milestones(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create project_milestones table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -12461,6 +12482,74 @@ app.get('/analytics/seasonal', authMiddleware, async (req, res) => {
   }
 });
 
+// ── Outreach Calendar ─────────────────────────────────────────────────────────
+// Forward-looking 12-month planner combining static wrap-industry knowledge
+// with the user's live pipeline count per category.
+const MONTHLY_OUTREACH_INTEL = {
+  1:  { themes: ['Q1 budget approvals', 'New year fleet refresh', 'Tax-advantaged spend'],
+        hot: ['fleet', 'gc_referral'], angle: 'Budget doors just opened — fleet managers are approving Q1 spend now. Lead with ROI numbers.' },
+  2:  { themes: ['Racing season prep', 'Spring bidding previews', 'Construction quoting starts'],
+        hot: ['racing', 'construction'], angle: 'Race hauler season and spring construction bids kick off. Reach racing teams before season deposits clear.' },
+  3:  { themes: ['Spring fleet refresh', 'Construction projects launch', 'Spring trade show season'],
+        hot: ['fleet', 'construction', 'gc_referral'], angle: 'Busiest outreach month for fleet and construction. Projects funded in January are now in motion.' },
+  4:  { themes: ['Warm weather = wrap season', 'GC contracts awarded', 'Motorsport season underway'],
+        hot: ['fleet', 'colorchange', 'racing'], angle: 'Peak install season starting. Color-change buyers are active. GC contracts being awarded weekly.' },
+  5:  { themes: ['Peak install season', 'Fleet maintenance budget reviews', 'Memorial Day promotions'],
+        hot: ['fleet', 'colorchange', 'dinoc'], angle: 'Highest-conversion month for fleet wraps. Lead with turn time — shops get backed up in summer.' },
+  6:  { themes: ['Summer heat = interior film demand', 'Fleet mid-year refresh', 'Festival & event wraps'],
+        hot: ['dinoc', 'reatec', 'fleet'], angle: 'Heat drives DI-NOC and Rea Tec inquiries for sun-facing surfaces. Fleet mid-year budget reviews.' },
+  7:  { themes: ['Q3 fleet budget windows', 'Back-to-school bus wraps', 'Fall construction bids open'],
+        hot: ['fleet', 'wallgraphics', 'construction'], angle: 'Q3 discretionary budget. School districts buying bus wraps. Fall construction bids open.' },
+  8:  { themes: ['Pre-Q4 fleet decisions', 'Interior design fall projects', 'Year-end prep starts'],
+        hot: ['fleet', 'design', 'dinoc'], angle: 'Fleet managers making Q4 decisions. Interior designers planning fall renovations.' },
+  9:  { themes: ['Fall project rush', 'GC year-end close-outs', 'Holiday fleet prep'],
+        hot: ['gc_referral', 'fleet', 'wallgraphics'], angle: 'GCs closing fall projects. Fleets prepping holiday livery. Year-end purchasing urgency building.' },
+  10: { themes: ['Year-end budget flush', 'Construction close-out', 'Holiday wrap demand'],
+        hot: ['fleet', 'gc_referral', 'colorchange'], angle: 'Year-end budget flush is real — fleet buyers need to spend before December 31.' },
+  11: { themes: ['Q4 year-end spend', 'Holiday wrap installs', 'Tax incentive deadlines'],
+        hot: ['fleet', 'colorchange', 'racing'], angle: 'Urgency is your friend in November. "Get it done before year-end" closes fleet deals fast.' },
+  12: { themes: ['Year-end close-out', 'Planning season for next year', 'Racing off-season builds'],
+        hot: ['racing', 'fleet', 'design'], angle: 'Slow-close time — plan ahead. Book January/February installs now. Race haulers go into build season.' },
+};
+
+app.get('/analytics/outreach-calendar', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  try {
+    // Pipeline lead counts per category
+    const { rows: pipelineCounts } = await pool.query(`
+      SELECT category, COUNT(*)::int AS count
+      FROM leads
+      WHERE user_id=$1 AND status NOT IN ('won','lost')
+      GROUP BY category
+    `, [uid]);
+    const pipelineMap = Object.fromEntries(pipelineCounts.map(r => [r.category, r.count]));
+
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      const intel = MONTHLY_OUTREACH_INTEL[m];
+      const isCurrent = m === currentMonth;
+      const isFuture = m > currentMonth || (currentMonth === 12 && m <= 3);
+      const hotPipelineCount = intel.hot.reduce((sum, cat) => sum + (pipelineMap[cat] || 0), 0);
+      return {
+        month: m,
+        name: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i],
+        themes: intel.themes,
+        hot_categories: intel.hot,
+        angle: intel.angle,
+        is_current: isCurrent,
+        is_future: isFuture,
+        pipeline_count: hotPipelineCount,
+      };
+    });
+
+    res.json({ months, currentMonth });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── 3-Month Revenue Projection ───────────────────────────────────────────────
 // Combines current pipeline value × historical stage win rates × time-to-close
 // to project expected revenue for the next 3 months with low/mid/high ranges.
@@ -15196,6 +15285,106 @@ ${pages.map(p => `  <url>
 
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
   res.send(xml);
+});
+
+// ── Project Milestone Tracker ─────────────────────────────────────────────────
+const MILESTONE_TEMPLATES = {
+  fleet:        ['Confirm vehicle list & specs', 'Schedule measurements', 'Share design brief with client', 'Client design approval', 'Order wrap material', 'Confirm install date(s)', 'Installation complete', 'Client final walkthrough & sign-off'],
+  construction: ['Confirm project scope & specs', 'Schedule measurement visit', 'Share design mockup', 'Client design approval', 'Order wrap material', 'Surface prep complete', 'Installation complete', 'Invoice sent'],
+  gc_referral:  ['Confirm project scope', 'Measurement visit', 'Design mockup review', 'Client approval', 'Order material', 'Installation complete', 'Invoice sent'],
+  dinoc:        ['Site visit & substrate assessment', 'Material sample approval', 'Order DI-NOC material', 'Surface prep', 'Installation complete', 'Client walkthrough'],
+  reatec:       ['Site visit & substrate assessment', 'Material sample approval', 'Order Rea-Tec material', 'Surface prep', 'Installation complete', 'Client walkthrough'],
+  colorchange:  ['Confirm color specs', 'Design mockup', 'Order wrap material', 'Schedule install', 'Installation complete', 'Client approval'],
+  racing:       ['Confirm livery specs & sponsor logos', 'Design mockup approval', 'Order wrap material', 'Schedule install', 'Installation complete', 'Delivery / event ready'],
+  design:       ['Confirm design brief', 'Concept mockup review', 'Final design approval', 'Order material', 'Installation complete'],
+  wallgraphics: ['Confirm wall dimensions', 'Design mockup approval', 'Order material', 'Surface prep', 'Installation complete'],
+};
+const DEFAULT_MILESTONES = ['Confirm project specs', 'Design approval', 'Order material', 'Schedule install', 'Installation complete'];
+
+app.get('/leads/:id/milestones', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    const { rows } = await pool.query(
+      `SELECT * FROM project_milestones WHERE lead_id=$1 AND user_id=$2 ORDER BY sort_order, id`,
+      [leadId, uid]
+    );
+    res.json({ milestones: rows, initialized: rows.length > 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/milestones/init', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    // Verify ownership
+    const { rows: lead } = await pool.query(`SELECT category FROM leads WHERE id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]);
+    if (!lead.length) return res.status(404).json({ error: 'Lead not found' });
+    // Don't re-init if already has milestones
+    const { rows: existing } = await pool.query(`SELECT id FROM project_milestones WHERE lead_id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]);
+    if (existing.length) return res.json({ ok: true, message: 'Already initialized' });
+    const category = lead[0].category;
+    const titles = MILESTONE_TEMPLATES[category] || DEFAULT_MILESTONES;
+    const insertions = titles.map((title, idx) =>
+      pool.query(`INSERT INTO project_milestones (lead_id, user_id, title, sort_order) VALUES ($1,$2,$3,$4)`, [leadId, uid, title, idx])
+    );
+    await Promise.all(insertions);
+    const { rows } = await pool.query(`SELECT * FROM project_milestones WHERE lead_id=$1 AND user_id=$2 ORDER BY sort_order, id`, [leadId, uid]);
+    res.json({ ok: true, milestones: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/milestones', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    const { title, notes, due_date } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    // Verify lead ownership
+    const { rows: lead } = await pool.query(`SELECT id FROM leads WHERE id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]);
+    if (!lead.length) return res.status(404).json({ error: 'Lead not found' });
+    const { rows: maxOrder } = await pool.query(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM project_milestones WHERE lead_id=$1 AND user_id=$2`, [leadId, uid]);
+    const { rows } = await pool.query(
+      `INSERT INTO project_milestones (lead_id, user_id, title, notes, due_date, sort_order) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [leadId, uid, title, notes || null, due_date || null, maxOrder[0].next]
+    );
+    res.json({ ok: true, milestone: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/milestones/:milestoneId', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const milestoneId = parseInt(req.params.milestoneId, 10);
+    const { completed, title, notes, due_date } = req.body;
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+    if (typeof completed === 'boolean') {
+      sets.push(`completed=$${idx++}`, `completed_at=${completed ? 'NOW()' : 'NULL'}`);
+      vals.push(completed);
+    }
+    if (title !== undefined) { sets.push(`title=$${idx++}`); vals.push(title); }
+    if (notes !== undefined) { sets.push(`notes=$${idx++}`); vals.push(notes); }
+    if (due_date !== undefined) { sets.push(`due_date=$${idx++}`); vals.push(due_date || null); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    vals.push(milestoneId, uid);
+    const { rows } = await pool.query(
+      `UPDATE project_milestones SET ${sets.join(',')} WHERE id=$${idx++} AND user_id=$${idx++} RETURNING *`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Milestone not found' });
+    res.json({ ok: true, milestone: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/milestones/:milestoneId', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const milestoneId = parseInt(req.params.milestoneId, 10);
+    await pool.query(`DELETE FROM project_milestones WHERE id=$1 AND user_id=$2`, [milestoneId, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────

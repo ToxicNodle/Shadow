@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Project Milestone Tracker',
+    body: 'Every lead now has a "📋 Project" tab that auto-generates a category-specific project checklist after you win the deal — from measurements and design approval through material ordering and final sign-off. Track completion with one click per step, add custom steps, and get a direct "Log Install →" button when everything is done.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Outreach Calendar — 12-Month Wrap Sales Planner',
     body: 'Analytics now shows a full-year outreach calendar with AI-curated selling themes, hottest wrap categories, and tailored pitch angles for every month. Click any month to see the exact messaging to use, which categories to push, and how many active pipeline leads you have that month. Current month is highlighted with a "NOW" indicator.',
   },

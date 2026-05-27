@@ -1277,4 +1277,38 @@ export const api = {
       }>;
       currentMonth: number;
     }>('/analytics/outreach-calendar'),
+
+  // Project Milestone Tracker
+  getMilestones: (leadId: number) =>
+    authFetch<{
+      milestones: Array<{
+        id: number; lead_id: number; user_id: string; title: string;
+        notes: string | null; completed: boolean; completed_at: string | null;
+        due_date: string | null; sort_order: number; created_at: string;
+      }>;
+      initialized: boolean;
+    }>(`/leads/${leadId}/milestones`),
+
+  initMilestones: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      milestones: Array<{
+        id: number; title: string; completed: boolean; sort_order: number;
+      }>;
+    }>(`/leads/${leadId}/milestones/init`, { method: 'POST' }),
+
+  createMilestone: (leadId: number, data: { title: string; notes?: string; due_date?: string }) =>
+    authFetch<{
+      ok: boolean;
+      milestone: { id: number; title: string; completed: boolean; sort_order: number };
+    }>(`/leads/${leadId}/milestones`, { method: 'POST', body: JSON.stringify(data) }),
+
+  updateMilestone: (milestoneId: number, data: { completed?: boolean; title?: string; notes?: string; due_date?: string }) =>
+    authFetch<{
+      ok: boolean;
+      milestone: { id: number; title: string; completed: boolean; completed_at: string | null; due_date: string | null };
+    }>(`/milestones/${milestoneId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  deleteMilestone: (milestoneId: number) =>
+    authFetch<{ ok: boolean }>(`/milestones/${milestoneId}`, { method: 'DELETE' }),
 };
