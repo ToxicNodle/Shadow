@@ -7387,6 +7387,99 @@ function startAnniversaryWorker() {
   console.log('· Anniversary worker: running (daily check at 11:00 AM)');
 }
 
+// ── Wrap Maintenance Check Worker ────────────────────────────────────────────
+// At the 2-year mark, sends a care/cleaning guide + soft refresh offer.
+// Fires daily at 10 AM. Sends once per job (blocked by activity log check).
+async function processMaintenanceChecks() {
+  const resendKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+  try {
+    const { rows: jobs } = await pool.query(
+      `SELECT j.*, l.email, l.contact_name, l.company AS lead_company,
+              u.settings_json AS settings
+       FROM installed_jobs j
+       JOIN leads l ON l.id = j.lead_id
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.lead_id IS NOT NULL
+         AND l.email IS NOT NULL AND l.email != ''
+         AND ABS(EXTRACT(DOY FROM NOW()) - EXTRACT(DOY FROM j.install_date + INTERVAL '2 years')) <= 3
+         AND NOT EXISTS (
+           SELECT 1 FROM lead_activities a
+           WHERE a.lead_id = j.lead_id AND a.type = 'email_sent'
+             AND a.subject LIKE '%maintenance%'
+             AND a.created_at > NOW() - INTERVAL '30 days'
+         )`
+    );
+    for (const job of jobs) {
+      const s = job.settings || {};
+      const fromName = s.senderName || 'Your Wrap Shop';
+      const vehicleLabel = `${job.vehicle_count} vehicle${job.vehicle_count > 1 ? 's' : ''}`;
+      const yearsLeft = Math.max(0, job.life_years - 2);
+      const subject = `Your Wrap Turns 2 — Quick Care Check for ${job.company}`;
+      const bodyText = `Hi ${job.contact_name || job.company},
+
+Your ${vehicleLabel} wrap is now 2 years old — you're officially at the halfway point for most premium vinyl installs!
+
+Here's what to check at the 2-year mark:
+
+✓ EDGES: Look for any corner lifting along door edges, rocker panels, and bumpers. A little heat and pressure from us can re-seal these before they become a bigger issue.
+
+✓ FINISH: On gloss wraps, watch for swirl marks or fading near the hood and roof. These are the highest UV-exposure spots.
+
+✓ MATTE: Avoid any waxy products — matte vinyl needs matte-safe detailer only. Regular car wash waxes will create permanent shiny patches.
+
+✓ SEAMS: Check that seams along body lines are sitting flat. If you see bubbling near a seam, that's moisture — call us before winter.
+
+You have approximately ${yearsLeft} year${yearsLeft !== 1 ? 's' : ''} of material life remaining. Now is a great time to think about a design refresh before the next fleet update.
+
+Reply to this email or call us to schedule a complimentary inspection.
+
+${fromName}`;
+
+      if (resendKey) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `${fromName} <${fromEmail}>`,
+            to: job.contact_name ? `${job.contact_name} <${job.email}>` : job.email,
+            subject,
+            text: bodyText,
+          }),
+        });
+      }
+      await logActivity(pool, {
+        leadId: job.lead_id,
+        userId: job.user_id,
+        type: 'email_sent',
+        subject: `[maintenance] ${subject}`,
+        body: bodyText.slice(0, 500),
+        metadata: { job_id: job.id, auto: true, check_year: 2 },
+      });
+      await createNotification(job.user_id, {
+        type: 'new_lead',
+        title: `🔧 2-year maintenance check sent to ${job.company}`,
+        body: `Care guide + inspection offer delivered automatically.`,
+        metadata: { lead_id: job.lead_id, job_id: job.id },
+      });
+    }
+    if (jobs.length) console.log(`[maintenance worker] Sent ${jobs.length} 2-year care check email${jobs.length > 1 ? 's' : ''}`);
+  } catch (e) {
+    console.error('[maintenance worker]', e.message);
+  }
+}
+
+function startMaintenanceWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 10 && now.getMinutes() === 0) {
+      processMaintenanceChecks();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Maintenance check worker: running (daily check at 10:00 AM)');
+}
+
 // ── Weather-Triggered E-Ink Content Worker ───────────────────────────────────
 // Checks weather for each shop's city once daily and auto-triggers relevant
 // E-Ink content pushes. Hot day = "Summer wrap special". Rain = "Indoor film work".
@@ -11984,6 +12077,7 @@ app.listen(PORT, async () => {
     startBidExpiryWorker();
     startStalledDealWorker();
     startAnniversaryWorker();
+    startMaintenanceWorker();
     startWeatherWorker();
     email.startTrialCron(pool);
     try {
