@@ -9285,12 +9285,18 @@ app.get('/portal/:token', async (req, res) => {
     );
     const bid = bids[0];
 
-    // Fetch design concept (latest activity with image)
+    // Fetch ALL design concepts (activities with image, newest first, up to 6)
     const { rows: designActs } = await pool.query(
-      `SELECT * FROM lead_activities WHERE lead_id=$1 AND (type='note_added') AND metadata->>'image_url' IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id, subject, body, metadata, created_at FROM lead_activities WHERE lead_id=$1 AND metadata->>'image_url' IS NOT NULL ORDER BY created_at DESC LIMIT 6`,
       [link.lead_id]
     );
     const designImg = designActs[0]?.metadata?.image_url;
+    // Check if design has already been approved
+    const { rows: designApprovals } = await pool.query(
+      `SELECT subject, created_at FROM lead_activities WHERE lead_id=$1 AND type='design_approved' ORDER BY created_at DESC LIMIT 1`,
+      [link.lead_id]
+    );
+    const designApproved = designApprovals[0] || null;
 
     // Fetch recent activities (last 8, public-safe types only)
     const { rows: activities } = await pool.query(
@@ -9455,11 +9461,45 @@ app.get('/portal/:token', async (req, res) => {
     </div>
   </div>` : ''}
 
-  ${designImg ? `
-  <!-- Design Concept -->
+  ${designActs.length > 0 ? `
+  <!-- Design Concepts + Approval -->
   <div class="section">
-    <div class="section-header"><span class="section-title">Design Concept</span></div>
-    <div class="section-body"><img src="${designImg}" class="design-img" alt="Wrap Design Concept"></div>
+    <div class="section-header">
+      <span class="section-title">Design Concepts</span>
+      ${designApproved ? `<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:99px;background:#dcfce7;color:#16a34a;">✓ Approved ${new Date(designApproved.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>` : ''}
+    </div>
+    <div class="section-body">
+      ${designActs.map((d, i) => `
+        <div style="margin-bottom:${i < designActs.length-1 ? 20 : 0}px">
+          ${designActs.length > 1 ? `<div style="font-size:11px;font-weight:600;color:#6b7280;margin-bottom:6px;">Option ${designActs.length - i}${d.subject && d.subject !== 'AR wrap concept shared to portal' ? ` — ${d.subject}` : ''}</div>` : ''}
+          <img src="${d.metadata.image_url}" class="design-img" alt="Wrap Design Concept ${i+1}" style="cursor:pointer" onclick="document.getElementById('lightbox').style.display='flex';document.getElementById('lb-img').src=this.src">
+          ${d.body && d.body !== 'AI-generated wrap concept' ? `<div style="font-size:12px;color:#6b7280;margin-top:6px;font-style:italic">${d.body}</div>` : ''}
+        </div>
+      `).join('')}
+
+      ${!designApproved ? `
+      <div id="design-approval-panel" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;">
+        <div style="font-size:13px;font-weight:600;color:#1e293b;margin-bottom:8px;">Ready to move forward?</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="approve-design-btn" onclick="approveDesign()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;">
+            ✓ Approve Design
+          </button>
+          <button onclick="document.getElementById('revision-panel').style.display='block';this.style.display='none'" style="background:#fff;color:#64748b;border:1px solid #e2e8f0;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;">
+            ✏ Request Revisions
+          </button>
+        </div>
+        <div id="revision-panel" style="display:none;margin-top:12px;">
+          <textarea id="revision-text" placeholder="Describe what you'd like changed — colors, layout, text, logo placement, etc." style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;color:#1e293b;background:#fff;resize:vertical;min-height:80px;font-family:inherit"></textarea>
+          <button onclick="submitRevision()" style="margin-top:8px;background:#f4551c;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">Send Revision Request</button>
+        </div>
+        <div id="design-approved-msg" style="display:none;color:#16a34a;font-weight:700;font-size:13px;margin-top:8px;">✓ Design approved! We'll be in touch shortly.</div>
+        <div id="revision-sent-msg" style="display:none;color:#f4551c;font-weight:700;font-size:13px;margin-top:8px;">✓ Revision request sent!</div>
+      </div>` : `
+      <div style="margin-top:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px">✅</span>
+        <div><div style="font-size:13px;font-weight:700;color:#16a34a">Design approved</div><div style="font-size:12px;color:#6b7280">Approved on ${new Date(designApproved.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div></div>
+      </div>`}
+    </div>
   </div>` : ''}
 
   ${activities.length > 0 ? `
@@ -9525,6 +9565,33 @@ app.get('/portal/:token', async (req, res) => {
       document.getElementById('approved-msg').style.display = 'block';
     } catch { document.getElementById('approve-btn').disabled = false; document.getElementById('approve-btn').textContent = '✓ Approve This Quote'; }
   }
+  async function approveDesign() {
+    const btn = document.getElementById('approve-design-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
+    try {
+      await fetch('/portal/${req.params.token}/approve-design', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      document.getElementById('design-approval-panel').style.display = 'none';
+      document.getElementById('design-approved-msg').style.display = 'block';
+    } catch { if (btn) { btn.disabled = false; btn.textContent = '✓ Approve Design'; } }
+  }
+  async function submitRevision() {
+    const text = document.getElementById('revision-text').value.trim();
+    if (!text) return;
+    try {
+      await fetch('/portal/${req.params.token}/revision-request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ feedback: text }) });
+      document.getElementById('revision-panel').style.display = 'none';
+      document.getElementById('revision-sent-msg').style.display = 'block';
+    } catch {}
+  }
+  // Image lightbox
+  document.addEventListener('DOMContentLoaded', () => {
+    const lb = document.createElement('div');
+    lb.id = 'lightbox';
+    lb.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out';
+    lb.innerHTML = '<img id="lb-img" style="max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px">';
+    lb.onclick = () => lb.style.display = 'none';
+    document.body.appendChild(lb);
+  });
   async function submitFeedback(e) {
     e.preventDefault();
     const text = document.getElementById('feedback-text').value.trim();
@@ -9574,6 +9641,48 @@ app.post('/portal/:token/feedback', async (req, res) => {
     await createNotification(link.user_id, {
       type: 'email_reply',
       title: `New feedback from ${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company}`,
+      body: feedback.slice(0, 200),
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: client approves design (creates a formal sign-off record)
+app.post('/portal/:token/approve-design', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT pl.*, l.company FROM portal_links pl JOIN leads l ON l.id=pl.lead_id WHERE pl.token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    // Log design_approved activity (idempotent — same type, no duplicates guard needed)
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'design_approved', subject: 'Client approved design via portal', body: null });
+    // Advance lead to proposal stage if not already further along
+    const { rows: leadR } = await pool.query('SELECT status FROM leads WHERE id=$1', [link.lead_id]);
+    if (leadR[0] && ['new', 'contacted', 'replied', 'meeting'].includes(leadR[0].status)) {
+      await pool.query('UPDATE leads SET status=$1, updated_at=NOW() WHERE id=$2', ['proposal', link.lead_id]);
+    }
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `${link.company} approved your design! 🎨`,
+      body: 'Client clicked "Approve Design" in the portal. Time to send the final proposal.',
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: client requests design revisions
+app.post('/portal/:token/revision-request', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT pl.*, l.company FROM portal_links pl JOIN leads l ON l.id=pl.lead_id WHERE pl.token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    const { feedback } = req.body;
+    if (!feedback?.trim()) return res.status(400).json({ error: 'feedback required' });
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'note_added', subject: 'Design revision request from client', body: feedback });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `${link.company} requested design revisions`,
       body: feedback.slice(0, 200),
       metadata: { lead_id: link.lead_id },
     });
