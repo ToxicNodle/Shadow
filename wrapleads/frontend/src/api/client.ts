@@ -1124,6 +1124,9 @@ export const api = {
       activeReaders: Array<{ leadId: number; company: string; status: string; openedAt: string; hoursAgo: number }>;
     }>('/analytics/email-timing'),
 
+  generateLeadBrief: (leadId: number) =>
+    authFetch<{ ok: boolean; brief: string }>('/ai/lead-brief', { method: 'POST', body: JSON.stringify({ leadId }) }),
+
   getRevenueForecast: () =>
     authFetch<{
       ok: boolean;

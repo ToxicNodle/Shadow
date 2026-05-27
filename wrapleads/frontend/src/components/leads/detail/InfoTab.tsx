@@ -669,6 +669,116 @@ function CallScriptPanel({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Lead Intelligence Brief ───────────────────────────────────────────────────
+function LeadIntelBriefPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [brief, setBrief] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const res = await api.generateLeadBrief(lead.serverId);
+      if (res.brief) setBrief(res.brief);
+    } catch {
+      showToast('Failed to generate brief');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!lead.serverId) return null;
+
+  // Parse the structured brief into sections for styled display
+  const sections: { header: string; body: string; color: string }[] = [];
+  if (brief) {
+    const SECTION_MAP: [string, string][] = [
+      ['COMPANY FIT', '#4d8af5'],
+      ['PITCH ANGLE', 'var(--accent)'],
+      ['ICEBREAKER', '#10b981'],
+      ['OBJECTIONS', '#f59e0b'],
+      ['NEXT ACTION', '#22c55e'],
+    ];
+    for (const [header, color] of SECTION_MAP) {
+      const re = new RegExp(`\\*\\*${header}\\*\\*\\s*[—–-]?\\s*([\\s\\S]*?)(?=\\*\\*[A-Z ]+\\*\\*|$)`);
+      const match = brief.match(re);
+      if (match) sections.push({ header, body: match[1].trim(), color });
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', justifyContent: 'space-between', fontSize: 12 }}
+        onClick={() => { setOpen((v) => !v); if (!brief && !open) generate(); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4d8af5" strokeWidth="2">
+            <path d="M12 2l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6-4.6-1.9 4.6-1.9z"/>
+            <path d="M20 3v4M18 5h4"/>
+          </svg>
+          <span style={{ color: 'var(--text)' }}>AI Lead Brief</span>
+          {brief && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>· ready</span>}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+          {loading ? <span className="spinner" style={{ width: 11, height: 11 }} /> : open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {loading && !brief && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '8px 0' }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+              Analyzing {lead.company}…
+            </div>
+          )}
+
+          {sections.length > 0 ? sections.map((sec) => (
+            <div key={sec.header} style={{
+              background: `${sec.color}08`,
+              border: `1px solid ${sec.color}22`,
+              borderLeft: `3px solid ${sec.color}`,
+              borderRadius: '0 7px 7px 0',
+              padding: '8px 12px',
+            }}>
+              <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: sec.color, marginBottom: 5 }}>
+                {sec.header}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                {sec.body}
+              </div>
+            </div>
+          )) : brief ? (
+            <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{brief}</div>
+          ) : null}
+
+          {brief && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 11, flex: 1, justifyContent: 'center' }}
+                onClick={() => {
+                  navigator.clipboard.writeText(brief);
+                  showToast('Brief copied');
+                }}
+              >
+                Copy Brief
+              </button>
+              <button className="btn" style={{ fontSize: 11 }} onClick={generate} disabled={loading}>
+                ↻ Regenerate
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --------------- Confetti ---------------
 function ConfettiCanvas({ active }: { active: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1664,6 +1774,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <SimilarWinsPanel lead={local} />}
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
+      {lead.serverId && <LeadIntelBriefPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && local.status === 'won' && <ReferralAskPanel lead={local} />}

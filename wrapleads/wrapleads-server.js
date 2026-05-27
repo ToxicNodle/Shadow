@@ -7399,6 +7399,86 @@ For state use the 2-letter abbreviation. For notes include any tagline or servic
   }
 });
 
+// ── AI Lead Intelligence Brief ────────────────────────────────────────────────
+// POST /ai/lead-brief
+// Generates a compact deal-prep dossier for any lead: company overview,
+// fit rationale, pitch angle, icebreaker, 3 likely objections, next action.
+// Uses lead data + activity history + loss history for similar companies.
+app.post('/ai/lead-brief', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Anthropic API key not configured' });
+
+  const { leadId } = req.body;
+  if (!leadId) return res.status(400).json({ error: 'leadId required' });
+
+  const uid = String(req.user.id);
+  try {
+    const [leadR, settingsR, activitiesR, similarWinsR] = await Promise.all([
+      pool.query(
+        `SELECT l.*, l.notes AS lead_notes
+           FROM leads l WHERE l.id=$1 AND l.user_id=$2`,
+        [leadId, uid]
+      ),
+      pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]),
+      pool.query(
+        `SELECT type, subject, body, metadata, created_at
+           FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+           ORDER BY created_at DESC LIMIT 8`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT company, category, status, fleet_size, notes
+           FROM leads WHERE user_id=$1 AND status='won' AND category=(
+             SELECT category FROM leads WHERE id=$2 AND user_id=$1 LIMIT 1
+           ) LIMIT 3`,
+        [uid, leadId]
+      ),
+    ]);
+
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+    const activities = activitiesR.rows;
+    const similarWins = similarWinsR.rows;
+
+    const actSummary = activities.length
+      ? activities.map(a => `${a.type}: ${a.subject || a.body || ''}`).join('; ')
+      : 'No activity yet';
+
+    const prompt = `You are a strategic sales advisor helping ${shopName}, a vehicle wrap shop. Write a compact deal-prep brief for the following prospect.
+
+LEAD DATA:
+- Company: ${lead.company}
+- Category: ${lead.category}
+- Fleet size: ${lead.fleet_size || 'unknown'}
+- Location: ${lead.city || ''}, ${lead.state || ''}
+- Contact: ${lead.contact_name || 'unknown'} (${lead.contact_title || 'unknown role'})
+- Website: ${lead.website || 'none'}
+- Current stage: ${lead.status}
+- Notes: ${lead.lead_notes || 'none'}
+- Pitch angle on file: ${lead.pitch_angle || 'none'}
+- Recent activity: ${actSummary}
+${similarWins.length ? `- Similar won deals in this category: ${similarWins.map(w => w.company).join(', ')}` : ''}
+
+Write a structured brief with EXACTLY these 5 sections (use the exact headers):
+**COMPANY FIT** — 2 sentences: who they are and why they're a strong wrap prospect right now.
+**PITCH ANGLE** — 1-2 sentences: the most compelling angle for this specific company.
+**ICEBREAKER** — 1 concrete opening line for an email or call (reference something specific about them).
+**OBJECTIONS** — 3 bullet points: the most likely objections and a 1-sentence counter for each.
+**NEXT ACTION** — 1 specific, actionable step for today.
+
+Keep each section tight. No fluff. Sound like a street-smart sales pro, not a consultant.`;
+
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    res.json({ ok: true, brief: text.trim() });
+  } catch (e) {
+    console.error('[ai/lead-brief]', e.message);
+    res.status(500).json({ error: 'Failed to generate brief' });
+  }
+});
+
 // ── AI Call Script Generator ──────────────────────────────────────────────────
 // POST /ai/call-script  (requireShopFlow)
 // Generates a structured phone sales script customized to the lead's profile.

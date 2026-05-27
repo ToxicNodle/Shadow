@@ -55,6 +55,15 @@ const INDUSTRY_OPTIONS = [
   { value: 'general',            label: 'General Business (SOS)' },
 ];
 
+const SOURCE_OPTIONS = [
+  { value: 'fmcsa',        label: '🚛 FMCSA Carriers', badge: null },
+  { value: 'sos',          label: '📋 State SOS (Registered Businesses)', badge: null },
+  { value: 'google_places', label: '📍 Google Places', badge: null },
+  { value: 'news_signal',  label: '📡 News Signal (Live Events)', badge: 'Signal' },
+  { value: 'sam_gov',      label: '🏛️ SAM.gov (Federal Contractors)', badge: 'GOV' },
+  { value: 'ingest_aia',   label: '🏗️ AIA / Architects Directory', badge: null },
+];
+
 export default function FilterRow() {
   const searchMutation = useCarrierSearch();
   const { createSearch } = useSavedSearches();
@@ -74,6 +83,7 @@ export default function FilterRow() {
 
   const [states, setStates] = useState<string[]>([]);
   const [industries, setIndustries] = useState<string[]>([]);
+  const [sources, setSources] = useState<string[]>([]);
   const [minFleet, setMinFleet] = useState('');
   const [maxFleet, setMaxFleet] = useState('');
   const [query, setQuery] = useState('');
@@ -86,6 +96,7 @@ export default function FilterRow() {
     return {
       states:       states.length ? states : null,
       industries:   industries.length ? industries : null,
+      sources:      sources.length ? sources : null,
       minFleet:     minFleet ? Number(minFleet) : null,
       maxFleet:     maxFleet ? Number(maxFleet) : null,
       query:        query || undefined,
@@ -124,6 +135,10 @@ export default function FilterRow() {
 
   function toggleIndustry(v: string) {
     setIndustries((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
+  }
+
+  function toggleSource(v: string) {
+    setSources((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
   }
 
   const PRESETS = [
@@ -231,6 +246,19 @@ export default function FilterRow() {
           </select>
         </div>
         <div className="field-group">
+          <label className="field-label">Source</label>
+          <select
+            className="select"
+            value=""
+            onChange={(e) => { if (e.target.value) toggleSource(e.target.value); }}
+          >
+            <option value="">Filter by source…</option>
+            {SOURCE_OPTIONS.filter((o) => !sources.includes(o.value)).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field-group">
           <label className="field-label">Min Fleet</label>
           <input
             className="input"
@@ -300,7 +328,7 @@ export default function FilterRow() {
         </div>
       </div>
 
-      {(states.length > 0 || industries.length > 0) && (
+      {(states.length > 0 || industries.length > 0 || sources.length > 0) && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {states.map((s) => (
             <span key={s} className="saved-chip">
@@ -314,6 +342,15 @@ export default function FilterRow() {
               <button className="chip-del" onClick={() => toggleIndustry(v)}>×</button>
             </span>
           ))}
+          {sources.map((v) => {
+            const opt = SOURCE_OPTIONS.find((o) => o.value === v);
+            return (
+              <span key={v} className="saved-chip" style={{ background: 'rgba(77,138,245,0.12)', borderColor: 'rgba(77,138,245,0.3)', color: '#4d8af5' }}>
+                {opt?.label ?? v}
+                <button className="chip-del" onClick={() => toggleSource(v)}>×</button>
+              </span>
+            );
+          })}
         </div>
       )}
 
