@@ -7,6 +7,30 @@ const CHANGELOG: Array<{
   body: string;
 }> = [
   {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Loss Intelligence + AI Win-Back Emails',
+    body: 'When marking a deal lost, a structured modal now captures the loss reason (price, competitor, timing, etc.) and competitor name. Analytics view shows a "Loss Intelligence" card with why-we-lose breakdown, competitor rankings, and one-click AI win-back email generation for recoverable losses.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Client Portal Design Sign-Off',
+    body: 'The client portal now shows ALL design concepts you\'ve shared (not just the latest), with a proper "Approve Design" button that creates a formal sign-off record. Clients can also request revisions with notes. Both actions notify you instantly.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'AI URL Import',
+    body: 'Paste any company website, LinkedIn page, or directory listing — AI extracts company name, contact info, fleet size, city/state, category, and generates a pitch angle. Review and edit before adding to your pipeline.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'improved',
+    title: 'Email Signature Auto-Enrichment',
+    body: 'When a prospect replies to your outreach email, WrapOS automatically scans the email signature and backfills missing contact name, phone number, and title on the lead record — no manual copy-paste.',
+  },
+  {
     date: 'May 2025',
     tag: 'new',
     title: 'AR Preview: variations, brand colors & fleet batch',
