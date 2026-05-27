@@ -328,6 +328,10 @@ export const api = {
   // Wrap Lifecycle Tracker
   getJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs'),
   getAgingJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs/aging'),
+  getJobsAgingMap: () => authFetch<{
+    byState: Record<string, { fresh: number; aging: number; due: number; overdue: number; vehicles: number }>;
+    totalJobs: number; dueCount: number; overdueCount: number;
+  }>('/jobs/aging-map'),
   createJob: (job: Partial<InstalledJob>) =>
     authFetch<{ job: InstalledJob }>('/jobs', { method: 'POST', body: JSON.stringify(job) }),
   updateJob: (id: number, updates: Partial<InstalledJob>) =>

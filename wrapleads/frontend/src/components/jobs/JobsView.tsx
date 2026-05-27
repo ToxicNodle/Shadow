@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../api/types';
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
 import MaterialCatalogModal from '../modals/MaterialCatalogModal';
+import FleetAgingMap from './FleetAgingMap';
 
 // ── Case Study Generator ──────────────────────────────────────────────────────
 function CaseStudyPanel({ job }: { job: InstalledJob }) {
@@ -617,7 +618,7 @@ function expiryLabel(days: number | undefined) {
 // ── Main JobsView ─────────────────────────────────────────────────────────────
 
 export default function JobsView() {
-  const [tab, setTab] = useState<'all' | 'aging'>('all');
+  const [tab, setTab] = useState<'all' | 'aging' | 'map'>('all');
   const [modal, setModal] = useState<InstalledJob | 'new' | null>(null);
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
@@ -691,13 +692,18 @@ export default function JobsView() {
         <button className={`jobs-tab ${tab === 'aging' ? 'active' : ''}`} onClick={() => setTab('aging')}>
           Aging Alerts {agingCount > 0 && <span className="jobs-tab-badge">{agingCount}</span>}
         </button>
+        <button className={`jobs-tab ${tab === 'map' ? 'active' : ''}`} onClick={() => setTab('map')}>
+          Fleet Map
+        </button>
       </div>
 
-      {isLoading && (
+      {tab === 'map' && <FleetAgingMap />}
+
+      {tab !== 'map' && isLoading && (
         <div className="pv-loading"><span className="spinner" /><span>Loading jobs…</span></div>
       )}
 
-      {!isLoading && jobs.length === 0 && (
+      {tab !== 'map' && !isLoading && jobs.length === 0 && (
         tab === 'aging' ? (
           <div className="empty-state empty-state-sm">
             <div className="empty-state-icon" style={{ color: 'var(--green)' }}>
@@ -737,7 +743,7 @@ export default function JobsView() {
         )
       )}
 
-      {!isLoading && jobs.length > 0 && (
+      {tab !== 'map' && !isLoading && jobs.length > 0 && (
         <div className="jobs-list">
           {jobs.map((job) => (
             <div key={job.id} className="jobs-row" onClick={() => setModal(job)}>

@@ -5954,6 +5954,46 @@ app.get('/jobs/aging', authMiddleware, async (req, res) => {
   res.json({ jobs: rows });
 });
 
+// GET /jobs/aging-map — per-state wrap age distribution for geographic heat map
+app.get('/jobs/aging-map', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { rows } = await pool.query(
+    `SELECT
+       COALESCE(l.state, 'Unknown') AS state,
+       EXTRACT(YEAR FROM AGE(CURRENT_DATE, j.install_date))::int AS years_old,
+       j.vehicle_count,
+       j.wrap_category,
+       j.life_years,
+       EXTRACT(DAY FROM (j.install_date + (j.life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
+     FROM installed_jobs j
+     LEFT JOIN leads l ON l.id = j.lead_id AND l.user_id = $1
+     WHERE j.user_id = $1
+     ORDER BY j.install_date ASC`,
+    [uid]
+  );
+
+  // Aggregate by state
+  const byState: Record<string, { fresh: number; aging: number; due: number; overdue: number; vehicles: number }> = {};
+  for (const r of rows) {
+    const st = r.state === 'Unknown' ? null : r.state;
+    if (!st) continue;
+    if (!byState[st]) byState[st] = { fresh: 0, aging: 0, due: 0, overdue: 0, vehicles: 0 };
+    const vehicles = r.vehicle_count ?? 1;
+    byState[st].vehicles += vehicles;
+    const daysLeft = r.days_until_expiry ?? 0;
+    if (daysLeft < 0) byState[st].overdue += vehicles;
+    else if (daysLeft <= 90) byState[st].due += vehicles;
+    else if (r.years_old >= 3) byState[st].aging += vehicles;
+    else byState[st].fresh += vehicles;
+  }
+
+  const totalJobs = rows.length;
+  const dueCount = rows.filter((r) => (r.days_until_expiry ?? 999) <= 90).length;
+  const overdueCount = rows.filter((r) => (r.days_until_expiry ?? 0) < 0).length;
+
+  res.json({ byState, totalJobs, dueCount, overdueCount });
+});
+
 app.post('/jobs', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
