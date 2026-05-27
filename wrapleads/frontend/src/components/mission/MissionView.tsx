@@ -14,6 +14,7 @@ import TodayScoreCard from './TodayScoreCard';
 import ProposalHeatCard from './ProposalHeatCard';
 import RescueQueueCard from './RescueQueueCard';
 import IntentSignalsCard from './IntentSignalsCard';
+import TaskQueueCard from './TaskQueueCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1834,6 +1835,9 @@ export default function MissionView() {
 
       {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
       <InboundRequestsCard />
+
+      {/* ── Daily Task Queue — AI-generated + manual task list ── */}
+      <TaskQueueCard />
 
       {/* ── Today's Score — gamified daily activity tracker ── */}
       <TodayScoreCard />

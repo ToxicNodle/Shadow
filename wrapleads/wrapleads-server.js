@@ -724,6 +724,29 @@ async function migrateDb() {
     console.warn('[migrate] Could not create roi_links table:', e.message);
   }
 
+  // Daily task queue
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        lead_id       BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        title         TEXT NOT NULL,
+        notes         TEXT,
+        type          TEXT DEFAULT 'manual',
+        completed     BOOLEAN DEFAULT FALSE,
+        completed_at  TIMESTAMPTZ,
+        due_date      DATE DEFAULT CURRENT_DATE,
+        due_time      TEXT,
+        priority      TEXT DEFAULT 'normal',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_user_date ON tasks(user_id, due_date, completed)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create tasks table:', e.message);
+  }
+
   // Project milestone tracker — post-win project checklists
   try {
     await pool.query(`
@@ -15348,6 +15371,177 @@ ${pages.map(p => `  <url>
 
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
   res.send(xml);
+});
+
+// ── Daily Task Queue ──────────────────────────────────────────────────────────
+app.get('/tasks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const today = new Date().toISOString().split('T')[0];
+    const { rows } = await pool.query(`
+      SELECT t.*, l.company AS lead_company, l.status AS lead_status, l.category AS lead_category
+      FROM tasks t
+      LEFT JOIN leads l ON l.id = t.lead_id
+      WHERE t.user_id = $1 AND (t.due_date <= $2 OR t.due_date IS NULL)
+        AND t.completed = FALSE
+      ORDER BY
+        CASE t.priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+        t.due_date ASC NULLS LAST, t.created_at ASC
+      LIMIT 50
+    `, [uid, today]);
+    const { rows: completed } = await pool.query(`
+      SELECT t.*, l.company AS lead_company
+      FROM tasks t
+      LEFT JOIN leads l ON l.id = t.lead_id
+      WHERE t.user_id = $1 AND t.completed = TRUE AND t.due_date = $2
+      ORDER BY t.completed_at DESC LIMIT 10
+    `, [uid, today]);
+    res.json({ ok: true, tasks: rows, completedToday: completed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/tasks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { title, notes, type = 'manual', lead_id, due_date, due_time, priority = 'normal' } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    const today = new Date().toISOString().split('T')[0];
+    const { rows } = await pool.query(
+      `INSERT INTO tasks (user_id, lead_id, title, notes, type, due_date, due_time, priority)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [uid, lead_id || null, title, notes || null, type, due_date || today, due_time || null, priority]
+    );
+    res.json({ ok: true, task: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/tasks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const taskId = parseInt(req.params.id, 10);
+    const { completed, title, notes, due_date, due_time, priority } = req.body;
+    const sets = [], vals = [];
+    let idx = 1;
+    if (typeof completed === 'boolean') {
+      sets.push(`completed=$${idx++}`, `completed_at=${completed ? 'NOW()' : 'NULL'}`);
+      vals.push(completed);
+    }
+    if (title !== undefined) { sets.push(`title=$${idx++}`); vals.push(title); }
+    if (notes !== undefined) { sets.push(`notes=$${idx++}`); vals.push(notes); }
+    if (due_date !== undefined) { sets.push(`due_date=$${idx++}`); vals.push(due_date || null); }
+    if (due_time !== undefined) { sets.push(`due_time=$${idx++}`); vals.push(due_time || null); }
+    if (priority !== undefined) { sets.push(`priority=$${idx++}`); vals.push(priority); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    vals.push(taskId, uid);
+    const { rows } = await pool.query(
+      `UPDATE tasks SET ${sets.join(',')} WHERE id=$${idx++} AND user_id=$${idx++} RETURNING *`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Task not found' });
+    res.json({ ok: true, task: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/tasks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    await pool.query(`DELETE FROM tasks WHERE id=$1 AND user_id=$2`, [parseInt(req.params.id, 10), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// AI-generate a prioritized task list for today based on pipeline state
+app.post('/tasks/generate-ai', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const anthropic = getAnthropic();
+    if (!anthropic) return res.status(503).json({ error: 'AI not configured' });
+
+    // Gather pipeline context
+    const [hotLeads, proposals, overdue, recentWins] = await Promise.all([
+      pool.query(`
+        SELECT l.id, l.company, l.status, l.category, l.fleet_size, l.contact_name, l.followup_due_at,
+               COUNT(et.id) FILTER (WHERE et.opened_at > NOW() - INTERVAL '48 hours') AS recent_opens
+        FROM leads l
+        LEFT JOIN email_tracking et ON et.lead_id = l.id AND et.user_id = l.user_id
+        WHERE l.user_id = $1 AND l.status NOT IN ('won','lost','cold')
+        GROUP BY l.id ORDER BY recent_opens DESC NULLS LAST, l.followup_due_at ASC NULLS LAST LIMIT 10
+      `, [uid]),
+      pool.query(`
+        SELECT p.id, p.title, l.company, l.id AS lead_id, p.view_count, p.last_viewed_at, p.created_at
+        FROM proposals p JOIN leads l ON l.id=p.lead_id
+        WHERE p.user_id=$1 AND p.status='sent'
+        ORDER BY p.last_viewed_at DESC NULLS LAST LIMIT 5
+      `, [uid]),
+      pool.query(`
+        SELECT l.id, l.company, l.status, l.followup_due_at, l.category
+        FROM leads l WHERE l.user_id=$1 AND l.followup_due_at < NOW()
+          AND l.status NOT IN ('won','lost','cold') LIMIT 5
+      `, [uid]),
+      pool.query(`
+        SELECT l.id, l.company FROM leads l WHERE l.user_id=$1 AND l.status='won'
+          AND l.updated_at > NOW() - INTERVAL '7 days' LIMIT 3
+      `, [uid]),
+    ]);
+
+    const context = {
+      hotLeads: hotLeads.rows.map(l => `${l.company} (${l.status}, ${l.category}${l.recent_opens > 0 ? `, ${l.recent_opens} opens` : ''})`),
+      sentProposals: proposals.rows.map(p => `${p.company}: "${p.title}" sent ${Math.round((Date.now() - new Date(p.created_at).getTime()) / 86400000)}d ago, viewed ${p.view_count}x`),
+      overdueFollowups: overdue.rows.map(l => l.company),
+      recentWins: recentWins.rows.map(l => l.company),
+    };
+
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 600,
+      messages: [{
+        role: 'user',
+        content: `You are a sales manager for a vehicle wrap shop. Generate exactly 5-7 specific, actionable tasks for today (${today}).
+
+Pipeline state:
+- Hot leads (recent activity): ${context.hotLeads.join('; ') || 'none'}
+- Sent proposals awaiting response: ${context.sentProposals.join('; ') || 'none'}
+- Overdue follow-ups: ${context.overdueFollowups.join(', ') || 'none'}
+- Recent wins (need project kickoff): ${context.recentWins.join(', ') || 'none'}
+
+Return ONLY a JSON array, no markdown. Each item: { "title": "...", "type": "call|email|follow_up|meeting|admin", "priority": "high|normal|low", "lead_company": "company name or null", "notes": "brief why" }
+
+Make tasks specific (use company names). Prioritize by impact. Max 7 tasks.`,
+      }],
+    });
+
+    const raw = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : '[]';
+    let aiTasks = [];
+    try {
+      const parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, ''));
+      aiTasks = Array.isArray(parsed) ? parsed.slice(0, 7) : [];
+    } catch { aiTasks = []; }
+
+    // Find lead_ids for the lead companies mentioned
+    const leadCompanies = aiTasks.map(t => t.lead_company).filter(Boolean);
+    let companyToId = {};
+    if (leadCompanies.length) {
+      const { rows: matchedLeads } = await pool.query(
+        `SELECT id, company FROM leads WHERE user_id=$1 AND company=ANY($2)`,
+        [uid, leadCompanies]
+      );
+      matchedLeads.forEach(l => { companyToId[l.company] = l.id; });
+    }
+
+    // Insert all AI tasks
+    const today2 = new Date().toISOString().split('T')[0];
+    const insertedTasks = await Promise.all(aiTasks.map(async (t) => {
+      const leadId = t.lead_company ? companyToId[t.lead_company] || null : null;
+      const { rows } = await pool.query(
+        `INSERT INTO tasks (user_id, lead_id, title, notes, type, due_date, priority)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [uid, leadId, t.title, t.notes || null, t.type || 'manual', today2, t.priority || 'normal']
+      );
+      return { ...rows[0], lead_company: t.lead_company };
+    }));
+
+    res.json({ ok: true, tasks: insertedTasks, generated: insertedTasks.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Project Milestone Tracker ─────────────────────────────────────────────────

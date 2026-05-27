@@ -8,6 +8,12 @@ const CHANGELOG: Array<{
 }> = [
   {
     date: 'May 2026',
+    tag: 'new',
+    title: 'Daily Task Queue with AI Generation',
+    body: 'Mission now has a "Today\'s Tasks" card — an AI-powered daily to-do list built from your actual pipeline state. Click "AI Tasks" and Claude analyzes your hot leads, overdue follow-ups, sent proposals, and recent wins to generate 5-7 specific, prioritized action items. Add manual tasks, complete with one click, and see everything done today at a glance.',
+  },
+  {
+    date: 'May 2026',
     tag: 'improved',
     title: 'AI Personalized Broadcast Email',
     body: 'Toggle "AI Personalize" when sending a broadcast email and Claude generates a unique opening sentence for each recipient — referencing their specific fleet size, city, and business context. Preview personalized versions for the first 3 leads before sending to the full list.',

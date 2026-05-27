@@ -53,6 +53,7 @@ export default defineConfig({
       '/inbound-leads':     API,
       '/case-studies':      API,
       '/milestones':        API,
+      '/tasks':             API,
     },
   },
 });

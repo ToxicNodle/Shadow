@@ -1321,4 +1321,35 @@ export const api = {
 
   deleteMilestone: (milestoneId: number) =>
     authFetch<{ ok: boolean }>(`/milestones/${milestoneId}`, { method: 'DELETE' }),
+
+  // Daily Task Queue
+  getTasks: () =>
+    authFetch<{
+      ok: boolean;
+      tasks: Array<{
+        id: number; user_id: string; lead_id: number | null; title: string;
+        notes: string | null; type: string; completed: boolean; completed_at: string | null;
+        due_date: string | null; due_time: string | null; priority: string;
+        created_at: string; lead_company: string | null; lead_status: string | null; lead_category: string | null;
+      }>;
+      completedToday: Array<{ id: number; title: string; lead_company: string | null; completed_at: string }>;
+    }>('/tasks'),
+
+  createTask: (data: { title: string; notes?: string; type?: string; lead_id?: number; due_date?: string; due_time?: string; priority?: string }) =>
+    authFetch<{ ok: boolean; task: { id: number; title: string; type: string; priority: string } }>('/tasks', {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+
+  updateTask: (id: number, data: { completed?: boolean; title?: string; notes?: string; due_date?: string; priority?: string }) =>
+    authFetch<{ ok: boolean; task: { id: number; completed: boolean } }>(`/tasks/${id}`, {
+      method: 'PATCH', body: JSON.stringify(data),
+    }),
+
+  deleteTask: (id: number) =>
+    authFetch<{ ok: boolean }>(`/tasks/${id}`, { method: 'DELETE' }),
+
+  generateAITasks: () =>
+    authFetch<{ ok: boolean; tasks: Array<{ id: number; title: string; type: string; priority: string; lead_company: string | null; notes: string | null }>; generated: number }>(
+      '/tasks/generate-ai', { method: 'POST' }
+    ),
 };
