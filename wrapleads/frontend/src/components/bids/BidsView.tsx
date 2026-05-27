@@ -797,12 +797,214 @@ function GCDirectory() {
   );
 }
 
+// ── Bid Email Template Library ────────────────────────────────────────────────
+const BID_EMAIL_TEMPLATES = [
+  {
+    id: 'submission_confirm',
+    label: 'Bid Submission Confirmation',
+    scenario: 'Send immediately after submitting a bid',
+    subject: 'Wrap Bid Submitted — [Project Name]',
+    body: `Hi [GC Name],
+
+Just wanted to confirm that we've submitted our bid for [Project Name]. Our proposal covers full fleet graphics for [vehicle count] units, including:
+
+• Premium 3M or Avery vinyl — 7-year outdoor durability
+• Installation within [X] business days of award
+• Warranty covering edge lift, color fade, and adhesion failure
+
+Our total bid is [amount]. We've attached our portfolio of similar fleet projects for your review.
+
+Please don't hesitate to reach out with any questions. We're local, fully insured, and can start immediately.
+
+Best,
+[Your Name]
+[Shop Name] | [Phone]`,
+  },
+  {
+    id: 'followup_3day',
+    label: '3-Day Follow-up',
+    scenario: 'Follow up 3 days after bid submission with no response',
+    subject: 'Following Up — [Project Name] Wrap Bid',
+    body: `Hi [GC Name],
+
+I wanted to follow up on the bid we submitted for [Project Name] earlier this week.
+
+We're very interested in this project and have capacity to start immediately upon award. If you have any questions about our process, materials, or pricing, I'd be happy to jump on a quick call.
+
+We've done similar work for [reference company] and can share that portfolio if helpful.
+
+Best,
+[Your Name]
+[Phone]`,
+  },
+  {
+    id: 'award_congrats',
+    label: 'Award Acceptance',
+    scenario: 'Respond when you win the bid',
+    subject: 'Re: [Project Name] — Excited to Get Started',
+    body: `Hi [GC Name],
+
+Thank you for selecting [Shop Name] for [Project Name]. We're excited to get started.
+
+Here's what happens next:
+1. We'll send a formal contract and deposit invoice within 24 hours
+2. Once deposit is received, we'll schedule the pre-install vehicle inspection
+3. Installation will begin on [date] as discussed
+
+Please confirm the primary contact for scheduling and any special site access requirements.
+
+Looking forward to a great project together.
+
+[Your Name]
+[Shop Name] | [Phone]`,
+  },
+  {
+    id: 'lost_bid_followup',
+    label: 'Lost Bid — Stay in Touch',
+    scenario: 'Professional response after losing to a competitor',
+    subject: 'Re: [Project Name] — Best of Luck',
+    body: `Hi [GC Name],
+
+Thank you for letting us know. We understand and appreciate you taking the time to respond.
+
+We'd love to be considered for future projects — we're continuously adding capacity and have been refining our fleet wrap process. If you ever need a second opinion, a rush install, or a backup vendor, please keep us in mind.
+
+I'll stay in touch. Congrats on the project moving forward.
+
+[Your Name]
+[Shop Name] | [Phone]`,
+  },
+  {
+    id: 'clarification',
+    label: 'Request for Clarification',
+    scenario: 'Ask questions before submitting or after receiving specs',
+    subject: '[Project Name] — A Few Questions Before We Finalize',
+    body: `Hi [GC Name],
+
+Thank you for the opportunity to bid on [Project Name]. Before we finalize our numbers, I had a few quick questions:
+
+1. What's the expected delivery timeline — is there a hard installation deadline?
+2. Will vehicles be available for pre-install inspection, or do we work from specs only?
+3. Is there a preferred vinyl brand or color system specified?
+4. Are there any site access restrictions at [location]?
+
+We want to make sure our bid is accurate and our crew is set up for success. Should take just a few minutes to connect if easier by phone — [Phone].
+
+Thanks,
+[Your Name]`,
+  },
+  {
+    id: 'price_negotiation',
+    label: 'Price Challenge Response',
+    scenario: 'GC says your price is too high',
+    subject: 'Re: [Project Name] — Let\'s Talk Options',
+    body: `Hi [GC Name],
+
+I appreciate your candor. I'd like to make this work.
+
+A few options to bring the number down while protecting quality:
+
+Option A — Same quality, phased timeline (+30 days): [reduced price]
+Option B — Reduce vehicle count to highest-priority units first: [per-unit price × smaller count]
+Option C — Downgrade to 5-year vinyl (vs. our standard 7-year): [reduced price, still fully warranted]
+
+We won't compromise on installation quality or materials below a certain threshold — your fleet is out there representing [their company] every day.
+
+Happy to walk through any of these on a quick call. When works for you?
+
+[Your Name] | [Phone]`,
+  },
+];
+
+function BidEmailTemplates() {
+  const [activeId, setActiveId] = useState<string>(BID_EMAIL_TEMPLATES[0].id);
+  const [copied, setCopied] = useState<'subject' | 'body' | null>(null);
+
+  const template = BID_EMAIL_TEMPLATES.find((t) => t.id === activeId)!;
+
+  function copy(part: 'subject' | 'body') {
+    navigator.clipboard.writeText(part === 'subject' ? template.subject : template.body);
+    setCopied(part);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  return (
+    <div style={{ padding: '16px 0', display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      {/* Template list */}
+      <div style={{ width: 220, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 6 }}>
+          Templates
+        </div>
+        {BID_EMAIL_TEMPLATES.map((t) => (
+          <button
+            key={t.id}
+            className="btn"
+            style={{
+              textAlign: 'left', fontSize: 12, padding: '8px 12px',
+              background: activeId === t.id ? 'rgba(244,85,28,.1)' : undefined,
+              borderColor: activeId === t.id ? 'rgba(244,85,28,.3)' : undefined,
+              color: activeId === t.id ? 'var(--accent)' : undefined,
+            }}
+            onClick={() => setActiveId(t.id)}
+          >
+            <div style={{ fontWeight: 600 }}>{t.label}</div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2, fontWeight: 400 }}>{t.scenario}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Template preview */}
+      <div style={{ flex: 1, minWidth: 280 }}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 4 }}>
+            Use when: {template.scenario}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+            <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>
+              <span style={{ color: 'var(--text-faint)', fontSize: 10, marginRight: 6 }}>Subject:</span>
+              {template.subject}
+            </div>
+            <button
+              className="btn"
+              style={{ fontSize: 10, padding: '3px 10px', flexShrink: 0 }}
+              onClick={() => copy('subject')}
+            >
+              {copied === 'subject' ? '✓ Copied' : 'Copy'}
+            </button>
+          </div>
+        </div>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)' }}>
+              Email Body
+            </div>
+            <button className="btn btn-primary" style={{ fontSize: 10 }} onClick={() => copy('body')}>
+              {copied === 'body' ? '✓ Copied!' : 'Copy Email →'}
+            </button>
+          </div>
+          <pre style={{
+            background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8,
+            padding: 14, fontSize: 11.5, color: 'var(--text)', lineHeight: 1.7,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
+            margin: 0, maxHeight: 420, overflowY: 'auto',
+          }}>
+            {template.body}
+          </pre>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 8 }}>
+            Replace <code style={{ background: 'var(--bg-elev-2)', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>[brackets]</code> with your specific project details before sending.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main BidsView ─────────────────────────────────────────────────────────────
 
 export default function BidsView() {
   const qc = useQueryClient();
   const [modalBid, setModalBid] = useState<Bid | null | 'new'>(null);
-  const [tab, setTab] = useState<'board' | 'calendar' | 'guide' | 'gcs'>('board');
+  const [tab, setTab] = useState<'board' | 'calendar' | 'guide' | 'gcs' | 'templates'>('board');
 
   const { data, isLoading } = useQuery({
     queryKey: ['bids'],
@@ -945,6 +1147,9 @@ export default function BidsView() {
         <button className={`bids-tab${tab === 'guide' ? ' active' : ''}`} onClick={() => setTab('guide')}>
           Where to Find Bids
         </button>
+        <button className={`bids-tab${tab === 'templates' ? ' active' : ''}`} onClick={() => setTab('templates')}>
+          ✉ Email Templates
+        </button>
       </div>
 
       {tab === 'calendar' ? (
@@ -958,6 +1163,10 @@ export default function BidsView() {
         <GCDirectory />
       ) : tab === 'guide' ? (
         <PlatformGuide />
+      ) : tab === 'templates' ? (
+        <div style={{ padding: '0 16px' }}>
+          <BidEmailTemplates />
+        </div>
       ) : isLoading ? (
         <div className="pv-loading">
           <span className="spinner spinner-lg" />
