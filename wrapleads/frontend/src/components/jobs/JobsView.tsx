@@ -362,14 +362,26 @@ function JobModal({ job, onClose }: JobModalProps) {
     install_date: isNew ? new Date().toISOString().split('T')[0] : (job as InstalledJob).install_date.split('T')[0],
     life_years: isNew ? 5 : (job as InstalledJob).life_years,
     notes: isNew ? '' : ((job as InstalledJob).notes ?? ''),
+    job_revenue: isNew ? '' : String((job as InstalledJob).job_revenue ?? ''),
+    material_cost: isNew ? '' : String((job as InstalledJob).material_cost ?? ''),
+    labor_hours: isNew ? '' : String((job as InstalledJob).labor_hours ?? ''),
   });
 
+  function formPayload() {
+    return {
+      ...form,
+      job_revenue: form.job_revenue ? Number(form.job_revenue) : 0,
+      material_cost: form.material_cost ? Number(form.material_cost) : 0,
+      labor_hours: form.labor_hours ? Number(form.labor_hours) : 0,
+    };
+  }
+
   const createMut = useMutation({
-    mutationFn: () => api.createJob(form),
+    mutationFn: () => api.createJob(formPayload()),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); onClose(); },
   });
   const updateMut = useMutation({
-    mutationFn: () => api.updateJob((job as InstalledJob).id, form),
+    mutationFn: () => api.updateJob((job as InstalledJob).id, formPayload()),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); onClose(); },
   });
   const deleteMut = useMutation({
@@ -466,6 +478,32 @@ function JobModal({ job, onClose }: JobModalProps) {
           <div className="field-group">
             <label className="field-label">Notes</label>
             <textarea className="input" rows={2} {...f('notes')} placeholder="Any notes about the job…" />
+          </div>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 2 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 10 }}>
+              Margin Tracking (optional)
+            </div>
+            <div className="field-row">
+              <div className="field-group">
+                <label className="field-label">Job Revenue ($)</label>
+                <input className="input" type="number" min={0} step={100} {...f('job_revenue')} placeholder="0" />
+              </div>
+              <div className="field-group">
+                <label className="field-label">Material Cost ($)</label>
+                <input className="input" type="number" min={0} step={50} {...f('material_cost')} placeholder="0" />
+              </div>
+            </div>
+            {form.job_revenue && form.material_cost && Number(form.job_revenue) > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: -4 }}>
+                Gross margin: <strong style={{ color: ((Number(form.job_revenue) - Number(form.material_cost)) / Number(form.job_revenue)) >= 0.4 ? '#22c55e' : '#f59e0b' }}>
+                  {Math.round(((Number(form.job_revenue) - Number(form.material_cost)) / Number(form.job_revenue)) * 100)}%
+                </strong> · ${(Number(form.job_revenue) - Number(form.material_cost)).toLocaleString()} gross profit
+              </div>
+            )}
+            <div className="field-group" style={{ marginTop: 10 }}>
+              <label className="field-label">Labor Hours (optional)</label>
+              <input className="input" type="number" min={0} step={0.5} {...f('labor_hours')} placeholder="0" />
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
             {!isNew && (

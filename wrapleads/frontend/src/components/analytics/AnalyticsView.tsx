@@ -1385,6 +1385,136 @@ function MarketPenetrationCard() {
   );
 }
 
+// ── Material Margin Dashboard ─────────────────────────────────────────────────
+function MarginDashboardCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['margin-analytics'],
+    queryFn: () => api.getMarginAnalytics(),
+    staleTime: 10 * 60_000,
+  });
+
+  const CAT_LABELS: Record<string, string> = {
+    fleet: 'Fleet', design: 'Design', construction: 'Construction',
+    dinoc: 'DI-NOC', reatec: 'Reatec', colorchange: 'Color Change',
+    wallgraphics: 'Wall Graphics', gc_referral: 'GC Referral', racing: 'Racing',
+  };
+
+  function fmtDollar(n: number): string {
+    if (!n && n !== 0) return '—';
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+    return `$${Math.round(n)}`;
+  }
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Material Margin</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      </div>
+    );
+  }
+
+  if (!data?.hasData) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Material Margin Dashboard</div>
+        <div style={{ padding: '20px 0', textAlign: 'center' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 6 }}>No margin data yet</div>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+            Add Revenue and Material Cost to your completed jobs to see gross margin by category.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const { byCategory, totals, bestMarginJobs, worstMarginJobs } = data;
+  const maxProfit = Math.max(...byCategory.map((c) => c.total_gross_profit), 1);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="an-card-title">Material Margin Dashboard</div>
+
+      {/* Summary stats row */}
+      {totals && (
+        <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+          {[
+            { label: 'Total Revenue', value: fmtDollar(totals.total_revenue), color: '#4d8af5' },
+            { label: 'Total Material', value: fmtDollar(totals.total_material), color: 'var(--text-muted)' },
+            { label: 'Gross Profit', value: fmtDollar(totals.total_gross_profit), color: '#22c55e' },
+            { label: 'Avg Margin', value: totals.avg_margin_pct != null ? `${totals.avg_margin_pct}%` : '—', color: (totals.avg_margin_pct ?? 0) >= 40 ? '#22c55e' : '#f59e0b' },
+            ...(totals.avg_revenue_per_hour ? [{ label: '$/Hour', value: `$${Math.round(totals.avg_revenue_per_hour)}`, color: 'var(--accent)' }] : []),
+          ].map((s) => (
+            <div key={s.label} style={{ flex: 1, minWidth: 100 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: '-1px', color: s.color, fontFamily: 'var(--mono)' }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* By category bars */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+        {byCategory.map((c) => {
+          const margin = c.avg_margin_pct ?? 0;
+          const barColor = margin >= 50 ? '#22c55e' : margin >= 35 ? '#f59e0b' : '#f4551c';
+          return (
+            <div key={c.wrap_category}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ color: 'var(--text)', fontWeight: 600 }}>{CAT_LABELS[c.wrap_category] ?? c.wrap_category}</span>
+                  <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{c.job_count} job{c.job_count !== 1 ? 's' : ''}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 12, fontFamily: 'var(--mono)', fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>{fmtDollar(c.avg_revenue_per_vehicle)}/vehicle</span>
+                  <span style={{ color: barColor, fontWeight: 700 }}>{margin > 0 ? `${margin}%` : '—'}</span>
+                  <span style={{ color: '#22c55e' }}>{fmtDollar(c.total_gross_profit)}</span>
+                </div>
+              </div>
+              <div style={{ height: 5, background: 'var(--border)', borderRadius: 99 }}>
+                <div style={{ height: '100%', width: `${(c.total_gross_profit / maxProfit) * 100}%`, background: barColor, borderRadius: 99, transition: 'width 0.4s' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Best / worst margin jobs */}
+      {(bestMarginJobs.length > 0 || worstMarginJobs.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          {bestMarginJobs.length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#22c55e', marginBottom: 8 }}>Highest Margin Jobs</div>
+              {bestMarginJobs.map((j, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 5 }}>
+                  <span style={{ color: 'var(--text)', fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.company}</span>
+                  <span style={{ color: '#22c55e', fontWeight: 700, fontFamily: 'var(--mono)', flexShrink: 0, marginLeft: 8 }}>{j.margin_pct}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {worstMarginJobs.length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#f4551c', marginBottom: 8 }}>Lowest Margin Jobs</div>
+              {worstMarginJobs.map((j, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 5 }}>
+                  <span style={{ color: 'var(--text)', fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.company}</span>
+                  <span style={{ color: '#f4551c', fontWeight: 700, fontFamily: 'var(--mono)', flexShrink: 0, marginLeft: 8 }}>{j.margin_pct}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-faint)' }}>
+        Gross margin = (Revenue − Material Cost) / Revenue · Add labor hours to unlock $/hour metric
+      </div>
+    </div>
+  );
+}
+
 // ── Lead Cohort Analysis ──────────────────────────────────────────────────────
 function CohortAnalysisCard() {
   const { data, isLoading } = useQuery({
@@ -2198,6 +2328,9 @@ export default function AnalyticsView() {
 
         {/* ── Revenue Attribution ── */}
         <RevenueAttributionCard />
+
+        {/* ── Material Margin Dashboard ── */}
+        <MarginDashboardCard />
 
         {/* ── Lead Cohort Analysis ── */}
         <CohortAnalysisCard />

@@ -669,6 +669,15 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create inbound_fleet_requests table:', e.message);
   }
+
+  // Material margin tracking on installed_jobs
+  try {
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS material_cost NUMERIC(10,2) DEFAULT 0`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS job_revenue NUMERIC(10,2) DEFAULT 0`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS labor_hours NUMERIC(6,1) DEFAULT 0`);
+  } catch (e) {
+    console.warn('[migrate] Could not add margin columns to installed_jobs:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -6158,11 +6167,12 @@ app.get('/jobs/aging-map', authMiddleware, async (req, res) => {
 
 app.post('/jobs', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
-  const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours } = req.body;
   const { rows } = await pool.query(
-    `INSERT INTO installed_jobs (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null]
+    `INSERT INTO installed_jobs (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+    [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null,
+     material_cost || 0, job_revenue || 0, labor_hours || 0]
   );
   res.json({ job: rows[0] });
 });
@@ -6170,11 +6180,13 @@ app.post('/jobs', authMiddleware, async (req, res) => {
 app.put('/jobs/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const { id } = req.params;
-  const { company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours } = req.body;
   const { rows } = await pool.query(
-    `UPDATE installed_jobs SET company=$1,vehicle_type=$2,vehicle_count=$3,wrap_category=$4,material=$5,install_date=$6,life_years=$7,notes=$8,updated_at=NOW()
-     WHERE id=$9 AND user_id=$10 RETURNING *`,
-    [company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, id, uid]
+    `UPDATE installed_jobs SET company=$1,vehicle_type=$2,vehicle_count=$3,wrap_category=$4,material=$5,install_date=$6,life_years=$7,notes=$8,
+     material_cost=$9,job_revenue=$10,labor_hours=$11,updated_at=NOW()
+     WHERE id=$12 AND user_id=$13 RETURNING *`,
+    [company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes,
+     material_cost || 0, job_revenue || 0, labor_hours || 0, id, uid]
   );
   if (!rows.length) return res.status(404).json({ error: 'Not found' });
   res.json({ job: rows[0] });
@@ -10851,6 +10863,81 @@ app.get('/analytics/cohort', authMiddleware, async (req, res) => {
       : 'stable';
 
     res.json({ cohorts, trend, recentRate, priorRate });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/margin — material margin dashboard
+// Gross margin = job_revenue - material_cost per vehicle, per category.
+// Only shows jobs with both revenue and cost > 0 entered.
+app.get('/analytics/margin', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        wrap_category,
+        COUNT(*)::INT                                          AS job_count,
+        SUM(vehicle_count)::INT                                AS total_vehicles,
+        ROUND(AVG(job_revenue))::INT                           AS avg_revenue,
+        ROUND(AVG(material_cost))::INT                         AS avg_material,
+        ROUND(AVG(CASE WHEN job_revenue > 0 THEN (job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100 END), 1)
+                                                               AS avg_margin_pct,
+        ROUND(AVG(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT
+                                                               AS avg_revenue_per_vehicle,
+        ROUND(AVG(CASE WHEN vehicle_count > 0 THEN material_cost / vehicle_count END))::INT
+                                                               AS avg_material_per_vehicle,
+        ROUND(SUM(job_revenue - material_cost))::INT           AS total_gross_profit,
+        MAX(install_date)                                      AS last_job_date
+      FROM installed_jobs
+      WHERE user_id = $1
+        AND job_revenue > 0
+        AND material_cost > 0
+      GROUP BY wrap_category
+      ORDER BY total_gross_profit DESC NULLS LAST
+    `, [uid]);
+
+    // Overall totals
+    const totals = await pool.query(`
+      SELECT
+        COUNT(*)::INT                                          AS job_count,
+        ROUND(SUM(job_revenue))::INT                           AS total_revenue,
+        ROUND(SUM(material_cost))::INT                         AS total_material,
+        ROUND(SUM(job_revenue - material_cost))::INT           AS total_gross_profit,
+        ROUND(AVG(CASE WHEN job_revenue > 0 THEN (job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100 END), 1)
+                                                               AS avg_margin_pct,
+        COUNT(*) FILTER (WHERE labor_hours > 0)::INT           AS jobs_with_labor,
+        ROUND(SUM(labor_hours), 1)                             AS total_labor_hours,
+        ROUND(AVG(CASE WHEN labor_hours > 0 THEN job_revenue / NULLIF(labor_hours, 0) END), 2)
+                                                               AS avg_revenue_per_hour
+      FROM installed_jobs
+      WHERE user_id = $1 AND job_revenue > 0 AND material_cost > 0
+    `, [uid]);
+
+    // Best margin job
+    const { rows: best } = await pool.query(`
+      SELECT company, wrap_category, job_revenue, material_cost, vehicle_count, install_date,
+             ROUND((job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100, 1) AS margin_pct
+      FROM installed_jobs
+      WHERE user_id = $1 AND job_revenue > 0 AND material_cost > 0
+      ORDER BY margin_pct DESC NULLS LAST
+      LIMIT 3
+    `, [uid]);
+
+    const { rows: worst } = await pool.query(`
+      SELECT company, wrap_category, job_revenue, material_cost, vehicle_count, install_date,
+             ROUND((job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100, 1) AS margin_pct
+      FROM installed_jobs
+      WHERE user_id = $1 AND job_revenue > 0 AND material_cost > 0
+      ORDER BY margin_pct ASC NULLS LAST
+      LIMIT 3
+    `, [uid]);
+
+    res.json({
+      byCategory: rows,
+      totals: totals.rows[0] ?? null,
+      bestMarginJobs: best,
+      worstMarginJobs: worst,
+      hasData: totals.rows[0]?.job_count > 0,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

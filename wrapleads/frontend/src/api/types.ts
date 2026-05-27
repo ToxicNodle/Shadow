@@ -338,6 +338,9 @@ export interface InstalledJob {
   install_date: string;
   life_years: number;
   notes?: string | null;
+  material_cost?: number | null;
+  job_revenue?: number | null;
+  labor_hours?: number | null;
   created_at: string;
   updated_at: string;
   days_until_expiry?: number;

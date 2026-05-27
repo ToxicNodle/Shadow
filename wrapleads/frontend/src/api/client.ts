@@ -993,4 +993,23 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ lead_ids: leadIds }),
     }),
+
+  // Material Margin Analytics
+  getMarginAnalytics: () =>
+    authFetch<{
+      byCategory: Array<{
+        wrap_category: string; job_count: number; total_vehicles: number;
+        avg_revenue: number; avg_material: number; avg_margin_pct: number | null;
+        avg_revenue_per_vehicle: number; avg_material_per_vehicle: number;
+        total_gross_profit: number; last_job_date: string;
+      }>;
+      totals: {
+        job_count: number; total_revenue: number; total_material: number;
+        total_gross_profit: number; avg_margin_pct: number | null;
+        jobs_with_labor: number; total_labor_hours: number; avg_revenue_per_hour: number | null;
+      } | null;
+      bestMarginJobs: Array<{ company: string; wrap_category: string; job_revenue: number; material_cost: number; vehicle_count: number; install_date: string; margin_pct: number }>;
+      worstMarginJobs: Array<{ company: string; wrap_category: string; job_revenue: number; material_cost: number; vehicle_count: number; install_date: string; margin_pct: number }>;
+      hasData: boolean;
+    }>('/analytics/margin'),
 };
