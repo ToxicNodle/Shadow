@@ -12948,6 +12948,210 @@ app.get('/analytics/margin', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Warm Reference Engine ─────────────────────────────────────────────────────
+// For any lead, surface up to 3 WON customers in the same state or category
+// that a sales rep can name-drop as social proof during outreach.
+app.get('/leads/:id/warm-references', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: target } = await pool.query(
+      `SELECT state, category, company FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!target.length) return res.status(404).json({ error: 'Lead not found' });
+    const { state, category, company } = target[0];
+
+    const { rows: refs } = await pool.query(`
+      SELECT id, company, category, state, city,
+             job_revenue,
+             EXTRACT(EPOCH FROM (NOW() - updated_at))::int / 86400 AS days_ago
+      FROM leads
+      WHERE user_id=$1
+        AND status='won'
+        AND id != $2
+        AND LOWER(company) != LOWER($5)
+        AND (state=$3 OR category=$4)
+      ORDER BY
+        CASE WHEN state=$3 AND category=$4 THEN 0
+             WHEN state=$3 THEN 1
+             WHEN category=$4 THEN 2
+             ELSE 3 END,
+        updated_at DESC
+      LIMIT 3
+    `, [uid, leadId, state, category, company]);
+
+    res.json({ references: refs, targetState: state, targetCategory: category });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Pipeline Doctor ───────────────────────────────────────────────────────────
+// AI diagnosis of the biggest conversion bottleneck in the pipeline.
+// Returns stage-by-stage conversion rates, the worst chokepoint, and 3
+// actionable recommendations from Claude Haiku. Cached per user per calendar day.
+app.get('/analytics/pipeline-doctor', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows: trans } = await pool.query(`
+      SELECT
+        COUNT(*)                                                              AS total,
+        COUNT(*) FILTER (WHERE status IN ('contacted','replied','meeting','proposal','won','lost')) AS passed_contacted,
+        COUNT(*) FILTER (WHERE status IN ('replied','meeting','proposal','won','lost'))             AS passed_replied,
+        COUNT(*) FILTER (WHERE status IN ('meeting','proposal','won','lost'))                       AS passed_meeting,
+        COUNT(*) FILTER (WHERE status IN ('proposal','won','lost'))                                AS passed_proposal,
+        COUNT(*) FILTER (WHERE status = 'won')                                                     AS won_total,
+        COUNT(*) FILTER (WHERE status = 'lost')                                                    AS lost_total,
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))/86400)
+              FILTER (WHERE status='won'))::int                               AS avg_days_to_close
+      FROM leads WHERE user_id=$1
+    `, [uid]);
+
+    const { rows: stageCounts } = await pool.query(`
+      SELECT status,
+             COUNT(*)::int AS count,
+             ROUND(AVG(EXTRACT(EPOCH FROM (NOW() - created_at))/86400))::int AS avg_days
+      FROM leads
+      WHERE user_id=$1 AND status NOT IN ('won','lost')
+      GROUP BY status
+    `, [uid]);
+
+    const t = trans[0];
+    const total   = parseInt(t.total)            || 1;
+    const cont    = parseInt(t.passed_contacted) || 0;
+    const replied = parseInt(t.passed_replied)   || 0;
+    const meeting = parseInt(t.passed_meeting)   || 0;
+    const prop    = parseInt(t.passed_proposal)  || 0;
+    const won     = parseInt(t.won_total)        || 0;
+    const lost    = parseInt(t.lost_total)       || 0;
+
+    const rates = {
+      new_to_contacted:      total   > 0 ? Math.round(cont    / total   * 100) : 0,
+      contacted_to_replied:  cont    > 0 ? Math.round(replied / cont    * 100) : 0,
+      replied_to_meeting:    replied > 0 ? Math.round(meeting / replied * 100) : 0,
+      meeting_to_proposal:   meeting > 0 ? Math.round(prop    / meeting * 100) : 0,
+      proposal_to_won:       prop    > 0 ? Math.round(won     / prop    * 100) : 0,
+    };
+
+    const allStageRates = [
+      { stage: 'New → Contacted',      rate: rates.new_to_contacted,     key: 'new_to_contacted'     },
+      { stage: 'Contacted → Replied',  rate: rates.contacted_to_replied,  key: 'contacted_to_replied'  },
+      { stage: 'Replied → Meeting',    rate: rates.replied_to_meeting,    key: 'replied_to_meeting'    },
+      { stage: 'Meeting → Proposal',   rate: rates.meeting_to_proposal,   key: 'meeting_to_proposal'   },
+      { stage: 'Proposal → Won',       rate: rates.proposal_to_won,       key: 'proposal_to_won'       },
+    ].filter(s => s.rate > 0 && s.rate < 100);
+
+    let worstBottleneck = allStageRates.length
+      ? allStageRates.reduce((a, b) => a.rate < b.rate ? a : b)
+      : null;
+
+    let diagnosis = 'Build more pipeline — once you have 10+ leads you\'ll see specific bottleneck patterns.';
+    let recommendations = [];
+    let healthGrade = 'N/A';
+
+    const anthropic = getAnthropic();
+    if (anthropic && total >= 5) {
+      try {
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 700,
+          messages: [{
+            role: 'user',
+            content: `You are a sales pipeline consultant for a vehicle wrap shop. Diagnose this pipeline and give a 3-recommendation action plan.
+
+Metrics:
+- Total leads: ${total} | Won: ${won} | Lost: ${lost}
+- Avg days to close: ${t.avg_days_to_close || '?'}
+- New→Contacted: ${rates.new_to_contacted}%
+- Contacted→Replied: ${rates.contacted_to_replied}%
+- Replied→Meeting: ${rates.replied_to_meeting}%
+- Meeting→Proposal: ${rates.meeting_to_proposal}%
+- Proposal→Won: ${rates.proposal_to_won}%
+${worstBottleneck ? `Worst chokepoint: ${worstBottleneck.stage} at ${worstBottleneck.rate}%` : ''}
+
+Active pipeline: ${stageCounts.map(s => `${s.status}(${s.count}, avg ${s.avg_days}d)`).join(', ')}
+
+Return ONLY JSON: {"diagnosis":"2 sentences","recommendations":["action 1","action 2","action 3"],"health_grade":"A|B|C|D|F"}`
+          }]
+        });
+        const parsed = JSON.parse(msg.content[0].text);
+        diagnosis         = parsed.diagnosis;
+        recommendations   = parsed.recommendations || [];
+        healthGrade       = parsed.health_grade || 'N/A';
+      } catch (_) { /* fall through */ }
+    }
+
+    res.json({
+      rates, stageCounts, wonTotal: won, lostTotal: lost, totalLeads: total,
+      avgDaysToClose: t.avg_days_to_close || 0,
+      worstBottleneck, diagnosis, recommendations, healthGrade,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Territory Intel ───────────────────────────────────────────────────────────
+// Cross-reference FMCSA carriers against the user's existing pipeline to show
+// which states have the most untouched wrap opportunity, ranked by an
+// opportunity score = sweet_spot_carriers × (1 - penetration) × sqrt(avg_fleet).
+app.get('/analytics/territory-intel', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [{ rows: carriersByState }, { rows: existingByState }, { rows: wonStates }] = await Promise.all([
+      pool.query(`
+        SELECT state,
+               COUNT(*)::int                                                          AS total_carriers,
+               SUM(fleet_size)::int                                                   AS total_vehicles,
+               ROUND(AVG(fleet_size))::int                                            AS avg_fleet_size,
+               COUNT(*) FILTER (WHERE fleet_size BETWEEN 25 AND 500)::int            AS sweet_spot_count
+        FROM companies
+        WHERE state IS NOT NULL AND fleet_size > 0
+        GROUP BY state
+        HAVING COUNT(*) >= 30
+        ORDER BY COUNT(*) FILTER (WHERE fleet_size BETWEEN 25 AND 500) DESC
+        LIMIT 25
+      `),
+      pool.query(
+        `SELECT state, COUNT(*)::int AS lead_count FROM leads WHERE user_id=$1 AND state IS NOT NULL GROUP BY state`,
+        [uid]
+      ),
+      pool.query(
+        `SELECT DISTINCT state FROM leads WHERE user_id=$1 AND status='won' AND state IS NOT NULL`,
+        [uid]
+      ),
+    ]);
+
+    const existingMap  = Object.fromEntries(existingByState.map(r => [r.state, r.lead_count]));
+    const wonStateSet  = new Set(wonStates.map(r => r.state));
+
+    const results = carriersByState.map(r => {
+      const alreadyIn    = existingMap[r.state] || 0;
+      const sweetSpot    = r.sweet_spot_count;
+      const penetration  = sweetSpot > 0 ? Math.round(alreadyIn / sweetSpot * 100) : 0;
+      const untouched    = Math.max(0, sweetSpot - alreadyIn);
+      return {
+        state:            r.state,
+        total_carriers:   r.total_carriers,
+        sweet_spot:       sweetSpot,
+        avg_fleet_size:   r.avg_fleet_size,
+        in_pipeline:      alreadyIn,
+        penetration_pct:  Math.min(penetration, 100),
+        untouched,
+        has_won:          wonStateSet.has(r.state),
+        opportunity_score: Math.round(sweetSpot * (1 - Math.min(penetration, 100) / 100) * Math.sqrt(r.avg_fleet_size || 1)),
+      };
+    });
+
+    results.sort((a, b) => b.opportunity_score - a.opportunity_score);
+
+    res.json({ territories: results.slice(0, 12) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Public Demo Call Feature ──────────────────────────────────────────────────
 // Visitors pick a real FMCSA carrier, enter their own phone, and the AI calls
 // THEM (not the carrier) — they experience the call firsthand, first-person.

@@ -9,6 +9,24 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Pipeline Doctor — AI Bottleneck Diagnosis',
+    body: 'Analytics now includes a Pipeline Doctor card that calculates your stage-by-stage conversion rates, pinpoints your single biggest chokepoint, grades your overall pipeline health A–F, and generates 3 specific AI recommendations to fix the leak. Powered by Claude Haiku, refreshed on demand.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Territory Intel — Untouched Opportunity by State',
+    body: 'A new Analytics card ranks every U.S. state by untouched wrap opportunity — sweet-spot carriers (25–500 vehicles) you haven\'t contacted yet, weighted by avg fleet size. Click any state row to launch a pre-filtered Discover search. States where you\'ve already won deals are highlighted in green.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Warm Reference Engine',
+    body: 'Every lead detail now shows a "Social Proof" panel listing up to 3 won customers in the same state or service category. Name-drop these during cold outreach — fleet managers always ask "have you done this before?" Now you have a ready answer with dollar amounts and cities.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Prospect News Intelligence',
     body: 'A background worker now monitors your active pipeline leads for recent company news. When a lead makes headlines — fleet expansion, rebrand, contract win — you get an instant notification and the article is logged to the lead\'s activity timeline. Each lead detail also has a "Company News Intel" panel to check on-demand. Uses Google News RSS, zero cost.',
   },

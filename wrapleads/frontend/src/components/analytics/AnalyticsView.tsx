@@ -4,6 +4,8 @@ import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { CATEGORIES, STATUSES } from '../../api/types';
+import PipelineDoctorCard from './PipelineDoctorCard';
+import TerritoryIntelCard from './TerritoryIntelCard';
 
 function fmtRev(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -2958,6 +2960,9 @@ export default function AnalyticsView() {
 
         <WinPatternCard />
 
+        {/* ── Pipeline Doctor ── */}
+        <PipelineDoctorCard />
+
         {/* ── Pipeline Health Score ── */}
         <PipelineHealthCard />
 
@@ -2975,6 +2980,9 @@ export default function AnalyticsView() {
 
         {/* ── Market Penetration Analysis ── */}
         <MarketPenetrationCard />
+
+        {/* ── Territory Intel ── */}
+        <TerritoryIntelCard />
 
         {/* ── Customer Lifetime Value ── */}
         {topCustomers && topCustomers.length > 0 && (

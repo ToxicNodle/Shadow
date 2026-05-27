@@ -1185,4 +1185,48 @@ export const api = {
       hasHistory: boolean;
       pipelineTotal: number;
     }>('/analytics/revenue-forecast'),
+
+  getWarmReferences: (leadId: number) =>
+    authFetch<{
+      references: Array<{
+        id: number;
+        company: string;
+        category: string;
+        state: string;
+        city: string;
+        job_revenue: number | null;
+        days_ago: number;
+      }>;
+      targetState: string;
+      targetCategory: string;
+    }>(`/leads/${leadId}/warm-references`),
+
+  getPipelineDoctor: () =>
+    authFetch<{
+      rates: Record<string, number>;
+      stageCounts: Array<{ status: string; count: number; avg_days: number }>;
+      wonTotal: number;
+      lostTotal: number;
+      totalLeads: number;
+      avgDaysToClose: number;
+      worstBottleneck: { stage: string; rate: number; key: string } | null;
+      diagnosis: string;
+      recommendations: string[];
+      healthGrade: string;
+    }>('/analytics/pipeline-doctor'),
+
+  getTerritoryIntel: () =>
+    authFetch<{
+      territories: Array<{
+        state: string;
+        total_carriers: number;
+        sweet_spot: number;
+        avg_fleet_size: number;
+        in_pipeline: number;
+        penetration_pct: number;
+        untouched: number;
+        has_won: boolean;
+        opportunity_score: number;
+      }>;
+    }>('/analytics/territory-intel'),
 };

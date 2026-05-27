@@ -669,6 +669,77 @@ function CallScriptPanel({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Warm Reference Engine ─────────────────────────────────────────────────────
+// Surface WON customers you can name-drop when pitching a new lead.
+function WarmReferencesPanel({ lead }: { lead: Lead }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['warm-references', lead.serverId],
+    queryFn: () => api.getWarmReferences(lead.serverId!),
+    enabled: !!lead.serverId,
+    staleTime: 5 * 60_000,
+  });
+
+  if (!lead.serverId || isLoading || !data?.references?.length) return null;
+
+  const CAT_SHORT: Record<string, string> = {
+    fleet: 'Fleet', design: 'Interior', construction: 'Construction',
+    dinoc: 'DI-NOC', reatec: 'Rea Tec', colorchange: 'Color Change',
+    wallgraphics: 'Wall Graphics', gc_referral: 'GC Referral', racing: 'Motorsport',
+  };
+
+  return (
+    <section style={{
+      margin: '12px 0', padding: '10px 14px', borderRadius: 8,
+      background: 'rgba(0,217,126,0.05)', border: '1px solid rgba(0,217,126,0.18)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+        <span style={{ fontSize: 13 }}>🤝</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Social Proof — Drop These References
+        </span>
+      </div>
+      <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        You've won similar accounts. Name-drop these in your pitch — fleet managers ask "have you done this before?"
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {data.references.map((ref) => (
+          <div key={ref.id} style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 8px', borderRadius: 6,
+            background: 'rgba(0,217,126,0.04)', border: '1px solid rgba(0,217,126,0.1)',
+          }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 6, flexShrink: 0,
+              background: 'rgba(0,217,126,0.15)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontWeight: 800, fontSize: 12, color: 'var(--green)',
+            }}>
+              {ref.company[0]?.toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {ref.company}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                {[ref.city, ref.state].filter(Boolean).join(', ')}
+                {ref.category ? ` · ${CAT_SHORT[ref.category] || ref.category}` : ''}
+                {ref.days_ago <= 365 ? ` · ${Math.round(ref.days_ago / 30)}mo ago` : ''}
+              </div>
+            </div>
+            {ref.job_revenue != null && ref.job_revenue > 0 && (
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', flexShrink: 0 }}>
+                ${ref.job_revenue.toLocaleString()}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <p style={{ margin: '8px 0 0', fontSize: 10, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+        "We wrapped {data.references[0]?.company} right here in {data.references[0]?.state} — happy to connect you."
+      </p>
+    </section>
+  );
+}
+
 // ── Prospect News Intelligence ────────────────────────────────────────────────
 function ProspectNewsPanel({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
@@ -2064,6 +2135,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <SimilarWinsPanel lead={local} />}
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
+      {lead.serverId && <WarmReferencesPanel lead={local} />}
       {lead.serverId && <ProspectNewsPanel lead={local} />}
       {lead.serverId && <LeadIntelBriefPanel lead={local} />}
       {lead.serverId && <CompetitiveIntelPanel lead={local} />}
