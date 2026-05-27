@@ -697,6 +697,27 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create email_unsubscribes table:', e.message);
   }
+
+  // Shareable ROI calculator links — pre-filled for a specific prospect
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS roi_links (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        lead_id       BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        token         TEXT NOT NULL UNIQUE,
+        company_name  TEXT,
+        fleet_size    INTEGER,
+        view_count    INTEGER DEFAULT 0,
+        last_viewed   TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_roi_links_token ON roi_links(token)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_roi_links_lead ON roi_links(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create roi_links table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -8456,6 +8477,377 @@ app.delete('/portal-links/:id', authMiddleware, async (req, res) => {
     await pool.query('DELETE FROM portal_links WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shareable ROI Calculator — pre-filled for a specific prospect
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/roi-link', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid lead id' });
+  try {
+    const own = await pool.query('SELECT company, fleet_size FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const { company, fleet_size } = own.rows[0];
+
+    // Upsert — one link per (lead, user) pair
+    const existing = await pool.query(
+      'SELECT token, view_count, last_viewed FROM roi_links WHERE lead_id=$1 AND user_id=$2',
+      [leadId, uid]
+    );
+    if (existing.rows.length) {
+      return res.json({ ok: true, link: existing.rows[0] });
+    }
+
+    const token = require('crypto').randomBytes(20).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO roi_links (user_id, lead_id, token, company_name, fleet_size)
+       VALUES ($1, $2, $3, $4, $5) RETURNING token, view_count, last_viewed`,
+      [uid, leadId, token, company || null, fleet_size || null]
+    );
+    res.json({ ok: true, link: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/roi/:token', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.*, l.company, u.settings_json
+       FROM roi_links r
+       LEFT JOIN leads l ON l.id = r.lead_id
+       LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.token=$1`,
+      [req.params.token]
+    );
+    if (!rows.length) return res.status(404).send('<h1>Link not found or expired.</h1>');
+
+    const link = rows[0];
+    const s = link.settings_json || {};
+    const shopName = s.companyName || 'WrapLeads';
+    const companyName = link.company || link.company_name || 'Your Company';
+    const fleetSize = link.fleet_size || 25;
+
+    // Track view
+    await pool.query(
+      `UPDATE roi_links SET view_count = view_count + 1, last_viewed = NOW() WHERE token=$1`,
+      [req.params.token]
+    ).catch(() => {});
+
+    // HTML: Interactive ROI calculator with pre-filled fleet size
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fleet Wrap ROI Calculator — ${he(shopName)}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      color: #e2e8f0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #1e293b;
+      border-radius: 16px;
+      border: 1px solid #334155;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    h1 {
+      font-size: 32px;
+      margin-bottom: 8px;
+      color: #f1f5f9;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: #94a3b8;
+      margin-bottom: 32px;
+    }
+    .calculator {
+      display: grid;
+      gap: 24px;
+    }
+    .input-group {
+      display: grid;
+      gap: 8px;
+    }
+    label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #cbd5e1;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    input {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #f1f5f9;
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+    input:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .results {
+      background: #0f172a;
+      border-radius: 12px;
+      padding: 24px;
+      border: 1px solid #334155;
+      margin-top: 24px;
+    }
+    .result-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #334155;
+    }
+    .result-item:last-child {
+      border-bottom: none;
+    }
+    .result-label {
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    .result-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+    .result-value.highlight {
+      color: #10b981;
+      font-size: 24px;
+    }
+    .benchmarks {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #334155;
+    }
+    .benchmark-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .benchmark-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .benchmark-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .benchmark-name {
+      font-size: 11px;
+      color: #cbd5e1;
+      min-width: 100px;
+    }
+    .bar {
+      flex: 1;
+      height: 24px;
+      background: #334155;
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      background: #3b82f6;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 6px;
+    }
+    .bar-fill.wrap {
+      background: #10b981;
+    }
+    .bar-text {
+      font-size: 10px;
+      color: #fff;
+      font-weight: 600;
+    }
+    .cta {
+      margin-top: 32px;
+      padding: 20px;
+      background: #1e3a8a;
+      border: 1px solid #3b82f6;
+      border-radius: 12px;
+      text-align: center;
+    }
+    .cta p {
+      font-size: 14px;
+      margin-bottom: 12px;
+      color: #dbeafe;
+    }
+    .btn {
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .btn:hover {
+      background: #2563eb;
+      transform: translateY(-1px);
+    }
+    .footer {
+      margin-top: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Fleet Wrap ROI Calculator</h1>
+    <div class="subtitle">Calculate the advertising value of your vehicle fleet wraps</div>
+
+    <div class="calculator">
+      <div class="row">
+        <div class="input-group">
+          <label>Fleet Size (# vehicles)</label>
+          <input type="number" id="fleet" value="${fleetSize}" min="1" step="1">
+        </div>
+        <div class="input-group">
+          <label>Cost Per Vehicle ($)</label>
+          <input type="number" id="costPerVehicle" value="3500" min="100" step="100">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="input-group">
+          <label>Miles Per Year</label>
+          <input type="number" id="milesPerYear" value="36500" min="1000" step="1000">
+        </div>
+        <div class="input-group">
+          <label>Lifespan (years)</label>
+          <input type="number" id="lifespan" value="5" min="1" step="0.5">
+        </div>
+      </div>
+    </div>
+
+    <div class="results" id="results"></div>
+
+    <div class="cta">
+      <p>Want to get started on your fleet wrap?</p>
+      <button class="btn" onclick="window.location.href='mailto:${he(s.senderEmail || 'outreach@wrapleads.io')}?subject=Fleet%20Wrap%20ROI&body=I%20was%20looking%20at%20the%20ROI%20calculator%20for%20${he(companyName).replace(/\\s+/g,'%20')}'">Get a Quote</button>
+    </div>
+
+    <div class="footer">
+      <p>Powered by <strong>${he(shopName)}</strong> · Fleet Wrap Specialists</p>
+    </div>
+  </div>
+
+  <script>
+    const BENCHMARKS = [
+      { name: 'Billboards', cpm: 5.21 },
+      { name: 'Radio', cpm: 8.40 },
+      { name: 'Direct Mail', cpm: 30.00 },
+      { name: 'TV (local)', cpm: 22.00 },
+      { name: 'Digital Display', cpm: 3.55 },
+    ];
+
+    function update() {
+      const fleet = parseInt(document.getElementById('fleet').value) || 1;
+      const costPerVehicle = parseFloat(document.getElementById('costPerVehicle').value) || 1;
+      const milesPerYear = parseFloat(document.getElementById('milesPerYear').value) || 1;
+      const lifespan = parseFloat(document.getElementById('lifespan').value) || 1;
+
+      const totalCost = fleet * costPerVehicle;
+      const annualImpressions = fleet * milesPerYear * 600; // 600 impressions/mile
+      const lifetimeImpressions = annualImpressions * lifespan;
+      const effectiveCPM = lifetimeImpressions > 0 ? (totalCost / lifetimeImpressions) * 1000 : 0;
+      const monthlyImpressions = Math.round(annualImpressions / 12);
+
+      const allBench = [
+        { name: 'Your Fleet Wraps', cpm: effectiveCPM, isWrap: true },
+        ...BENCHMARKS,
+      ].sort((a, b) => a.cpm - b.cpm);
+
+      const maxCPM = Math.max(...allBench.map(b => b.cpm), 1);
+
+      const html = \`
+        <div class="result-item">
+          <span class="result-label">Total Investment</span>
+          <span class="result-value">\\$\${totalCost.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Monthly Impressions</span>
+          <span class="result-value">\${monthlyImpressions.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Lifetime Impressions</span>
+          <span class="result-value">\${lifetimeImpressions.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Effective CPM</span>
+          <span class="result-value highlight">\\$\${effectiveCPM.toFixed(2)}</span>
+        </div>
+
+        <div class="benchmarks">
+          <div class="benchmark-title">CPM Comparison</div>
+          <div class="benchmark-bars">
+            \${allBench.map(b => {
+              const pct = (b.cpm / maxCPM) * 100;
+              return \`
+                <div class="benchmark-bar">
+                  <div class="benchmark-name">\${b.name}</div>
+                  <div class="bar">
+                    <div class="bar-fill \${b.isWrap ? 'wrap' : ''}" style="width: \${pct}%">
+                      <span class="bar-text">\\$\${b.cpm.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              \`;
+            }).join('')}
+          </div>
+        </div>
+      \`;
+
+      document.getElementById('results').innerHTML = html;
+    }
+
+    document.querySelectorAll('input').forEach(el => {
+      el.addEventListener('change', update);
+      el.addEventListener('input', update);
+    });
+
+    update();
+  </script>
+</body>
+</html>`;
+
+    res.set('Content-Type', 'text/html; charset=utf-8').send(html);
+  } catch (e) {
+    res.status(500).send('<h1>Error loading ROI calculator.</h1>');
+  }
 });
 
 // Push an AR wrap concept to a lead's client portal and return a shareable approval link.

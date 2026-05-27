@@ -1027,4 +1027,11 @@ export const api = {
     authFetch<{ unsubscribed: boolean; email: string | null; unsubscribed_at: string | null }>(
       `/leads/${leadId}/unsubscribe-status`
     ),
+
+  // Shareable ROI calculator link pre-filled with prospect data
+  getOrCreateRoiLink: (leadId: number) =>
+    authFetch<{ ok: boolean; link: { token: string; view_count: number; last_viewed: string | null } }>(
+      `/leads/${leadId}/roi-link`,
+      { method: 'POST' }
+    ),
 };

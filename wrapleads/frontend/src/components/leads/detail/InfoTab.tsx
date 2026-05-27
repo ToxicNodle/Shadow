@@ -52,7 +52,32 @@ function WrapROICalculator({ lead }: { lead: Lead }) {
   const [milesPerYear, setMilesPerYear] = useState(36500);
   const [lifespanYears, setLifespanYears] = useState(5);
   const [copied, setCopied] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [roiLink, setRoiLink] = useState<{ token: string } | null>(null);
+  const [linkLoading, setLinkLoading] = useState(false);
   const showToast = useAppStore((s) => s.showToast);
+
+  async function generateShareLink() {
+    if (!lead.serverId) return;
+    setLinkLoading(true);
+    try {
+      const result = await api.getOrCreateRoiLink(lead.serverId);
+      setRoiLink(result.link);
+      showToast('ROI calculator link ready to share');
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+
+  function copyShareLink() {
+    if (!roiLink) return;
+    const baseUrl = window.location.origin;
+    const url = `${baseUrl}/roi/${roiLink.token}`;
+    navigator.clipboard.writeText(url).catch(() => {});
+    showToast('ROI calculator link copied to clipboard');
+  }
 
   const totalCost           = fleet * costPerVehicle;
   const annualImpressions   = fleet * milesPerYear * 600; // 600 impressions/mile — industry avg
@@ -170,9 +195,65 @@ function WrapROICalculator({ lead }: { lead: Lead }) {
             </div>
           </div>
 
-          <button className="btn" style={{ width: '100%', fontSize: 11, fontWeight: 600 }} onClick={copyROI}>
-            {copied ? '✓ Copied!' : 'Copy ROI Summary for Proposal →'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn" style={{ flex: 1, fontSize: 11, fontWeight: 600 }} onClick={copyROI}>
+              {copied ? '✓ Copied!' : 'Copy Summary'}
+            </button>
+            {lead.serverId && (
+              <button
+                className="btn"
+                style={{ flex: 1, fontSize: 11, fontWeight: 600, background: 'var(--signal-blue)', color: '#fff', border: 'none' }}
+                onClick={() => { generateShareLink(); setShareModalOpen(true); }}
+                disabled={linkLoading}
+              >
+                {linkLoading ? '…' : 'Share Calculator'}
+              </button>
+            )}
+          </div>
+
+          {shareModalOpen && (
+            <div style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(2px)',
+            }} onClick={() => setShareModalOpen(false)}>
+              <div
+                style={{
+                  background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 12, padding: 20,
+                  maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Share ROI Calculator</h3>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                  Share this interactive calculator with {lead.contactName || lead.company}. They can adjust vehicle count, cost, and mileage to see their own ROI.
+                </p>
+                {roiLink ? (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${window.location.origin}/roi/${roiLink.token}`}
+                      style={{
+                        flex: 1, padding: '8px 10px', fontSize: 11, background: 'var(--bg-input)',
+                        border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontFamily: 'monospace',
+                      }}
+                    />
+                    <button
+                      className="btn"
+                      onClick={copyShareLink}
+                      style={{ fontSize: 11, fontWeight: 600, padding: '8px 14px' }}
+                    >
+                      Copy Link
+                    </button>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
+                    Loading…
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
