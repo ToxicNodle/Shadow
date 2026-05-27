@@ -8,6 +8,7 @@ import PipelineDoctorCard from './PipelineDoctorCard';
 import TerritoryIntelCard from './TerritoryIntelCard';
 import OutreachCalendarCard from './OutreachCalendarCard';
 import PricingIntelCard from './PricingIntelCard';
+import WinPatternsCard from './WinPatternsCard';
 
 function fmtRev(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -2934,6 +2935,9 @@ export default function AnalyticsView() {
 
         {/* ── Seasonal Win Intelligence ── */}
         <SeasonalIntelligenceCard />
+
+        {/* ── Win Pattern Library ── */}
+        <WinPatternsCard />
 
         {/* ── Pricing Intelligence — win rates by price tier ── */}
         <PricingIntelCard />

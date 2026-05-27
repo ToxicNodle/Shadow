@@ -1411,6 +1411,33 @@ export const api = {
       } | null;
     }>('/analytics/pricing-intel'),
 
+  // Win Debrief — AI "what worked" brief for a won deal
+  generateWinDebrief: (leadId: number) =>
+    authFetch<{
+      ok: boolean; cached: boolean;
+      debrief: {
+        id: number; company: string; category: string | null;
+        days_to_close: number | null; touch_count: number | null;
+        deal_value_est: number | null; key_signal: string | null;
+        winning_tactic: string | null; pattern_tags: string[];
+        summary: string; created_at: string;
+      };
+    }>(`/leads/${leadId}/win-debrief`, { method: 'POST' }),
+
+  // Win Pattern Library — aggregated patterns from all win debriefs (debrief system)
+  getWinPatternLibrary: () =>
+    authFetch<{
+      ok: boolean; hasData: boolean;
+      debriefs: Array<{
+        id: number; company: string; category: string | null; days_to_close: number | null;
+        touch_count: number | null; deal_value_est: number | null; key_signal: string | null;
+        winning_tactic: string | null; pattern_tags: string[]; summary: string; created_at: string;
+      }>;
+      topTags: Array<{ tag: string; count: number }>;
+      byCategory: Array<{ category: string; count: number; avg_days: number | null; avg_value: number | null }>;
+      summary: { totalWins: number; avgDaysToClose: number | null; avgTouchCount: number | null };
+    }>('/analytics/win-patterns'),
+
   // Pricing benchmarks from job history
   getPricingBenchmarks: (category: string) =>
     authFetch<{

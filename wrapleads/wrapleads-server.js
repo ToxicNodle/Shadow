@@ -767,6 +767,30 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create project_milestones table:', e.message);
   }
+
+  // Win debriefs — AI-generated "what worked" brief for each won deal
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS win_debriefs (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        lead_id         BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        company         TEXT NOT NULL,
+        category        TEXT,
+        days_to_close   INTEGER,
+        touch_count     INTEGER,
+        deal_value_est  NUMERIC(10,2),
+        key_signal      TEXT,
+        winning_tactic  TEXT,
+        pattern_tags    TEXT[],
+        summary         TEXT NOT NULL,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_win_debriefs_user ON win_debriefs(user_id, created_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create win_debriefs table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -10851,6 +10875,147 @@ Respond ONLY with this exact JSON (no markdown, no explanation):
 
     const parsed = JSON.parse(match[0]);
     res.json({ ok: true, fallback: false, ...parsed, daysInPipeline, daysInStage });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Win Debrief — AI "what worked" brief for a won deal ──────────────────
+// Analyzes the full activity timeline for a won lead and produces a structured
+// brief: key signal, winning tactic, days to close, pattern tags.
+// Stored in win_debriefs for aggregation into the Win Pattern Library card.
+app.post('/leads/:id/win-debrief', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    const [leadR, activityR, quotesR] = await Promise.all([
+      pool.query(
+        `SELECT company, category, status, fleet_size, city, state, created_at, updated_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at ASC LIMIT 30`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT total FROM shop_quotes WHERE lead_id=$1 AND user_id=$2 AND status='accepted' LIMIT 1`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    if (lead.status !== 'won') return res.status(400).json({ error: 'Lead is not won yet' });
+
+    // Check for existing debrief
+    const existing = await pool.query(
+      `SELECT * FROM win_debriefs WHERE lead_id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]
+    );
+    if (existing.rows.length) return res.json({ ok: true, debrief: existing.rows[0], cached: true });
+
+    const daysToClose = Math.floor((new Date(lead.updated_at).getTime() - new Date(lead.created_at).getTime()) / 86_400_000);
+    const touchCount = activityR.rows.length;
+    const dealValue = quotesR.rows[0]?.total ? parseFloat(quotesR.rows[0].total) : null;
+
+    const REV_EST: Record<string, number> = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+    const estValue = dealValue || REV_EST[lead.category] || 3000;
+
+    if (!apiKey) {
+      // Fallback: compute basic debrief without AI
+      const debrief = {
+        company: lead.company, category: lead.category, days_to_close: daysToClose,
+        touch_count: touchCount, deal_value_est: estValue,
+        key_signal: touchCount <= 3 ? 'Fast close — high buyer intent from first contact' : `Sustained engagement over ${touchCount} touchpoints`,
+        winning_tactic: daysToClose <= 7 ? 'Quick response and follow-up cadence' : 'Consistent follow-through and value demonstration',
+        pattern_tags: [lead.category, daysToClose <= 14 ? 'fast-close' : 'nurture-win', touchCount <= 3 ? 'low-touch' : 'high-touch'],
+        summary: `Won ${lead.company} (${lead.category}) in ${daysToClose} days with ${touchCount} touchpoints. Estimated value: $${Math.round(estValue).toLocaleString()}.`,
+      };
+      const { rows } = await pool.query(
+        `INSERT INTO win_debriefs (user_id, lead_id, company, category, days_to_close, touch_count, deal_value_est, key_signal, winning_tactic, pattern_tags, summary)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [uid, leadId, debrief.company, debrief.category, debrief.days_to_close, debrief.touch_count, debrief.deal_value_est, debrief.key_signal, debrief.winning_tactic, debrief.pattern_tags, debrief.summary]
+      );
+      return res.json({ ok: true, debrief: rows[0], cached: false });
+    }
+
+    const activityTimeline = activityR.rows.map(a =>
+      `[${new Date(a.created_at).toLocaleDateString()}] ${a.type}: ${a.subject || ''}${a.body ? ' — ' + a.body.slice(0, 80) : ''}`
+    ).join('\n');
+
+    const prompt = `You are a sales performance analyst. Analyze this won deal and write a "Win Debrief" brief.
+
+Deal: ${lead.company} (${lead.category || 'unknown category'})
+Location: ${lead.city || ''} ${lead.state || ''}
+Fleet size: ${lead.fleet_size || 'not specified'}
+Days to close: ${daysToClose}
+Total touchpoints: ${touchCount}
+Estimated deal value: $${Math.round(estValue).toLocaleString()}
+
+Activity timeline:
+${activityTimeline || 'No activities logged'}
+
+Return ONLY this exact JSON (no markdown):
+{
+  "key_signal": "The single biggest signal that predicted this win (1 sentence)",
+  "winning_tactic": "The specific tactic or approach that closed this deal (1 sentence)",
+  "pattern_tags": ["tag1", "tag2", "tag3"],
+  "summary": "2-3 sentence narrative of what happened and what made it work. Specific to this deal."
+}
+
+Pattern tag examples: "fast-close", "warm-referral", "email-sequence", "cold-outreach", "proposal-win", "fleet-upsell", "local-win", "high-value", "long-nurture", "first-call-close"`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 500);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const parsed = JSON.parse(match[0]);
+    const { rows } = await pool.query(
+      `INSERT INTO win_debriefs (user_id, lead_id, company, category, days_to_close, touch_count, deal_value_est, key_signal, winning_tactic, pattern_tags, summary)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [uid, leadId, lead.company, lead.category, daysToClose, touchCount, estValue, parsed.key_signal, parsed.winning_tactic, parsed.pattern_tags || [], parsed.summary]
+    );
+    res.json({ ok: true, debrief: rows[0], cached: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/win-patterns — aggregated win debrief patterns
+app.get('/analytics/win-patterns', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [debriefs, tagR, catR] = await Promise.all([
+      pool.query(
+        `SELECT * FROM win_debriefs WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20`, [uid]
+      ),
+      pool.query(
+        `SELECT unnest(pattern_tags) AS tag, COUNT(*)::INT AS count
+         FROM win_debriefs WHERE user_id=$1 AND pattern_tags IS NOT NULL
+         GROUP BY unnest(pattern_tags) ORDER BY count DESC LIMIT 12`, [uid]
+      ),
+      pool.query(
+        `SELECT category, COUNT(*)::INT AS count,
+                ROUND(AVG(days_to_close))::INT AS avg_days,
+                ROUND(AVG(deal_value_est))::INT AS avg_value
+         FROM win_debriefs WHERE user_id=$1
+         GROUP BY category ORDER BY count DESC`, [uid]
+      ),
+    ]);
+
+    const avgDays = debriefs.rows.length
+      ? Math.round(debriefs.rows.reduce((s, r) => s + (r.days_to_close || 0), 0) / debriefs.rows.length)
+      : null;
+    const avgTouches = debriefs.rows.length
+      ? Math.round(debriefs.rows.reduce((s, r) => s + (r.touch_count || 0), 0) / debriefs.rows.length)
+      : null;
+
+    res.json({
+      ok: true,
+      hasData: debriefs.rows.length > 0,
+      debriefs: debriefs.rows,
+      topTags: tagR.rows,
+      byCategory: catR.rows,
+      summary: { totalWins: debriefs.rows.length, avgDaysToClose: avgDays, avgTouchCount: avgTouches },
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

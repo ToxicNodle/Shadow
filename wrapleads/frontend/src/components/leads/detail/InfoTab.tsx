@@ -11,6 +11,7 @@ import FindEmailPanel from './FindEmailPanel';
 import SimilarWinsPanel from './SimilarWinsPanel';
 import LossReasonModal from '../../modals/LossReasonModal';
 import DealCoachPanel from './DealCoachPanel';
+import WinDebriefPanel from './WinDebriefPanel';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -2143,6 +2144,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <CompetitiveIntelPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
+      {lead.serverId && local.status === 'won' && <WinDebriefPanel lead={local} />}
       {lead.serverId && local.status === 'won' && <ReferralAskPanel lead={local} />}
       {lead.serverId && local.status === 'won' && <MultiLocationExpansion lead={local} />}
       {lead.serverId && local.status === 'lost' && <WinBackPanel lead={local} />}

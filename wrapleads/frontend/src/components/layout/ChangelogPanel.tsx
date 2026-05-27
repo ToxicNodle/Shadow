@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Win Debrief + Pattern Library',
+    body: 'Won a deal? Click "🏆 Generate Win Debrief" in the lead info tab and Claude analyzes the full activity timeline — how many touches, how many days, what signal preceded the win, what tactic closed it — and writes a structured brief. Over time, these accumulate into a "Win Pattern Library" in Analytics showing your top winning patterns, avg days to close by category, and the playbook you\'re actually using (even if you didn\'t know it).',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Pricing Intelligence — Win Rate by Price Tier',
     body: 'Analytics now shows a "Pricing Intelligence" card that correlates your quote amounts with deal outcomes to identify your sweet spot pricing by category. See average won vs. lost price for Fleet, GC Referral, DI-NOC, and every other category — then drill into low/mid/high tiers with win rates for each. Star ★ marks your highest-win-rate tier. Stop guessing on price.',
   },
