@@ -358,6 +358,117 @@ function buildTip(status: string, daysSince: number | null): CoachTip | null {
   return null;
 }
 
+// ── Revenue at Risk ──────────────────────────────────────────────────────────
+// Surfaces deals >14 days without movement and quantifies their total value.
+// This is the "bleed rate" — money leaving the pipeline through inaction.
+
+const REV_AT_RISK_MAP: Record<string, number> = {
+  fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+  colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500,
+};
+
+const STALL_DAYS: Record<string, number> = {
+  contacted: 7, replied: 5, meeting: 10, proposal: 14,
+};
+
+function RevenueAtRiskCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { leads } = useLeads();
+
+  const stalledLeads = useMemo(() => {
+    return leads
+      .filter((l) => {
+        if (['won', 'lost', 'cold', 'new'].includes(l.status)) return false;
+        const threshold = STALL_DAYS[l.status] ?? 14;
+        const lastTouch = l.lastContacted ?? l.createdAt;
+        if (!lastTouch) return false;
+        const days = Math.floor((Date.now() - new Date(lastTouch).getTime()) / 86_400_000);
+        return days > threshold;
+      })
+      .map((l) => {
+        const threshold = STALL_DAYS[l.status] ?? 14;
+        const lastTouch = l.lastContacted ?? l.createdAt;
+        const daysSince = lastTouch
+          ? Math.floor((Date.now() - new Date(lastTouch).getTime()) / 86_400_000)
+          : 0;
+        const value = REV_AT_RISK_MAP[l.category] ?? 2500;
+        const overBy = daysSince - threshold;
+        return { lead: l, daysSince, overBy, value };
+      })
+      .sort((a, b) => b.value - a.value || b.daysSince - a.daysSince)
+      .slice(0, 8);
+  }, [leads]);
+
+  if (stalledLeads.length === 0) return null;
+
+  const totalAtRisk = stalledLeads.reduce((s, r) => s + r.value, 0);
+
+  function fmtMoney(n: number) {
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1000) return `$${(n / 1000).toFixed(0)}K`;
+    return `$${n}`;
+  }
+
+  return (
+    <section className="pv-card">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 }}>
+        <h3 className="pv-card-title" style={{ margin: 0 }}>Revenue at Risk</h3>
+        <span style={{
+          fontSize: 18, fontWeight: 900, color: '#ef4444',
+          fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.5px',
+        }}>
+          {fmtMoney(totalAtRisk)}
+        </span>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+        {stalledLeads.length} deal{stalledLeads.length !== 1 ? 's' : ''} past their expected move date. Touch them today before they go cold.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {stalledLeads.map(({ lead, daysSince, overBy, value }) => (
+          <button
+            key={lead.id}
+            onClick={() => lead.serverId && onLeadClick(lead.serverId)}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 50px 60px',
+              alignItems: 'center',
+              gap: 10,
+              padding: '7px 10px',
+              borderRadius: 8,
+              border: '1px solid transparent',
+              background: 'transparent',
+              cursor: 'pointer',
+              textAlign: 'left',
+              transition: 'background 0.12s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {lead.company}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                {lead.status} · {daysSince}d ({overBy}d overdue)
+              </div>
+            </div>
+            <div style={{
+              fontSize: 10, fontWeight: 700, color: '#ef4444',
+              background: 'rgba(239,68,68,0.1)', padding: '2px 6px', borderRadius: 4, textAlign: 'center',
+            }}>
+              +{overBy}d
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+              ~{fmtMoney(value)}
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function DealCoachCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   const { leads } = useLeads();
 
@@ -1199,6 +1310,9 @@ export default function PipelineView() {
 
         {/* ── Quick Win Predictor ── */}
         <QuickWinPredictor onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
+
+        {/* ── Revenue at Risk ── */}
+        <RevenueAtRiskCard onLeadClick={(id) => { setFilter({ status: 'all', category: 'all', state: '', search: '' }); setMode('leads'); useAppStore.getState().setCurrentLeadId(String(id)); }} />
 
         {/* ── Install Capacity Intelligence ── */}
         <InstallCapacityCard

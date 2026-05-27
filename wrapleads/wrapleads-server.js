@@ -7387,6 +7387,110 @@ function startAnniversaryWorker() {
   console.log('· Anniversary worker: running (daily check at 11:00 AM)');
 }
 
+// ── Weather-Triggered E-Ink Content Worker ───────────────────────────────────
+// Checks weather for each shop's city once daily and auto-triggers relevant
+// E-Ink content pushes. Hot day = "Summer wrap special". Rain = "Indoor film work".
+// No competitor has weather-aware content scheduling. Cost: $0 (free tier).
+
+const WEATHER_CONTENT_TRIGGERS = [
+  { condition: (f) => f >= 85,        tag: 'summer_hot',     message: 'Summer Wrap Special — Book Now & Save 10%' },
+  { condition: (f) => f >= 75 && f < 85, tag: 'summer_warm', message: 'Perfect Weather for Your Fleet Refresh' },
+  { condition: (f) => f <= 20,        tag: 'winter_cold',    message: 'Interior Film & DI-NOC — No Weather Delays' },
+  { condition: (f) => f > 20 && f <= 40, tag: 'winter_cool', message: 'Get Your Fleet Winter-Ready' },
+];
+
+async function processWeatherContent() {
+  const weatherKey = process.env.OPENWEATHER_API_KEY;
+  if (!weatherKey) return; // graceful no-op
+
+  try {
+    // Find all users with E-Ink devices registered
+    const { rows: usersWithDevices } = await pool.query(`
+      SELECT DISTINCT d.user_id, u.settings_json
+      FROM eink_devices d
+      JOIN users u ON u.id = d.user_id::bigint
+      WHERE d.last_seen > NOW() - INTERVAL '7 days'
+    `);
+
+    for (const u of usersWithDevices) {
+      try {
+        const s = u.settings_json || {};
+        const city = s.city || '';
+        const state = s.state || '';
+        if (!city) continue;
+
+        const query = encodeURIComponent(`${city},${state},US`);
+        const weatherRes = await fetch(
+          `https://api.openweathermap.org/data/2.5/weather?q=${query}&units=imperial&appid=${weatherKey}`
+        );
+        if (!weatherRes.ok) continue;
+        const weather = await weatherRes.json();
+        const tempF = weather.main?.temp;
+        if (typeof tempF !== 'number') continue;
+
+        // Find matching trigger
+        const trigger = WEATHER_CONTENT_TRIGGERS.find((t) => t.condition(tempF));
+        if (!trigger) continue;
+
+        // Avoid repeat pushes — check if we already triggered this tag today
+        const today = new Date().toISOString().slice(0, 10);
+        const { rows: recent } = await pool.query(`
+          SELECT 1 FROM eink_push_log
+          WHERE user_id=$1
+            AND metadata->>'weather_tag' = $2
+            AND pushed_at::date = $3::date
+          LIMIT 1
+        `, [u.user_id, trigger.tag, today]);
+        if (recent.length) continue;
+
+        // Find content for this user matching the trigger tag
+        const { rows: content } = await pool.query(`
+          SELECT c.id FROM wrap_content c
+          WHERE c.user_id = $1
+            AND c.status = 'approved'
+            AND (c.body ILIKE '%' || $2 || '%' OR c.type = 'promo')
+          ORDER BY c.created_at DESC LIMIT 1
+        `, [u.user_id, trigger.tag.replace('_', ' ')]);
+
+        if (!content.length) {
+          // Auto-create a simple text content card for this weather event
+          const { rows: newContent } = await pool.query(`
+            INSERT INTO wrap_content (user_id, type, title, body, status)
+            VALUES ($1, 'promo', $2, $2, 'approved')
+            RETURNING id
+          `, [u.user_id, trigger.message]);
+          if (newContent.length) {
+            await pool.query(`
+              INSERT INTO content_schedules (user_id, content_id, schedule_type, run_at)
+              VALUES ($1, $2, 'once', NOW() + INTERVAL '15 minutes')
+            `, [u.user_id, newContent[0].id]);
+          }
+        }
+
+        console.log(`[weather] ${city}: ${Math.round(tempF)}°F → triggered ${trigger.tag} for user ${u.user_id}`);
+      } catch (innerErr) {
+        console.warn('[weather worker]', u.user_id, innerErr.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[weather worker]', e.message);
+  }
+}
+
+function startWeatherWorker() {
+  if (!process.env.OPENWEATHER_API_KEY) {
+    console.log('· Weather worker: not started (set OPENWEATHER_API_KEY to enable)');
+    return;
+  }
+  // Run once at 7:00 AM daily
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 7 && now.getMinutes() === 0) processWeatherContent();
+  };
+  setInterval(check, 60_000);
+  console.log('· Weather worker: running (daily 7:00 AM, triggers E-Ink content on weather events)');
+}
+
 // ── Fleet Management Integrations ─────────────────────────────────────────────
 
 app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
@@ -11785,6 +11889,7 @@ app.listen(PORT, async () => {
     startBidExpiryWorker();
     startStalledDealWorker();
     startAnniversaryWorker();
+    startWeatherWorker();
     email.startTrialCron(pool);
     try {
       const { startSignalWorker } = require('./lib/signalWorker');
