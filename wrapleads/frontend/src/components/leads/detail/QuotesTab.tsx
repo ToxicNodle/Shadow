@@ -323,6 +323,110 @@ function decayProbability(daysSince: number): number {
   return Math.max(10, Math.round(21 - (daysSince - 21) * 0.5));
 }
 
+// ── Quote Timing Intelligence ─────────────────────────────────────────────────
+// Uses actual quote sent_at + category benchmarks + AI to recommend when and how
+// to follow up. Complements ProposalDecayMeter (which uses lastContacted).
+function QuoteTimingPanel({ lead }: { lead: Lead }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['quote-timing', lead.serverId],
+    queryFn: () => api.getQuoteTimingIntel(lead.serverId!),
+    enabled: !!lead.serverId && lead.status === 'proposal',
+    staleTime: 10 * 60_000,
+  });
+
+  if (!lead.serverId || lead.status !== 'proposal') return null;
+  if (isLoading || !data?.hasSentQuote) return null;
+
+  const { urgency, daysSinceSent, validDaysLeft, benchmark, followUpDraft, quote } = data;
+  if (daysSinceSent == null || !urgency) return null;
+
+  const COLOR = {
+    on_track: '#00d97e', follow_up_now: '#fbbf24', overdue: '#ef4444',
+  };
+  const LABEL = {
+    on_track: 'On Track', follow_up_now: 'Follow Up Now', overdue: 'Overdue',
+  };
+  const urgencyColor = COLOR[urgency];
+  const urgencyLabel = LABEL[urgency];
+
+  function copyDraft() {
+    if (!followUpDraft) return;
+    navigator.clipboard.writeText(`Subject: ${followUpDraft.subject}\n\n${followUpDraft.body}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  }
+
+  return (
+    <div style={{
+      background: `${urgencyColor}08`, border: `1px solid ${urgencyColor}25`,
+      borderRadius: 10, padding: '10px 14px', marginBottom: 14,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Quote Follow-Up Intelligence</span>
+          <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, background: `${urgencyColor}20`, color: urgencyColor }}>
+            {urgencyLabel}
+          </span>
+        </div>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {quote?.quoteNumber} · {daysSinceSent === 0 ? 'sent today' : `sent ${daysSinceSent}d ago`}
+        </span>
+      </div>
+
+      {benchmark && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+          Industry avg response: <span style={{ fontWeight: 700, color: 'var(--text)' }}>{benchmark.avg} days</span>
+          {' · '}
+          <span style={{ color: urgencyColor }}>
+            {daysSinceSent < benchmark.avg
+              ? `${benchmark.avg - daysSinceSent}d before avg`
+              : `${daysSinceSent - benchmark.avg}d past avg`}
+          </span>
+          {validDaysLeft != null && (
+            <span style={{ marginLeft: 8, color: validDaysLeft <= 3 ? '#ef4444' : 'var(--text-faint)' }}>
+              · {validDaysLeft > 0 ? `${validDaysLeft}d until expiry` : 'Quote expired'}
+            </span>
+          )}
+        </div>
+      )}
+
+      {followUpDraft && (
+        <>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: urgencyColor, padding: '2px 0' }}
+          >
+            {expanded ? '▲ Hide AI follow-up draft' : '▼ Show AI follow-up draft'}
+          </button>
+          {expanded && (
+            <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--bg-elev)', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', marginBottom: 4 }}>
+                Subject: {followUpDraft.subject}
+              </div>
+              <pre style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', margin: 0, lineHeight: 1.6 }}>
+                {followUpDraft.body}
+              </pre>
+              <button
+                onClick={copyDraft}
+                style={{
+                  marginTop: 8, fontSize: 11, padding: '4px 10px', borderRadius: 5,
+                  background: `${urgencyColor}18`, border: `1px solid ${urgencyColor}30`,
+                  color: urgencyColor, cursor: 'pointer',
+                }}
+              >
+                {copied ? '✓ Copied' : '⊘ Copy to clipboard'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProposalDecayMeter({ lead }: { lead: Lead }) {
   if (lead.status !== 'proposal') return null;
 
@@ -478,6 +582,8 @@ export default function QuotesTab({ lead }: Props) {
 
       {/* Proposal decay meter — shown when status is 'proposal' */}
       <ProposalDecayMeter lead={lead} />
+      {/* Quote Timing Intelligence — actual sent_at + category benchmarks + AI draft */}
+      <QuoteTimingPanel lead={lead} />
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>

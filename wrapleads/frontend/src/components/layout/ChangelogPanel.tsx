@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Quote Follow-Up Intelligence',
+    body: 'Proposals now show a "Quote Follow-Up Intelligence" panel with the exact days since the quote was sent, your category\'s industry benchmark (fleet=7d, construction=10d, GC=14d), an urgency indicator, and an AI-generated follow-up email draft tailored to the elapsed time. On track, follow up now, or overdue — you always know exactly what action to take.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Intent Signals Dashboard',
     body: 'Mission now shows a real-time "buying intent" leaderboard across ALL signal types: email opens (3pts), proposal views (4pts), recent replies (10pts), and aging wrap lifecycle signals (6pts). Leads are scored and ranked so you always know exactly who to call first. Refreshes every 5 minutes.',
   },

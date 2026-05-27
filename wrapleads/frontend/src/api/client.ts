@@ -1250,4 +1250,16 @@ export const api = {
         }>;
       }>;
     }>('/mission/intent-signals'),
+
+  getQuoteTimingIntel: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      hasSentQuote: boolean;
+      quote?: { id: number; quoteNumber: string; title: string; total: number; sentAt: string; validDays: number };
+      daysSinceSent?: number;
+      validDaysLeft?: number;
+      urgency?: 'on_track' | 'follow_up_now' | 'overdue';
+      benchmark?: { avg: number; fast: number; slow: number };
+      followUpDraft?: { subject: string; body: string } | null;
+    }>(`/leads/${leadId}/quote-timing-intel`),
 };

@@ -10852,6 +10852,110 @@ app.delete('/quotes/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /leads/:id/quote-timing-intel — for the most recent sent quote, analyze
+// how long it has been sitting and generate a follow-up recommendation.
+app.get('/leads/:id/quote-timing-intel', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: leadRows } = await pool.query(
+      `SELECT l.company, l.contact_name, l.category, l.status, u.settings_json AS settings
+       FROM leads l JOIN users u ON u.id::text=l.user_id
+       WHERE l.id=$1 AND l.user_id=$2`,
+      [leadId, uid]
+    );
+    if (!leadRows.length) return res.status(404).json({ error: 'Lead not found' });
+    const { company, contact_name, category, settings } = leadRows[0];
+
+    const { rows: quoteRows } = await pool.query(
+      `SELECT id, quote_number, title, total, status, sent_at, valid_days
+       FROM shop_quotes
+       WHERE lead_id=$1 AND user_id=$2 AND status='sent'
+       ORDER BY sent_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+
+    if (!quoteRows.length) {
+      return res.json({ ok: true, hasSentQuote: false });
+    }
+    const q = quoteRows[0];
+    const daysSinceSent = q.sent_at
+      ? Math.floor((Date.now() - new Date(q.sent_at).getTime()) / 86400000)
+      : null;
+    const validDaysLeft = q.valid_days && q.sent_at
+      ? q.valid_days - daysSinceSent
+      : null;
+
+    // Category-specific response benchmarks (days)
+    const BENCHMARKS = {
+      fleet:        { avg: 7, fast: 3, slow: 14 },
+      construction: { avg: 10, fast: 5, slow: 21 },
+      gc_referral:  { avg: 14, fast: 7, slow: 30 },
+      racing:       { avg: 5, fast: 2, slow: 10 },
+      design:       { avg: 6, fast: 2, slow: 14 },
+      dinoc:        { avg: 10, fast: 5, slow: 21 },
+      reatec:       { avg: 10, fast: 5, slow: 21 },
+      colorchange:  { avg: 5, fast: 2, slow: 10 },
+      wallgraphics: { avg: 8, fast: 3, slow: 18 },
+    };
+    const bench = BENCHMARKS[category] || BENCHMARKS.fleet;
+
+    let urgency = 'on_track'; // on_track, follow_up_now, overdue
+    if (daysSinceSent !== null) {
+      if (daysSinceSent >= bench.slow) urgency = 'overdue';
+      else if (daysSinceSent >= bench.avg) urgency = 'follow_up_now';
+    }
+
+    // AI follow-up suggestion
+    let followUpDraft = null;
+    const anthropic = getAnthropic();
+    const s = settings || {};
+    if (anthropic && daysSinceSent !== null) {
+      try {
+        const urgencyContext = urgency === 'overdue'
+          ? 'The quote is significantly overdue based on industry averages. Be warm but create gentle urgency.'
+          : urgency === 'follow_up_now'
+          ? 'The quote is past the average response window. A professional follow-up is appropriate now.'
+          : 'The quote is still in the normal response window. A light, friendly check-in is appropriate.';
+
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 280,
+          messages: [{
+            role: 'user',
+            content: `Write a SHORT follow-up email for a sent vehicle wrap quote. ${urgencyContext}
+
+Details:
+- Company: ${company}
+- Contact: ${contact_name || 'the decision maker'}
+- Category: ${category}
+- Quote total: $${Math.round(q.total || 0).toLocaleString()}
+- Days since sent: ${daysSinceSent}
+- Quote valid for: ${q.valid_days || 30} days${validDaysLeft !== null ? ` (${validDaysLeft} days left)` : ''}
+- Sender: ${s.senderName || 'Alex'} at ${s.companyName || 'our shop'}
+
+Return JSON: {"subject": "short subject", "body": "email body, max 90 words, plain text"}`
+          }]
+        });
+        followUpDraft = JSON.parse(msg.content[0].text);
+      } catch (_) { /* fall through */ }
+    }
+
+    res.json({
+      ok: true,
+      hasSentQuote: true,
+      quote: { id: q.id, quoteNumber: q.quote_number, title: q.title, total: q.total, sentAt: q.sent_at, validDays: q.valid_days },
+      daysSinceSent,
+      validDaysLeft,
+      urgency,
+      benchmark: bench,
+      followUpDraft,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PUBLIC — proposal page (client-facing, no auth)
 app.get('/proposals/:token', async (req, res) => {
   try {
