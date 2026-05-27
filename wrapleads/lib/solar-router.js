@@ -855,6 +855,22 @@ function buildSolarRouter(deps) {
     } catch (e) { res.status(500).send(`Error: ${e.message}`); }
   });
 
+  // GET /solar/proposal/:token.pdf  → high-fidelity Chromium-rendered PDF
+  router.get('/proposal/:tokenWithExt(*\\.pdf)', async (req, res) => {
+    const token = req.params.tokenWithExt.replace(/\.pdf$/, '');
+    try {
+      const pdf = await solarProposal.getProposalPdfByToken(pool, token);
+      if (!pdf) return res.status(404).send('Proposal not found');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="HelioScout-Proposal-${token.slice(0, 8)}.pdf"`);
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      res.send(pdf);
+    } catch (e) {
+      console.error('[solar/proposal.pdf]', e.message);
+      res.status(500).send(`PDF render error: ${e.message}`);
+    }
+  });
+
   // ── QUALIFY A SINGLE LEAD (firmographic + Google Solar + DSIRE + ROI) ─
   // POST /solar/qualify  body: { domain?, company?, street?, city?, state?, zip?, latitude?, longitude?, building_sqft?, roof_type? }
   router.post('/qualify', authMiddleware, subMiddleware, async (req, res) => {

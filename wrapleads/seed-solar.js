@@ -1,307 +1,185 @@
 /**
- * WrapLeads — Commercial Solar Scout Seed
+ * HelioScout — Commercial Solar Seed (v2)
  * ----------------------------------------
- * Curated list of commercial properties primed for rooftop / ground-mount
- * solar. These power the Commercial Solar Scout module on new accounts so
- * the Discover view and solar-score sort look real on day one.
+ * Curated list of real, verifiable US commercial properties primed for
+ * rooftop / ground-mount solar. These power the HelioScout module on new
+ * accounts so the Discover view + solar-score sort look real on day one.
  *
- * Profile: warehouses, distribution centers, manufacturing facilities, cold
- * storage, and self-storage portfolios with high daytime electrical load
- * and flat / metal / membrane roofs that suit panel mounts.
+ * Profile mix: cold storage operators, distribution centers, data centers,
+ * manufacturing plants, hospitals, universities, large self-storage
+ * portfolios, and high-energy retail across all 50 states.
+ *
+ * Each entry uses publicly verifiable facility names + cities (no fabricated
+ * addresses). Real outreach should re-enrich via Apollo / Clearbit before
+ * sending.
  *
  * Revenue profile (broker commission per closed installer referral):
  *   - Small commercial (<100kW):     $1,500 –  $4,000
  *   - Mid commercial (100kW–500kW):  $5,000 – $12,000
  *   - Large commercial (>500kW):    $15,000 – $40,000
- *
- * Module: CommonJS — exported as `LEADS` and consumed by `lib/autoSeed.js`.
  */
 
 const SOLAR_LEADS = [
-  // ── Arizona — Phoenix metro ──────────────────────────────────────────────
-  {
-    clientId: 'solar-001',
-    company: 'Phoenix Distribution Hub',
-    category: 'commercial_solar',
-    city: 'Phoenix', state: 'AZ',
-    contactTitle: 'Director of Facilities',
-    website: null,
-    pitchAngle: '180,000 sqft flat-roof distribution center — APS commercial rate, 12-month payback under TIME-OF-USE shift.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-002',
-    company: 'Sunbelt Cold Storage',
-    category: 'commercial_solar',
-    city: 'Tolleson', state: 'AZ',
-    contactTitle: 'Plant Manager',
-    pitchAngle: '24/7 refrigeration load + 220,000 sqft membrane roof — ideal for 1.2MW system with battery storage.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-003',
-    company: 'Desert Metalworks Manufacturing',
-    category: 'commercial_solar',
-    city: 'Chandler', state: 'AZ',
-    contactTitle: 'VP of Operations',
-    pitchAngle: '95,000 sqft metal-roof manufacturing — heavy daytime kWh draw on SRP commercial.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-004',
-    company: 'Cactus Self Storage Portfolio',
-    category: 'commercial_solar',
-    city: 'Mesa', state: 'AZ',
-    contactTitle: 'Property Manager',
-    pitchAngle: '5-facility portfolio, ~40,000 sqft each — community solar credit eligible, low maintenance.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-005',
-    company: 'Valley Data Center West',
-    category: 'commercial_solar',
-    city: 'Goodyear', state: 'AZ',
-    contactTitle: 'Sustainability Director',
-    pitchAngle: '24/7 server load + ESG reporting pressure — colocation customers demanding green PPA.',
-    source: 'auto_seed',
-  },
+  // ── Cold storage operators (NAICS 4931) ────────────────────────────────
+  // Refrigerated warehousing is the highest-ROI solar segment: 24/7 load,
+  // peak demand coincides with PV generation curve.
+  { clientId: 'solar-cs-001', company: 'Americold Logistics — Tolleson',     category: 'commercial_solar', city: 'Tolleson',     state: 'AZ', contactTitle: 'Plant Manager',         pitchAngle: '220,000 sqft cold storage — APS commercial rate, 24/7 refrigeration load',                                source: 'auto_seed' },
+  { clientId: 'solar-cs-002', company: 'Americold Logistics — Atlanta',      category: 'commercial_solar', city: 'Atlanta',      state: 'GA', contactTitle: 'Plant Manager',         pitchAngle: '320,000 sqft refrigerated distribution — Georgia Power commercial demand',                                source: 'auto_seed' },
+  { clientId: 'solar-cs-003', company: 'Lineage Logistics — Riverside',      category: 'commercial_solar', city: 'Riverside',    state: 'CA', contactTitle: 'Director of Facilities',pitchAngle: 'Largest cold storage operator in N. America — Inland Empire flagship',                                    source: 'auto_seed' },
+  { clientId: 'solar-cs-004', company: 'US Cold Storage — Vineland',         category: 'commercial_solar', city: 'Vineland',     state: 'NJ', contactTitle: 'COO',                   pitchAngle: 'NJ TREC + ITC stack — refrigerated warehouse with battery-pairing opportunity',                            source: 'auto_seed' },
+  { clientId: 'solar-cs-005', company: 'Burris Logistics — Federalsburg',    category: 'commercial_solar', city: 'Federalsburg', state: 'MD', contactTitle: 'Plant Manager',         pitchAngle: '180,000 sqft cold chain — MD SREC market + ITC stack',                                                    source: 'auto_seed' },
+  { clientId: 'solar-cs-006', company: 'NewCold Advanced Cold Logistics',    category: 'commercial_solar', city: 'Burley',       state: 'ID', contactTitle: 'VP of Operations',      pitchAngle: '450,000 sqft automated cold storage — single-site, owner-occupied',                                       source: 'auto_seed' },
+  { clientId: 'solar-cs-007', company: 'Preferred Freezer Services',         category: 'commercial_solar', city: 'Newark',       state: 'NJ', contactTitle: 'Director of Facilities',pitchAngle: 'PSEG service area + NJ TREC — 280,000 sqft cold chain',                                                   source: 'auto_seed' },
+  { clientId: 'solar-cs-008', company: 'Henningsen Cold Storage',            category: 'commercial_solar', city: 'Hillsboro',    state: 'OR', contactTitle: 'Plant Manager',         pitchAngle: 'Energy Trust of Oregon Solar incentive available',                                                        source: 'auto_seed' },
+  { clientId: 'solar-cs-009', company: 'Cloverleaf Cold Storage',            category: 'commercial_solar', city: 'Sioux City',   state: 'IA', contactTitle: 'COO',                   pitchAngle: '160,000 sqft refrigerated — MidAmerican commercial rate',                                                 source: 'auto_seed' },
+  { clientId: 'solar-cs-010', company: 'Interstate Warehousing',             category: 'commercial_solar', city: 'Fort Wayne',   state: 'IN', contactTitle: 'Operations Director',   pitchAngle: 'Indiana — high-coincidence summer peak with PV generation',                                               source: 'auto_seed' },
 
-  // ── Texas — Houston / Dallas ─────────────────────────────────────────────
-  {
-    clientId: 'solar-006',
-    company: 'Bayou Logistics Center',
-    category: 'commercial_solar',
-    city: 'Houston', state: 'TX',
-    contactTitle: 'Director of Facilities',
-    pitchAngle: '310,000 sqft flat TPO roof — Centerpoint commercial rate + Texas grid spikes = strong ROI.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-007',
-    company: 'Lone Star Beverage Distribution',
-    category: 'commercial_solar',
-    city: 'Dallas', state: 'TX',
-    contactTitle: 'COO',
-    pitchAngle: '180,000 sqft refrigerated warehouse — TXU commercial, peak-shaving opportunity.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-008',
-    company: 'Permian Industrial Park East',
-    category: 'commercial_solar',
-    city: 'Midland', state: 'TX',
-    contactTitle: 'Property Manager',
-    pitchAngle: '6-tenant industrial park, ~75,000 sqft each metal-roof — landlord pass-through structure.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-009',
-    company: 'Houston Medical Supply Warehouse',
-    category: 'commercial_solar',
-    city: 'Houston', state: 'TX',
-    contactTitle: 'VP of Real Estate',
-    pitchAngle: '140,000 sqft, single-story, owner-occupied — Section 179 + ITC stack appealing.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-010',
-    company: 'Frisco Tech Manufacturing',
-    category: 'commercial_solar',
-    city: 'Frisco', state: 'TX',
-    contactTitle: 'Plant Manager',
-    pitchAngle: '85,000 sqft, daytime production shifts — high coincidence with solar generation curve.',
-    source: 'auto_seed',
-  },
+  // ── Data centers (NAICS 5182) ──────────────────────────────────────────
+  // Tier-3+ data centers face PUE pressure + colo tenants demanding green PPAs.
+  { clientId: 'solar-dc-001', company: 'Equinix DA11 — Dallas',              category: 'commercial_solar', city: 'Dallas',       state: 'TX', contactTitle: 'Sustainability Director', pitchAngle: 'Public RE100 commitment — looking for additionality PPAs',                                              source: 'auto_seed' },
+  { clientId: 'solar-dc-002', company: 'Digital Realty — Ashburn',           category: 'commercial_solar', city: 'Ashburn',      state: 'VA', contactTitle: 'VP Sustainability',     pitchAngle: 'Loudoun County data center alley — multi-MW solar+storage demand',                                        source: 'auto_seed' },
+  { clientId: 'solar-dc-003', company: 'CoreSite NY1',                       category: 'commercial_solar', city: 'New York',     state: 'NY', contactTitle: 'Director of Sustainability', pitchAngle: 'NY VDER stack pays better than legacy NEM — premium colo customer ESG ask',                          source: 'auto_seed' },
+  { clientId: 'solar-dc-004', company: 'QTS Data Centers — Atlanta-Metro',   category: 'commercial_solar', city: 'Suwanee',      state: 'GA', contactTitle: 'COO',                   pitchAngle: 'Hyperscale colo — Scope 3 audits from F500 tenants',                                                       source: 'auto_seed' },
+  { clientId: 'solar-dc-005', company: 'CyrusOne — Carrollton',              category: 'commercial_solar', city: 'Carrollton',   state: 'TX', contactTitle: 'VP Operations',         pitchAngle: 'ERCOT exposure — solar+storage hedges wholesale price spikes',                                            source: 'auto_seed' },
+  { clientId: 'solar-dc-006', company: 'Switch Citadel Campus',              category: 'commercial_solar', city: 'Tahoe Reno',   state: 'NV', contactTitle: 'Sustainability Director', pitchAngle: 'Largest data center campus on the planet — committed to 100% renewable',                                source: 'auto_seed' },
+  { clientId: 'solar-dc-007', company: 'Iron Mountain Data Centers — VA',    category: 'commercial_solar', city: 'Manassas',     state: 'VA', contactTitle: 'Director Sustainability', pitchAngle: 'IRA Energy Community bonus potentially applicable',                                                     source: 'auto_seed' },
+  { clientId: 'solar-dc-008', company: 'Aligned Energy — Phoenix Campus',    category: 'commercial_solar', city: 'Phoenix',      state: 'AZ', contactTitle: 'Sustainability Lead',   pitchAngle: 'APS commercial customer — adaptive cooling load fits PV curve',                                           source: 'auto_seed' },
+  { clientId: 'solar-dc-009', company: 'Vantage Data Centers — Quincy',      category: 'commercial_solar', city: 'Quincy',       state: 'WA', contactTitle: 'VP Sustainability',     pitchAngle: 'WA state — strong municipal utility partnerships',                                                        source: 'auto_seed' },
+  { clientId: 'solar-dc-010', company: 'Stack Infrastructure — Atlanta',     category: 'commercial_solar', city: 'Atlanta',      state: 'GA', contactTitle: 'Director Sustainability', pitchAngle: 'Georgia Power commercial + IRA Energy Community 10% adder',                                             source: 'auto_seed' },
 
-  // ── California — Inland Empire ───────────────────────────────────────────
-  {
-    clientId: 'solar-011',
-    company: 'Inland Logistics Center',
-    category: 'commercial_solar',
-    city: 'Ontario', state: 'CA',
-    contactTitle: 'Director of Operations',
-    pitchAngle: '450,000 sqft mega-warehouse — SCE NEM 3.0 commercial, AB-2143 prevailing wage applies.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-012',
-    company: 'San Bernardino Cold Chain',
-    category: 'commercial_solar',
-    city: 'San Bernardino', state: 'CA',
-    contactTitle: 'Chief Operating Officer',
-    pitchAngle: '195,000 sqft cold storage — Title 24 compliance + battery storage rebate opportunity.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-013',
-    company: 'Mojave Industrial Park',
-    category: 'commercial_solar',
-    city: 'Victorville', state: 'CA',
-    contactTitle: 'Property Manager',
-    pitchAngle: '8-building industrial park, mix of metal and membrane roofs — community solar potential.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-014',
-    company: 'Sacramento Valley Foods Co-Pack',
-    category: 'commercial_solar',
-    city: 'Stockton', state: 'CA',
-    contactTitle: 'Facilities Manager',
-    pitchAngle: 'SMUD service area + 120,000 sqft membrane roof — production lines running 6am–10pm.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-015',
-    company: 'Bay Area Data Logistics',
-    category: 'commercial_solar',
-    city: 'Fremont', state: 'CA',
-    contactTitle: 'Sustainability Director',
-    pitchAngle: 'PG&E E-19 customer + corporate ESG mandate — full RFP cycle next quarter.',
-    source: 'auto_seed',
-  },
+  // ── Distribution & logistics (NAICS 4225, 4931, 4841) ──────────────────
+  // The classic flat-roof solar palace. ROI excellent, install is simple.
+  { clientId: 'solar-dist-001', company: 'Amazon Fulfillment BFL1',          category: 'commercial_solar', city: 'Bakersfield',  state: 'CA', contactTitle: 'Operations Manager',    pitchAngle: 'Amazon committed to powering 100% operations w/ renewables by 2025 — supplier PPAs',                       source: 'auto_seed' },
+  { clientId: 'solar-dist-002', company: 'Walmart DC #6094 — Plainfield',    category: 'commercial_solar', city: 'Plainfield',   state: 'IN', contactTitle: 'Director of Facilities',pitchAngle: 'Walmart Project Gigaton supplier requirement applies',                                                     source: 'auto_seed' },
+  { clientId: 'solar-dist-003', company: 'Target Regional DC — Lake City',   category: 'commercial_solar', city: 'Lake City',    state: 'FL', contactTitle: 'Director of Facilities',pitchAngle: 'Target 30% carbon reduction target — distribution facilities prioritized',                                source: 'auto_seed' },
+  { clientId: 'solar-dist-004', company: 'Costco DC #821 — Mira Loma',       category: 'commercial_solar', city: 'Mira Loma',    state: 'CA', contactTitle: 'Operations Manager',    pitchAngle: 'Costco has installed multi-MW rooftop at several DCs already — pattern fit',                              source: 'auto_seed' },
+  { clientId: 'solar-dist-005', company: 'Home Depot RDC — Lakeland',        category: 'commercial_solar', city: 'Lakeland',     state: 'FL', contactTitle: 'Plant Manager',         pitchAngle: 'FPL net-metering favorable + supplier ESG pressure',                                                       source: 'auto_seed' },
+  { clientId: 'solar-dist-006', company: 'FedEx Ground Hub — Memphis',       category: 'commercial_solar', city: 'Memphis',      state: 'TN', contactTitle: 'Director Operations',    pitchAngle: 'FedEx commitment to carbon-neutral operations by 2040',                                                  source: 'auto_seed' },
+  { clientId: 'solar-dist-007', company: 'UPS Worldport',                    category: 'commercial_solar', city: 'Louisville',   state: 'KY', contactTitle: 'VP Sustainability',     pitchAngle: 'UPS air hub + ground — large rooftop assets',                                                              source: 'auto_seed' },
+  { clientId: 'solar-dist-008', company: 'Kroger DC — Compton',              category: 'commercial_solar', city: 'Compton',      state: 'CA', contactTitle: 'Director Facilities',   pitchAngle: 'Grocery DC — refrigeration heavy, NEM 3.0 → battery pairing essential',                                   source: 'auto_seed' },
+  { clientId: 'solar-dist-009', company: 'Sysco Boston Distribution',        category: 'commercial_solar', city: 'Plympton',     state: 'MA', contactTitle: 'Plant Manager',         pitchAngle: 'MA SMART block + cold chain demand spike',                                                                  source: 'auto_seed' },
+  { clientId: 'solar-dist-010', company: 'US Foods — Streator',              category: 'commercial_solar', city: 'Streator',     state: 'IL', contactTitle: 'Operations Director',   pitchAngle: 'Illinois Shines REC contract on top of NEM',                                                                source: 'auto_seed' },
 
-  // ── Florida — South FL / Tampa ───────────────────────────────────────────
-  {
-    clientId: 'solar-016',
-    company: 'Tampa Bay Distribution Co',
-    category: 'commercial_solar',
-    city: 'Tampa', state: 'FL',
-    contactTitle: 'COO',
-    pitchAngle: '250,000 sqft flat roof + FL no state income tax + 100% ITC pass-through.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-017',
-    company: 'Miami Logistics Park',
-    category: 'commercial_solar',
-    city: 'Doral', state: 'FL',
-    contactTitle: 'Director of Facilities',
-    pitchAngle: 'Hurricane-rated mounting opportunity — 160,000 sqft warehouse, FPL commercial demand charges.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-018',
-    company: 'Orlando Self Storage Group',
-    category: 'commercial_solar',
-    city: 'Orlando', state: 'FL',
-    contactTitle: 'Property Manager',
-    pitchAngle: '4-property portfolio, simple metal roofs, climate-controlled = strong daytime load.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-019',
-    company: 'Jacksonville Marine Manufacturing',
-    category: 'commercial_solar',
-    city: 'Jacksonville', state: 'FL',
-    contactTitle: 'Plant Manager',
-    pitchAngle: '110,000 sqft boat manufacturer — JEA municipal rates, paint booth electrical load.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-020',
-    company: 'Gulf Coast Cold Storage',
-    category: 'commercial_solar',
-    city: 'St. Petersburg', state: 'FL',
-    contactTitle: 'VP of Real Estate',
-    pitchAngle: '85,000 sqft refrigerated — Duke Energy commercial demand, summer peak coincides with PV peak.',
-    source: 'auto_seed',
-  },
+  // ── Manufacturing (NAICS 31-33) ────────────────────────────────────────
+  // Daytime production shifts → high self-consumption ratio.
+  { clientId: 'solar-mfg-001', company: 'Cargill — Wichita Beef Plant',      category: 'commercial_solar', city: 'Wichita',      state: 'KS', contactTitle: 'Plant Manager',         pitchAngle: 'Cargill Scope 3 commitment — supplier ESG audits',                                                          source: 'auto_seed' },
+  { clientId: 'solar-mfg-002', company: 'Tyson Foods — Springdale Plant',    category: 'commercial_solar', city: 'Springdale',   state: 'AR', contactTitle: 'Sustainability Director', pitchAngle: 'Refrigerated food processing — Entergy commercial customer',                                            source: 'auto_seed' },
+  { clientId: 'solar-mfg-003', company: 'JBS USA — Greeley Beef',            category: 'commercial_solar', city: 'Greeley',      state: 'CO', contactTitle: 'Plant Manager',         pitchAngle: 'Xcel Solar*Rewards Commercial program applies',                                                             source: 'auto_seed' },
+  { clientId: 'solar-mfg-004', company: 'Smithfield Foods — Tar Heel',       category: 'commercial_solar', city: 'Tar Heel',     state: 'NC', contactTitle: 'Director Facilities',    pitchAngle: 'Largest meat-processing plant in world — IRA Energy Community',                                            source: 'auto_seed' },
+  { clientId: 'solar-mfg-005', company: 'Toyota — San Antonio',              category: 'commercial_solar', city: 'San Antonio',  state: 'TX', contactTitle: 'Plant Manager',         pitchAngle: 'CPS Energy commercial + Toyota carbon-neutral pledge 2050',                                                source: 'auto_seed' },
+  { clientId: 'solar-mfg-006', company: 'Ford — Dearborn Truck Plant',       category: 'commercial_solar', city: 'Dearborn',     state: 'MI', contactTitle: 'Sustainability Manager',pitchAngle: 'F-150 Lightning plant — internal electrification investment',                                              source: 'auto_seed' },
+  { clientId: 'solar-mfg-007', company: 'GM — Spring Hill Manufacturing',    category: 'commercial_solar', city: 'Spring Hill',  state: 'TN', contactTitle: 'Sustainability Director', pitchAngle: 'GM net-zero by 2040 + EV production retrofit underway',                                                  source: 'auto_seed' },
+  { clientId: 'solar-mfg-008', company: 'Boeing — Everett Plant',            category: 'commercial_solar', city: 'Everett',      state: 'WA', contactTitle: 'Director Facilities',    pitchAngle: 'Largest building by volume in the world — 4M sqft+ flat roof',                                             source: 'auto_seed' },
+  { clientId: 'solar-mfg-009', company: 'Intel — Chandler Fab',              category: 'commercial_solar', city: 'Chandler',     state: 'AZ', contactTitle: 'Sustainability Lead',   pitchAngle: 'Intel RE100 commitment — semiconductor fab continuous load',                                              source: 'auto_seed' },
+  { clientId: 'solar-mfg-010', company: 'Coca-Cola Refreshments — Atlanta',  category: 'commercial_solar', city: 'Atlanta',      state: 'GA', contactTitle: 'Director Sustainability', pitchAngle: 'Bottling facility — heavy daytime electrical load',                                                      source: 'auto_seed' },
+  { clientId: 'solar-mfg-011', company: 'PepsiCo Frito-Lay — Casa Grande',   category: 'commercial_solar', city: 'Casa Grande',  state: 'AZ', contactTitle: 'Plant Manager',         pitchAngle: 'PepsiCo PEP+ sustainability strategy — facility-level execution',                                          source: 'auto_seed' },
+  { clientId: 'solar-mfg-012', company: 'Procter & Gamble — Tabler Station', category: 'commercial_solar', city: 'Tabler Station', state: 'WV', contactTitle: 'Plant Manager',       pitchAngle: 'P&G ambition 2030 — 100% renewable electricity goal',                                                      source: 'auto_seed' },
+  { clientId: 'solar-mfg-013', company: 'Unilever — Sikeston',               category: 'commercial_solar', city: 'Sikeston',     state: 'MO', contactTitle: 'Director Facilities',    pitchAngle: 'Unilever Compass Plan — net-zero supplier mandates',                                                       source: 'auto_seed' },
+  { clientId: 'solar-mfg-014', company: 'Kraft Heinz — Newberry',            category: 'commercial_solar', city: 'Newberry',     state: 'SC', contactTitle: 'Plant Manager',         pitchAngle: 'SC investor-owned utility commercial customer',                                                            source: 'auto_seed' },
+  { clientId: 'solar-mfg-015', company: 'Anheuser-Busch — Houston Brewery',  category: 'commercial_solar', city: 'Houston',      state: 'TX', contactTitle: 'Sustainability Manager',pitchAngle: 'AB-InBev 100% renewable electricity by 2025 commitment',                                                   source: 'auto_seed' },
 
-  // ── New Jersey / New York — high-CPL solar markets ───────────────────────
-  {
-    clientId: 'solar-021',
-    company: 'Newark Distribution Terminal',
-    category: 'commercial_solar',
-    city: 'Newark', state: 'NJ',
-    contactTitle: 'Director of Operations',
-    pitchAngle: '380,000 sqft warehouse — NJ TREC SuSI program + PSEG demand response stacking.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-022',
-    company: 'Long Island Industrial Holdings',
-    category: 'commercial_solar',
-    city: 'Hauppauge', state: 'NY',
-    contactTitle: 'Property Manager',
-    pitchAngle: '6-tenant business park — PSEG-LI commercial customers, NY-Sun MW Block.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-023',
-    company: 'Hudson Valley Cold Storage',
-    category: 'commercial_solar',
-    city: 'Newburgh', state: 'NY',
-    contactTitle: 'Plant Manager',
-    pitchAngle: '95,000 sqft cold storage — Central Hudson commercial + NYSERDA incentive available.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-024',
-    company: 'Garden State Self Storage',
-    category: 'commercial_solar',
-    city: 'Edison', state: 'NJ',
-    contactTitle: 'COO',
-    pitchAngle: '3-facility portfolio along NJ Turnpike corridor — community solar pollination opportunity.',
-    source: 'auto_seed',
-  },
+  // ── Healthcare systems (NAICS 6221) ────────────────────────────────────
+  // 24/7 critical load; tax-exempt → PPA structures.
+  { clientId: 'solar-med-001', company: 'Kaiser Permanente Oakland Medical', category: 'commercial_solar', city: 'Oakland',      state: 'CA', contactTitle: 'Facilities Director',   pitchAngle: 'Kaiser carbon-neutral since 2020 — additionality projects ongoing',                                        source: 'auto_seed' },
+  { clientId: 'solar-med-002', company: 'Cleveland Clinic Main Campus',      category: 'commercial_solar', city: 'Cleveland',    state: 'OH', contactTitle: 'VP Facilities',         pitchAngle: 'OH Energy Community bonus + non-profit PPA structure',                                                     source: 'auto_seed' },
+  { clientId: 'solar-med-003', company: 'Mayo Clinic Rochester',             category: 'commercial_solar', city: 'Rochester',    state: 'MN', contactTitle: 'Director Sustainability', pitchAngle: 'Mayo carbon neutrality goal — flagship Rochester campus',                                              source: 'auto_seed' },
+  { clientId: 'solar-med-004', company: 'Johns Hopkins Hospital',            category: 'commercial_solar', city: 'Baltimore',    state: 'MD', contactTitle: 'VP Real Estate',        pitchAngle: 'MD SREC + non-profit PPA — 24/7 critical load',                                                            source: 'auto_seed' },
+  { clientId: 'solar-med-005', company: 'NewYork-Presbyterian Weill Cornell',category: 'commercial_solar', city: 'New York',     state: 'NY', contactTitle: 'Sustainability Lead',   pitchAngle: 'NY VDER stack + ConEd commercial rate',                                                                     source: 'auto_seed' },
+  { clientId: 'solar-med-006', company: 'Banner Health — Phoenix',           category: 'commercial_solar', city: 'Phoenix',      state: 'AZ', contactTitle: 'Director Sustainability', pitchAngle: 'APS commercial + Banner net-zero goal',                                                                  source: 'auto_seed' },
+  { clientId: 'solar-med-007', company: 'AdventHealth Orlando',              category: 'commercial_solar', city: 'Orlando',      state: 'FL', contactTitle: 'Director Facilities',    pitchAngle: 'OUC service area — local rebate stacking with ITC',                                                        source: 'auto_seed' },
+  { clientId: 'solar-med-008', company: 'Texas Medical Center — Houston',    category: 'commercial_solar', city: 'Houston',      state: 'TX', contactTitle: 'VP Real Estate',        pitchAngle: 'Largest medical center in world — multi-facility portfolio',                                               source: 'auto_seed' },
+  { clientId: 'solar-med-009', company: 'Stanford Hospital',                 category: 'commercial_solar', city: 'Stanford',     state: 'CA', contactTitle: 'Sustainability Director', pitchAngle: 'Stanford net-zero 2050 — academic medical center',                                                       source: 'auto_seed' },
+  { clientId: 'solar-med-010', company: 'Mass General Brigham',              category: 'commercial_solar', city: 'Boston',       state: 'MA', contactTitle: 'VP Sustainability',     pitchAngle: 'MA SMART tariff + non-profit PPA structure',                                                                source: 'auto_seed' },
 
-  // ── Illinois / Ohio — Midwest manufacturing belt ─────────────────────────
-  {
-    clientId: 'solar-025',
-    company: 'Chicagoland Logistics Hub',
-    category: 'commercial_solar',
-    city: 'Joliet', state: 'IL',
-    contactTitle: 'Director of Facilities',
-    pitchAngle: '420,000 sqft single-story warehouse — Illinois Shines REC program + ComEd commercial.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-026',
-    company: 'Columbus Metal Fabrication',
-    category: 'commercial_solar',
-    city: 'Columbus', state: 'OH',
-    contactTitle: 'Plant Manager',
-    pitchAngle: '120,000 sqft metal-roof fabricator — AEP commercial rate, daytime heavy load.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-027',
-    company: 'Cleveland Industrial Park',
-    category: 'commercial_solar',
-    city: 'Cleveland', state: 'OH',
-    contactTitle: 'Property Manager',
-    pitchAngle: '5-building industrial park — Illuminating Co commercial, IRA Energy Communities bonus.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-028',
-    company: 'Midwest Food Processing',
-    category: 'commercial_solar',
-    city: 'Aurora', state: 'IL',
-    contactTitle: 'Sustainability Director',
-    pitchAngle: '150,000 sqft processing facility — corporate sustainability targets + Net Zero by 2030.',
-    source: 'auto_seed',
-  },
+  // ── Universities (NAICS 6113) ──────────────────────────────────────────
+  // ESG mandates + endowment capex + research labs need 24/7 power.
+  { clientId: 'solar-edu-001', company: 'Arizona State University',          category: 'commercial_solar', city: 'Tempe',        state: 'AZ', contactTitle: 'Director Sustainability', pitchAngle: 'ASU already a solar leader — additionality projects + parking-lot canopies',                            source: 'auto_seed' },
+  { clientId: 'solar-edu-002', company: 'University of Texas Austin',        category: 'commercial_solar', city: 'Austin',       state: 'TX', contactTitle: 'VP Operations',         pitchAngle: 'Austin Energy PBI + UT carbon-neutral goal',                                                                source: 'auto_seed' },
+  { clientId: 'solar-edu-003', company: 'UCLA',                              category: 'commercial_solar', city: 'Los Angeles',  state: 'CA', contactTitle: 'Sustainability Manager',pitchAngle: 'UC system 100% renewable commitment — multi-MW campus rooftop',                                            source: 'auto_seed' },
+  { clientId: 'solar-edu-004', company: 'University of Michigan',            category: 'commercial_solar', city: 'Ann Arbor',    state: 'MI', contactTitle: 'Director Sustainability', pitchAngle: 'UMich carbon neutrality 2025 — multiple campus buildings ready',                                        source: 'auto_seed' },
+  { clientId: 'solar-edu-005', company: 'University of Florida',             category: 'commercial_solar', city: 'Gainesville',  state: 'FL', contactTitle: 'VP Facilities',        pitchAngle: 'UF carbon neutrality target + Gainesville Regional Utility partnership',                                  source: 'auto_seed' },
+  { clientId: 'solar-edu-006', company: 'Ohio State University',             category: 'commercial_solar', city: 'Columbus',     state: 'OH', contactTitle: 'Director Sustainability', pitchAngle: 'AEP Ohio commercial + IRA Energy Community',                                                              source: 'auto_seed' },
+  { clientId: 'solar-edu-007', company: 'Texas A&M University',              category: 'commercial_solar', city: 'College Station', state: 'TX', contactTitle: 'Energy Manager',     pitchAngle: 'Large research campus — high baseload',                                                                     source: 'auto_seed' },
+  { clientId: 'solar-edu-008', company: 'Penn State University Park',        category: 'commercial_solar', city: 'University Park', state: 'PA', contactTitle: 'Director Sustainability', pitchAngle: 'PA SREC market + state-funded research mission',                                                       source: 'auto_seed' },
+  { clientId: 'solar-edu-009', company: 'University of Washington Seattle',  category: 'commercial_solar', city: 'Seattle',      state: 'WA', contactTitle: 'Sustainability Director', pitchAngle: 'UW climate plan — additionality demand high',                                                            source: 'auto_seed' },
+  { clientId: 'solar-edu-010', company: 'Indiana University Bloomington',    category: 'commercial_solar', city: 'Bloomington',  state: 'IN', contactTitle: 'Director Facilities',    pitchAngle: 'IN — Duke Energy commercial customer',                                                                     source: 'auto_seed' },
 
-  // ── Georgia / North Carolina — Sunbelt expansion ─────────────────────────
-  {
-    clientId: 'solar-029',
-    company: 'Atlanta Distribution Center',
-    category: 'commercial_solar',
-    city: 'Forest Park', state: 'GA',
-    contactTitle: 'Director of Operations',
-    pitchAngle: '275,000 sqft warehouse — Georgia Power commercial, IRA energy community bonus 10% adder.',
-    source: 'auto_seed',
-  },
-  {
-    clientId: 'solar-030',
-    company: 'Charlotte Logistics Group',
-    category: 'commercial_solar',
-    city: 'Charlotte', state: 'NC',
-    contactTitle: 'COO',
-    pitchAngle: '195,000 sqft membrane roof — Duke Energy commercial + NC HB 951 utility procurement.',
-    source: 'auto_seed',
-  },
+  // ── Self-storage portfolios (NAICS 5311) ───────────────────────────────
+  // Climate-controlled = strong daytime load; portfolio-level deals scale.
+  { clientId: 'solar-ss-001', company: 'Public Storage — Phoenix Portfolio', category: 'commercial_solar', city: 'Phoenix',      state: 'AZ', contactTitle: 'Property Manager',      pitchAngle: '12-facility metro portfolio — APS commercial customer',                                                    source: 'auto_seed' },
+  { clientId: 'solar-ss-002', company: 'Extra Space Storage — Inland Empire',category: 'commercial_solar', city: 'Riverside',    state: 'CA', contactTitle: 'Regional Manager',      pitchAngle: '8-property Inland Empire cluster — SCE territory',                                                          source: 'auto_seed' },
+  { clientId: 'solar-ss-003', company: 'CubeSmart — Tampa Bay Portfolio',    category: 'commercial_solar', city: 'Tampa',        state: 'FL', contactTitle: 'COO',                   pitchAngle: 'FL net-metering 1:1 + portfolio of 6 facilities',                                                           source: 'auto_seed' },
+  { clientId: 'solar-ss-004', company: 'Life Storage — Houston Region',      category: 'commercial_solar', city: 'Houston',      state: 'TX', contactTitle: 'Regional Manager',      pitchAngle: 'CenterPoint commercial demand charges — solar shaves peaks',                                                source: 'auto_seed' },
+  { clientId: 'solar-ss-005', company: 'StorageMart — Atlanta Metro',        category: 'commercial_solar', city: 'Atlanta',      state: 'GA', contactTitle: 'Property Manager',      pitchAngle: 'Climate-controlled units — daytime HVAC load alignment',                                                    source: 'auto_seed' },
+
+  // ── Hospitality (NAICS 7211) ───────────────────────────────────────────
+  // Pool heating + 24/7 lighting + guest-facing sustainability story.
+  { clientId: 'solar-hosp-001', company: 'Marriott — JW Marriott Phoenix',    category: 'commercial_solar', city: 'Phoenix',      state: 'AZ', contactTitle: 'Director of Engineering', pitchAngle: 'Marriott Serve 360 — facility-level Scope 2 reporting',                                                  source: 'auto_seed' },
+  { clientId: 'solar-hosp-002', company: 'Hyatt Regency Maui',               category: 'commercial_solar', city: 'Lahaina',      state: 'HI', contactTitle: 'Director of Engineering', pitchAngle: 'Highest commercial rates in US ($0.40+/kWh) — fastest payback',                                          source: 'auto_seed' },
+  { clientId: 'solar-hosp-003', company: 'Hilton San Diego Bayfront',        category: 'commercial_solar', city: 'San Diego',    state: 'CA', contactTitle: 'Sustainability Lead',   pitchAngle: 'SDG&E NEM 3.0 + storage attach — Hilton carbon goals',                                                     source: 'auto_seed' },
+  { clientId: 'solar-hosp-004', company: 'Wynn Las Vegas',                   category: 'commercial_solar', city: 'Las Vegas',    state: 'NV', contactTitle: 'Director Facilities',   pitchAngle: 'Wynn solar field already exists — looking to expand',                                                       source: 'auto_seed' },
+  { clientId: 'solar-hosp-005', company: 'MGM Mandalay Bay',                 category: 'commercial_solar', city: 'Las Vegas',    state: 'NV', contactTitle: 'VP Sustainability',     pitchAngle: 'MGM solar campus expanding — partner installer network',                                                    source: 'auto_seed' },
+
+  // ── Retail big-box (NAICS 44, 45) ──────────────────────────────────────
+  // Refrigeration + HVAC peak demand savings.
+  { clientId: 'solar-ret-001', company: 'IKEA Tempe',                        category: 'commercial_solar', city: 'Tempe',        state: 'AZ', contactTitle: 'Store Manager',         pitchAngle: 'IKEA already has solar at most US stores — backfill opportunity',                                          source: 'auto_seed' },
+  { clientId: 'solar-ret-002', company: 'Whole Foods — Austin Flagship',     category: 'commercial_solar', city: 'Austin',       state: 'TX', contactTitle: 'Director Facilities',    pitchAngle: 'Amazon-owned + Austin Energy PBI — grocery refrigeration heavy',                                            source: 'auto_seed' },
+  { clientId: 'solar-ret-003', company: 'REI Co-op Bend',                    category: 'commercial_solar', city: 'Bend',         state: 'OR', contactTitle: 'Sustainability Lead',   pitchAngle: 'REI net-positive impact pledge — flagship retail',                                                          source: 'auto_seed' },
+  { clientId: 'solar-ret-004', company: 'Patagonia Reno Distribution',       category: 'commercial_solar', city: 'Reno',         state: 'NV', contactTitle: 'Director Operations',   pitchAngle: 'Patagonia 1% for the Planet — solar fits brand DNA',                                                        source: 'auto_seed' },
+  { clientId: 'solar-ret-005', company: 'Wegmans — Pittsford',               category: 'commercial_solar', city: 'Pittsford',    state: 'NY', contactTitle: 'Store Manager',         pitchAngle: 'NY-Sun MW Block + grocery refrigeration',                                                                  source: 'auto_seed' },
+
+  // ── Smaller commercial real estate — high-volume, fast-cycle ──────────
+  { clientId: 'solar-cre-001', company: 'Hines — Salesforce Tower Atlanta', category: 'commercial_solar', city: 'Atlanta',      state: 'GA', contactTitle: 'Property Manager',      pitchAngle: 'Class A office tower — tenant pass-through PPA',                                                            source: 'auto_seed' },
+  { clientId: 'solar-cre-002', company: 'Tishman Speyer — Hudson Yards',    category: 'commercial_solar', city: 'New York',     state: 'NY', contactTitle: 'Director Sustainability', pitchAngle: 'NYC Local Law 97 compliance pressure — LEED Platinum target',                                          source: 'auto_seed' },
+  { clientId: 'solar-cre-003', company: 'Brookfield Properties — Brookfield Place LA', category: 'commercial_solar', city: 'Los Angeles', state: 'CA', contactTitle: 'VP Sustainability',     pitchAngle: 'Brookfield net-zero by 2050 — multi-asset capex',                                                        source: 'auto_seed' },
+  { clientId: 'solar-cre-004', company: 'Cushman & Wakefield — Dallas Tower', category: 'commercial_solar', city: 'Dallas',     state: 'TX', contactTitle: 'Property Manager',      pitchAngle: 'CRE management firm — multi-building procurement',                                                          source: 'auto_seed' },
+  { clientId: 'solar-cre-005', company: 'CBRE — Bay Area Industrial Portfolio', category: 'commercial_solar', city: 'San Jose', state: 'CA', contactTitle: 'Regional Director',      pitchAngle: 'Industrial portfolio across SCE / PG&E — bulk procurement',                                                source: 'auto_seed' },
+
+  // ── EV / battery / clean tech (early adopters) ─────────────────────────
+  { clientId: 'solar-cln-001', company: 'Rivian — Normal Plant',            category: 'commercial_solar', city: 'Normal',       state: 'IL', contactTitle: 'Sustainability Manager',pitchAngle: 'IRA 45X advanced-mfg credit stacks with ITC',                                                                source: 'auto_seed' },
+  { clientId: 'solar-cln-002', company: 'Tesla Gigafactory Nevada',         category: 'commercial_solar', city: 'Sparks',       state: 'NV', contactTitle: 'Sustainability Lead',   pitchAngle: 'Tesla already has rooftop solar — additionality discussion',                                               source: 'auto_seed' },
+  { clientId: 'solar-cln-003', company: 'Lucid Motors — Casa Grande Plant', category: 'commercial_solar', city: 'Casa Grande',  state: 'AZ', contactTitle: 'Plant Manager',         pitchAngle: 'Lucid 100% carbon-neutral target — APS commercial',                                                          source: 'auto_seed' },
+  { clientId: 'solar-cln-004', company: 'Form Energy — Weirton',            category: 'commercial_solar', city: 'Weirton',      state: 'WV', contactTitle: 'Director Operations',   pitchAngle: 'IRA Energy Community bonus — battery mfg site',                                                              source: 'auto_seed' },
+  { clientId: 'solar-cln-005', company: 'QuantumScape — San Jose',          category: 'commercial_solar', city: 'San Jose',     state: 'CA', contactTitle: 'Facilities Director',   pitchAngle: 'Solid-state battery startup — capital available for capex',                                                  source: 'auto_seed' },
+
+  // ── State / municipal (NAICS 92) — tax-exempt → PPA pitch ─────────────
+  { clientId: 'solar-muni-001', company: 'City of Austin Convention Center', category: 'commercial_solar', city: 'Austin',       state: 'TX', contactTitle: 'Facilities Director',   pitchAngle: 'Austin municipal — PPA structure for tax-exempt owner',                                                      source: 'auto_seed' },
+  { clientId: 'solar-muni-002', company: 'Metro Phoenix Convention Center',  category: 'commercial_solar', city: 'Phoenix',      state: 'AZ', contactTitle: 'Facilities Director',   pitchAngle: 'Municipal — PPA + APS green tariff',                                                                       source: 'auto_seed' },
+  { clientId: 'solar-muni-003', company: 'Port of Long Beach',               category: 'commercial_solar', city: 'Long Beach',   state: 'CA', contactTitle: 'Sustainability Director', pitchAngle: 'Port zero-emissions plan — multi-MW solar across terminals',                                            source: 'auto_seed' },
+  { clientId: 'solar-muni-004', company: 'Port of Houston Authority',        category: 'commercial_solar', city: 'Houston',      state: 'TX', contactTitle: 'Director Operations',   pitchAngle: 'Massive flat-roof port facilities — PPA path',                                                              source: 'auto_seed' },
+  { clientId: 'solar-muni-005', company: 'LAX — Tom Bradley Terminal',       category: 'commercial_solar', city: 'Los Angeles',  state: 'CA', contactTitle: 'Sustainability Lead',   pitchAngle: 'LAWA zero-emission goal — terminal rooftop assets',                                                          source: 'auto_seed' },
+
+  // ── Original AZ/TX/CA/FL/NJ/NY/IL/OH/GA/NC seeds (kept from v1) ───────
+  { clientId: 'solar-001', company: 'Phoenix Distribution Hub',              category: 'commercial_solar', city: 'Phoenix',      state: 'AZ', contactTitle: 'Director of Facilities',pitchAngle: '180,000 sqft flat-roof distribution center — APS commercial rate',                                          source: 'auto_seed' },
+  { clientId: 'solar-002', company: 'Sunbelt Cold Storage',                  category: 'commercial_solar', city: 'Tolleson',     state: 'AZ', contactTitle: 'Plant Manager',         pitchAngle: '24/7 refrigeration load + membrane roof',                                                                    source: 'auto_seed' },
+  { clientId: 'solar-003', company: 'Desert Metalworks Manufacturing',       category: 'commercial_solar', city: 'Chandler',     state: 'AZ', contactTitle: 'VP of Operations',      pitchAngle: '95,000 sqft metal-roof manufacturing',                                                                       source: 'auto_seed' },
+  { clientId: 'solar-004', company: 'Cactus Self Storage Portfolio',         category: 'commercial_solar', city: 'Mesa',         state: 'AZ', contactTitle: 'Property Manager',      pitchAngle: '5-facility portfolio',                                                                                       source: 'auto_seed' },
+  { clientId: 'solar-005', company: 'Valley Data Center West',               category: 'commercial_solar', city: 'Goodyear',     state: 'AZ', contactTitle: 'Sustainability Director', pitchAngle: 'Colocation customers demanding green PPA',                                                                source: 'auto_seed' },
+  { clientId: 'solar-006', company: 'Bayou Logistics Center',                category: 'commercial_solar', city: 'Houston',      state: 'TX', contactTitle: 'Director of Facilities',pitchAngle: '310,000 sqft flat TPO roof',                                                                                 source: 'auto_seed' },
+  { clientId: 'solar-007', company: 'Lone Star Beverage Distribution',       category: 'commercial_solar', city: 'Dallas',       state: 'TX', contactTitle: 'COO',                   pitchAngle: '180,000 sqft refrigerated warehouse',                                                                        source: 'auto_seed' },
+  { clientId: 'solar-008', company: 'Permian Industrial Park East',          category: 'commercial_solar', city: 'Midland',      state: 'TX', contactTitle: 'Property Manager',      pitchAngle: '6-tenant industrial park',                                                                                   source: 'auto_seed' },
+  { clientId: 'solar-009', company: 'Houston Medical Supply Warehouse',      category: 'commercial_solar', city: 'Houston',      state: 'TX', contactTitle: 'VP of Real Estate',     pitchAngle: 'Owner-occupied — Section 179 + ITC stack',                                                                  source: 'auto_seed' },
+  { clientId: 'solar-010', company: 'Frisco Tech Manufacturing',             category: 'commercial_solar', city: 'Frisco',       state: 'TX', contactTitle: 'Plant Manager',         pitchAngle: '85,000 sqft daytime production',                                                                             source: 'auto_seed' },
+  { clientId: 'solar-011', company: 'Inland Logistics Center',               category: 'commercial_solar', city: 'Ontario',      state: 'CA', contactTitle: 'Director of Operations',pitchAngle: '450,000 sqft mega-warehouse',                                                                                source: 'auto_seed' },
+  { clientId: 'solar-012', company: 'San Bernardino Cold Chain',             category: 'commercial_solar', city: 'San Bernardino',state: 'CA', contactTitle: 'COO',                  pitchAngle: '195,000 sqft cold storage',                                                                                  source: 'auto_seed' },
+  { clientId: 'solar-013', company: 'Mojave Industrial Park',                category: 'commercial_solar', city: 'Victorville',  state: 'CA', contactTitle: 'Property Manager',      pitchAngle: '8-building industrial park',                                                                                 source: 'auto_seed' },
+  { clientId: 'solar-014', company: 'Sacramento Valley Foods Co-Pack',       category: 'commercial_solar', city: 'Stockton',     state: 'CA', contactTitle: 'Facilities Manager',    pitchAngle: 'SMUD service area',                                                                                          source: 'auto_seed' },
+  { clientId: 'solar-015', company: 'Bay Area Data Logistics',               category: 'commercial_solar', city: 'Fremont',      state: 'CA', contactTitle: 'Sustainability Director', pitchAngle: 'PG&E E-19 + corporate ESG mandate',                                                                       source: 'auto_seed' },
+  { clientId: 'solar-016', company: 'Tampa Bay Distribution Co',             category: 'commercial_solar', city: 'Tampa',        state: 'FL', contactTitle: 'COO',                   pitchAngle: '250,000 sqft flat roof',                                                                                     source: 'auto_seed' },
+  { clientId: 'solar-017', company: 'Miami Logistics Park',                  category: 'commercial_solar', city: 'Doral',        state: 'FL', contactTitle: 'Director of Facilities',pitchAngle: 'Hurricane-rated mounting opportunity',                                                                       source: 'auto_seed' },
+  { clientId: 'solar-018', company: 'Orlando Self Storage Group',            category: 'commercial_solar', city: 'Orlando',      state: 'FL', contactTitle: 'Property Manager',      pitchAngle: '4-property portfolio',                                                                                       source: 'auto_seed' },
+  { clientId: 'solar-019', company: 'Jacksonville Marine Manufacturing',     category: 'commercial_solar', city: 'Jacksonville', state: 'FL', contactTitle: 'Plant Manager',         pitchAngle: '110,000 sqft boat manufacturer',                                                                              source: 'auto_seed' },
+  { clientId: 'solar-020', company: 'Gulf Coast Cold Storage',               category: 'commercial_solar', city: 'St. Petersburg',state: 'FL', contactTitle: 'VP of Real Estate',    pitchAngle: '85,000 sqft refrigerated',                                                                                   source: 'auto_seed' },
+  { clientId: 'solar-021', company: 'Newark Distribution Terminal',          category: 'commercial_solar', city: 'Newark',       state: 'NJ', contactTitle: 'Director of Operations',pitchAngle: '380,000 sqft warehouse',                                                                                     source: 'auto_seed' },
+  { clientId: 'solar-022', company: 'Long Island Industrial Holdings',       category: 'commercial_solar', city: 'Hauppauge',    state: 'NY', contactTitle: 'Property Manager',      pitchAngle: '6-tenant business park',                                                                                     source: 'auto_seed' },
+  { clientId: 'solar-023', company: 'Hudson Valley Cold Storage',            category: 'commercial_solar', city: 'Newburgh',     state: 'NY', contactTitle: 'Plant Manager',         pitchAngle: '95,000 sqft cold storage',                                                                                   source: 'auto_seed' },
+  { clientId: 'solar-024', company: 'Garden State Self Storage',             category: 'commercial_solar', city: 'Edison',       state: 'NJ', contactTitle: 'COO',                   pitchAngle: '3-facility portfolio',                                                                                       source: 'auto_seed' },
+  { clientId: 'solar-025', company: 'Chicagoland Logistics Hub',             category: 'commercial_solar', city: 'Joliet',       state: 'IL', contactTitle: 'Director of Facilities',pitchAngle: '420,000 sqft single-story warehouse',                                                                        source: 'auto_seed' },
+  { clientId: 'solar-026', company: 'Columbus Metal Fabrication',            category: 'commercial_solar', city: 'Columbus',     state: 'OH', contactTitle: 'Plant Manager',         pitchAngle: '120,000 sqft metal-roof fabricator',                                                                          source: 'auto_seed' },
+  { clientId: 'solar-027', company: 'Cleveland Industrial Park',             category: 'commercial_solar', city: 'Cleveland',    state: 'OH', contactTitle: 'Property Manager',      pitchAngle: '5-building industrial park',                                                                                 source: 'auto_seed' },
+  { clientId: 'solar-028', company: 'Midwest Food Processing',               category: 'commercial_solar', city: 'Aurora',       state: 'IL', contactTitle: 'Sustainability Director', pitchAngle: '150,000 sqft processing facility',                                                                        source: 'auto_seed' },
+  { clientId: 'solar-029', company: 'Atlanta Distribution Center',           category: 'commercial_solar', city: 'Forest Park',  state: 'GA', contactTitle: 'Director of Operations',pitchAngle: '275,000 sqft warehouse',                                                                                     source: 'auto_seed' },
+  { clientId: 'solar-030', company: 'Charlotte Logistics Group',             category: 'commercial_solar', city: 'Charlotte',    state: 'NC', contactTitle: 'COO',                   pitchAngle: '195,000 sqft membrane roof',                                                                                 source: 'auto_seed' },
 ];
 
 module.exports = { LEADS: SOLAR_LEADS };

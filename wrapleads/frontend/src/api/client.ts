@@ -864,7 +864,12 @@ export const api = {
     authFetch<{
       token: string;
       url: string;
-      summary: { company: string; system_kw: number; net_payback: number | null; net_cost: number; annual_savings: number };
+      pdf_url: string;
+      summary: { company: string; system_kw: number; net_payback: number | null; net_cost: number; annual_savings: number; npv_p50?: number | null; pays_back_prob?: number | null };
+      simulation?: {
+        npv: { p10: number; p50: number; p90: number; mean: number };
+        payback_years: { p10: number; p50: number; p90: number; probability_under_10y: number; probability_pays_back: number };
+      } | null;
     }>(`/solar/leads/${leadId}/proposal`, { method: 'POST', body: '{}' }),
 
   // Pilot installers (requireWrapOS)

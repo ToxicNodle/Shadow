@@ -633,20 +633,31 @@ function StatusBadge({ status }: { status: string }) {
 function ProposalButton({ companyId, importMut }: { companyId: number; importMut: ReturnType<typeof useImportSolarLead> }) {
   const proposal = useCreateSolarProposal();
   const toast = useAppStore(s => s.showToast);
-  async function onClick() {
+  async function generate(open: 'html' | 'pdf') {
     try {
       const r = await importMut.mutateAsync(companyId);
       if (!r.leadId) { toast('Could not import lead', 'error'); return; }
       const p = await proposal.mutateAsync(r.leadId);
-      window.open(p.url, '_blank', 'noopener');
-      toast('Proposal generated — opening in a new tab', 'success');
+      window.open(open === 'pdf' ? p.pdf_url : p.url, '_blank', 'noopener');
+      const sim = p.simulation;
+      toast(
+        sim
+          ? `Proposal ready · P50 NPV $${Math.round(sim.npv.p50 / 1000).toLocaleString()}K · ${Math.round(sim.payback_years.probability_pays_back * 100)}% pays back`
+          : 'Proposal generated',
+        'success'
+      );
     } catch (e) {
       toast(String((e as Error).message || 'Failed to generate proposal'), 'error');
     }
   }
   return (
-    <button onClick={onClick} disabled={proposal.isPending || importMut.isPending} style={secondaryButtonStyle()}>
-      {proposal.isPending ? 'Generating…' : '📄 Generate proposal'}
-    </button>
+    <span style={{ display: 'inline-flex', gap: 4 }}>
+      <button onClick={() => generate('pdf')} disabled={proposal.isPending || importMut.isPending} style={primaryButtonStyle()}>
+        {proposal.isPending ? 'Generating…' : '⬇ PDF proposal'}
+      </button>
+      <button onClick={() => generate('html')} disabled={proposal.isPending || importMut.isPending} style={secondaryButtonStyle()} title="Open the proposal in your browser (shareable link)">
+        View
+      </button>
+    </span>
   );
 }
