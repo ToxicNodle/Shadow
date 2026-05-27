@@ -1085,4 +1085,20 @@ export const api = {
       totalPipelineValue: number;
       hasData: boolean;
     }>('/analytics/referrals'),
+
+  // Loss Analysis — breakdown of why deals are lost and who we lost them to
+  getLossAnalysis: () =>
+    authFetch<{
+      totalLost: number;
+      byReason: Array<{ reason: string; count: number; avg_days_in_pipeline: number | null; categories: string[] }>;
+      byCompetitor: Array<{ competitor: string; losses: number; categories: string[] }>;
+      trend: Array<{ month: string; losses: number; recoverable: number }>;
+      recoverableLeads: Array<{ id: number; company: string; category: string; lost_reason: string; lost_competitor: string | null; lost_at: string; contact_name: string | null; email: string }>;
+    }>('/analytics/loss-analysis'),
+
+  generateWinBackEmail: (leadId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string }>(`/leads/${leadId}/win-back-email`, { method: 'POST' }),
+
+  logWinLoss: (leadId: number, data: { factor: string; competitor?: string; notes?: string }) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify(data) }),
 };

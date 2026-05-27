@@ -1611,6 +1611,168 @@ function ReferralIntelligenceCard() {
   );
 }
 
+// ── Loss Intelligence Card ────────────────────────────────────────────────────
+const LOSS_REASON_LABELS: Record<string, string> = {
+  price: 'Price too high', competitor: 'Went with competitor', timing: 'Bad timing',
+  not_ready: 'Not ready yet', no_budget: 'No budget', no_response: 'Went dark',
+  wrong_fit: 'Wrong fit', other: 'Other', unknown: 'Unknown',
+};
+
+function LossAnalysisCard() {
+  const showToast = useAppStore((s) => s.showToast);
+  const { data, isLoading } = useQuery({
+    queryKey: ['loss-analysis'],
+    queryFn: () => api.getLossAnalysis(),
+    staleTime: 5 * 60_000,
+  });
+  const [winBackLeadId, setWinBackLeadId] = useState<number | null>(null);
+  const [winBackEmail, setWinBackEmail] = useState<{ subject: string; body: string } | null>(null);
+  const [winBackLoading, setWinBackLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function generateWinBack(leadId: number) {
+    setWinBackLeadId(leadId);
+    setWinBackEmail(null);
+    setWinBackLoading(true);
+    try {
+      const r = await api.generateWinBackEmail(leadId);
+      setWinBackEmail({ subject: r.subject, body: r.body });
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setWinBackLoading(false);
+    }
+  }
+
+  function copyEmail(text: string) {
+    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  }
+
+  if (isLoading) return null;
+  if (!data || data.totalLost === 0) return null;
+
+  const maxReasonCount = Math.max(...(data.byReason?.map((r) => r.count) ?? [1]), 1);
+
+  return (
+    <div className="an-card" style={{ borderColor: 'rgba(239,68,68,.25)' }}>
+      <div className="an-card-header" style={{ marginBottom: 16 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          Loss Intelligence
+        </span>
+        <span style={{
+          fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+          background: 'rgba(239,68,68,.12)', color: '#ef4444',
+        }}>
+          {data.totalLost} total losses
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        {/* Why we lose */}
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 10 }}>
+            Why We Lose
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {(data.byReason ?? []).slice(0, 6).map((r) => (
+              <div key={r.reason}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text)' }}>{LOSS_REASON_LABELS[r.reason] ?? r.reason}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#ef4444' }}>{r.count}</span>
+                </div>
+                <div style={{ height: 3, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ width: `${(r.count / maxReasonCount) * 100}%`, height: '100%', background: '#ef4444', borderRadius: 99 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Competitors eating our lunch */}
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 10 }}>
+            Competitors We Lose To
+          </div>
+          {(data.byCompetitor ?? []).length === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+              No competitor data yet — fill in the "competitor" field when marking deals lost.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(data.byCompetitor ?? []).slice(0, 5).map((c) => (
+                <div key={c.competitor} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {c.competitor}
+                  </div>
+                  <div style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 99,
+                    background: 'rgba(239,68,68,.1)', color: '#ef4444',
+                  }}>
+                    {c.losses} {c.losses === 1 ? 'loss' : 'losses'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recoverable leads win-back panel */}
+      {(data.recoverableLeads ?? []).length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 10 }}>
+            Win-Back Opportunities — Price/Timing/Not Ready
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {data.recoverableLeads.slice(0, 4).map((lead) => (
+              <div key={lead.id}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{lead.company}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 8 }}>
+                      {LOSS_REASON_LABELS[lead.lost_reason] ?? lead.lost_reason}
+                      {' · '}
+                      {new Date(lead.lost_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </span>
+                  </div>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 11, padding: '3px 10px', color: '#4d8af5', borderColor: 'rgba(77,138,245,.3)', flexShrink: 0 }}
+                    onClick={() => generateWinBack(lead.id)}
+                    disabled={winBackLoading && winBackLeadId === lead.id}
+                  >
+                    {winBackLoading && winBackLeadId === lead.id ? '…' : '✉ Win Back'}
+                  </button>
+                </div>
+                {winBackLeadId === lead.id && winBackEmail && (
+                  <div style={{ marginTop: 8, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#4d8af5', marginBottom: 4 }}>
+                      Subject: {winBackEmail.subject}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6, marginBottom: 8, whiteSpace: 'pre-wrap' }}>
+                      {winBackEmail.body}
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      style={{ fontSize: 11, padding: '4px 12px' }}
+                      onClick={() => copyEmail(`Subject: ${winBackEmail.subject}\n\n${winBackEmail.body}`)}
+                    >
+                      {copied ? '✓ Copied!' : 'Copy Email'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Lead Cohort Analysis ──────────────────────────────────────────────────────
 function CohortAnalysisCard() {
   const { data, isLoading } = useQuery({
@@ -2369,6 +2531,9 @@ export default function AnalyticsView() {
             }}
           />
         )}
+
+        {/* ── Loss Intelligence ── */}
+        <LossAnalysisCard />
 
         {/* ── Referral Intelligence ── */}
         <ReferralIntelligenceCard />

@@ -287,6 +287,11 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'US'`);
   } catch (e) { console.warn('[migrate] Could not add country column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason TEXT`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_competitor TEXT`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add lost_reason columns:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -4421,6 +4426,11 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
     const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
     if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
     const { factor = 'other', notes = '', competitor = '' } = req.body || {};
+    // Persist structured loss data to the lead row itself
+    await pool.query(
+      `UPDATE leads SET lost_reason=$1, lost_competitor=$2, lost_at=NOW(), updated_at=NOW() WHERE id=$3 AND user_id=$4`,
+      [factor || null, competitor || null, leadId, uid]
+    );
     await logActivity(pool, {
       leadId, userId: uid, type: 'status_changed',
       subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}`,
@@ -4432,6 +4442,125 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
       },
     });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/loss-analysis — breakdown of loss reasons, competitors, revenue impact
+app.get('/analytics/loss-analysis', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [reasonsR, competitorsR, timelineR, recoverableR] = await Promise.all([
+      // Loss reason breakdown with revenue estimate
+      pool.query(`
+        SELECT
+          COALESCE(lost_reason, 'unknown') AS reason,
+          COUNT(*)::INT AS count,
+          ROUND(AVG(EXTRACT(EPOCH FROM (lost_at - created_at)) / 86400))::INT AS avg_days_in_pipeline,
+          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories
+        FROM leads
+        WHERE user_id=$1 AND status='lost'
+        GROUP BY COALESCE(lost_reason, 'unknown')
+        ORDER BY count DESC
+      `, [uid]),
+
+      // Top competitors mentioned in losses
+      pool.query(`
+        SELECT
+          lost_competitor AS competitor,
+          COUNT(*)::INT AS losses,
+          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories
+        FROM leads
+        WHERE user_id=$1 AND status='lost' AND lost_competitor IS NOT NULL AND lost_competitor != ''
+        GROUP BY lost_competitor
+        ORDER BY losses DESC
+        LIMIT 10
+      `, [uid]),
+
+      // Monthly loss trend (last 6 months)
+      pool.query(`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', lost_at), 'Mon') AS month,
+          DATE_TRUNC('month', lost_at) AS month_date,
+          COUNT(*)::INT AS losses,
+          COUNT(*) FILTER (WHERE lost_reason NOT IN ('price','timing','no_budget') OR lost_reason IS NULL)::INT AS recoverable
+        FROM leads
+        WHERE user_id=$1 AND status='lost' AND lost_at >= NOW() - INTERVAL '6 months'
+        GROUP BY DATE_TRUNC('month', lost_at)
+        ORDER BY month_date
+      `, [uid]),
+
+      // Recoverable losses — price or timing related, from last 90 days
+      pool.query(`
+        SELECT id, company, category, lost_reason, lost_competitor, lost_at, contact_name, email
+        FROM leads
+        WHERE user_id=$1 AND status='lost'
+          AND lost_reason IN ('price','timing','not_ready')
+          AND lost_at >= NOW() - INTERVAL '90 days'
+          AND email IS NOT NULL AND email != ''
+        ORDER BY lost_at DESC
+        LIMIT 8
+      `, [uid]),
+    ]);
+
+    const totalLost = reasonsR.rows.reduce((s, r) => s + r.count, 0);
+    const byCompetitor = competitorsR.rows;
+    const byReason = reasonsR.rows;
+    const trend = timelineR.rows;
+    const recoverableLeads = recoverableR.rows;
+
+    res.json({ ok: true, totalLost, byReason, byCompetitor, trend, recoverableLeads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/win-back-email — generate a re-engagement email for a lost lead
+app.post('/leads/:id/win-back-email', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const leadR = await pool.query(
+      `SELECT company, contact_name, category, lost_reason, lost_competitor, lost_at, email FROM leads WHERE id=$1 AND user_id=$2 AND status='lost'`,
+      [leadId, uid]
+    );
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Not found or not a lost lead' });
+    const lead = leadR.rows[0];
+    const settR = await pool.query(`SELECT settings_json, sender_name FROM users WHERE id=$1`, [uid]);
+    const settings = settR.rows[0]?.settings_json ? JSON.parse(settR.rows[0].settings_json) : {};
+    const senderName = settings.senderName || settR.rows[0]?.sender_name || 'your team';
+    const shopName = settings.companyName || 'us';
+
+    const monthsAgo = lead.lost_at
+      ? Math.round((Date.now() - new Date(lead.lost_at).getTime()) / (30 * 86400000))
+      : null;
+
+    const reasonContext = {
+      price: `The main objection was price. Mention a current fleet special, flexible payment terms, or an updated quote that may work better for their budget.`,
+      timing: `The timing wasn't right. Check if their situation has changed. Reference the season or a reason now is ideal.`,
+      not_ready: `They weren't ready. Acknowledge the time that's passed and make it easy to re-engage with no pressure.`,
+      competitor: lead.lost_competitor
+        ? `They went with ${lead.lost_competitor}. Reference your quality difference and offer to quote their next vehicle or phase.`
+        : `They went with a competitor. Position this as a check-in, not a pitch.`,
+    }[lead.lost_reason] || `Reach out warmly without referencing why they went cold.`;
+
+    const prompt = `You write win-back emails for a vehicle wrap shop. Write a SHORT, conversational re-engagement email.
+
+Shop contact name: ${senderName}
+Prospect: ${lead.contact_name || 'there'} at ${lead.company} (${lead.category} category)
+${monthsAgo ? `Lost ${monthsAgo} month${monthsAgo !== 1 ? 's' : ''} ago.` : ''}
+Strategy: ${reasonContext}
+
+Requirements:
+- Subject line that doesn't feel like a cold pitch (e.g., "Quick thought on ${lead.company}", "Checking back in — ${lead.company}")
+- 3-4 sentences max, warm and direct
+- ONE clear call to action (reply, schedule a call, or visit a link)
+- Do NOT apologize or grovel
+- Feel like a genuine human check-in, not a sales blast
+
+Respond with ONLY valid JSON: { "subject": "...", "body": "..." }`;
+
+    const raw = await claudeHaiku(prompt, 400);
+    const cleaned = raw.replace(/```json\n?|```/g, '').trim();
+    const { subject, body } = JSON.parse(cleaned);
+    res.json({ ok: true, subject, body });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

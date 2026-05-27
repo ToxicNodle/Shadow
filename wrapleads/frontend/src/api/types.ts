@@ -25,6 +25,9 @@ export interface Lead {
   sourceCompanyId?: number;
   referred_by?: string | null;
   tags?: string[];
+  lost_reason?: string | null;
+  lost_competitor?: string | null;
+  lost_at?: string | null;
   createdAt: string;
   updatedAt: string;
 }

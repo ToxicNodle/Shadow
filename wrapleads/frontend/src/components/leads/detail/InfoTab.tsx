@@ -9,6 +9,7 @@ import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 import FindEmailPanel from './FindEmailPanel';
 import SimilarWinsPanel from './SimilarWinsPanel';
+import LossReasonModal from '../../modals/LossReasonModal';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -148,6 +149,85 @@ function MultiLocationExpansion({ lead }: { lead: Lead }) {
             >
               Regenerate
             </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Win-Back Email Panel (for lost leads) ─────────────────────────────────────
+function WinBackPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState<{ subject: string; body: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  if (lead.status !== 'lost') return null;
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    setOpen(true);
+    try {
+      const r = await api.generateWinBackEmail(lead.serverId);
+      setEmail({ subject: r.subject, body: r.body });
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copy() {
+    if (!email) return;
+    navigator.clipboard.writeText(`Subject: ${email.subject}\n\n${email.body}`)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  }
+
+  return (
+    <div style={{ margin: '12px 0', border: '1px solid rgba(239,68,68,.2)', borderRadius: 10, overflow: 'hidden' }}>
+      <button
+        onClick={() => open ? setOpen(false) : (email ? setOpen(true) : generate())}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 14px', background: 'rgba(239,68,68,.06)', border: 'none', cursor: 'pointer',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+          </svg>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#f87171' }}>Generate Win-Back Email</span>
+        </div>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '12px 14px' }}>
+          {loading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} /> Crafting re-engagement email…
+            </div>
+          )}
+          {email && !loading && (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#4d8af5', marginBottom: 4 }}>
+                Subject: {email.subject}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
+                {email.body}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={copy}>
+                  {copied ? '✓ Copied!' : 'Copy Email'}
+                </button>
+                <button className="btn" style={{ fontSize: 11 }} onClick={generate}>
+                  Regenerate
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1588,10 +1668,19 @@ export default function InfoTab({ lead }: Props) {
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && local.status === 'won' && <ReferralAskPanel lead={local} />}
       {lead.serverId && local.status === 'won' && <MultiLocationExpansion lead={local} />}
+      {lead.serverId && local.status === 'lost' && <WinBackPanel lead={local} />}
       {lead.serverId && <ProposalSection lead={local} />}
 
-      {showWinLoss && lead.serverId && (
+      {showWinLoss && lead.serverId && local.status === 'won' && (
         <WinLossModal lead={local} onClose={() => setShowWinLoss(false)} />
+      )}
+      {showWinLoss && lead.serverId && local.status === 'lost' && (
+        <LossReasonModal
+          leadId={lead.serverId}
+          company={local.company}
+          onClose={() => setShowWinLoss(false)}
+          onDone={() => setShowWinLoss(false)}
+        />
       )}
       {showSms && lead.serverId && (
         <SmsModal lead={local} onClose={() => setShowSms(false)} />
