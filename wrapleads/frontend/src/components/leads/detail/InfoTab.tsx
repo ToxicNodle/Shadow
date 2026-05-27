@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Lead, LeadCategory, LeadStatus, VehicleType } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
@@ -44,6 +44,206 @@ const MEDIA_BENCHMARKS: { name: string; cpm: number; isWrap?: boolean }[] = [
   { name: 'TV (local)',     cpm: 22.00 },
   { name: 'Digital Display',cpm: 3.55 },
 ];
+
+// ── Multi-Location Expansion ──────────────────────────────────────────────────
+function MultiLocationExpansion({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<Array<{ company: string; city: string; state: string; fleet_size: number | null; reasoning: string }> | null>(null);
+  const [creating, setCreating] = useState<number | null>(null);
+  const [created, setCreated] = useState<Set<number>>(new Set());
+  const showToast = useAppStore((s) => s.showToast);
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const qc = useQueryClient();
+
+  const fleetNum = parseInt(String(lead.fleetSize ?? '0'), 10);
+  if (lead.status !== 'won' || fleetNum < 10) return null;
+
+  async function fetchSuggestions() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const result = await api.suggestLocations(lead.serverId);
+      setSuggestions(result.suggestions);
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createLead(idx: number, s: { company: string; city: string; state: string; fleet_size: number | null }) {
+    if (!lead.serverId) return;
+    setCreating(idx);
+    try {
+      const result = await api.createLocationLead(lead.serverId, { ...s, category: lead.category });
+      setCreated((c) => new Set([...c, idx]));
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast(`Added ${s.company} to pipeline`);
+      if (result.clientId) setCurrentLeadId(result.clientId);
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setCreating(null);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <button
+        className="btn"
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, fontWeight: 600 }}
+        onClick={() => { if (!suggestions && !open) fetchSuggestions(); setOpen((v) => !v); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ghost-green)" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          Expand to Other Locations
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--text-faint)', fontWeight: 400 }}>
+          {fleetNum}+ vehicle fleet — likely has other terminals
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '12px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+              AI analyzing likely locations for {lead.company}…
+            </div>
+          )}
+          {suggestions && suggestions.map((s, i) => (
+            <div key={i} style={{
+              background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+              padding: '8px 10px', marginBottom: 6, display: 'flex', gap: 8, alignItems: 'flex-start',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{s.company}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{[s.city, s.state].filter(Boolean).join(', ')}{s.fleet_size ? ` · ~${s.fleet_size} vehicles` : ''}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2, fontStyle: 'italic' }}>{s.reasoning}</div>
+              </div>
+              <button
+                className="btn"
+                disabled={created.has(i) || creating === i}
+                onClick={() => createLead(i, s)}
+                style={{
+                  fontSize: 10, padding: '3px 9px', flexShrink: 0,
+                  background: created.has(i) ? '#22c55e22' : undefined,
+                  borderColor: created.has(i) ? '#22c55e' : undefined,
+                  color: created.has(i) ? '#22c55e' : undefined,
+                }}
+              >
+                {created.has(i) ? '✓ Added' : creating === i ? '…' : 'Add →'}
+              </button>
+            </div>
+          ))}
+          {suggestions && suggestions.length === 0 && (
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0' }}>No additional locations suggested for this company.</p>
+          )}
+          {suggestions && (
+            <button
+              className="btn"
+              style={{ fontSize: 10, marginTop: 4 }}
+              onClick={() => { setSuggestions(null); setCreated(new Set()); fetchSuggestions(); }}
+            >
+              Regenerate
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Referral Ask Panel ─────────────────────────────────────────────────────────
+function ReferralAskPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState<{ subject: string; body: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  if (lead.status !== 'won') return null;
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const result = await api.generateReferralAsk(lead.serverId);
+      setEmail({ subject: result.subject, body: result.body });
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copy() {
+    if (!email) return;
+    navigator.clipboard.writeText(`Subject: ${email.subject}\n\n${email.body}`).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    showToast('Referral ask email copied to clipboard');
+  }
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <button
+        className="btn"
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, fontWeight: 600 }}
+        onClick={() => { if (!email && !open) generate(); setOpen((v) => !v); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ghost-green)" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Ask for Referrals
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--text-faint)', fontWeight: 400 }}>AI writes the email</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />Writing referral ask…
+            </div>
+          )}
+          {email && (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                Subject
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, fontStyle: 'italic' }}>
+                {email.subject}
+              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                Body
+              </div>
+              <div style={{
+                fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6,
+                background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+                padding: '8px 10px', marginBottom: 8, whiteSpace: 'pre-wrap',
+              }}>
+                {email.body}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  className="btn"
+                  style={{ flex: 1, fontSize: 11, fontWeight: 600, background: copied ? '#22c55e22' : undefined, borderColor: copied ? '#22c55e' : undefined, color: copied ? '#22c55e' : undefined }}
+                  onClick={copy}
+                >
+                  {copied ? '✓ Copied' : 'Copy Email'}
+                </button>
+                <button className="btn" style={{ fontSize: 11 }} onClick={() => { setEmail(null); generate(); }}>
+                  Regenerate
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function WrapROICalculator({ lead }: { lead: Lead }) {
   const fleet = parseInt(String(lead.fleetSize ?? '10'), 10) || 10;
@@ -1386,6 +1586,8 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <FollowUpRecommender lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
+      {lead.serverId && local.status === 'won' && <ReferralAskPanel lead={local} />}
+      {lead.serverId && local.status === 'won' && <MultiLocationExpansion lead={local} />}
       {lead.serverId && <ProposalSection lead={local} />}
 
       {showWinLoss && lead.serverId && (

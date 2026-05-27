@@ -8850,6 +8850,209 @@ app.get('/roi/:token', async (req, res) => {
   }
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// Multi-Location Expansion — for won deals with large fleets, suggest terminals
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/suggest-locations', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT company, city, state, fleet_size, category, website, industry
+       FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = rows[0];
+
+    const prompt = `A vehicle wrap shop just won a deal with "${lead.company}", a ${lead.category} company based in ${lead.city || 'unknown city'}, ${lead.state || 'unknown state'} with a fleet of ${lead.fleet_size || 'unknown'} vehicles.
+
+Large fleet companies often have multiple terminals, branches, or regional offices. Based on the company name and location, suggest 4-6 OTHER potential locations this company likely operates from. These are NEW leads for the wrap shop — different from the one they already won.
+
+Return ONLY a valid JSON array. Each object must have:
+- "company": company name (same brand, variant like "[Company] Columbus Terminal" or "[Company] - Midwest Hub")
+- "city": guessed city name
+- "state": 2-letter state code
+- "fleet_size": estimated fleet vehicles at this location (integer, use null if unknown)
+- "reasoning": one sentence why this location likely exists
+
+Example format:
+[{"company":"ABC Trucking - Columbus Hub","city":"Columbus","state":"OH","fleet_size":30,"reasoning":"Major Ohio distribution hub given Indianapolis base"},...]
+
+No markdown, no explanation outside the JSON array.`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return res.status(500).json({ error: 'AI parse error', raw });
+
+    const suggestions = JSON.parse(match[0]);
+    res.json({ ok: true, suggestions, sourceCompany: lead.company, sourceState: lead.state });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/create-location — create a new lead from a suggested location
+app.post('/leads/:id/create-location', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const sourceLeadId = Number(req.params.id);
+  const { company, city, state, fleet_size, category } = req.body || {};
+  if (!company) return res.status(400).json({ error: 'company required' });
+
+  try {
+    // Inherit source lead's category if not specified
+    const src = await pool.query('SELECT category, referred_by FROM leads WHERE id=$1 AND user_id=$2', [sourceLeadId, uid]);
+    const srcLead = src.rows[0] || {};
+
+    const clientId = require('crypto').randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO leads (user_id, client_id, company, city, state, fleet_size, category, status, source, referred_by, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'new','location_expansion',$8,NOW(),NOW()) RETURNING id`,
+      [uid, clientId, company, city || null, state || null, fleet_size || null,
+       category || srcLead.category || 'fleet', `Location of #${sourceLeadId}`]
+    );
+    const newLeadId = rows[0].id;
+
+    await logActivity(pool, {
+      leadId: newLeadId, userId: uid, type: 'note',
+      subject: `Created from location expansion of lead #${sourceLeadId}`,
+      metadata: { source_lead_id: sourceLeadId, expansion: true },
+    });
+
+    res.json({ ok: true, leadId: newLeadId, clientId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Referral Ask — AI generates a personalized email asking won client for referrals
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/referral-ask', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT l.company, l.contact_name, l.category, l.city, l.state, l.fleet_size,
+              u.settings_json
+       FROM leads l JOIN users u ON u.id=l.user_id
+       WHERE l.id=$1 AND l.user_id=$2 AND l.status='won'`, [leadId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Lead not found or not won' });
+    const lead = rows[0];
+    const s = lead.settings_json || {};
+    const senderName = s.senderName || 'the team';
+    const shopName = s.companyName || 'our wrap shop';
+
+    const prompt = `Write a short, warm referral ask email from ${senderName} at ${shopName} to ${lead.contact_name || lead.company} at ${lead.company}.
+
+Context:
+- They are a happy won customer (${lead.category} wrap project)
+- ${lead.fleet_size ? `Fleet size: ${lead.fleet_size} vehicles` : ''}
+- ${lead.city || ''} ${lead.state || ''}
+
+The email should:
+1. Briefly thank them for their business and mention the project was great
+2. Ask if they know 2-3 other companies (in their industry or area) who might benefit from vehicle wraps
+3. Offer a referral incentive (e.g., 5% off their next wrap or a gift card — keep vague, use placeholder)
+4. Be conversational, under 120 words, no generic filler
+
+Return JSON: {"subject": "...", "body": "..."}
+No markdown.`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 400);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const { subject, body } = JSON.parse(match[0]);
+    res.json({ ok: true, subject, body, contactName: lead.contact_name, contactEmail: null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /analytics/referrals — detailed referral pipeline analytics
+// ────────────────────────────────────────────────────────────────────────────
+
+app.get('/analytics/referrals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [referrersR, recentR, totalsR] = await Promise.all([
+      // Top referrers with pipeline value
+      pool.query(`
+        SELECT
+          referred_by,
+          COUNT(*)::INT AS referrals,
+          COUNT(*) FILTER (WHERE status='won')::INT AS won,
+          COUNT(*) FILTER (WHERE status IN ('proposal','meeting','replied'))::INT AS active,
+          COUNT(*) FILTER (WHERE status='lost')::INT AS lost,
+          COALESCE(SUM(
+            CASE category WHEN 'fleet' THEN 4500 WHEN 'gc_referral' THEN 18000
+            WHEN 'dinoc' THEN 6000 WHEN 'construction' THEN 5000
+            WHEN 'colorchange' THEN 3500 WHEN 'racing' THEN 40000
+            ELSE 2500 END
+          ) FILTER (WHERE status='won'), 0)::INT AS won_revenue,
+          COALESCE(SUM(
+            CASE category WHEN 'fleet' THEN 4500 WHEN 'gc_referral' THEN 18000
+            WHEN 'dinoc' THEN 6000 WHEN 'construction' THEN 5000
+            WHEN 'colorchange' THEN 3500 WHEN 'racing' THEN 40000
+            ELSE 2500 END
+          ) FILTER (WHERE status IN ('proposal','meeting','replied')), 0)::INT AS pipeline_value,
+          MAX(created_at) AS last_referral_at
+        FROM leads
+        WHERE user_id=$1 AND referred_by IS NOT NULL AND referred_by != ''
+        GROUP BY referred_by
+        ORDER BY referrals DESC
+        LIMIT 20
+      `, [uid]),
+      // Recent referrals (last 10)
+      pool.query(`
+        SELECT company, status, referred_by, category, created_at
+        FROM leads
+        WHERE user_id=$1 AND referred_by IS NOT NULL AND referred_by != ''
+        ORDER BY created_at DESC LIMIT 10
+      `, [uid]),
+      // Overall referral vs non-referral close rate
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE referred_by IS NOT NULL AND referred_by != '')::INT AS total_referred,
+          COUNT(*) FILTER (WHERE referred_by IS NOT NULL AND referred_by != '' AND status='won')::INT AS referred_won,
+          COUNT(*) FILTER (WHERE (referred_by IS NULL OR referred_by = '') AND status='won')::INT AS organic_won,
+          COUNT(*) FILTER (WHERE referred_by IS NULL OR referred_by = '')::INT AS total_organic
+        FROM leads WHERE user_id=$1
+      `, [uid]),
+    ]);
+
+    const t = totalsR.rows[0] || {};
+    res.json({
+      referrers: referrersR.rows.map((r) => ({
+        ...r,
+        closeRate: r.referrals > 0 ? Math.round((r.won / r.referrals) * 100) : 0,
+      })),
+      recent: recentR.rows,
+      referralCloseRate: t.total_referred > 0 ? Math.round((t.referred_won / t.total_referred) * 100) : null,
+      organicCloseRate: t.total_organic > 0 ? Math.round((t.organic_won / t.total_organic) * 100) : null,
+      totalReferredRevenue: referrersR.rows.reduce((s, r) => s + (r.won_revenue || 0), 0),
+      totalPipelineValue: referrersR.rows.reduce((s, r) => s + (r.pipeline_value || 0), 0),
+      hasData: referrersR.rows.length > 0,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Push an AR wrap concept to a lead's client portal and return a shareable approval link.
 // Logs the image as a note_added activity (the portal renders the latest such image as the
 // design concept) and ensures a portal link exists for the lead.

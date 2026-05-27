@@ -1034,4 +1034,41 @@ export const api = {
       `/leads/${leadId}/roi-link`,
       { method: 'POST' }
     ),
+
+  // Multi-location expansion — AI suggests other terminals/branches for large fleet won deals
+  suggestLocations: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      suggestions: Array<{ company: string; city: string; state: string; fleet_size: number | null; reasoning: string }>;
+      sourceCompany: string;
+      sourceState: string | null;
+    }>(`/leads/${leadId}/suggest-locations`, { method: 'POST' }),
+
+  createLocationLead: (sourceLeadId: number, data: { company: string; city: string; state: string; fleet_size: number | null; category?: string }) =>
+    authFetch<{ ok: boolean; leadId: number; clientId: string }>(
+      `/leads/${sourceLeadId}/create-location`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  // AI referral ask — generate personalized email requesting referrals from won client
+  generateReferralAsk: (leadId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string; contactName: string | null }>(
+      `/leads/${leadId}/referral-ask`,
+      { method: 'POST' }
+    ),
+
+  // Detailed referral pipeline analytics
+  getReferralAnalytics: () =>
+    authFetch<{
+      referrers: Array<{
+        referred_by: string; referrals: number; won: number; active: number; lost: number;
+        won_revenue: number; pipeline_value: number; closeRate: number; last_referral_at: string;
+      }>;
+      recent: Array<{ company: string; status: string; referred_by: string; category: string; created_at: string }>;
+      referralCloseRate: number | null;
+      organicCloseRate: number | null;
+      totalReferredRevenue: number;
+      totalPipelineValue: number;
+      hasData: boolean;
+    }>('/analytics/referrals'),
 };

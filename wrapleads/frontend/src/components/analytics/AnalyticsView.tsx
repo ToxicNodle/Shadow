@@ -1515,6 +1515,102 @@ function MarginDashboardCard() {
   );
 }
 
+// ── Referral Intelligence ─────────────────────────────────────────────────────
+function ReferralIntelligenceCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['referral-analytics'],
+    queryFn: () => api.getReferralAnalytics(),
+    staleTime: 10 * 60_000,
+  });
+
+  if (isLoading) return null;
+  if (!data?.hasData) return null;
+
+  const { referrers, recent, referralCloseRate, organicCloseRate, totalReferredRevenue, totalPipelineValue } = data;
+
+  return (
+    <div className="an-card">
+      <div className="an-card-title">Referral Intelligence</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
+        {referrers.length} active referral source{referrers.length !== 1 ? 's' : ''}
+      </div>
+
+      {/* Close rate comparison */}
+      {referralCloseRate !== null && organicCloseRate !== null && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          {[
+            { label: 'Referral close rate', value: `${referralCloseRate}%`, color: referralCloseRate > organicCloseRate ? '#10b981' : 'var(--text)' },
+            { label: 'Organic close rate', value: `${organicCloseRate}%`, color: 'var(--text-muted)' },
+            { label: 'Referred revenue won', value: totalReferredRevenue >= 1000 ? `$${Math.round(totalReferredRevenue / 1000)}K` : `$${totalReferredRevenue}`, color: '#10b981' },
+            { label: 'Active pipeline', value: totalPipelineValue >= 1000 ? `$${Math.round(totalPipelineValue / 1000)}K` : `$${totalPipelineValue}`, color: 'var(--accent)' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ flex: 1, textAlign: 'center', padding: '8px 6px', background: 'var(--surface)', borderRadius: 6, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 3 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Referrer leaderboard */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {referrers.map((r, i) => {
+          const barPct = referrers[0].referrals > 0 ? (r.referrals / referrers[0].referrals) * 100 : 0;
+          return (
+            <div key={r.referred_by} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', width: 18, textAlign: 'right', flexShrink: 0 }}>#{i + 1}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{r.referred_by}</span>
+                  <span style={{ fontSize: 10, color: '#10b981', fontWeight: 700, flexShrink: 0 }}>{r.closeRate}% close</span>
+                  {r.won_revenue > 0 && (
+                    <span style={{ fontSize: 10, color: '#10b981', flexShrink: 0 }}>
+                      {r.won_revenue >= 1000 ? `$${Math.round(r.won_revenue / 1000)}K won` : `$${r.won_revenue} won`}
+                    </span>
+                  )}
+                </div>
+                <div style={{ height: 4, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ height: '100%', width: `${barPct}%`, background: '#10b981', borderRadius: 99, transition: 'width 0.4s ease' }} />
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {r.referrals} total · {r.won} won · {r.active} active
+                  {r.pipeline_value > 0 && ` · $${r.pipeline_value >= 1000 ? `${Math.round(r.pipeline_value / 1000)}K` : r.pipeline_value} pipeline`}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Recent referrals */}
+      {recent.length > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 6 }}>
+            Recent Referrals
+          </div>
+          {recent.slice(0, 4).map((r) => (
+            <div key={r.company + r.created_at} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</span>
+              <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>via {r.referred_by}</span>
+              <span style={{
+                fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 700,
+                background: r.status === 'won' ? '#10b98120' : r.status === 'lost' ? '#ef444420' : '#6366f120',
+                color: r.status === 'won' ? '#10b981' : r.status === 'lost' ? '#ef4444' : '#818cf8',
+              }}>
+                {r.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-faint)' }}>
+        Set a lead's "Referred By" field in the Info tab to track referral sources.
+      </div>
+    </div>
+  );
+}
+
 // ── Lead Cohort Analysis ──────────────────────────────────────────────────────
 function CohortAnalysisCard() {
   const { data, isLoading } = useQuery({
@@ -1703,7 +1799,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals, atRisk, activityCalendar } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, atRisk, activityCalendar } = data;
   const maxRevTrend = Math.max(...wonTrend.map((t) => t.revenue), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -2274,36 +2370,8 @@ export default function AnalyticsView() {
           />
         )}
 
-        {/* ── Referral Sources ── */}
-        {referrals && referrals.length > 0 && (
-          <div className="an-card">
-            <div className="an-card-title">Referral Sources</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>Who sends you business</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {referrals.map((r, i) => (
-                <div key={r.referred_by} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', width: 16, flexShrink: 0 }}>#{i + 1}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.referred_by}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {r.referrals} lead{r.referrals !== 1 ? 's' : ''}
-                      {r.won > 0 && <span style={{ color: '#10b981', marginLeft: 6 }}>· {r.won} won</span>}
-                      {r.active > 0 && <span style={{ color: 'var(--accent)', marginLeft: 6 }}>· {r.active} active</span>}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                    {Array.from({ length: r.referrals }).map((_, j) => (
-                      <div key={j} style={{ width: 8, height: 8, borderRadius: '50%', background: j < r.won ? '#10b981' : j < r.won + r.active ? '#6366f1' : 'var(--border)' }} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-faint)' }}>
-              Add referral sources by editing a lead's "Referred By" field in the Info tab.
-            </div>
-          </div>
-        )}
+        {/* ── Referral Intelligence ── */}
+        <ReferralIntelligenceCard />
 
         {/* ── Activity Heatmap ── */}
         {activityCalendar && <ActivityHeatmap data={activityCalendar} />}

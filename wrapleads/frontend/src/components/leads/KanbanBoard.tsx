@@ -235,6 +235,11 @@ export default function KanbanBoard() {
                         {[lead.city, lead.state].filter(Boolean).join(', ')}
                       </div>
                     )}
+                    {lead.pitchAngle && !hint && !['won', 'lost'].includes(lead.status) && (
+                      <div className="kanban-next-action" style={{ fontStyle: 'italic', color: 'var(--text-faint)' }}>
+                        {lead.pitchAngle.length > 60 ? lead.pitchAngle.slice(0, 60) + '…' : lead.pitchAngle}
+                      </div>
+                    )}
                     {hint && !['won', 'lost'].includes(lead.status) && (
                       <div className="kanban-next-action">{hint}</div>
                     )}
