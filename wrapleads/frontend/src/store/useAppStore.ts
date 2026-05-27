@@ -105,6 +105,7 @@ interface AppStore {
   arOpen: boolean;
   pitchOpen: boolean;
   cardScanOpen: boolean;
+  urlImportOpen: boolean;
   notifOpen: boolean;
   changelogOpen: boolean;
   setAddLeadOpen: (open: boolean) => void;
@@ -120,6 +121,7 @@ interface AppStore {
   setArOpen: (open: boolean) => void;
   setPitchOpen: (open: boolean) => void;
   setCardScanOpen: (open: boolean) => void;
+  setUrlImportOpen: (open: boolean) => void;
   setNotifOpen: (open: boolean) => void;
   setChangelogOpen: (open: boolean) => void;
 
@@ -259,6 +261,7 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       arOpen: false,
       pitchOpen: false,
       cardScanOpen: false,
+      urlImportOpen: false,
       notifOpen: false,
       changelogOpen: false,
       setAddLeadOpen: (open) => set({ addLeadOpen: open }),
@@ -274,6 +277,7 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       setArOpen: (open) => set({ arOpen: open }),
       setPitchOpen: (open) => set({ pitchOpen: open }),
       setCardScanOpen: (open) => set({ cardScanOpen: open }),
+      setUrlImportOpen: (open) => set({ urlImportOpen: open }),
       setNotifOpen: (open) => set({ notifOpen: open }),
       setChangelogOpen: (open) => set({ changelogOpen: open }),
 

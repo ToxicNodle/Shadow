@@ -176,6 +176,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: 'a:kanban',    group: 'action', label: 'Kanban Pipeline',   sub: 'Switch to drag-and-drop board view',       icon: '▦',  action: () => { store.setLeadView('kanban'); store.setMode('leads'); onClose(); } },
     { id: 'a:list',      group: 'action', label: 'List View',         sub: 'Switch to table list view',                icon: '≡',  action: () => { store.setLeadView('list'); store.setMode('leads'); onClose(); } },
     { id: 'a:card-scan', group: 'action', label: 'Scan Business Card', sub: 'AI reads contact info from a card photo',  icon: '📇', action: () => { store.setCardScanOpen(true); onClose(); } },
+    { id: 'a:url-import', group: 'action', label: 'Import Lead from URL', sub: 'AI extracts company data from any website or LinkedIn page', icon: '🔗', action: () => { store.setUrlImportOpen(true); onClose(); } },
   ];
 
   const NAV_ITEMS: CmdItem[] = [

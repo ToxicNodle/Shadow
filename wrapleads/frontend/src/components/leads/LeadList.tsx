@@ -9,6 +9,7 @@ import { api, getToken } from '../../api/client';
 import { STATUSES } from '../../api/types';
 import type { LeadStatus } from '../../api/types';
 import BroadcastModal from '../modals/BroadcastModal';
+import UrlImportModal from '../modals/UrlImportModal';
 
 // ── Filter Presets Bar ────────────────────────────────────────────────────────
 const BUILTIN_PRESETS: { name: string; icon: string; filter: Partial<ActiveFilter> }[] = [
@@ -268,6 +269,7 @@ export default function LeadList() {
     leadSort, setLeadSort,
     selectedLeadIds, selectAllLeads, clearLeadSelection,
     setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen, setShopVoxImportOpen, setCardScanOpen,
+    urlImportOpen, setUrlImportOpen,
     pendingOpenLeadServerId, setPendingOpenLeadServerId,
     showToast,
   } = useAppStore((s) => ({
@@ -285,6 +287,8 @@ export default function LeadList() {
     setPasteImportOpen: s.setPasteImportOpen,
     setShopVoxImportOpen: s.setShopVoxImportOpen,
     setCardScanOpen: s.setCardScanOpen,
+    urlImportOpen: s.urlImportOpen,
+    setUrlImportOpen: s.setUrlImportOpen,
     pendingOpenLeadServerId: s.pendingOpenLeadServerId,
     setPendingOpenLeadServerId: s.setPendingOpenLeadServerId,
     showToast: s.showToast,
@@ -482,6 +486,19 @@ export default function LeadList() {
             <line x1="2" y1="10" x2="22" y2="10" />
           </svg>
           Scan Card
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', borderColor: 'rgba(77,138,245,0.4)', color: '#4d8af5' }}
+          onClick={() => setUrlImportOpen(true)}
+          title="Paste any URL — AI extracts company data from websites, LinkedIn, or directories"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+          From URL
         </button>
 
         <button
@@ -787,6 +804,8 @@ export default function LeadList() {
           onSent={() => { clearLeadSelection(); setBroadcastOpen(false); }}
         />
       )}
+
+      {urlImportOpen && <UrlImportModal onClose={() => setUrlImportOpen(false)} />}
     </div>
   );
 }

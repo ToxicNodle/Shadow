@@ -9684,6 +9684,119 @@ app.post('/leads/:id/find-email', authMiddleware, async (req, res) => {
   }
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// POST /ai/import-from-url — AI-powered quick lead import from any URL
+// Paste a company website, LinkedIn URL, or directory listing → AI extracts
+// company name, industry, fleet size, contact info, and suggests a pitch angle.
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/ai/import-from-url', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'url required' });
+
+  // Basic URL validation
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  const domain = parsedUrl.hostname.replace(/^www\./, '');
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    // Fetch the page with a strict timeout (5s)
+    let pageText = '';
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const pageRes = await fetch(parsedUrl.href, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; WrapLeads/1.0; +https://wrapleads.io)' },
+      });
+      clearTimeout(timeoutId);
+      const html = await pageRes.text();
+      // Strip HTML tags, collapse whitespace, keep first 4000 chars
+      pageText = html
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 4000);
+    } catch (fetchErr) {
+      // If fetch fails, extract what we can from the domain alone
+      pageText = `Company website: ${domain}`;
+    }
+
+    const prompt = `You are a CRM data extraction assistant for a vehicle wrap and graphics shop.
+
+Given the following URL and page content, extract structured lead data for a potential wrap customer.
+
+URL: ${parsedUrl.href}
+Domain: ${domain}
+Page content: ${pageText}
+
+Extract and return a JSON object with these fields (use null for unknown):
+{
+  "company": "company/organization name",
+  "contactName": "main contact person name or null",
+  "contactTitle": "job title or null",
+  "email": "email address or null",
+  "phone": "phone number formatted as (XXX) XXX-XXXX or null",
+  "city": "city or null",
+  "state": "2-letter US state code or null",
+  "website": "clean website URL (https://domain.com)",
+  "fleetSize": "estimated number of vehicles as a string, e.g. '25' or null",
+  "industry": "brief industry description or null",
+  "category": one of exactly: "fleet" | "design" | "construction" | "dinoc" | "reatec" | "colorchange" | "wallgraphics" | "gc_referral" | "racing",
+  "pitchAngle": "1-2 sentence wrap sales pitch angle specific to this company, or null",
+  "confidence": "high" | "medium" | "low"
+}
+
+Rules:
+- category "fleet" = logistics, trucking, delivery, transport, utility companies with multiple vehicles
+- category "construction" = construction, contractors, trades, HVAC, plumbing, electrical
+- category "design" = companies that need branded single vehicles (lawyers, realtors, etc.)
+- category "colorchange" = car dealerships, performance shops, automotive
+- category "gc_referral" = general contractors managing large construction projects
+- If uncertain about category, use "fleet" for any multi-vehicle business
+- pitchAngle should reference their specific industry and why vehicle wraps make sense for them
+- Only return the JSON object, no markdown or explanation`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error', raw });
+
+    const extracted = JSON.parse(match[0]);
+
+    // Sanitize + normalize
+    const lead = {
+      company:       String(extracted.company || domain).slice(0, 200),
+      contactName:   extracted.contactName || null,
+      contactTitle:  extracted.contactTitle || null,
+      email:         extracted.email || null,
+      phone:         extracted.phone || null,
+      city:          extracted.city || null,
+      state:         extracted.state || null,
+      website:       extracted.website || `https://${domain}`,
+      fleetSize:     extracted.fleetSize || null,
+      industry:      extracted.industry || null,
+      category:      ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing'].includes(extracted.category)
+                     ? extracted.category : 'fleet',
+      pitchAngle:    extracted.pitchAngle || null,
+      confidence:    extracted.confidence || 'medium',
+    };
+
+    res.json({ ok: true, lead, domain, url: parsedUrl.href });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /leads/bulk-find-emails — run email permutation + optional SMTP probe
 // on up to 50 leads that have a website but no email.  Returns per-lead results.
 app.post('/leads/bulk-find-emails', authMiddleware, async (req, res) => {

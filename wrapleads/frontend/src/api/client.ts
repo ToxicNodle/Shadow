@@ -1057,6 +1057,20 @@ export const api = {
       { method: 'POST' }
     ),
 
+  // AI-powered quick lead import from any URL
+  importFromUrl: (url: string) =>
+    authFetch<{
+      ok: boolean;
+      domain: string;
+      url: string;
+      lead: {
+        company: string; contactName: string | null; contactTitle: string | null;
+        email: string | null; phone: string | null; city: string | null; state: string | null;
+        website: string; fleetSize: string | null; industry: string | null;
+        category: string; pitchAngle: string | null; confidence: 'high' | 'medium' | 'low';
+      };
+    }>('/ai/import-from-url', { method: 'POST', body: JSON.stringify({ url }) }),
+
   // Detailed referral pipeline analytics
   getReferralAnalytics: () =>
     authFetch<{
