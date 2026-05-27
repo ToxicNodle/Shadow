@@ -10142,6 +10142,58 @@ app.get('/analytics/market-map', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Lead Cohort Analysis ──────────────────────────────────────────────────────
+// Groups leads by calendar month they were added, then computes 90-day win rate
+// and average deal size for each cohort — surfaces which acquisition months
+// performed best and whether close rates are improving or declining over time.
+app.get('/analytics/cohort', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const r = await pool.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS cohort_month,
+        COUNT(*)::INT AS total,
+        COUNT(*) FILTER (WHERE status = 'won')::INT AS won,
+        COUNT(*) FILTER (WHERE status = 'lost')::INT AS lost,
+        COUNT(*) FILTER (
+          WHERE status = 'won'
+            AND updated_at <= created_at + INTERVAL '90 days'
+        )::INT AS won_in_90d,
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)
+          FILTER (WHERE status = 'won'))::INT AS avg_close_days
+      FROM leads
+      WHERE user_id = $1
+        AND created_at >= NOW() - INTERVAL '12 months'
+      GROUP BY DATE_TRUNC('month', created_at)
+      ORDER BY DATE_TRUNC('month', created_at) ASC
+    `, [uid]);
+
+    const cohorts = r.rows.map((row) => ({
+      month: row.cohort_month,
+      total: row.total,
+      won: row.won,
+      lost: row.lost,
+      wonIn90d: row.won_in_90d,
+      winRate: row.total > 0 ? Math.round((row.won / row.total) * 100) : 0,
+      win90dRate: row.total > 0 ? Math.round((row.won_in_90d / row.total) * 100) : 0,
+      avgCloseDays: row.avg_close_days,
+    }));
+
+    // Trend: is win rate improving? Compare last 3 months vs prior 3
+    const recentWins = cohorts.slice(-3).reduce((s, c) => s + c.won, 0);
+    const recentTotal = cohorts.slice(-3).reduce((s, c) => s + c.total, 0);
+    const priorWins = cohorts.slice(-6, -3).reduce((s, c) => s + c.won, 0);
+    const priorTotal = cohorts.slice(-6, -3).reduce((s, c) => s + c.total, 0);
+    const recentRate = recentTotal > 0 ? (recentWins / recentTotal) * 100 : null;
+    const priorRate = priorTotal > 0 ? (priorWins / priorTotal) * 100 : null;
+    const trend = recentRate !== null && priorRate !== null
+      ? (recentRate > priorRate + 2 ? 'improving' : recentRate < priorRate - 2 ? 'declining' : 'stable')
+      : 'stable';
+
+    res.json({ cohorts, trend, recentRate, priorRate });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Public Demo Call Feature ──────────────────────────────────────────────────
 // Visitors pick a real FMCSA carrier, enter their own phone, and the AI calls
 // THEM (not the carrier) — they experience the call firsthand, first-person.

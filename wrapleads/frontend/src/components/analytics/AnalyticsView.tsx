@@ -1385,6 +1385,139 @@ function MarketPenetrationCard() {
   );
 }
 
+// ── Lead Cohort Analysis ──────────────────────────────────────────────────────
+function CohortAnalysisCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['cohort-analysis'],
+    queryFn: () => api.getCohortAnalysis(),
+    staleTime: 10 * 60_000,
+  });
+
+  const cohorts = data?.cohorts ?? [];
+  const trend = data?.trend ?? 'stable';
+  const recentRate = data?.recentRate ?? null;
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Lead Cohort Analysis</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+          <span className="spinner" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!cohorts.length) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Lead Cohort Analysis</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Import leads over multiple months to see cohort win rate trends.
+        </p>
+      </div>
+    );
+  }
+
+  const maxTotal = Math.max(...cohorts.map((c) => c.total), 1);
+  const TREND_COLOR = { improving: '#22c55e', declining: '#ef4444', stable: '#f59e0b' }[trend];
+  const TREND_LABEL = { improving: '↑ Improving', declining: '↓ Declining', stable: '→ Stable' }[trend];
+
+  function fmtMonth(m: string) {
+    const [year, month] = m.split('-');
+    const d = new Date(+year, +month - 1);
+    return d.toLocaleString('en-US', { month: 'short', year: '2-digit' });
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Lead Cohort Analysis</div>
+        <span style={{
+          fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 99,
+          background: TREND_COLOR + '1a', color: TREND_COLOR, letterSpacing: '.04em',
+        }}>
+          {TREND_LABEL}
+        </span>
+        {recentRate !== null && (
+          <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto' }}>
+            Last 3 months: <strong style={{ color: 'var(--text)' }}>{Math.round(recentRate)}%</strong> win rate
+          </span>
+        )}
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
+        Leads grouped by month added — compare which intake cohorts close at the highest rate within 90 days.
+      </p>
+
+      <div style={{ overflowX: 'auto' }}>
+        <div style={{ display: 'flex', gap: 8, minWidth: cohorts.length * 72 }}>
+          {cohorts.map((c) => {
+            const barPct = (c.total / maxTotal) * 100;
+            const winColor = c.winRate >= 20 ? '#22c55e' : c.winRate >= 10 ? '#f59e0b' : '#6366f1';
+            return (
+              <div key={c.month} style={{ flex: 1, minWidth: 64, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {/* Bar */}
+                <div style={{ height: 80, display: 'flex', alignItems: 'flex-end', gap: 2 }}>
+                  <div style={{ flex: 1, position: 'relative' }} title={`${c.total} leads added`}>
+                    <div style={{
+                      height: `${barPct}%`, minHeight: 4,
+                      background: 'var(--border)', borderRadius: '3px 3px 0 0',
+                      position: 'relative', overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        position: 'absolute', bottom: 0, left: 0, right: 0,
+                        height: `${c.winRate}%`,
+                        background: winColor,
+                        transition: 'height 0.3s ease',
+                      }} />
+                    </div>
+                  </div>
+                </div>
+                {/* Labels */}
+                <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-faint)', textAlign: 'center', letterSpacing: '.05em' }}>
+                  {fmtMonth(c.month)}
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: winColor, letterSpacing: '-0.5px' }}>
+                    {c.winRate}%
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>{c.total} leads</div>
+                </div>
+                {c.won > 0 && (
+                  <div style={{ fontSize: 9, color: '#22c55e', textAlign: 'center' }}>
+                    {c.won}W
+                    {c.avgCloseDays !== null && (
+                      <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{c.avgCloseDays}d</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, marginTop: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+          <div style={{ width: 10, height: 10, background: '#22c55e', borderRadius: 2 }} />
+          Win rate ≥ 20%
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+          <div style={{ width: 10, height: 10, background: '#f59e0b', borderRadius: 2 }} />
+          Win rate 10–20%
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+          <div style={{ width: 10, height: 10, background: '#6366f1', borderRadius: 2 }} />
+          Win rate &lt; 10%
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto' }}>
+          Bar height = leads added · color fill = win rate · W = wins, d = avg close days
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -2065,6 +2198,9 @@ export default function AnalyticsView() {
 
         {/* ── Revenue Attribution ── */}
         <RevenueAttributionCard />
+
+        {/* ── Lead Cohort Analysis ── */}
+        <CohortAnalysisCard />
 
         {/* ── Ideal Customer Profile ── */}
         <ICPCard />

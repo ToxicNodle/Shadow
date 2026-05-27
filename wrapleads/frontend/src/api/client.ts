@@ -924,4 +924,16 @@ export const api = {
       totalCarriers: number;
       topOpportunityStates: string[];
     }>('/analytics/market-map'),
+
+  // Lead Cohort Analysis
+  getCohortAnalysis: () =>
+    authFetch<{
+      cohorts: Array<{
+        month: string; total: number; won: number; lost: number;
+        wonIn90d: number; winRate: number; win90dRate: number; avgCloseDays: number | null;
+      }>;
+      trend: 'improving' | 'declining' | 'stable';
+      recentRate: number | null;
+      priorRate: number | null;
+    }>('/analytics/cohort'),
 };
