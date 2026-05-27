@@ -8,6 +8,12 @@ const CHANGELOG: Array<{
 }> = [
   {
     date: 'May 2026',
+    tag: 'improved',
+    title: 'AI Personalized Broadcast Email',
+    body: 'Toggle "AI Personalize" when sending a broadcast email and Claude generates a unique opening sentence for each recipient — referencing their specific fleet size, city, and business context. Preview personalized versions for the first 3 leads before sending to the full list.',
+  },
+  {
+    date: 'May 2026',
     tag: 'new',
     title: 'Project Milestone Tracker',
     body: 'Every lead now has a "📋 Project" tab that auto-generates a category-specific project checklist after you win the deal — from measurements and design approval through material ordering and final sign-off. Track completion with one click per step, add custom steps, and get a direct "Log Install →" button when everything is done.',

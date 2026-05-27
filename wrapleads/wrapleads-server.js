@@ -12131,7 +12131,7 @@ app.get('/admin/devices/:id/log', authMiddleware, async (req, res) => {
 
 // ── Broadcast Email — send one message to many leads at once ─────────────────
 app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) => {
-  const { leadIds, subject, body } = req.body || {};
+  const { leadIds, subject, body, aiPersonalize } = req.body || {};
   if (!Array.isArray(leadIds) || !leadIds.length || !subject || !body)
     return res.status(400).json({ error: 'leadIds[], subject, body required' });
   if (leadIds.length > 100)
@@ -12147,9 +12147,11 @@ app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) =
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
 
   const { rows: leads } = await pool.query(
-    `SELECT id, company, contact_name, email FROM leads WHERE id=ANY($1) AND user_id=$2`,
+    `SELECT id, company, contact_name, email, category, state, city, fleet_size, notes FROM leads WHERE id=ANY($1) AND user_id=$2`,
     [leadIds, uid]
   );
+
+  const anthropic = aiPersonalize ? getAnthropic() : null;
 
   let sent = 0, skipped = 0, errors = 0;
   for (const lead of leads) {
@@ -12161,7 +12163,21 @@ app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) =
         [trackToken, uid, lead.id, subject]
       );
       const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
-      const personalBody = body.replace(/\{\{company\}\}/gi, lead.company)
+
+      let aiOpener = '';
+      if (anthropic) {
+        try {
+          const ctx = `Company: ${lead.company}${lead.city ? `, ${lead.city}` : ''}${lead.state ? `, ${lead.state}` : ''} | Fleet: ${lead.fleet_size || 'unknown'} | Category: ${lead.category || 'fleet'} | Notes: ${(lead.notes || '').slice(0, 80)}`;
+          const msg = await anthropic.messages.create({
+            model: 'claude-haiku-4-5', max_tokens: 80,
+            messages: [{ role: 'user', content: `Write ONE specific opening sentence (max 25 words) for a B2B vehicle wrap outreach email. Be specific to this prospect. No name. No "I hope". Just a compelling, personalized opener.\n\nProspect: ${ctx}\nSubject: ${subject}\n\nReturn ONLY the sentence.` }],
+          });
+          aiOpener = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : '';
+        } catch { /* fall through without AI opener */ }
+      }
+
+      const templateBody = aiOpener ? `${aiOpener}\n\n${body}` : body;
+      const personalBody = templateBody.replace(/\{\{company\}\}/gi, lead.company)
         .replace(/\{\{name\}\}/gi, lead.contact_name || lead.company);
       const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">
 ${personalBody.replace(/\n/g, '<br>')}
@@ -12196,6 +12212,53 @@ ${personalBody.replace(/\n/g, '<br>')}
     }
   }
   res.json({ ok: true, sent, skipped, errors });
+});
+
+// Preview AI-personalized email openers for broadcast (up to 3 sample leads)
+app.post('/leads/broadcast/preview-ai', authMiddleware, requireShopFlow, async (req, res) => {
+  try {
+    const { leadIds, subject, body } = req.body || {};
+    if (!Array.isArray(leadIds) || !leadIds.length) return res.status(400).json({ error: 'leadIds[] required' });
+    const uid = String(req.user.id);
+    const anthropic = getAnthropic();
+    if (!anthropic) return res.status(503).json({ error: 'AI not configured' });
+
+    const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+    const settings = userR.rows[0]?.settings_json || {};
+    const senderName = settings.senderName || 'WrapLeads';
+
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, contact_name, email, category, state, city, fleet_size, notes
+       FROM leads WHERE id=ANY($1) AND user_id=$2 LIMIT 3`,
+      [leadIds.slice(0, 3), uid]
+    );
+
+    const previews = await Promise.all(leads.map(async (lead) => {
+      const ctx = `Company: ${lead.company}${lead.city ? `, ${lead.city}` : ''}${lead.state ? `, ${lead.state}` : ''} | Category: ${lead.category || 'fleet'} | Fleet: ${lead.fleet_size || 'unknown'} | Contact: ${lead.contact_name || 'unknown'} | Notes: ${(lead.notes || '').slice(0, 100)}`;
+      const msg = await anthropic.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 120,
+        messages: [{
+          role: 'user',
+          content: `You are an expert B2B sales copywriter for a vehicle wrap shop. Write ONE personalized opening sentence (max 30 words) for an outbound email to this prospect. Make it specific to their business — reference their fleet, location, or industry. Do NOT use their name (we don't know if it's right). No fluff, no "I hope this email finds you". Just a compelling, specific opener.\n\nProspect: ${ctx}\n\nEmail subject: ${subject || 'vehicle wrap services'}\n\nReturn ONLY the single sentence, nothing else.`,
+        }],
+      });
+      const aiOpener = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : '';
+      const personalBody = `${aiOpener}\n\n${body || ''}`
+        .replace(/\{\{company\}\}/gi, lead.company)
+        .replace(/\{\{name\}\}/gi, lead.contact_name || lead.company);
+      return {
+        leadId: lead.id,
+        company: lead.company,
+        contactName: lead.contact_name,
+        email: lead.email,
+        aiOpener,
+        fullBody: personalBody,
+      };
+    }));
+
+    res.json({ ok: true, previews, totalLeads: leadIds.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Global Activity Feed ───────────────────────────────────────────────────────

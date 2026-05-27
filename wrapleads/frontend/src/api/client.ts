@@ -795,11 +795,21 @@ export const api = {
     return `/bids/calendar.ics?token=${encodeURIComponent(token || '')}`;
   },
 
-  broadcastEmail: (leadIds: number[], subject: string, body: string) =>
+  broadcastEmail: (leadIds: number[], subject: string, body: string, aiPersonalize?: boolean) =>
     authFetch<{ ok: boolean; sent: number; skipped: number; errors: number }>(
       '/leads/broadcast',
-      { method: 'POST', body: JSON.stringify({ leadIds, subject, body }) }
+      { method: 'POST', body: JSON.stringify({ leadIds, subject, body, aiPersonalize }) }
     ),
+
+  previewAIBroadcast: (leadIds: number[], subject: string, body: string) =>
+    authFetch<{
+      ok: boolean;
+      totalLeads: number;
+      previews: Array<{
+        leadId: number; company: string; contactName: string | null;
+        email: string | null; aiOpener: string; fullBody: string;
+      }>;
+    }>('/leads/broadcast/preview-ai', { method: 'POST', body: JSON.stringify({ leadIds, subject, body }) }),
 
   getMissionSignals: () =>
     authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
