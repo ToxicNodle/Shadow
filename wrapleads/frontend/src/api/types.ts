@@ -457,7 +457,7 @@ export interface JobPhoto {
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 
-export type NotificationType = 'aging_wrap' | 'call_completed' | 'email_reply' | 'sequence_complete' | 'bid_due_soon' | 'quote_expiring' | 'deal_stalled' | 'hot_prospect' | 'new_lead' | 'design_approved' | 'maintenance_due' | 'anniversary';
+export type NotificationType = 'aging_wrap' | 'call_completed' | 'email_reply' | 'sequence_complete' | 'bid_due_soon' | 'quote_expiring' | 'deal_stalled' | 'hot_prospect' | 'new_lead' | 'design_approved' | 'maintenance_due' | 'anniversary' | 'referral_opportunity';
 
 export interface AppNotification {
   id: number;

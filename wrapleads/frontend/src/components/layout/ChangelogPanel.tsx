@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Referral Mining — Automated 30-Day Win Follow-Up',
+    body: 'A background worker runs daily and fires a notification exactly 30 days after you win a deal — while the client relationship is warmest. One click generates a personalized referral ask email and copies it to your clipboard. No manual tracking required.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'improved',
+    title: 'AI Call Intelligence — Objection + Key Info Extraction',
+    body: 'After every AI outbound call, Claude now analyzes the full transcript to extract: objections raised, key information (fleet count, rebrand timeline, budget hints), prospect sentiment, and the single best next action. All extracted intel appears in the lead\'s activity timeline and auto-populates competitor/notes fields.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Pipeline Doctor — AI Bottleneck Diagnosis',
     body: 'Analytics now includes a Pipeline Doctor card that calculates your stage-by-stage conversion rates, pinpoints your single biggest chokepoint, grades your overall pipeline health A–F, and generates 3 specific AI recommendations to fix the leak. Powered by Claude Haiku, refreshed on demand.',
   },

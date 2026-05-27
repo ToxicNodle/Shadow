@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api } from '../../api/client';
@@ -7,6 +8,7 @@ import type { AppNotification } from '../../api/types';
 const ICONS: Record<string, ReactNode> = {
   aging_wrap: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
   call_completed: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>,
+  referral_opportunity: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
   call_initiated: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.44 2 2 0 0 1 3.59 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l1.97-1.97a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
   email_reply: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
   sequence_complete: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
@@ -26,6 +28,43 @@ function timeAgo(ts: string) {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function ReferralDraftButton({ leadId }: { leadId: number }) {
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function draft() {
+    setLoading(true);
+    try {
+      const res = await api.getReferralAsk(leadId);
+      if (res.ok) {
+        await navigator.clipboard.writeText(`Subject: ${res.subject}\n\n${res.body}`);
+        setCopied(true);
+        showToast('Referral email copied to clipboard', 'success');
+        setTimeout(() => setCopied(false), 3000);
+      }
+    } catch {
+      showToast('Failed to generate referral email', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); draft(); }}
+      disabled={loading}
+      style={{
+        marginTop: 5, fontSize: 10, padding: '3px 8px', borderRadius: 4,
+        background: 'rgba(0,217,126,0.12)', border: '1px solid rgba(0,217,126,0.25)',
+        color: '#00d97e', cursor: 'pointer',
+      }}
+    >
+      {loading ? '…' : copied ? '✓ Copied' : '✉ Draft Referral Ask'}
+    </button>
+  );
 }
 
 export default function NotificationPanel({ onClose }: { onClose: () => void }) {
@@ -104,6 +143,9 @@ export default function NotificationPanel({ onClose }: { onClose: () => void }) 
               <div className="notif-content">
                 <span className="notif-row-title">{n.title}</span>
                 {n.body && <span className="notif-row-body">{n.body}</span>}
+                {n.type === 'referral_opportunity' && typeof (n.metadata as Record<string, unknown>)?.lead_id === 'number' && (
+                  <ReferralDraftButton leadId={(n.metadata as Record<string, number>).lead_id} />
+                )}
                 <span className="notif-row-time">{timeAgo(n.created_at)}</span>
               </div>
               <button

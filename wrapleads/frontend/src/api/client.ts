@@ -1229,4 +1229,7 @@ export const api = {
         opportunity_score: number;
       }>;
     }>('/analytics/territory-intel'),
+
+  getReferralAsk: (leadId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string }>(`/leads/${leadId}/referral-ask`),
 };

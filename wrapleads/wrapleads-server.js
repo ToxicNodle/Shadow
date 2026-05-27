@@ -6270,6 +6270,45 @@ app.post('/calls/webhook', (req, res, next) => {
         `, [newStatus, lead_id, user_id]);
       }
 
+      // Deep-analyze transcript with Claude for objections, key info, sentiment
+      let callIntel = null;
+      const anthropic = getAnthropic();
+      if (anthropic && transcript && transcript.length > 100) {
+        try {
+          const intelMsg = await anthropic.messages.create({
+            model: 'claude-haiku-4-5',
+            max_tokens: 500,
+            messages: [{
+              role: 'user',
+              content: `You analyze AI outbound sales call transcripts for a vehicle wrap shop. Extract structured intelligence from this call transcript.
+
+Transcript:
+${transcript.slice(0, 3000)}
+
+Return ONLY valid JSON: {
+  "objections": ["objection 1", "objection 2"] or [],
+  "key_info": ["info 1", "info 2"] or [],
+  "sentiment": "positive|neutral|negative",
+  "interested": true|false,
+  "best_next_action": "one specific action to take within 48 hours",
+  "quote_mentioned": true|false,
+  "competitor_mentioned": "name or null"
+}`,
+            }]
+          });
+          callIntel = JSON.parse(intelMsg.content[0].text);
+          // Save competitor to lead notes if newly discovered
+          if (callIntel.competitor_mentioned && callIntel.competitor_mentioned !== structured.competitorVendor) {
+            await pool.query(
+              `UPDATE leads SET notes = CONCAT(COALESCE(notes,''), $1) WHERE id=$2 AND user_id=$3`,
+              [`\n[Competitor from AI call intel]: ${callIntel.competitor_mentioned}`, lead_id, user_id]
+            );
+          }
+        } catch (e) {
+          console.warn('[calls/webhook] call intel extraction failed:', e.message);
+        }
+      }
+
       // Log detailed activity
       await logActivity(pool, {
         leadId: lead_id, userId: user_id,
@@ -6288,6 +6327,7 @@ app.post('/calls/webhook', (req, res, next) => {
           callback_requested: structured.callbackRequested,
           referred_to: structured.referredTo,
           transcript_preview: transcript.slice(0, 300),
+          call_intel: callIntel,
         },
       });
 
@@ -8754,6 +8794,90 @@ function startProspectIntelWorker() {
   setInterval(check, 60_000);
   console.log('· Prospect Intel worker: running (daily 7:30 AM, monitors pipeline companies for news)');
 }
+
+// ── Referral Mining Worker ────────────────────────────────────────────────────
+// 30 days after a deal is won, nudge the user to ask for a referral while the
+// client relationship is warm. Generates a personalized draft referral ask.
+async function processReferralMining() {
+  try {
+    // Won deals that are 28–33 days old with no referral notification yet
+    const { rows: wonDeals } = await pool.query(`
+      SELECT l.id, l.user_id, l.company, l.contact_name, l.category, l.city, l.state
+      FROM leads l
+      WHERE l.status = 'won'
+        AND l.updated_at BETWEEN NOW() - INTERVAL '33 days' AND NOW() - INTERVAL '27 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = l.user_id
+            AND n.type = 'referral_opportunity'
+            AND (n.metadata->>'lead_id')::int = l.id
+        )
+      LIMIT 30
+    `);
+
+    for (const deal of wonDeals) {
+      await createNotification(deal.user_id, {
+        type: 'referral_opportunity',
+        title: `Referral opportunity — ${deal.company}`,
+        body: `It's been ~30 days since you won ${deal.company}. Strike while the relationship is warm — ask for a referral.`,
+        metadata: { lead_id: deal.id, company: deal.company, category: deal.category },
+      });
+      console.log(`[referral-mining] Notification created for won deal: ${deal.company} (lead ${deal.id})`);
+    }
+  } catch (e) {
+    console.error('[referral-mining] error:', e.message);
+  }
+}
+
+function startReferralMiningWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 15) processReferralMining();
+  };
+  setInterval(check, 60_000);
+  console.log('· Referral Mining worker: running (daily 8:15 AM, nudges 30-day post-win referral asks)');
+}
+
+// Referral ask email generation endpoint
+app.get('/leads/:id/referral-ask', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: leadRows } = await pool.query(
+      `SELECT l.*, u.settings_json AS settings FROM leads l JOIN users u ON u.id::text=l.user_id WHERE l.id=$1 AND l.user_id=$2`,
+      [leadId, uid]
+    );
+    if (!leadRows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadRows[0];
+    const s = lead.settings || {};
+    const shopName = s.companyName || s.senderName || 'our shop';
+    const senderName = s.senderName || 'Alex';
+
+    const anthropic = getAnthropic();
+    if (!anthropic) return res.json({ ok: true, subject: `Thanks for working with us — can you send anyone our way?`, body: `Hi ${lead.contact_name || lead.company.split(' ')[0]},\n\nIt's been about a month since we finished your project — hope everything looks great!\n\nIf you know anyone in the ${lead.state || 'area'} who could use vehicle wraps, fleet graphics, or architectural film work, we'd love the introduction. We take great care of referrals.\n\nThanks again,\n${senderName}\n${shopName}` });
+
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 350,
+      messages: [{
+        role: 'user',
+        content: `Write a SHORT, warm referral ask email from ${senderName} at ${shopName} to ${lead.contact_name || lead.company}.
+
+Context:
+- We completed a ${lead.category || 'wrap'} project for ${lead.company} in ${lead.city || ''} ${lead.state || ''} about 30 days ago
+- We want to ask for a referral to similar companies they know
+- Keep it casual, NOT salesy — feels like a genuine relationship check-in
+- Mention 1 specific, natural reason they'd know someone (e.g., same industry, shared suppliers, local business network)
+
+Return JSON: {"subject": "short subject line", "body": "email body (plain text, no markdown)"}`
+      }]
+    });
+    const parsed = JSON.parse(msg.content[0].text);
+    res.json({ ok: true, subject: parsed.subject, body: parsed.body });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ── Fleet Management Integrations ─────────────────────────────────────────────
 
@@ -14904,6 +15028,7 @@ app.listen(PORT, async () => {
     startRescueWorker();
     startWeatherWorker();
     startProspectIntelWorker();
+    startReferralMiningWorker();
     email.startTrialCron(pool);
     try {
       const { startSignalWorker } = require('./lib/signalWorker');
