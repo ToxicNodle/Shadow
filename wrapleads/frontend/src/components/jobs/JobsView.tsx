@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
@@ -210,7 +210,8 @@ function PhotoGallery({ jobId }: { jobId: number }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [caption, setCaption] = useState('');
   const [photoType, setPhotoType] = useState<string>('before');
-  const [uploading, setUploading] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<{ file: File; id: string; done: boolean }[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['job-photos', jobId],
@@ -223,19 +224,35 @@ function PhotoGallery({ jobId }: { jobId: number }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job-photos', jobId] }),
   });
 
-  async function handleUpload(file: File) {
-    setUploading(true);
-    try {
-      await api.uploadJobPhoto(jobId, file, caption, photoType);
-      qc.invalidateQueries({ queryKey: ['job-photos', jobId] });
-      setCaption('');
-    } finally {
-      setUploading(false);
+  const uploadFiles = useCallback(async (files: File[]) => {
+    const entries = files.map((f) => ({ file: f, id: Math.random().toString(36).slice(2), done: false }));
+    setUploadQueue((q) => [...q, ...entries]);
+    for (const entry of entries) {
+      try {
+        await api.uploadJobPhoto(jobId, entry.file, '', photoType);
+        setUploadQueue((q) => q.map((e) => e.id === entry.id ? { ...e, done: true } : e));
+      } catch { /* individual upload failure — non-fatal */ }
     }
+    qc.invalidateQueries({ queryKey: ['job-photos', jobId] });
+    setTimeout(() => setUploadQueue([]), 1200);
+  }, [jobId, photoType, qc]);
+
+  async function handleUpload(file: File) {
+    await api.uploadJobPhoto(jobId, file, caption, photoType);
+    qc.invalidateQueries({ queryKey: ['job-photos', jobId] });
+    setCaption('');
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+    if (files.length) uploadFiles(files);
   }
 
   const photos: JobPhoto[] = data?.photos ?? [];
   const TYPE_COLORS: Record<string, string> = { before: '#f59e0b', after: '#22c55e', detail: '#6366f1', other: '#6b7280' };
+  const uploading = uploadQueue.some((e) => !e.done);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -250,16 +267,52 @@ function PhotoGallery({ jobId }: { jobId: number }) {
           </select>
         </div>
         <div className="field-group" style={{ flex: 2, minWidth: 160 }}>
-          <label className="field-label">Caption (optional)</label>
+          <label className="field-label">Caption (single upload only)</label>
           <input className="input" value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Driver side — finished" />
         </div>
-        <div>
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
-            onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} />
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length === 1) handleUpload(files[0]);
+              else if (files.length > 1) uploadFiles(files);
+            }} />
           <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={uploading} onClick={() => fileRef.current?.click()}>
-            {uploading ? 'Uploading…' : '+ Add Photo'}
+            {uploading ? `Uploading ${uploadQueue.filter((e) => !e.done).length}…` : '+ Add Photo(s)'}
           </button>
         </div>
+      </div>
+
+      {/* Drag-drop zone */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={onDrop}
+        style={{
+          border: `2px dashed ${isDragOver ? 'var(--accent)' : 'var(--border)'}`,
+          borderRadius: 10, padding: '16px', textAlign: 'center', fontSize: 12,
+          color: isDragOver ? 'var(--accent)' : 'var(--text-faint)',
+          background: isDragOver ? 'rgba(244,85,28,.04)' : 'transparent',
+          transition: 'all 0.15s ease', cursor: 'pointer',
+        }}
+        onClick={() => fileRef.current?.click()}
+      >
+        {uploadQueue.length > 0 ? (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+            {uploadQueue.map((e) => (
+              <span key={e.id} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 99, background: e.done ? 'rgba(34,197,94,.15)' : 'rgba(244,85,28,.12)', color: e.done ? '#22c55e' : 'var(--accent)' }}>
+                {e.done ? '✓' : '⋯'} {e.file.name.slice(0, 16)}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: 4, display: 'block', margin: '0 auto 6px' }}>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Drop images here or click to bulk upload
+          </>
+        )}
       </div>
 
       {isLoading && <div className="pv-loading"><span className="spinner" /></div>}
