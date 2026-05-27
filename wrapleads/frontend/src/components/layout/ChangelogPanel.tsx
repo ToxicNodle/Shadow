@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Prospect News Intelligence',
+    body: 'A background worker now monitors your active pipeline leads for recent company news. When a lead makes headlines — fleet expansion, rebrand, contract win — you get an instant notification and the article is logged to the lead\'s activity timeline. Each lead detail also has a "Company News Intel" panel to check on-demand. Uses Google News RSS, zero cost.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Truck Scan to Lead',
     body: 'Photograph any commercial truck in the wild. Claude Vision extracts the company name and DOT number, cross-references 600K FMCSA carriers, and imports the match to your CRM in one tap. Works from Discover (🚛 Scan Truck button), the Command Palette, or a direct camera shot on mobile.',
   },

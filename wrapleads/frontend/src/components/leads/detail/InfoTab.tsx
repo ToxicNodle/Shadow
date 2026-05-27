@@ -669,6 +669,105 @@ function CallScriptPanel({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Prospect News Intelligence ────────────────────────────────────────────────
+function ProspectNewsPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [articles, setArticles] = useState<Array<{ title: string; link: string; pubDate: string; source: string }> | null>(null);
+  const [checked, setChecked] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function fetchNews() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const res = await api.checkLeadNews(lead.serverId);
+      setArticles(res.articles);
+      setChecked(true);
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'News check failed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function formatDate(d: string) {
+    try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch { return ''; }
+  }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', justifyContent: 'space-between', fontSize: 12 }}
+        onClick={() => { setOpen((v) => !v); if (!checked && !open) fetchNews(); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/><path d="M9 9h6M9 13h6M9 17h4"/>
+          </svg>
+          Company News Intel
+          {articles !== null && articles.length > 0 && (
+            <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: 'rgba(77,138,245,0.15)', color: '#4d8af5' }}>
+              {articles.length} recent
+            </span>
+          )}
+          {checked && articles?.length === 0 && (
+            <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>no recent news</span>
+          )}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+          {loading ? <span className="spinner" style={{ width: 11, height: 11 }} /> : open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="spinner" style={{ width: 11, height: 11 }} />
+              Searching Google News for {lead.company}…
+            </div>
+          )}
+
+          {!loading && articles !== null && articles.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+              No news articles found for "{lead.company}" in the last 30 days.
+              {' '}<button className="btn" style={{ fontSize: 10, padding: '1px 6px' }} onClick={fetchNews}>Refresh</button>
+            </div>
+          )}
+
+          {!loading && articles !== null && articles.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.08em', color: '#4d8af5', marginBottom: 2 }}>
+                Use these as icebreakers in your next email or call
+              </div>
+              {articles.map((a, i) => (
+                <div key={i} style={{ padding: '7px 10px', background: 'rgba(77,138,245,0.06)', borderRadius: 7, borderLeft: '2px solid rgba(77,138,245,0.3)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', lineHeight: 1.4, marginBottom: 3 }}>
+                    {a.title.replace(/\s*[-—–]\s*[A-Z][A-Za-z0-9\s&.]+$/, '')}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {a.source && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{a.source}</span>}
+                    {a.pubDate && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>· {formatDate(a.pubDate)}</span>}
+                    <a href={a.link} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 10, color: '#4d8af5', marginLeft: 'auto', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}>
+                      Read →
+                    </a>
+                  </div>
+                </div>
+              ))}
+              <button className="btn" style={{ fontSize: 10, alignSelf: 'flex-start' }} onClick={fetchNews} disabled={loading}>
+                ↺ Refresh
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Competitive Intel — analyze a competitor wrap photo, get counter-pitch ────
 function CompetitiveIntelPanel({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
@@ -1965,6 +2064,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <SimilarWinsPanel lead={local} />}
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
+      {lead.serverId && <ProspectNewsPanel lead={local} />}
       {lead.serverId && <LeadIntelBriefPanel lead={local} />}
       {lead.serverId && <CompetitiveIntelPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}

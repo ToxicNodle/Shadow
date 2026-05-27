@@ -32,7 +32,7 @@ export interface Lead {
   updatedAt: string;
 }
 
-export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply' | 'design_approved' | 'call_logged';
+export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply' | 'design_approved' | 'call_logged' | 'news_intel' | 'call_initiated' | 'call_completed';
 
 export interface LeadActivity {
   id: string;

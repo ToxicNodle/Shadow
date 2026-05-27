@@ -8649,6 +8649,112 @@ function startWeatherWorker() {
   console.log('· Weather worker: running (daily 7:00 AM, triggers E-Ink content on weather events)');
 }
 
+// ── Prospect News Intelligence Worker ─────────────────────────────────────────
+// Daily at 7:30 AM — monitors active pipeline leads for recent news mentions.
+// Uses Google News RSS (free, no API key). When a company in your pipeline
+// makes news, creates a notification + activity log so you can strike with
+// relevant context before your next outreach.
+// Dedup: max one intel alert per lead per 7 days.
+
+async function processProspectIntel() {
+  try {
+    // Get all active pipeline leads (unique by user + company)
+    const { rows: leads } = await pool.query(`
+      SELECT DISTINCT ON (user_id, LOWER(company))
+        id, user_id, company, status, last_contacted
+      FROM leads
+      WHERE status IN ('new','cold','contacted','replied','meeting','proposal')
+        AND company IS NOT NULL AND LENGTH(company) > 3
+      ORDER BY user_id, LOWER(company), updated_at DESC
+    `);
+
+    let alertsSent = 0;
+    const DAY7 = 7 * 24 * 3600 * 1000;
+
+    for (const lead of leads) {
+      try {
+        // Dedup: skip if we already sent an intel alert for this lead recently
+        const { rows: recent } = await pool.query(
+          `SELECT id FROM lead_activities
+           WHERE lead_id=$1 AND type='news_intel'
+             AND created_at > NOW() - INTERVAL '7 days'
+           LIMIT 1`,
+          [lead.id]
+        );
+        if (recent.length) continue;
+
+        // Search Google News RSS for this company
+        const q = encodeURIComponent(`"${lead.company.replace(/['"]/g, '')}"`);
+        const url = `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`;
+        let items = [];
+        try {
+          const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          if (!resp.ok) continue;
+          const xml = await resp.text();
+          // Simple RSS parse — same pattern as signalWorker
+          const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
+          const cutoff = Date.now() - DAY7;
+          for (const m of itemMatches) {
+            const block = m[1];
+            const title = (block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/)?.[1] || '').trim();
+            const link  = (block.match(/<link>([\s\S]*?)<\/link>/)?.[1] || '').trim();
+            const pub   = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] || '').trim();
+            const pubMs = pub ? new Date(pub).getTime() : 0;
+            if (title && pubMs > cutoff) items.push({ title, link, pubMs });
+          }
+        } catch { continue; }
+
+        if (!items.length) continue;
+
+        // Take the most recent article
+        items.sort((a, b) => b.pubMs - a.pubMs);
+        const top = items[0];
+        const headline = top.title.replace(/\s*[-—–]\s*[A-Z][A-Za-z0-9\s&.]+$/, '').trim();
+
+        // Skip generic/unrelated news (must contain company name or very short company)
+        const companyWords = lead.company.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        const headlineLower = headline.toLowerCase();
+        if (companyWords.length > 1 && !companyWords.some(w => headlineLower.includes(w))) continue;
+
+        // Log activity
+        await logActivity(pool, {
+          leadId: lead.id,
+          userId: lead.user_id,
+          type: 'news_intel',
+          subject: `📰 Company in the news: ${headline.slice(0, 100)}`,
+          body: `Google News found a recent article about ${lead.company}.\n\nHeadline: ${headline}\n\nUse this as an icebreaker in your next email or call.\n\nArticle: ${top.link}`,
+          metadata: { headline, link: top.link, pub_ms: top.pubMs },
+        });
+
+        // Create notification
+        await createNotification(lead.user_id, {
+          type: 'hot_prospect',
+          title: `📰 Intel: ${lead.company} in the news`,
+          body: `"${headline.slice(0, 120)}" — perfect icebreaker for your next outreach.`,
+          metadata: { lead_id: lead.id, headline, link: top.link },
+        });
+
+        alertsSent++;
+      } catch (innerErr) {
+        console.error('[prospect-intel] lead', lead.id, innerErr.message);
+      }
+    }
+    if (alertsSent) console.log(`[prospect-intel] ${alertsSent} news intel alerts sent`);
+  } catch (e) {
+    console.error('[prospect-intel worker]', e.message);
+  }
+}
+
+function startProspectIntelWorker() {
+  // Run once at 7:30 AM daily
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 7 && now.getMinutes() === 30) processProspectIntel();
+  };
+  setInterval(check, 60_000);
+  console.log('· Prospect Intel worker: running (daily 7:30 AM, monitors pipeline companies for news)');
+}
+
 // ── Fleet Management Integrations ─────────────────────────────────────────────
 
 app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
@@ -9301,6 +9407,56 @@ No markdown, no explanation outside the JSON array.`;
     const suggestions = JSON.parse(match[0]);
     res.json({ ok: true, suggestions, sourceCompany: lead.company, sourceState: lead.state });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/check-news — on-demand prospect news intel for a single lead
+app.post('/leads/:id/check-news', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: leadRows } = await pool.query(
+      'SELECT id, company, user_id FROM leads WHERE id=$1 AND user_id=$2',
+      [leadId, uid]
+    );
+    if (!leadRows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadRows[0];
+
+    const q = encodeURIComponent(`"${lead.company.replace(/['"]/g, '')}"`);
+    const url = `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!resp.ok) return res.json({ ok: true, articles: [] });
+    const xml = await resp.text();
+
+    const items = [];
+    const cutoff = Date.now() - 30 * 24 * 3600 * 1000; // 30 days
+    for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+      const block = m[1];
+      const title = (block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/)?.[1] || '').trim();
+      const link  = (block.match(/<link>([\s\S]*?)<\/link>/)?.[1] || '').trim();
+      const pub   = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] || '').trim();
+      const source = (block.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1] || '').trim();
+      const pubMs = pub ? new Date(pub).getTime() : 0;
+      if (title && pubMs > cutoff) items.push({ title, link, pubDate: pub, source, pubMs });
+    }
+    items.sort((a, b) => b.pubMs - a.pubMs);
+    const articles = items.slice(0, 5);
+
+    if (articles.length) {
+      // Log the check as an activity
+      await logActivity(pool, {
+        leadId, userId: uid,
+        type: 'news_intel',
+        subject: `📰 News check: ${articles.length} article${articles.length !== 1 ? 's' : ''} found about ${lead.company}`,
+        body: articles.map((a) => `• ${a.title}\n  ${a.link}`).join('\n\n'),
+        metadata: { articles: articles.map((a) => ({ title: a.title, link: a.link, pubDate: a.pubDate })) },
+      });
+    }
+
+    res.json({ ok: true, company: lead.company, articles });
+  } catch (e) {
+    console.error('[check-news]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -14543,6 +14699,7 @@ app.listen(PORT, async () => {
     startMaintenanceWorker();
     startRescueWorker();
     startWeatherWorker();
+    startProspectIntelWorker();
     email.startTrialCron(pool);
     try {
       const { startSignalWorker } = require('./lib/signalWorker');

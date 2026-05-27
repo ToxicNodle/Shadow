@@ -341,6 +341,12 @@ export const api = {
   createReorderLead: (jobId: number) =>
     authFetch<{ leadId: number; existing: boolean }>(`/jobs/${jobId}/create-reorder-lead`, { method: 'POST' }),
 
+  checkLeadNews: (leadId: number) =>
+    authFetch<{
+      ok: boolean; company: string;
+      articles: Array<{ title: string; link: string; pubDate: string; source: string; pubMs: number }>;
+    }>(`/leads/${leadId}/check-news`, { method: 'POST' }),
+
   getCaseStudy: (jobId: number) =>
     authFetch<{
       caseStudy: {
