@@ -1936,6 +1936,7 @@ app.post('/carriers/search', authMiddleware, subMiddleware, async (req, res) => 
   const dataSql = `
     SELECT id, source, source_id AS dot_number, name, dba_name, street, city, state, zip,
            phone, email, fleet_size, drivers, last_reported, added_to_registry,
+           notes,
            ${wrapScoreExpr} AS wrap_score,
            CASE WHEN last_reported IS NOT NULL
                 THEN EXTRACT(YEAR FROM NOW())::INT - EXTRACT(YEAR FROM last_reported)::INT
@@ -11596,6 +11597,141 @@ function startBidExpiryWorker() {
   console.log('· Bid expiry worker: running (daily alert at 10:00 AM)');
 }
 
+// ── Quote Expiry Worker ───────────────────────────────────────────────────────
+// Fires daily at 8 AM. Notifies shop owners when a sent quote is within 3 days
+// of its validity window expiring — prompts them to follow up before the client
+// has to ask for a price refresh.
+async function processQuoteExpiry() {
+  try {
+    const { rows: users } = await pool.query(
+      `SELECT DISTINCT user_id FROM shop_quotes WHERE status='sent' AND sent_at IS NOT NULL`
+    );
+    for (const { user_id } of users) {
+      const { rows: expiring } = await pool.query(
+        `SELECT q.id, q.quote_number, q.title, q.total, q.sent_at, q.valid_days, q.lead_id,
+                l.company, l.contact_name, l.email
+           FROM shop_quotes q
+           LEFT JOIN leads l ON l.id = q.lead_id AND l.user_id = q.user_id
+          WHERE q.user_id=$1 AND q.status='sent' AND q.sent_at IS NOT NULL
+            AND (q.sent_at + (q.valid_days || ' days')::interval) BETWEEN NOW() AND NOW() + INTERVAL '3 days'`,
+        [user_id]
+      );
+      for (const quote of expiring) {
+        const expiryMs = new Date(quote.sent_at).getTime() + quote.valid_days * 86_400_000;
+        const daysLeft = Math.max(0, Math.ceil((expiryMs - Date.now()) / 86_400_000));
+        const already = await pool.query(
+          `SELECT 1 FROM notifications WHERE user_id=$1 AND type='quote_expiring'
+           AND metadata->>'quote_id' = $2 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
+          [user_id, String(quote.id)]
+        );
+        if (already.rows.length) continue;
+        await createNotification(user_id, {
+          type: 'quote_expiring',
+          title: `⏳ Quote expires ${daysLeft === 0 ? 'today' : `in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`} — ${quote.title}`,
+          body: `${quote.company || 'Unknown client'} · ${quote.quote_number} · $${(quote.total || 0).toLocaleString()} — follow up before they ask for a reprice.`,
+          metadata: { quote_id: quote.id, lead_id: quote.lead_id, days_left: daysLeft, company: quote.company },
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[quote-expiry worker]', e.message);
+  }
+}
+
+function startQuoteExpiryWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 0) {
+      processQuoteExpiry();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Quote expiry worker: running (daily alert at 08:00 AM)');
+}
+
+// ── Seasonal Win Intelligence ─────────────────────────────────────────────────
+// Returns month-by-month win patterns from the user's history + identifies
+// which month we're in, what's historically the best category this time of year,
+// and which pipeline leads to prioritize for the current season.
+app.get('/analytics/seasonal', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const currentMonth = new Date().getMonth() + 1; // 1-12
+    const currentMonthName = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][currentMonth - 1];
+
+    // Monthly win rate breakdown by category over last 24 months
+    const historyR = await pool.query(`
+      SELECT
+        EXTRACT(MONTH FROM updated_at)::INT AS month,
+        category,
+        COUNT(*)::INT AS wins
+      FROM leads
+      WHERE user_id=$1 AND status='won' AND updated_at >= NOW() - INTERVAL '24 months'
+      GROUP BY month, category
+      ORDER BY month, wins DESC
+    `, [uid]);
+
+    // Build month → top category map
+    const monthMap: Record<number, Record<string, number>> = {};
+    for (const row of historyR.rows) {
+      if (!monthMap[row.month]) monthMap[row.month] = {};
+      monthMap[row.month][row.category] = (monthMap[row.month][row.category] || 0) + row.wins;
+    }
+
+    // Adjacent months (current ± 1)
+    const peakMonths = [
+      ((currentMonth - 2 + 12) % 12) + 1,
+      currentMonth,
+      (currentMonth % 12) + 1,
+    ];
+
+    // Find historically best category this season
+    const seasonCats: Record<string, number> = {};
+    for (const m of peakMonths) {
+      const mData = monthMap[m] || {};
+      for (const [cat, count] of Object.entries(mData)) {
+        seasonCats[cat] = (seasonCats[cat] || 0) + count;
+      }
+    }
+    const topSeasonCategory = Object.entries(seasonCats).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    const seasonWins = Object.values(seasonCats).reduce((s, v) => s + v, 0);
+
+    // Pipeline leads in the hot category that should be pushed this month
+    const hotPipelineR = topSeasonCategory ? await pool.query(`
+      SELECT id, company, category, status, followup_due_at, fleet_size
+      FROM leads
+      WHERE user_id=$1 AND status IN ('contacted','replied','meeting','proposal')
+        AND category=$2
+      ORDER BY
+        CASE status WHEN 'proposal' THEN 0 WHEN 'meeting' THEN 1 WHEN 'replied' THEN 2 ELSE 3 END,
+        updated_at DESC
+      LIMIT 8
+    `, [uid, topSeasonCategory]) : { rows: [] };
+
+    // Month-by-month series (all months 1-12)
+    const series = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      const data = monthMap[m] || {};
+      const total = Object.values(data).reduce((s, v) => s + v, 0);
+      const topCat = Object.entries(data).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      return { month: m, wins: total, topCat };
+    });
+
+    res.json({
+      ok: true,
+      currentMonth,
+      currentMonthName,
+      topSeasonCategory,
+      seasonWins,
+      hotPipelineLeads: hotPipelineR.rows,
+      series,
+    });
+  } catch (e) {
+    console.error('[analytics/seasonal]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
 // WrapLeads ROI Impact — current-month stats showing platform value
 app.get('/analytics/impact', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -13942,6 +14078,7 @@ app.listen(PORT, async () => {
     startColdNurtureWorker();
     startReOrderWorker();
     startBidExpiryWorker();
+    startQuoteExpiryWorker();
     startStalledDealWorker();
     startAnniversaryWorker();
     startMaintenanceWorker();

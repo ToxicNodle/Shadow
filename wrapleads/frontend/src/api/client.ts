@@ -1101,4 +1101,15 @@ export const api = {
 
   logWinLoss: (leadId: number, data: { factor: string; competitor?: string; notes?: string }) =>
     authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify(data) }),
+
+  getSeasonalIntelligence: () =>
+    authFetch<{
+      ok: boolean;
+      currentMonth: number;
+      currentMonthName: string;
+      topSeasonCategory: string | null;
+      seasonWins: number;
+      hotPipelineLeads: Array<{ id: number; company: string; category: string; status: string; followup_due_at: string | null; fleet_size: string | null }>;
+      series: Array<{ month: number; wins: number; topCat: string | null }>;
+    }>('/analytics/seasonal'),
 };

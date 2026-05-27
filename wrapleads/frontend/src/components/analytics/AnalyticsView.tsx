@@ -1618,6 +1618,143 @@ const LOSS_REASON_LABELS: Record<string, string> = {
   wrong_fit: 'Wrong fit', other: 'Other', unknown: 'Unknown',
 };
 
+const CAT_LABELS: Record<string, string> = {
+  fleet: 'Fleet Wraps', dinoc: 'DI-NOC', gc_referral: 'GC Referral', construction: 'Construction',
+  colorchange: 'Color Change', racing: 'Racing', reatec: 'Rea Tec', design: 'Interior Design',
+  wallgraphics: 'Wall Graphics',
+};
+
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function SeasonalIntelligenceCard() {
+  const { setMode, setCurrentLeadId } = useAppStore((s) => ({
+    setMode: s.setMode,
+    setCurrentLeadId: s.setCurrentLeadId,
+  }));
+  const { data, isLoading } = useQuery({
+    queryKey: ['seasonal-intel'],
+    queryFn: () => api.getSeasonalIntelligence(),
+    staleTime: 30 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+      </div>
+    );
+  }
+
+  const d = data;
+  if (!d?.ok) return null;
+
+  const maxWins = Math.max(...(d.series.map((s) => s.wins)), 1);
+
+  const STATUS_COLOR: Record<string, string> = {
+    proposal: '#22c55e', meeting: '#4d8af5', replied: '#f59e0b', contacted: 'var(--text-faint)',
+  };
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Seasonal Win Intelligence</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Historical win patterns by month — spot your best-selling season and prioritize accordingly
+          </div>
+        </div>
+        {d.topSeasonCategory && d.seasonWins > 0 && (
+          <div style={{
+            background: 'rgba(77,138,245,0.12)', border: '1px solid rgba(77,138,245,0.3)',
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#4d8af5',
+          }}>
+            📅 {d.currentMonthName} sweet spot: {CAT_LABELS[d.topSeasonCategory] ?? d.topSeasonCategory}
+            {d.seasonWins > 0 && <span style={{ fontWeight: 400, marginLeft: 6 }}>({d.seasonWins} historical wins)</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Month sparkline */}
+      <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 56, marginBottom: 16 }}>
+        {d.series.map((s) => {
+          const isCurrent = s.month === d.currentMonth;
+          const height = Math.max(4, Math.round((s.wins / maxWins) * 48));
+          return (
+            <div key={s.month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+              <div style={{
+                width: '100%', height, borderRadius: '3px 3px 0 0',
+                background: isCurrent ? '#4d8af5' : s.wins > 0 ? '#4d8af528' : 'var(--border)',
+                border: isCurrent ? '1px solid #4d8af5' : 'none',
+                transition: 'height 0.3s ease',
+              }} />
+              <span style={{
+                fontSize: 9, fontWeight: isCurrent ? 800 : 400,
+                color: isCurrent ? '#4d8af5' : 'var(--text-faint)',
+              }}>
+                {MONTH_ABBR[s.month - 1]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Hot pipeline leads for this season */}
+      {d.hotPipelineLeads.length > 0 && d.topSeasonCategory && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            {CAT_LABELS[d.topSeasonCategory] ?? d.topSeasonCategory} leads to push this month ({d.hotPipelineLeads.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {d.hotPipelineLeads.map((lead) => {
+              const statusColor = STATUS_COLOR[lead.status] ?? 'var(--text-faint)';
+              return (
+                <div
+                  key={lead.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '7px 10px', borderRadius: 7,
+                    background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => {
+                    setCurrentLeadId(String(lead.id));
+                    setMode('leads');
+                  }}
+                >
+                  <div style={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    background: statusColor, flexShrink: 0,
+                  }} />
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {lead.company}
+                  </span>
+                  {lead.fleet_size && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>
+                      {lead.fleet_size} units
+                    </span>
+                  )}
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 7px', borderRadius: 4,
+                    background: `${statusColor}18`, color: statusColor, flexShrink: 0,
+                  }}>
+                    {lead.status}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!d.topSeasonCategory && (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+          Close your first deal to unlock seasonal patterns. As you log wins, WrapOS learns which months are hottest for each service category.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function LossAnalysisCard() {
   const showToast = useAppStore((s) => s.showToast);
   const { data, isLoading } = useQuery({
@@ -2531,6 +2668,9 @@ export default function AnalyticsView() {
             }}
           />
         )}
+
+        {/* ── Seasonal Win Intelligence ── */}
+        <SeasonalIntelligenceCard />
 
         {/* ── Loss Intelligence ── */}
         <LossAnalysisCard />

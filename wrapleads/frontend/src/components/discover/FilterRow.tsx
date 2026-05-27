@@ -1,8 +1,37 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useCarrierSearch } from '../../hooks/useCarriers';
 import { useSavedSearches } from '../../hooks/useSavedSearches';
 import { useAppStore } from '../../store/useAppStore';
+import { api } from '../../api/client';
 import type { CarrierSearchParams, SavedSearch } from '../../api/types';
+
+// State adjacency map — used for "Near My Shop" preset
+const STATE_NEIGHBORS: Record<string, string[]> = {
+  AL:['FL','GA','MS','TN'],  AK:[], AZ:['CA','CO','NM','NV','UT'],
+  AR:['LA','MO','MS','OK','TN','TX'], CA:['AZ','NV','OR'],
+  CO:['AZ','KS','NE','NM','OK','UT','WY'], CT:['MA','NY','RI'],
+  DE:['MD','NJ','PA'], FL:['AL','GA'], GA:['AL','FL','NC','SC','TN'],
+  HI:[], ID:['MT','NV','OR','UT','WA','WY'], IL:['IN','IA','KY','MO','WI'],
+  IN:['IL','KY','MI','OH'], IA:['IL','MN','MO','NE','SD','WI'],
+  KS:['CO','MO','NE','OK'], KY:['IL','IN','MO','OH','TN','VA','WV'],
+  LA:['AR','MS','TX'], ME:['NH'], MD:['DE','PA','VA','WV'],
+  MA:['CT','NH','NY','RI','VT'], MI:['IN','OH','WI'],
+  MN:['IA','ND','SD','WI'], MS:['AL','AR','LA','TN'],
+  MO:['AR','IL','IA','KS','KY','NE','OK','TN'], MT:['ID','ND','SD','WY'],
+  NE:['CO','IA','KS','MO','SD','WY'], NV:['AZ','CA','ID','OR','UT'],
+  NH:['MA','ME','VT'], NJ:['DE','NY','PA'], NM:['AZ','CO','OK','TX'],
+  NY:['CT','MA','NJ','PA','VT'], NC:['GA','SC','TN','VA'],
+  ND:['MN','MT','SD'], OH:['IN','KY','MI','PA','WV'],
+  OK:['AR','CO','KS','MO','NM','TX'], OR:['CA','ID','NV','WA'],
+  PA:['DE','MD','NJ','NY','OH','WV'], RI:['CT','MA'],
+  SC:['GA','NC'], SD:['IA','MN','MT','ND','NE','WY'],
+  TN:['AL','AR','GA','KY','MS','MO','NC','VA'], TX:['AR','LA','NM','OK'],
+  UT:['AZ','CO','ID','NV','NM','WY'], VT:['MA','NH','NY'],
+  VA:['KY','MD','NC','TN','WV'], WA:['ID','OR'],
+  WV:['KY','MD','OH','PA','VA'], WI:['IL','IA','MI','MN'],
+  WY:['CO','ID','MT','NE','SD','UT'],
+};
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -29,9 +58,19 @@ const INDUSTRY_OPTIONS = [
 export default function FilterRow() {
   const searchMutation = useCarrierSearch();
   const { createSearch } = useSavedSearches();
+  const { data: settingsData } = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api.getSettings(),
+    staleTime: 5 * 60_000,
+  });
   const { setCarrierOffset } = useAppStore((s) => ({
     setCarrierOffset: s.setCarrierOffset,
   }));
+
+  const shopState = settingsData?.settings?.state || '';
+  const nearMyShopStates: string[] = shopState
+    ? [shopState, ...(STATE_NEIGHBORS[shopState] ?? [])].slice(0, 5)
+    : [];
 
   const [states, setStates] = useState<string[]>([]);
   const [industries, setIndustries] = useState<string[]>([]);
@@ -119,9 +158,39 @@ export default function FilterRow() {
     });
   }
 
+  function applyNearMyShop() {
+    if (!nearMyShopStates.length) return;
+    setStates(nearMyShopStates);
+    setMinFleet('25');
+    setMaxFleet('500');
+    setQuery('');
+    setSort('wrap_score');
+    setOnlyWithPhone(false);
+    setCarrierOffset(0);
+    searchMutation.mutate({
+      states: nearMyShopStates,
+      minFleet: 25,
+      maxFleet: 500,
+      sort: 'wrap_score',
+      limit: 25,
+      offset: 0,
+    });
+  }
+
   return (
     <div>
       <div className="discover-presets">
+        {nearMyShopStates.length > 0 && (
+          <button
+            className="discover-preset-btn"
+            onClick={applyNearMyShop}
+            disabled={searchMutation.isPending}
+            style={{ borderColor: 'var(--accent)', color: 'var(--accent)', background: 'var(--accent-dim, rgba(244,85,28,0.08))' }}
+            title={`Search ${nearMyShopStates.join(', ')} — your state + neighbors`}
+          >
+            📍 Near My Shop
+          </button>
+        )}
         {PRESETS.map((p) => (
           <button
             key={p.label}
