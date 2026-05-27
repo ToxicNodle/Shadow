@@ -125,6 +125,26 @@ export const api = {
       method: 'POST', body: JSON.stringify(opp),
     }),
 
+  getInboundLeads: (params: { state?: string; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.state) qs.set('state', params.state);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.offset) qs.set('offset', String(params.offset));
+    return authFetch<{
+      leads: Array<{
+        id: number; name: string | null; company: string; email: string | null; phone: string | null;
+        city: string | null; state_code: string | null; vehicle_type: string | null; fleet_size: number | null;
+        industry: string | null; message: string | null;
+        concepts_json: Array<{ name: string; palette: string; description: string; estimatedCost?: string }>;
+        created_at: string;
+      }>;
+      total: number;
+    }>('/inbound-leads?' + qs.toString());
+  },
+
+  claimInboundLead: (id: number) =>
+    authFetch<{ ok: boolean; lead: { id: number; company: string } }>(`/inbound-leads/${id}/claim`, { method: 'POST' }),
+
   importShopVoxCSV: (file: File) => {
     const token = getToken();
     const form = new FormData();

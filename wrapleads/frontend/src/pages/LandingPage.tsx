@@ -167,6 +167,7 @@ export default function LandingPage() {
             <a href="/demo" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(99,102,241,0.1)', borderRadius: 6 }}>📞 Watch a live AI call</a>
             <a href="/calculator" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(99,102,241,0.1)', borderRadius: 6 }}>💰 Stack cost calculator</a>
             <a href="/migrate/shopvox" style={{ color: '#f87171', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(239,68,68,0.1)', borderRadius: 6 }}>↗ Migrate from ShopVOX</a>
+            <a href="/wrap-my-fleet" style={{ color: '#00d97e', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(0,217,126,0.1)', borderRadius: 6 }}>🚐 Fleet owners: free wrap concepts</a>
           </div>
         </div>
 

@@ -7,6 +7,7 @@ import ROICalculatorModal from '../modals/ROICalculatorModal';
 import HotProposalsCard from './HotProposalsCard';
 import PerfectTimingCard from './PerfectTimingCard';
 import StreakBadge from './StreakBadge';
+import InboundRequestsCard from './InboundRequestsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1823,6 +1824,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
+      <InboundRequestsCard />
 
       {/* ── Perfect Timing — email opens in the last 2 hours ── */}
       <PerfectTimingCard />

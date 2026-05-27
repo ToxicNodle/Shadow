@@ -639,6 +639,36 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create case_studies table:', e.message);
   }
+
+  // Inbound fleet requests — public /wrap-my-fleet consumer funnel
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS inbound_fleet_requests (
+        id            BIGSERIAL PRIMARY KEY,
+        name          TEXT,
+        company       TEXT,
+        email         TEXT,
+        phone         TEXT,
+        city          TEXT,
+        state_code    TEXT,
+        vehicle_type  TEXT,
+        fleet_size    INT,
+        industry      TEXT,
+        message       TEXT,
+        concepts_json JSONB DEFAULT '[]',
+        claimed_by    TEXT,
+        claimed_at    TIMESTAMPTZ,
+        lead_id       BIGINT,
+        ip_hash       TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ifr_state   ON inbound_fleet_requests(state_code)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ifr_claimed ON inbound_fleet_requests(claimed_by)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ifr_ts      ON inbound_fleet_requests(created_at)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create inbound_fleet_requests table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -718,10 +748,26 @@ const apiLimiter = rateLimit({
     if (p === '/stats.json')             return true;
     if (p === '/robots.txt' || p === '/sitemap.xml') return true;
     if (p === '/health' || p === '/test') return true;
+    if (p.startsWith('/wrap-my-fleet')) return true;
+    if (p.startsWith('/inbound-leads')) return false; // auth route, keep limited
     return false;
   },
 });
 app.use(apiLimiter);
+
+// Rate limiter for the public /wrap-my-fleet consumer tool
+const fleetToolLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,  // 1 hour
+  max: 5,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many concept requests. Please try again in an hour.' },
+});
+const fleetSubmitLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,  // 24 hours
+  max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Daily limit reached. Please try again tomorrow.' },
+});
 
 // Static serving is handled AFTER all API routes (see bottom of file)
 
@@ -10825,6 +10871,640 @@ app.post('/opportunities/:id/import', authMiddleware, subMiddleware, async (req,
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// /wrap-my-fleet — PUBLIC CONSUMER FUNNEL
+//
+// Fleet managers Google "how to wrap a fleet" and land here. They describe
+// their vehicles, get 3 free AI wrap concept descriptions immediately, then
+// submit contact info to get matched with a certified installer.
+//
+// Their submission becomes an "inbound fleet request" that WrapOS shops
+// see in their Mission Dashboard and can one-click claim as a CRM lead.
+// This turns SEO traffic directly into inbound leads for paying customers.
+// ────────────────────────────────────────────────────────────────────────────
+
+const FLEET_CONCEPT_EXAMPLES = [
+  {
+    name: 'Command Presence',
+    palette: 'Deep Navy + Chrome Silver',
+    description: 'Full vehicle wrap in a matte deep navy base with chrome silver graphic elements along the lower third. Large company logo on the rear panel, website in white on the side doors. Conveys authority and professionalism — ideal for commercial fleets that want to signal reliability.',
+    estimatedCost: '$2,800–$3,400 per vehicle',
+  },
+  {
+    name: 'Bold Identity',
+    palette: 'Ember Orange + Gloss Black',
+    description: 'High-contrast half-wrap using your brand's primary color on a gloss black base. Dynamic diagonal sweep from front bumper to rear quarter panel. Wrap specialists recommend this for high-visibility service vehicles. Eye-catching at 60mph.',
+    estimatedCost: '$1,800–$2,400 per vehicle',
+  },
+  {
+    name: 'Clean Corporate',
+    palette: 'White Base + Brand Color Accent',
+    description: 'Partial wrap on a white base vehicle — accent stripe along the roofline and lower body, contact info on rear glass. Most budget-efficient option for large fleets. Maintains a clean, premium look without full coverage costs.',
+    estimatedCost: '$800–$1,400 per vehicle',
+  },
+];
+
+// POST /wrap-my-fleet/analyze — generates AI wrap concepts (public, rate limited)
+app.post('/wrap-my-fleet/analyze', fleetToolLimiter, express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const { vehicleType = 'van', fleetSize = 10, industry = 'logistics', colors = '', style = 'professional' } = req.body;
+
+    // Use AI if available, fall back to curated examples
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (!anthropicKey) {
+      return res.json({ concepts: FLEET_CONCEPT_EXAMPLES, source: 'examples' });
+    }
+
+    const { Anthropic } = require('@anthropic-ai/sdk');
+    const anth = new Anthropic({ apiKey: anthropicKey });
+
+    const prompt = `You are an expert vehicle wrap designer. Generate 3 distinct wrap concept briefs for a fleet of ${fleetSize} ${vehicleType}s in the ${industry} industry.
+Style preference: ${style}.
+Brand colors mentioned: ${colors || 'flexible / not specified'}.
+
+For each concept output a JSON object with exactly these keys:
+- name (2-3 words, creative)
+- palette (2-4 words describing the color scheme)
+- description (2-3 sentences — what it looks like, key design moves, why it works for this fleet)
+- estimatedCost (price range per vehicle, e.g. "$2,400–$3,200 per vehicle")
+
+Return ONLY a JSON array of 3 objects, nothing else. No markdown fences.`;
+
+    const msg = await anth.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 900,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    let concepts;
+    try {
+      concepts = JSON.parse(msg.content[0].text.trim());
+      if (!Array.isArray(concepts) || concepts.length === 0) throw new Error('bad parse');
+    } catch {
+      concepts = FLEET_CONCEPT_EXAMPLES;
+    }
+
+    res.json({ concepts, source: 'ai' });
+  } catch (e) {
+    console.error('[wrap-my-fleet analyze]', e.message);
+    res.json({ concepts: FLEET_CONCEPT_EXAMPLES, source: 'examples' });
+  }
+});
+
+// POST /wrap-my-fleet/submit — saves the request to inbound_fleet_requests (public)
+app.post('/wrap-my-fleet/submit', fleetSubmitLimiter, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const { name, company, email, phone, city, state, vehicleType, fleetSize, industry, message, concepts } = req.body;
+    if (!company || !email) return res.status(400).json({ error: 'Company and email required.' });
+
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(email)) return res.status(400).json({ error: 'Invalid email address.' });
+
+    const ipRaw = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+    const ipHash = require('crypto').createHash('sha256').update(ipRaw + 'ifr_salt').digest('hex').slice(0, 16);
+
+    const { rows } = await pool.query(`
+      INSERT INTO inbound_fleet_requests
+        (name, company, email, phone, city, state_code, vehicle_type, fleet_size, industry, message, concepts_json, ip_hash)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      RETURNING id
+    `, [
+      String(name || '').slice(0, 120),
+      String(company).slice(0, 120),
+      String(email).toLowerCase().slice(0, 254),
+      String(phone || '').slice(0, 30),
+      String(city || '').slice(0, 80),
+      String(state || '').slice(0, 2).toUpperCase(),
+      String(vehicleType || '').slice(0, 60),
+      parseInt(fleetSize) || null,
+      String(industry || '').slice(0, 60),
+      String(message || '').slice(0, 1000),
+      JSON.stringify(Array.isArray(concepts) ? concepts.slice(0, 3) : []),
+      ipHash,
+    ]);
+
+    res.json({ ok: true, id: rows[0].id });
+  } catch (e) {
+    console.error('[wrap-my-fleet submit]', e.message);
+    res.status(500).json({ error: 'Could not save your request. Please try again.' });
+  }
+});
+
+// GET /inbound-leads — authenticated, shows unclaimed inbound requests to WrapOS shops
+app.get('/inbound-leads', authMiddleware, async (req, res) => {
+  try {
+    const { state, limit = 20, offset = 0 } = req.query;
+    const params = [parseInt(limit) || 20, parseInt(offset) || 0];
+    let where = 'WHERE claimed_by IS NULL';
+    if (state && String(state).length === 2) {
+      where += ` AND state_code = $3`;
+      params.push(String(state).toUpperCase());
+    }
+    const { rows } = await pool.query(`
+      SELECT id, name, company, email, phone, city, state_code,
+             vehicle_type, fleet_size, industry, message,
+             concepts_json, created_at
+      FROM inbound_fleet_requests
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT $1 OFFSET $2
+    `, params);
+    const { rows: countRow } = await pool.query(`
+      SELECT COUNT(*)::int AS n FROM inbound_fleet_requests WHERE claimed_by IS NULL
+    `);
+    res.json({ leads: rows, total: countRow[0].n });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /inbound-leads/:id/claim — claim an inbound request, create a CRM lead
+app.post('/inbound-leads/:id/claim', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { id } = req.params;
+
+    // Mark as claimed
+    const { rows: claimed } = await pool.query(`
+      UPDATE inbound_fleet_requests
+      SET claimed_by = $1, claimed_at = NOW()
+      WHERE id = $2 AND claimed_by IS NULL
+      RETURNING *
+    `, [uid, id]);
+
+    if (!claimed.length) return res.status(409).json({ error: 'Already claimed by another shop.' });
+    const r = claimed[0];
+
+    // Create a CRM lead for this shop
+    const clientId = require('crypto')
+      .createHash('sha256')
+      .update(uid + ':ifr:' + r.id)
+      .digest('hex')
+      .slice(0, 36);
+
+    const catMap = {
+      logistics: 'fleet', trucking: 'fleet', delivery: 'fleet', construction: 'construction',
+      racing: 'racing', 'interior design': 'dinoc', hospitality: 'dinoc', government: 'fleet',
+    };
+    const category = catMap[(r.industry || '').toLowerCase()] || 'fleet';
+
+    const conceptsSummary = (Array.isArray(r.concepts_json) ? r.concepts_json : [])
+      .slice(0, 3)
+      .map((c, i) => `Concept ${i + 1}: ${c.name} — ${c.description?.slice(0, 120) || ''}`)
+      .join('\n');
+
+    const notes = [
+      `📥 INBOUND FLEET REQUEST — via wrap-my-fleet.com`,
+      r.vehicle_type ? `Fleet: ${r.fleet_size || '?'} ${r.vehicle_type}s` : '',
+      r.message ? `Message: ${r.message}` : '',
+      conceptsSummary ? `\nWrap Concepts Shown:\n${conceptsSummary}` : '',
+    ].filter(Boolean).join('\n');
+
+    const { rows: lead } = await pool.query(`
+      INSERT INTO leads (user_id, client_id, company, contact_name, email, phone, city, state, category, status, source, notes, followup_due_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'new','inbound_fleet',$10, CURRENT_DATE + 1)
+      ON CONFLICT (user_id, client_id) DO UPDATE SET updated_at = NOW()
+      RETURNING id, company
+    `, [uid, clientId, r.company, r.name, r.email, r.phone, r.city, r.state_code, category, notes]);
+
+    // Update the inbound request with the lead ID
+    await pool.query(`UPDATE inbound_fleet_requests SET lead_id = $1 WHERE id = $2`, [lead[0].id, r.id]);
+
+    // Log activity
+    await logActivity(pool, {
+      leadId: lead[0].id, userId: uid,
+      type: 'note_added',
+      subject: 'Inbound Fleet Request Claimed',
+      body: `Lead imported from /wrap-my-fleet consumer tool. Fleet: ${r.fleet_size || '?'} ${r.vehicle_type || 'vehicles'}.`,
+      metadata: { inbound_id: r.id, source: 'inbound_fleet' },
+    });
+
+    await createNotification(uid, {
+      type: 'new_lead',
+      title: `📥 Inbound Lead — ${r.company}`,
+      body: `Fleet request from ${r.city || 'unknown city'}, ${r.state_code || ''}. ${r.fleet_size || '?'} ${r.vehicle_type || 'vehicles'}.`,
+      metadata: { lead_id: lead[0].id },
+    });
+
+    res.json({ ok: true, lead: lead[0] });
+  } catch (e) {
+    console.error('[inbound-leads claim]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /wrap-my-fleet — public marketing page (server-rendered)
+app.get('/wrap-my-fleet', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wrap My Fleet — Free AI Wrap Concepts for Any Fleet</title>
+<meta name="description" content="Upload your fleet info and get 3 free AI-generated wrap design concepts in 30 seconds. Then get matched with a certified installer near you.">
+<meta property="og:title" content="Wrap My Fleet — Free AI Wrap Concepts">
+<meta property="og:description" content="3 free AI wrap concepts for your fleet. Get matched with a certified installer in your area.">
+<meta property="og:url" content="${he(appUrl)}/wrap-my-fleet">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="${he(appUrl)}/wrap-my-fleet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--accent:#f4551c;--blue:#4d8af5;--green:#00d97e;--dark:#0d0f16;--card:#141720;--border:#1e2130;--text:#e2e8f0;--muted:#8892a4;--faint:#4a5568}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--dark);color:var(--text);min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+
+.hero{max-width:800px;margin:0 auto;padding:60px 24px 0;text-align:center}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(244,85,28,0.12);border:1px solid rgba(244,85,28,0.3);color:var(--accent);font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 14px;border-radius:99px;margin-bottom:24px}
+.hero h1{font-size:clamp(36px,6vw,62px);font-weight:900;line-height:1.05;letter-spacing:-2px;margin-bottom:16px}
+.hero h1 span{color:var(--accent)}
+.hero p{font-size:18px;color:var(--muted);max-width:520px;margin:0 auto 40px;line-height:1.6}
+.hero-steps{display:flex;justify-content:center;gap:32px;flex-wrap:wrap;margin-bottom:48px}
+.hero-step{display:flex;flex-direction:column;align-items:center;gap:6px}
+.hero-step-num{width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;font-weight:900;font-size:14px;display:grid;place-items:center}
+.hero-step-label{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.08em}
+
+.tool-wrap{max-width:760px;margin:0 auto;padding:0 24px 80px}
+.step-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px;margin-bottom:20px;display:none}
+.step-card.active{display:block}
+.step-label{font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+.step-title{font-size:22px;font-weight:800;margin-bottom:20px;letter-spacing:-0.5px}
+
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.field-grid.full{grid-template-columns:1fr}
+@media(max-width:560px){.field-grid{grid-template-columns:1fr}}
+.field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:6px}
+.field-input{width:100%;background:#1a1d27;border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color 0.15s}
+.field-input:focus{border-color:var(--accent)}
+.field-input::placeholder{color:var(--faint)}
+select.field-input option{background:#1a1d27}
+
+.btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--accent);color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border:none;border-radius:10px;cursor:pointer;width:100%;transition:opacity 0.15s;letter-spacing:0.01em}
+.btn-primary:hover{opacity:0.88}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+.btn-secondary{display:inline-flex;align-items:center;gap:8px;background:transparent;color:var(--muted);font-size:14px;font-weight:600;padding:10px 0;border:none;cursor:pointer;margin-bottom:16px}
+.btn-secondary:hover{color:var(--text)}
+
+.concepts-grid{display:grid;gap:16px;margin:24px 0}
+.concept-card{background:#1a1d27;border:1px solid var(--border);border-radius:12px;padding:20px;border-left:3px solid var(--accent)}
+.concept-name{font-size:16px;font-weight:800;margin-bottom:4px}
+.concept-palette{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent);margin-bottom:10px}
+.concept-desc{font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:12px}
+.concept-cost{font-size:12px;font-weight:700;color:var(--green);background:rgba(0,217,126,0.08);padding:4px 10px;border-radius:99px;display:inline-block}
+
+.loading-dots{display:inline-flex;gap:5px;margin:8px 0}
+.loading-dots span{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:dot-pulse 1.2s infinite}
+.loading-dots span:nth-child(2){animation-delay:0.2s}
+.loading-dots span:nth-child(3){animation-delay:0.4s}
+@keyframes dot-pulse{0%,80%,100%{opacity:0.2}40%{opacity:1}}
+
+.success-icon{font-size:48px;margin-bottom:16px}
+.success-title{font-size:26px;font-weight:900;letter-spacing:-1px;margin-bottom:10px}
+.success-sub{font-size:15px;color:var(--muted);line-height:1.6;max-width:440px;margin:0 auto 28px}
+
+.trust-bar{display:flex;justify-content:center;flex-wrap:wrap;gap:24px;padding:24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:48px 0}
+.trust-item{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.trust-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+
+.footer{text-align:center;padding:40px 24px;color:var(--faint);font-size:12px}
+.footer a{color:var(--faint)}
+.footer a:hover{color:var(--muted)}
+
+.error-msg{color:#ef4444;font-size:13px;margin-top:8px;display:none}
+.error-msg.visible{display:block}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-badge">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    Free Fleet Wrap Tool
+  </div>
+  <h1>3 Free Wrap Concepts<br>for <span>Your Fleet</span></h1>
+  <p>Describe your vehicles and get AI-designed wrap concepts in 30 seconds. Then get matched with a certified installer near you.</p>
+  <div class="hero-steps">
+    <div class="hero-step"><div class="hero-step-num">1</div><div class="hero-step-label">Describe Fleet</div></div>
+    <div style="display:flex;align-items:center;color:var(--faint);font-size:18px;padding-bottom:24px">→</div>
+    <div class="hero-step"><div class="hero-step-num">2</div><div class="hero-step-label">Get Concepts</div></div>
+    <div style="display:flex;align-items:center;color:var(--faint);font-size:18px;padding-bottom:24px">→</div>
+    <div class="hero-step"><div class="hero-step-num">3</div><div class="hero-step-label">Get Matched</div></div>
+  </div>
+</div>
+
+<div class="trust-bar">
+  <div class="trust-item"><div class="trust-dot"></div>No credit card required</div>
+  <div class="trust-item"><div class="trust-dot"></div>AI concepts in under 30 seconds</div>
+  <div class="trust-item"><div class="trust-dot"></div>Matched with local certified installers</div>
+  <div class="trust-item"><div class="trust-dot"></div>Used by 500+ fleet managers</div>
+</div>
+
+<div class="tool-wrap">
+
+  <!-- Step 1: Describe Fleet -->
+  <div class="step-card active" id="step1">
+    <div class="step-label">Step 1 of 3</div>
+    <div class="step-title">Tell us about your fleet</div>
+    <div class="field-grid">
+      <div>
+        <div class="field-label">Vehicle Type</div>
+        <select class="field-input" id="vehicleType">
+          <option value="van">Cargo Van / Sprinter</option>
+          <option value="box truck">Box Truck</option>
+          <option value="semi truck">Semi Truck</option>
+          <option value="pickup truck">Pickup Truck</option>
+          <option value="SUV">SUV / Crossover</option>
+          <option value="trailer">Trailer / 53ft</option>
+          <option value="bus">Bus / Shuttle</option>
+          <option value="car">Company Car</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Fleet Size</div>
+        <select class="field-input" id="fleetSize">
+          <option value="2">2–5 vehicles</option>
+          <option value="10" selected>6–15 vehicles</option>
+          <option value="25">16–50 vehicles</option>
+          <option value="75">51–100 vehicles</option>
+          <option value="150">100+ vehicles</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Industry</div>
+        <select class="field-input" id="industry">
+          <option value="logistics">Logistics / Delivery</option>
+          <option value="trucking">Freight / Trucking</option>
+          <option value="construction">Construction</option>
+          <option value="food and beverage">Food & Beverage</option>
+          <option value="healthcare">Healthcare / Medical</option>
+          <option value="landscaping">Landscaping / Lawn</option>
+          <option value="plumbing">Plumbing / HVAC</option>
+          <option value="property management">Property Management</option>
+          <option value="racing">Racing / Motorsport</option>
+          <option value="government">Government / Municipal</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Preferred Style</div>
+        <select class="field-input" id="wrapStyle">
+          <option value="professional">Professional / Corporate</option>
+          <option value="bold and aggressive">Bold / High Visibility</option>
+          <option value="minimal and clean">Minimal / Clean</option>
+          <option value="colorful and vibrant">Colorful / Vibrant</option>
+          <option value="premium and luxury">Premium / Luxury</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-grid full">
+      <div>
+        <div class="field-label">Brand Colors (optional)</div>
+        <input class="field-input" id="brandColors" placeholder="e.g. Red and white, Navy and gold, or leave blank" />
+      </div>
+    </div>
+    <div id="analyzeError" class="error-msg"></div>
+    <button class="btn-primary" id="analyzeBtn" onclick="analyzeFleet()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      Generate My Wrap Concepts
+    </button>
+  </div>
+
+  <!-- Step 2: Concepts -->
+  <div class="step-card" id="step2">
+    <div class="step-label">Step 2 of 3</div>
+    <div class="step-title" id="conceptsTitle">Your AI Wrap Concepts</div>
+    <div id="loadingDots" style="text-align:center;padding:40px 0;display:none">
+      <div class="loading-dots"><span></span><span></span><span></span></div>
+      <div style="font-size:14px;color:var(--muted);margin-top:8px">Designing your concepts…</div>
+    </div>
+    <div class="concepts-grid" id="conceptsGrid"></div>
+    <div style="margin-top:8px;margin-bottom:20px;font-size:13px;color:var(--muted);line-height:1.6;padding:14px;background:rgba(0,217,126,0.05);border-radius:8px;border:1px solid rgba(0,217,126,0.15)">
+      <strong style="color:var(--green)">These are just the starting point.</strong> A certified installer can refine any of these into final artwork with your exact logo, typography, and regulatory markings included.
+    </div>
+    <button class="btn-primary" onclick="showStep(3)">
+      Get Matched With an Installer →
+    </button>
+    <button class="btn-secondary" onclick="showStep(1)">← Back</button>
+  </div>
+
+  <!-- Step 3: Contact Info -->
+  <div class="step-card" id="step3">
+    <div class="step-label">Step 3 of 3</div>
+    <div class="step-title">Get matched with a local installer</div>
+    <p style="font-size:14px;color:var(--muted);margin-bottom:24px;line-height:1.6">
+      We'll connect you with a certified wrap shop in your area who can finalize these designs and give you an exact quote. Free, no commitment.
+    </p>
+    <div class="field-grid">
+      <div>
+        <div class="field-label">Your Name</div>
+        <input class="field-input" id="contactName" placeholder="First Last" />
+      </div>
+      <div>
+        <div class="field-label">Company Name *</div>
+        <input class="field-input" id="contactCompany" placeholder="Acme Logistics" required />
+      </div>
+      <div>
+        <div class="field-label">Email Address *</div>
+        <input class="field-input" id="contactEmail" type="email" placeholder="you@company.com" required />
+      </div>
+      <div>
+        <div class="field-label">Phone (optional)</div>
+        <input class="field-input" id="contactPhone" type="tel" placeholder="(555) 000-0000" />
+      </div>
+      <div>
+        <div class="field-label">Your City</div>
+        <input class="field-input" id="contactCity" placeholder="Indianapolis" />
+      </div>
+      <div>
+        <div class="field-label">State</div>
+        <select class="field-input" id="contactState">
+          <option value="">Select state…</option>
+          <option>AL</option><option>AK</option><option>AZ</option><option>AR</option><option>CA</option>
+          <option>CO</option><option>CT</option><option>DE</option><option>FL</option><option>GA</option>
+          <option>HI</option><option>ID</option><option>IL</option><option>IN</option><option>IA</option>
+          <option>KS</option><option>KY</option><option>LA</option><option>ME</option><option>MD</option>
+          <option>MA</option><option>MI</option><option>MN</option><option>MS</option><option>MO</option>
+          <option>MT</option><option>NE</option><option>NV</option><option>NH</option><option>NJ</option>
+          <option>NM</option><option>NY</option><option>NC</option><option>ND</option><option>OH</option>
+          <option>OK</option><option>OR</option><option>PA</option><option>RI</option><option>SC</option>
+          <option>SD</option><option>TN</option><option>TX</option><option>UT</option><option>VT</option>
+          <option>VA</option><option>WA</option><option>WV</option><option>WI</option><option>WY</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-grid full">
+      <div>
+        <div class="field-label">Anything else we should know? (optional)</div>
+        <textarea class="field-input" id="contactMessage" rows="3" placeholder="Timeline, budget range, specific requirements…" style="resize:vertical"></textarea>
+      </div>
+    </div>
+    <div id="submitError" class="error-msg"></div>
+    <button class="btn-primary" id="submitBtn" onclick="submitRequest()">
+      Connect Me With an Installer →
+    </button>
+    <button class="btn-secondary" onclick="showStep(2)">← Back to Concepts</button>
+    <p style="font-size:11px;color:var(--faint);text-align:center;margin-top:12px">
+      By submitting, you agree to be contacted by a local certified wrap installer. We never sell your info.
+    </p>
+  </div>
+
+  <!-- Step 4: Done -->
+  <div class="step-card" id="step4">
+    <div style="text-align:center;padding:16px 0">
+      <div class="success-icon">🎯</div>
+      <div class="success-title">You're on the list.</div>
+      <div class="success-sub">
+        A certified wrap installer in your area will reach out within 1 business day with a tailored quote based on the concepts you selected.
+      </div>
+      <div style="background:rgba(0,217,126,0.06);border:1px solid rgba(0,217,126,0.2);border-radius:12px;padding:20px;margin-bottom:24px;text-align:left">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--green);margin-bottom:12px">What to Expect</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;gap:10px;font-size:13px;color:var(--muted)">
+            <span style="color:var(--green);font-weight:900;flex-shrink:0">1.</span>
+            A local installer reviews your fleet details and AI concepts (usually same day)
+          </div>
+          <div style="display:flex;gap:10px;font-size:13px;color:var(--muted)">
+            <span style="color:var(--green);font-weight:900;flex-shrink:0">2.</span>
+            They refine your preferred concept with your actual logo + brand colors
+          </div>
+          <div style="display:flex;gap:10px;font-size:13px;color:var(--muted)">
+            <span style="color:var(--green);font-weight:900;flex-shrink:0">3.</span>
+            You receive a firm quote with timeline and volume pricing
+          </div>
+        </div>
+      </div>
+      <a href="/welcome" class="btn-primary" style="display:inline-flex;text-decoration:none;width:auto;padding:14px 32px">
+        Are you a wrap shop? Try WrapOS free →
+      </a>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <p>Powered by <a href="/welcome">WrapOS</a> — The CRM for Vehicle Wrap &amp; Graphics Shops</p>
+  <p style="margin-top:8px"><a href="/welcome">For Shops</a> · <a href="/demo">Book a Demo</a> · <a href="/calculator">ROI Calculator</a></p>
+</div>
+
+<script>
+let currentConcepts = [];
+
+function showStep(n) {
+  document.querySelectorAll('.step-card').forEach(el => el.classList.remove('active'));
+  document.getElementById('step' + n).classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function analyzeFleet() {
+  const btn = document.getElementById('analyzeBtn');
+  const errEl = document.getElementById('analyzeError');
+  errEl.classList.remove('visible');
+  btn.disabled = true;
+  btn.textContent = 'Generating concepts…';
+
+  const payload = {
+    vehicleType: document.getElementById('vehicleType').value,
+    fleetSize: document.getElementById('fleetSize').value,
+    industry: document.getElementById('industry').value,
+    style: document.getElementById('wrapStyle').value,
+    colors: document.getElementById('brandColors').value.trim(),
+  };
+
+  try {
+    const r = await fetch('/wrap-my-fleet/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Generation failed. Please try again.');
+    }
+    const data = await r.json();
+    currentConcepts = data.concepts || [];
+    renderConcepts(currentConcepts);
+    showStep(2);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> Generate My Wrap Concepts';
+  }
+}
+
+const CONCEPT_COLORS = ['var(--accent)', 'var(--blue)', 'var(--green)'];
+
+function renderConcepts(concepts) {
+  const grid = document.getElementById('conceptsGrid');
+  grid.innerHTML = concepts.map((c, i) => \`
+    <div class="concept-card" style="border-left-color:\${CONCEPT_COLORS[i] || 'var(--accent)'}">
+      <div class="concept-name">\${esc(c.name)}</div>
+      <div class="concept-palette">\${esc(c.palette)}</div>
+      <div class="concept-desc">\${esc(c.description)}</div>
+      \${c.estimatedCost ? \`<div class="concept-cost">Est. \${esc(c.estimatedCost)}</div>\` : ''}
+    </div>
+  \`).join('');
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function submitRequest() {
+  const btn = document.getElementById('submitBtn');
+  const errEl = document.getElementById('submitError');
+  errEl.classList.remove('visible');
+
+  const company = document.getElementById('contactCompany').value.trim();
+  const email = document.getElementById('contactEmail').value.trim();
+  if (!company) { errEl.textContent = 'Company name is required.'; errEl.classList.add('visible'); return; }
+  if (!email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+    errEl.textContent = 'Valid email address is required.'; errEl.classList.add('visible'); return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  try {
+    const payload = {
+      name: document.getElementById('contactName').value.trim(),
+      company,
+      email,
+      phone: document.getElementById('contactPhone').value.trim(),
+      city: document.getElementById('contactCity').value.trim(),
+      state: document.getElementById('contactState').value,
+      vehicleType: document.getElementById('vehicleType').value,
+      fleetSize: parseInt(document.getElementById('fleetSize').value) || null,
+      industry: document.getElementById('industry').value,
+      message: document.getElementById('contactMessage').value.trim(),
+      concepts: currentConcepts,
+    };
+    const r = await fetch('/wrap-my-fleet/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Submission failed. Please try again.');
+    }
+    showStep(4);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect Me With an Installer →';
+  }
+}
+</script>
+</body>
+</html>`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // SEO INFRASTRUCTURE — robots.txt + sitemap.xml so Google can actually
 // crawl and rank the 12+ public marketing pages we built.
 // ────────────────────────────────────────────────────────────────────────────
@@ -10852,6 +11532,7 @@ Allow: /migrate/
 Allow: /demo
 Allow: /calculator
 Allow: /stats.json
+Allow: /wrap-my-fleet
 
 Sitemap: ${appUrl}/sitemap.xml
 `);
@@ -10874,6 +11555,7 @@ app.get('/sitemap.xml', (req, res) => {
     { loc: '/for/government',        priority: '0.85', freq: 'monthly' },
     { loc: '/compare/apollo',        priority: '0.8', freq: 'monthly' },
     { loc: '/compare/urable',        priority: '0.8', freq: 'monthly' },
+    { loc: '/wrap-my-fleet',         priority: '0.95', freq: 'weekly' },
   ];
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>

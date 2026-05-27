@@ -48,7 +48,9 @@ export default defineConfig({
       '/compare':       API,
       '/calculator':    API,
       '/stats.json':    API,
-      '/opportunities': API,
+      '/opportunities':      API,
+      '/wrap-my-fleet':     API,
+      '/inbound-leads':     API,
     },
   },
 });
