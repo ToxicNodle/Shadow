@@ -782,6 +782,11 @@ export const api = {
   cloneBid: (id: number) =>
     authFetch<{ bid: Bid }>(`/bids/${id}/clone`, { method: 'POST' }),
 
+  getBidCalendarUrl: () => {
+    const token = getToken();
+    return `/bids/calendar.ics?token=${encodeURIComponent(token || '')}`;
+  },
+
   broadcastEmail: (leadIds: number[], subject: string, body: string) =>
     authFetch<{ ok: boolean; sent: number; skipped: number; errors: number }>(
       '/leads/broadcast',

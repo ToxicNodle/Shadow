@@ -3932,6 +3932,76 @@ app.get('/bids/intel', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /bids/calendar.ics — iCal feed of all active bid due dates
+// Users can subscribe this URL in Google Calendar / Outlook for automatic reminders.
+// Uses a token-based auth so calendar apps can subscribe without Bearer headers.
+app.get('/bids/calendar.ics', async (req, res) => {
+  const token = (req.query.token || req.headers.authorization?.replace('Bearer ', ''))?.trim();
+  if (!token) return res.status(401).send('Unauthorized');
+
+  let uid;
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'wraplead_secret');
+    uid = String(decoded.id);
+  } catch {
+    return res.status(401).send('Invalid token');
+  }
+
+  const { rows } = await pool.query(
+    `SELECT b.id, b.project_name, b.gc_name, b.bid_due, b.estimated_value, b.status, l.company
+     FROM bids b LEFT JOIN leads l ON l.id = b.lead_id
+     WHERE b.user_id = $1 AND b.status = 'tracking'
+       AND b.bid_due IS NOT NULL AND b.bid_due >= CURRENT_DATE - INTERVAL '7 days'
+     ORDER BY b.bid_due ASC`,
+    [uid]
+  );
+
+  function icsDate(dateStr) {
+    return dateStr.replace(/-/g, '') + 'T080000Z';
+  }
+  function escapeICS(str = '') {
+    return (str || '').replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  }
+
+  const now = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z';
+  const events = rows.map((b) => {
+    const title = b.project_name || (b.company ? `Bid — ${b.company}` : 'Bid Due');
+    const desc = [b.gc_name ? `GC: ${b.gc_name}` : null, b.estimated_value ? `Value: $${b.estimated_value.toLocaleString()}` : null].filter(Boolean).join(' | ');
+    return [
+      'BEGIN:VEVENT',
+      `UID:wrapos-bid-${b.id}@wrapos.app`,
+      `DTSTAMP:${now}`,
+      `DTSTART;VALUE=DATE:${b.bid_due.replace(/-/g, '')}`,
+      `DTEND;VALUE=DATE:${b.bid_due.replace(/-/g, '')}`,
+      `SUMMARY:${escapeICS(title)} — Bid Due`,
+      `DESCRIPTION:${escapeICS(desc)}`,
+      'BEGIN:VALARM',
+      'TRIGGER:-PT24H',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:Bid due tomorrow: ${escapeICS(title)}`,
+      'END:VALARM',
+      'END:VEVENT',
+    ].join('\r\n');
+  });
+
+  const ical = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//WrapOS//Bid Calendar//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:WrapOS Bid Deadlines',
+    'X-WR-TIMEZONE:UTC',
+    ...events,
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="wrapos-bids.ics"');
+  res.send(ical);
+});
+
 // ============================================================================
 // GC Relationship Directory — aggregate bid stats per general contractor
 // ============================================================================
