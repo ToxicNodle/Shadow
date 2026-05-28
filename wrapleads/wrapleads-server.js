@@ -4614,6 +4614,7 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
 app.get('/analytics/pricing-intel', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
+    const filterCategory = req.query.category ? String(req.query.category) : null;
 
     // Get all quotes with lead outcome, grouped by category
     const { rows: quoteRows } = await pool.query(`
@@ -4633,8 +4634,9 @@ app.get('/analytics/pricing-intel', authMiddleware, async (req, res) => {
         AND q.total > 0
         AND q.status NOT IN ('draft')
         AND (l.status IN ('won','lost') OR q.status = 'accepted')
+        ${filterCategory ? `AND l.category = $2` : ''}
       ORDER BY q.total ASC
-    `, [uid]);
+    `, filterCategory ? [uid, filterCategory] : [uid]);
 
     if (!quoteRows.length) {
       return res.json({ ok: true, hasData: false, categories: [], overall: null });

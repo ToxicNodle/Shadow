@@ -10,6 +10,54 @@ function fmtK(n: number | null | undefined) {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
+function WinRateAdvisor({ category, currentTotal }: { category: string; currentTotal: number }) {
+  const { data } = useQuery({
+    queryKey: ['pricing-intel', category],
+    queryFn: () => api.getPricingIntel(category),
+    staleTime: 10 * 60_000,
+  });
+
+  if (!data?.hasData) return null;
+  const cat = data.categories[0];
+  if (!cat || cat.totalDeals < 3 || !cat.tiers) return null;
+
+  const sweetSpot = cat.tiers.find(t => t.isSweetSpot);
+  if (!sweetSpot) return null;
+
+  const inSweetSpot = currentTotal >= sweetSpot.minPrice && currentTotal <= sweetSpot.maxPrice;
+  const overSweetSpot = currentTotal > sweetSpot.maxPrice;
+
+  const color = inSweetSpot ? '#00d97e' : overSweetSpot ? '#ef4444' : '#f59e0b';
+  const icon = inSweetSpot ? '✓' : overSweetSpot ? '↑' : '↓';
+  const label = inSweetSpot
+    ? `In your sweet spot (${cat.winRate}% win rate)`
+    : overSweetSpot
+      ? `Above sweet spot — win rate may drop`
+      : currentTotal > 0
+        ? `Below sweet spot — consider raising price`
+        : `Sweet spot: ${fmtK(sweetSpot.minPrice)}–${fmtK(sweetSpot.maxPrice)} (${sweetSpot.winRate ?? '?'}% wins)`;
+
+  return (
+    <div style={{
+      padding: '5px 14px', borderBottom: '1px solid var(--border)',
+      display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+      background: `${color}08`,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 800, color, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+        {icon} Win-Rate Advisor
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+        {label}
+      </span>
+      {currentTotal > 0 && !inSweetSpot && (
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+          · Best range: {fmtK(sweetSpot.minPrice)}–{fmtK(sweetSpot.maxPrice)}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function PricingBenchmarkStrip({ category }: { category: string }) {
   const { data } = useQuery({
     queryKey: ['pricing-benchmarks', category],
@@ -440,6 +488,7 @@ export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, q
 
           {/* Pricing benchmarks from job history */}
           {leadCategory && <PricingBenchmarkStrip category={leadCategory} />}
+          {leadCategory && <WinRateAdvisor category={leadCategory} currentTotal={subtotal} />}
 
           {/* Scrollable body */}
           <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>

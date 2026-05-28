@@ -1469,7 +1469,7 @@ export const api = {
     }>('/mission/stale-pipeline'),
 
   // Pricing Intelligence — win rate by price tier, sweet spot identification
-  getPricingIntel: () =>
+  getPricingIntel: (category?: string) =>
     authFetch<{
       ok: boolean; hasData: boolean;
       categories: Array<{
@@ -1486,7 +1486,7 @@ export const api = {
         wonCount: number; lostCount: number; winRate: number | null;
         avgWonPrice: number | null; avgLostPrice: number | null;
       } | null;
-    }>('/analytics/pricing-intel'),
+    }>(`/analytics/pricing-intel${category ? `?category=${encodeURIComponent(category)}` : ''}`),
 
   // Account Health — relationship vitals for a won client
   getAccountHealth: (leadId: number) =>
