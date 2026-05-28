@@ -17,6 +17,7 @@ import IntentSignalsCard from './IntentSignalsCard';
 import TaskQueueCard from './TaskQueueCard';
 import SpeedDialCard from './SpeedDialCard';
 import StalePipelineCard from './StalePipelineCard';
+import ReferralEngineCard from './ReferralEngineCard';
 import DailyBriefingCard from './DailyBriefingCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
@@ -1847,6 +1848,9 @@ export default function MissionView() {
 
       {/* ── Stale Pipeline — deals going cold with no activity ── */}
       <StalePipelineCard />
+
+      {/* ── Referral Engine — AI referral ask for top won clients ── */}
+      <ReferralEngineCard />
 
       {/* ── Daily Task Queue — AI-generated + manual task list ── */}
       <TaskQueueCard />

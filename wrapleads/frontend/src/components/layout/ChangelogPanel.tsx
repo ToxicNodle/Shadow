@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Client Referral Engine — AI Referral Ask Generation',
+    body: 'Mission now shows a "Referral Engine" card listing your top won clients who haven\'t been asked for a referral yet — scored by recency of win, deal value, and vehicles wrapped. Click "Request Referral" on any row and Claude Haiku writes a warm, personalized referral ask email referencing their specific job. Preview the email, copy to clipboard, or send directly via Resend. The lead is stamped with a referral_asked_at timestamp and logged to their activity timeline — no more manual tracking.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Daily Briefing — AI Morning Pipeline Snapshot',
     body: 'Mission now opens with a "Today\'s Briefing" card showing an AI-written 2-sentence summary of your pipeline every morning — how many active deals you have, what\'s overdue, what\'s close to closing, and what to prioritize. Cached for 4 hours so it loads instantly. Falls back to a plain data summary if Claude is not configured. Starts your day with a clear picture, not a wall of data.',
   },

@@ -292,6 +292,9 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_competitor TEXT`);
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add lost_reason columns:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_asked_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add referral_asked_at column:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -9855,8 +9858,168 @@ No markdown.`;
     if (!match) return res.status(500).json({ error: 'AI parse error' });
 
     const { subject, body } = JSON.parse(match[0]);
-    res.json({ ok: true, subject, body, contactName: lead.contact_name, contactEmail: null });
+
+    // Stamp referral_asked_at and log activity
+    await pool.query(
+      `UPDATE leads SET referral_asked_at = NOW() WHERE id = $1 AND user_id = $2`,
+      [leadId, uid]
+    );
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'referral_ask_sent',
+      subject, metadata: { company: lead.company },
+    });
+
+    res.json({ ok: true, subject, body, contactName: lead.contact_name, contactEmail: lead.email || null });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /leads/:id/smart-followup — context-aware AI follow-up composer
+// Tier: ShopFlow ($149/mo)
+// Reads the full relationship history (lead details, last 10 activities,
+// emails sent, proposals) and generates a hyper-personalized follow-up email.
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/smart-followup', authMiddleware, requireShopFlow, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    // Fetch lead + last 10 activities + emails sent + proposals + user settings in parallel
+    const [leadR, activityR, emailR, proposalR, settingsR] = await Promise.all([
+      pool.query(
+        `SELECT id, company, contact_name, contact_title, category, status, fleet_size,
+                city, state, email, phone, notes, pitch_angle, last_contacted_at,
+                followup_due_at, created_at
+         FROM leads WHERE id=$1 AND user_id=$2`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, created_at
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 10`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT subject, body, created_at
+         FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 AND type IN ('email_sent','email_generated')
+         ORDER BY created_at DESC LIMIT 5`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT title, status, created_at
+         FROM proposals WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 3`,
+        [leadId, uid]
+      ),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const activities = activityR.rows;
+    const emails = emailR.rows;
+    const proposals = proposalR.rows;
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our wrap shop';
+    const senderName = s.senderName || 'the team';
+
+    const daysSinceContact = lead.last_contacted_at
+      ? Math.floor((Date.now() - new Date(lead.last_contacted_at).getTime()) / 86_400_000)
+      : null;
+
+    const activityLog = activities.length
+      ? activities.map(a =>
+          `[${new Date(a.created_at).toLocaleDateString()}] ${a.type}: ${a.subject || '(no subject)'}`
+        ).join('\n')
+      : 'No activities logged yet';
+
+    const lastEmail = emails[0] || null;
+    const lastEmailSection = lastEmail
+      ? `LAST EMAIL SENT (${new Date(lastEmail.created_at).toLocaleDateString()}):\nSubject: ${lastEmail.subject || '(none)'}\n${(lastEmail.body || '').slice(0, 400)}`
+      : 'No emails have been sent yet';
+
+    const proposalSection = proposals.length
+      ? proposals.map(p => `Proposal "${p.title}" — status: ${p.status} (sent ${new Date(p.created_at).toLocaleDateString()})`).join('\n')
+      : 'No proposals sent';
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    // Graceful fallback when no API key configured
+    if (!apiKey) {
+      const fallbackSubject = lastEmail
+        ? `Re: ${lastEmail.subject || 'our conversation'}`
+        : `Following up — ${lead.company}`;
+      const contactGreeting = lead.contact_name ? `Hi ${lead.contact_name.split(' ')[0]},` : `Hi there,`;
+      const fallbackBody = `${contactGreeting}\n\nI wanted to follow up on our conversation about vehicle wraps for ${lead.company}. Do you have any questions or would you like to move forward?\n\nBest,\n${senderName}\n${shopName}`;
+      return res.json({
+        ok: true,
+        fallback: true,
+        subject: fallbackSubject,
+        body: fallbackBody,
+        tone: 'professional',
+        reasoningNote: 'Fallback template — configure ANTHROPIC_API_KEY for AI-personalized follow-ups.',
+      });
+    }
+
+    const prompt = `You are a veteran sales rep for "${shopName}", a vehicle wrap and graphics shop. Your job is to write ONE perfectly-personalized follow-up email to a specific prospect based on your complete history with them.
+
+PROSPECT:
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Fleet/Facilities Manager'}${lead.contact_title ? `, ${lead.contact_title}` : ''}
+Category: ${lead.category}
+Status: ${lead.status}
+Fleet size: ${lead.fleet_size || 'unknown'}
+Location: ${lead.city || ''}${lead.state ? ', ' + lead.state : ''}
+${daysSinceContact !== null ? `Days since last contact: ${daysSinceContact}` : ''}
+Notes: ${lead.notes || 'none'}
+Pitch angle: ${lead.pitch_angle || 'general wrap inquiry'}
+
+${lastEmailSection}
+
+RECENT ACTIVITY LOG (newest first):
+${activityLog}
+
+PROPOSALS:
+${proposalSection}
+
+INSTRUCTIONS:
+- Reference specific things from the history above (not generic filler)
+- Match tone to the relationship stage (${lead.status})
+- If a proposal was sent, reference it specifically
+- If emails have been sent, don't repeat the same angle — escalate or shift approach
+- Keep under 180 words
+- Choose an appropriate tone: professional, warm, direct, or consultative
+- The reasoningNote should explain in 1 sentence WHY you chose this particular angle given the history
+
+Return ONLY this JSON (no markdown):
+{
+  "subject": "...",
+  "body": "...",
+  "tone": "professional|warm|direct|consultative",
+  "reasoningNote": "1 sentence explaining why this angle was chosen"
+}`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI returned invalid response' });
+
+    const parsed = JSON.parse(match[0]);
+
+    // Log the generation as an activity
+    await pool.query(
+      `INSERT INTO lead_activities (lead_id, user_id, type, subject, metadata)
+       VALUES ($1, $2, 'smart_followup_generated', $3, $4)`,
+      [leadId, uid, parsed.subject, JSON.stringify({ tone: parsed.tone })]
+    );
+
+    res.json({ ok: true, fallback: false, ...parsed });
+  } catch (e) {
+    console.error('[smart-followup]', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -13782,6 +13945,48 @@ Return raw JSON only: {"subject": "...", "body": "..."}`;
     }
 
     res.json({ ok: true, queued });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Referral Engine: GET /mission/referral-opportunities ─────────────────────
+// Returns top 5 won leads sorted by recency + deal value that haven't been
+// asked for a referral yet. Used by the ReferralEngineCard on Mission.
+app.get('/mission/referral-opportunities', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const REV_EST_REF = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        l.id              AS lead_id,
+        l.company,
+        l.category,
+        l.contact_name,
+        l.email,
+        l.fleet_size,
+        l.city,
+        l.state,
+        l.updated_at      AS won_at,
+        l.referral_asked_at
+      FROM leads l
+      WHERE l.user_id = $1
+        AND l.status = 'won'
+        AND l.referral_asked_at IS NULL
+      ORDER BY l.updated_at DESC
+      LIMIT 5
+    `, [uid]);
+
+    const leads = rows.map(r => ({
+      leadId: parseInt(r.lead_id, 10),
+      company: r.company,
+      category: r.category,
+      contactName: r.contact_name,
+      email: r.email,
+      wonAt: r.won_at,
+      estValue: REV_EST_REF[r.category] || 2500,
+      vehicleCount: r.fleet_size || 1,
+    }));
+
+    res.json({ ok: true, leads });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

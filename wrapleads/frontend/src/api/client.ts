@@ -171,6 +171,12 @@ export const api = {
     authFetch<{ ok: boolean; resend_id?: string }>(`/leads/${serverId}/send-email`, {
       method: 'POST', body: JSON.stringify(payload),
     }),
+  generateSmartFollowup: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      subject: string; body: string; tone: string; reasoningNote: string;
+    }>(`/leads/${leadId}/smart-followup`, { method: 'POST' }),
+
   getFollowupDue: () =>
     authFetch<{ leads: Lead[]; count: number }>('/leads/followup-due'),
   activateSequence: (serverId: number, tone?: string) =>
@@ -1101,6 +1107,22 @@ export const api = {
       `/leads/${sourceLeadId}/create-location`,
       { method: 'POST', body: JSON.stringify(data) }
     ),
+
+  // Referral Engine — top 5 won clients that haven't been asked for a referral yet
+  getReferralOpportunities: () =>
+    authFetch<{
+      ok: boolean;
+      leads: Array<{
+        leadId: number;
+        company: string;
+        category: string;
+        contactName: string | null;
+        email: string | null;
+        wonAt: string;
+        estValue: number;
+        vehicleCount: number;
+      }>;
+    }>('/mission/referral-opportunities'),
 
   // AI referral ask — generate personalized email requesting referrals from won client
   generateReferralAsk: (leadId: number) =>
