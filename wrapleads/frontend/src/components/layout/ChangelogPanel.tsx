@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Win-Rate Advisor in Quote Builder — Live Pricing Sweet Spot',
+    body: 'The quote builder now shows a live color-coded indicator (green/amber/red) that tells you whether your current quote total falls inside your historical sweet spot for that lead category. Based on real proposal win/loss outcomes from your own CRM — not generic benchmarks. As you type prices, the indicator updates in real time. If you\'re outside the sweet spot, it shows your best range. Gets smarter with every proposal you send and close.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'AI Cold Call Opener — Personalized Phone Scripts Per Lead',
+    body: 'Any active lead now has a "📞 Call Opener" panel in the Info tab. Click it and Claude generates a natural, confident 2-3 sentence phone opening based on that company\'s specific data — fleet size, category, location, recent CRM activity. Not a generic script. An opener that sounds like you\'ve done your homework. Includes a one-line coaching tip. Copy to clipboard before you dial.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'DOT Number Quick-Import — Instant FMCSA Carrier Lookup',
     body: 'Type any 7–9 digit DOT number directly into the command palette (⌘K) and WrapOS instantly looks up that carrier in the FMCSA database — no searching required. See company name, location, fleet size, and wrap score in a preview card. One click imports the carrier straight into your CRM as a lead. Works with bare DOT numbers ("1234567") or with a prefix ("dot 1234567"). If the carrier is already in your CRM, the panel shows "IN CRM" instead of the import button.',
   },

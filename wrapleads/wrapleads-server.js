@@ -14313,6 +14313,85 @@ Reply ONLY with JSON: {"subject":"...","body":"...","tip":"one-sentence coach no
   }
 });
 
+// GET /leads/:id/call-opener — AI-generated 15-second cold call opening line
+// Personalized to the specific lead: company name, fleet size, category, city/state,
+// recent activity, and the shop's own voice/offer from settings.
+app.get('/leads/:id/call-opener', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    const [leadR, settingsR, actR] = await Promise.all([
+      pool.query(
+        `SELECT company, contact_name, category, fleet_size, city, state, status, notes, pitch_angle, website
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]),
+      pool.query(
+        `SELECT type, subject, metadata, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 3`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const settings = settingsR.rows[0]?.settings_json || {};
+    const shopName = settings.companyName || settings.shopName || 'our shop';
+    const recentActs = actR.rows.map(a => `${a.type}${a.subject ? ': ' + a.subject : ''}`).join(', ');
+
+    const categoryLabels = {
+      fleet: 'commercial fleet wraps', dinoc: 'Di-NOC architectural film', construction: 'construction vehicle wraps',
+      colorchange: 'color change wraps', racing: 'racing liveries', wallgraphics: 'wall graphics',
+      gc_referral: 'general contractor wraps', reatec: 'REATEC film', design: 'custom design work',
+    };
+    const catLabel = categoryLabels[lead.category] || 'vehicle wraps';
+    const fleetStr = lead.fleet_size ? ` with ${lead.fleet_size} vehicles` : '';
+    const locationStr = [lead.city, lead.state].filter(Boolean).join(', ');
+    const recentStr = recentActs ? `\nRecent CRM activity: ${recentActs}` : '';
+    const pitchStr = lead.pitch_angle ? `\nKnown pitch angle: ${lead.pitch_angle}` : '';
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      // Fallback opener without AI
+      const contact = lead.contact_name ? `, may I speak with ${lead.contact_name}?` : '?';
+      const opener = `Hi, this is [your name] from ${shopName}. I'm reaching out because we specialize in ${catLabel} for companies like ${lead.company}${fleetStr}${locationStr ? ' in ' + locationStr : ''}. We've helped similar fleets get premium graphics that actually drive new business. Do you have 90 seconds to hear what we've been doing for carriers in your area?`;
+      return res.json({ ok: true, fallback: true, opener, tip: 'Mention a specific local client by name if you have one.', contactSuffix: contact });
+    }
+
+    const messages = [
+      {
+        role: 'user',
+        content: `You are a sales coach helping a vehicle wrap shop make cold calls. Write a natural, confident 2-3 sentence phone opener for this lead:
+
+Company: ${lead.company}${fleetStr}${locationStr ? '\nLocation: ' + locationStr : ''}
+Category: ${catLabel}
+Contact: ${lead.contact_name || 'unknown'}${recentStr}${pitchStr}
+Shop name: ${shopName}
+
+Rules:
+- Sound like a real person calling (not a script reader)
+- Mention a specific, relevant benefit — NOT generic phrases like "I wanted to reach out"
+- End with a soft question that invites conversation, not a hard close
+- Max 3 sentences total (about 15-20 seconds spoken)
+- No emojis, no bullet points — just the spoken words
+- Include a brief [coaching tip] at the end on one line (not spoken aloud)`,
+      },
+    ];
+
+    const result = await claudeHaiku(apiKey, messages, 300);
+    const raw = result || '';
+    const tipMatch = raw.match(/\[coaching tip\]:?\s*(.*)/i);
+    const tip = tipMatch ? tipMatch[1].trim() : null;
+    const opener = raw.replace(/\[coaching tip\]:?.*/is, '').trim();
+
+    res.json({ ok: true, fallback: false, opener, tip });
+  } catch (e) {
+    console.error('[call-opener]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Market Penetration Analysis ───────────────────────────────────────────────
 // Returns, for each of the user's top states, how many FMCSA-registered fleet
 // carriers exist vs. how many they're already targeting — the "white space".

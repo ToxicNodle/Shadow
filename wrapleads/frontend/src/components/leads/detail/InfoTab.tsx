@@ -14,6 +14,7 @@ import DealCoachPanel from './DealCoachPanel';
 import WinDebriefPanel from './WinDebriefPanel';
 import AccountHealthCard from './AccountHealthCard';
 import MeetingPrepPanel from './MeetingPrepPanel';
+import CallOpenerPanel from './CallOpenerPanel';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -2137,6 +2138,7 @@ export default function InfoTab({ lead }: Props) {
       </button>
 
       {lead.serverId && <SimilarWinsPanel lead={local} />}
+      {lead.serverId && !['won','lost'].includes(local.status) && <CallOpenerPanel lead={local} />}
       {lead.serverId && <MeetingPrepPanel lead={local} />}
       {lead.serverId && <DealCoachPanel lead={local} />}
       {lead.serverId && <AICoach lead={local} />}

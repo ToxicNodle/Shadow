@@ -213,6 +213,11 @@ export const api = {
       method: 'POST', body: JSON.stringify({ companyId }),
     }),
 
+  getCallOpener: (leadId: number) =>
+    authFetch<{ ok: boolean; fallback: boolean; opener: string; tip: string | null; contactSuffix?: string }>(
+      `/leads/${leadId}/call-opener`
+    ),
+
   lookupByDot: (dotNumber: string) =>
     authFetch<{
       ok: boolean;
