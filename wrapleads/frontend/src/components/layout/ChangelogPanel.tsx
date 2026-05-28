@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '🤖 AI Revenue Coach — Your Personal Sales Coach Knows Your Pipeline',
+    body: 'A conversational AI coach now lives inside WrapOS, accessible from the 🤖 button in the bottom-right corner or via ⌘K → "AI Revenue Coach". Unlike generic AI tools, this coach has live access to your actual CRM data: pipeline stage breakdown, estimated revenue by stage, hot prospects who opened emails in the last 48 hours, overdue follow-ups, and recent activity across your leads. Ask it "What should I do today?", "Which leads are about to go cold?", "Why am I losing deals?", or anything else — and get specific, data-driven coaching referencing your real company names and numbers. Powered by Claude with full conversation history.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '🔍 Natural Language Lead Search — "Find 20-truck fleets in Ohio"',
     body: 'The Command Palette (⌘K) now understands natural language. Type "find construction fleets in Texas" or "search freight carriers midwest with 25+ trucks" and it queries the 600K-carrier FMCSA database in real time. Claude parses your intent into structured search params, explains what it searched for, and shows the top matching carriers with one-click Import buttons — all without leaving the keyboard. The fastest path from idea to lead ever built.',
   },

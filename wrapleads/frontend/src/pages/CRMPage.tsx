@@ -8,6 +8,7 @@ import Sidebar from '../components/layout/Sidebar';
 import TrialBanner from '../components/layout/TrialBanner';
 import NotificationPanel from '../components/layout/NotificationPanel';
 import ChangelogPanel from '../components/layout/ChangelogPanel';
+import AICoachDrawer, { AICoachFAB } from '../components/layout/AICoachDrawer';
 import LivePulse from '../components/layout/LivePulse';
 import PipelineStats from '../components/layout/PipelineStats';
 import LeadList from '../components/leads/LeadList';
@@ -61,6 +62,7 @@ export default function CRMPage() {
     quickQuoteOpen, setQuickQuoteOpen,
     notifOpen, setNotifOpen,
     changelogOpen, setChangelogOpen,
+    aiCoachOpen, setAiCoachOpen,
     currentLeadId,
   } = useAppStore((s) => ({
     mode: s.mode,
@@ -91,6 +93,8 @@ export default function CRMPage() {
     setNotifOpen: s.setNotifOpen,
     changelogOpen: s.changelogOpen,
     setChangelogOpen: s.setChangelogOpen,
+    aiCoachOpen: s.aiCoachOpen,
+    setAiCoachOpen: s.setAiCoachOpen,
     currentLeadId: s.currentLeadId,
   }));
 
@@ -224,11 +228,13 @@ export default function CRMPage() {
       {quickQuoteOpen && <QuickQuoteModal onClose={() => setQuickQuoteOpen(false)} />}
       {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       {changelogOpen && <ChangelogPanel onClose={() => { setChangelogOpen(false); }} />}
+      {aiCoachOpen && <AICoachDrawer onClose={() => setAiCoachOpen(false)} />}
       {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <PasteImportModal />
       <Toast />
       <LivePulse />
+      <AICoachFAB />
     </div>
   );
 }

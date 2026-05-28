@@ -1652,4 +1652,11 @@ export const api = {
       low: number; high: number; recommended: number; perVehicle: number;
       fromHistory: boolean; historyJobs: number;
     }>(`/tools/quick-quote?vehicleType=${vehicleType}&vehicleCount=${vehicleCount}&coverage=${coverage}`),
+
+  // ── AI Revenue Coach ──
+  aiCoach: (message: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) =>
+    authFetch<{ ok: boolean; reply: string }>(
+      '/ai/coach',
+      { method: 'POST', body: JSON.stringify({ message, history }) }
+    ),
 };

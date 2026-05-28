@@ -259,6 +259,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: 'a:truck-scan', group: 'action', label: 'Scan Truck to Lead', sub: 'Photograph a truck — AI extracts company + DOT, imports to CRM', icon: '🚛', action: () => { store.setTruckScanOpen(true); onClose(); } },
     { id: 'a:url-import', group: 'action', label: 'Import Lead from URL', sub: 'AI extracts company data from any website or LinkedIn page', icon: '🔗', action: () => { store.setUrlImportOpen(true); onClose(); } },
     { id: 'a:quick-quote', group: 'action', label: 'Quick Quote', sub: 'Ballpark price estimate for an on-the-call prospect', icon: '⚡', action: () => { store.setQuickQuoteOpen(true); onClose(); } },
+    { id: 'a:ai-coach', group: 'action', label: 'AI Revenue Coach', sub: 'Ask your AI coach what to do next — knows your live pipeline', icon: '🤖', action: () => { store.setAiCoachOpen(true); onClose(); } },
   ];
 
   const NAV_ITEMS: CmdItem[] = [

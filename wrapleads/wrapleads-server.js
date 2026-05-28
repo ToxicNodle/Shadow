@@ -8568,6 +8568,114 @@ Return ONLY the JSON.`;
   }
 });
 
+// ── AI Revenue Coach ──────────────────────────────────────────────────────────
+// Conversational AI with full pipeline context. Accepts a message + history,
+// injects live CRM data as system context, returns a focused coach response.
+app.post('/ai/coach', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+  const uid = String(req.user.id);
+  const { message, history = [] } = req.body || {};
+  if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
+
+  try {
+    // Gather live pipeline context
+    const [pipelineR, recentR, settingsR, hotR, overdueR] = await Promise.all([
+      pool.query(`
+        SELECT status,
+          COUNT(*) AS count,
+          SUM(CASE WHEN category='fleet' THEN 4500 WHEN category='gc_referral' THEN 18000
+                   WHEN category='racing' THEN 40000 WHEN category='dinoc' THEN 6000
+                   ELSE 3000 END) AS est_value
+        FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost')
+        GROUP BY status ORDER BY status`, [uid]),
+      pool.query(`
+        SELECT l.company, l.status, l.category, a.activity_type, a.created_at
+        FROM lead_activities a JOIN leads l ON l.id=a.lead_id
+        WHERE a.user_id=$1 ORDER BY a.created_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT settings_json FROM users WHERE id=$1::uuid`, [uid]),
+      pool.query(`
+        SELECT l.company, et.open_count, et.open_last_at
+        FROM email_tracking et JOIN leads l ON l.id=et.lead_id
+        WHERE et.user_id=$1 AND et.open_last_at > NOW()-INTERVAL '48 hours'
+        ORDER BY et.open_last_at DESC LIMIT 5`, [uid]),
+      pool.query(`
+        SELECT company, status, followup_due_at
+        FROM leads WHERE user_id=$1 AND followup_due_at < NOW()
+          AND status NOT IN ('won','lost') ORDER BY followup_due_at ASC LIMIT 5`, [uid]),
+    ]);
+
+    const settings = settingsR.rows[0]?.settings_json || {};
+    const shopName = settings.companyName || 'your shop';
+    const totalPipelineValue = pipelineR.rows.reduce((s, r) => s + parseFloat(r.est_value || 0), 0);
+    const totalLeads = pipelineR.rows.reduce((s, r) => s + parseInt(r.count), 0);
+
+    const pipelineSummary = pipelineR.rows.map(r =>
+      `  ${r.status}: ${r.count} leads (~$${Math.round(parseFloat(r.est_value || 0)).toLocaleString()})`
+    ).join('\n');
+
+    const recentActivity = recentR.rows.map(r =>
+      `  ${r.company} (${r.status}) — ${r.activity_type} on ${new Date(r.created_at).toLocaleDateString()}`
+    ).join('\n');
+
+    const hotOpens = hotR.rows.map(r =>
+      `  ${r.company}: opened ${r.open_count}x, last ${new Date(r.open_last_at).toLocaleDateString()}`
+    ).join('\n');
+
+    const overdueList = overdueR.rows.map(r =>
+      `  ${r.company} (${r.status}): overdue since ${new Date(r.followup_due_at).toLocaleDateString()}`
+    ).join('\n');
+
+    const systemPrompt = `You are the AI Revenue Coach for ${shopName}, a vehicle wrap and graphics shop. You have real-time access to their CRM data and act as a direct, no-BS sales coach. You know their business intimately.
+
+CURRENT PIPELINE SNAPSHOT:
+Total active leads: ${totalLeads}
+Estimated pipeline value: $${Math.round(totalPipelineValue).toLocaleString()}
+By stage:
+${pipelineSummary || '  (no active leads)'}
+
+RECENT ACTIVITY (last 10):
+${recentActivity || '  (no recent activity)'}
+
+HOT PROSPECTS (email opened last 48h):
+${hotOpens || '  (none)'}
+
+OVERDUE FOLLOW-UPS:
+${overdueList || '  (none overdue)'}
+
+COACHING STYLE:
+- Be direct and specific — reference actual company names and numbers from their data
+- Give actionable advice, not generic platitudes
+- Lead with the most important insight first
+- Keep responses concise (2-4 short paragraphs max)
+- If asked what to do today, give a ranked list of 3-5 specific actions with reasoning
+- You can use markdown formatting (bold, bullets)
+- You are a senior sales coach who has helped hundreds of wrap shops scale`;
+
+    const messages = [
+      ...history.slice(-8).map((m: { role: string; content: string }) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })),
+      { role: 'user' as const, content: message },
+    ];
+
+    const anthropic = new (require('@anthropic-ai/sdk'))({ apiKey });
+    const resp = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      system: systemPrompt,
+      messages,
+    });
+
+    const reply = resp.content?.[0]?.text ?? 'No response generated.';
+    res.json({ ok: true, reply });
+  } catch (e) {
+    console.error('[ai/coach]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Pipeline Narrative ─────────────────────────────────────────────────────
 app.post('/ai/pipeline-narrative', authMiddleware, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;

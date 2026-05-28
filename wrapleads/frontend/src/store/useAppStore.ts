@@ -126,6 +126,8 @@ interface AppStore {
   setUrlImportOpen: (open: boolean) => void;
   setTruckScanOpen: (open: boolean) => void;
   setQuickQuoteOpen: (open: boolean) => void;
+  aiCoachOpen: boolean;
+  setAiCoachOpen: (open: boolean) => void;
   setNotifOpen: (open: boolean) => void;
   setChangelogOpen: (open: boolean) => void;
 
@@ -286,6 +288,8 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       setUrlImportOpen: (open) => set({ urlImportOpen: open }),
       setTruckScanOpen: (open) => set({ truckScanOpen: open }),
       setQuickQuoteOpen: (open) => set({ quickQuoteOpen: open }),
+      aiCoachOpen: false,
+      setAiCoachOpen: (open) => set({ aiCoachOpen: open }),
       setNotifOpen: (open) => set({ notifOpen: open }),
       setChangelogOpen: (open) => set({ changelogOpen: open }),
 
