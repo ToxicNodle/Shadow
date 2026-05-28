@@ -1190,6 +1190,23 @@ export default function PipelineView() {
     staleTime: 30_000,
   });
 
+  // Derive the values the count-up hooks need with safe fallbacks BEFORE any
+  // early return, so the hooks always run in the same order every render
+  // (Rules of Hooks). Calling them after the loading `return` below crashes
+  // React with "rendered more hooks than during the previous render".
+  const total = data?.total ?? 0;
+  const byStatus = data?.byStatus ?? {};
+  const overdue = data?.overdue ?? 0;
+  const sequenceStats = data?.sequenceStats ?? { activeSequences: 0, emailsSent30d: 0 };
+  const activeLeads = total - (byStatus.won ?? 0) - (byStatus.lost ?? 0) - (byStatus.cold ?? 0);
+
+  const animTotal = useCountUp(total);
+  const animActive = useCountUp(activeLeads);
+  const animWon = useCountUp(byStatus.won ?? 0);
+  const animOverdue = useCountUp(overdue);
+  const animSeq = useCountUp(sequenceStats.activeSequences);
+  const animEmails = useCountUp(sequenceStats.emailsSent30d);
+
   if (isLoading || !data) {
     return (
       <div className="pv-root">
@@ -1220,18 +1237,9 @@ export default function PipelineView() {
     );
   }
 
-  const { total, byStatus, byCategory, overdue, projectedRevenue, sequenceStats, recentLeads } = data;
-
-  const activeLeads = total - (byStatus.won ?? 0) - (byStatus.lost ?? 0) - (byStatus.cold ?? 0);
+  const { byCategory, projectedRevenue, recentLeads } = data;
   const closedCount = (byStatus.won ?? 0) + (byStatus.lost ?? 0);
   const closeRate = closedCount > 0 ? (byStatus.won ?? 0) / closedCount : 0.24;
-
-  const animTotal = useCountUp(total);
-  const animActive = useCountUp(activeLeads);
-  const animWon = useCountUp(byStatus.won ?? 0);
-  const animOverdue = useCountUp(overdue);
-  const animSeq = useCountUp(sequenceStats.activeSequences);
-  const animEmails = useCountUp(sequenceStats.emailsSent30d);
   const catEntries = Object.entries(byCategory ?? {})
     .map(([cat, count]) => [cat, count ?? 0] as [string, number])
     .sort((a, b) => b[1] - a[1]);

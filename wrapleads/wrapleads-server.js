@@ -4665,7 +4665,7 @@ app.get('/analytics/pricing-intel', authMiddleware, async (req, res) => {
     }
 
     // Group by category and compute price tier win rates
-    const byCategory: Record<string, { won: number[]; lost: number[] }> = {};
+    const byCategory = {};
     for (const r of quoteRows) {
       const cat = r.category || 'other';
       if (!byCategory[cat]) byCategory[cat] = { won: [], lost: [] };
@@ -4673,7 +4673,7 @@ app.get('/analytics/pricing-intel', authMiddleware, async (req, res) => {
       else if (r.outcome === 'lost') byCategory[cat].lost.push(parseFloat(r.total));
     }
 
-    function computeTiers(won: number[], lost: number[]) {
+    function computeTiers(won, lost) {
       const all = [...won.map(v => ({ v, won: true })), ...lost.map(v => ({ v, won: false }))];
       if (all.length < 2) return null;
       all.sort((a, b) => a.v - b.v);
@@ -6001,7 +6001,7 @@ app.post('/ai/lead-search', authMiddleware, async (req, res) => {
   const { query } = req.body || {};
   if (!query?.trim()) return res.status(400).json({ error: 'query is required' });
 
-  const US_STATES: Record<string, string> = {
+  const US_STATES = {
     alabama:'AL',alaska:'AK',arizona:'AZ',arkansas:'AR',california:'CA',colorado:'CO',
     connecticut:'CT',delaware:'DE',florida:'FL',georgia:'GA',hawaii:'HI',idaho:'ID',
     illinois:'IL',indiana:'IN',iowa:'IA',kansas:'KS',kentucky:'KY',louisiana:'LA',
@@ -6013,7 +6013,7 @@ app.post('/ai/lead-search', authMiddleware, async (req, res) => {
     tennessee:'TN',texas:'TX',utah:'UT',vermont:'VT',virginia:'VA',washington:'WA',
     'west virginia':'WV',wisconsin:'WI',wyoming:'WY',
   };
-  const REGION_MAP: Record<string, string[]> = {
+  const REGION_MAP = {
     midwest: ['OH','MI','IN','IL','WI','MN','IA','MO','ND','SD','NE','KS'],
     south: ['TX','FL','GA','NC','SC','VA','AL','MS','TN','AR','LA','OK','KY','WV'],
     northeast: ['NY','PA','NJ','CT','MA','RI','VT','NH','ME','MD','DE'],
@@ -6023,7 +6023,7 @@ app.post('/ai/lead-search', authMiddleware, async (req, res) => {
     'great plains': ['ND','SD','NE','KS','MN','IA','MO'],
     'pacific northwest': ['WA','OR','ID'],
   };
-  const INDUSTRY_MAP: Record<string, string[]> = {
+  const INDUSTRY_MAP = {
     trucking: ['trucking','freight','carrier','transport'],
     construction: ['construction','contractor','building'],
     food: ['food','beverage','restaurant','grocery'],
@@ -6031,7 +6031,7 @@ app.post('/ai/lead-search', authMiddleware, async (req, res) => {
     delivery: ['delivery','courier','logistics'],
   };
 
-  let parsedIntent: { states: string[] | null; minFleet: number | null; maxFleet: number | null; industries: string[] | null; textQuery: string; explanation: string } = {
+  let parsedIntent = {
     states: null, minFleet: null, maxFleet: null, industries: null, textQuery: '', explanation: '',
   };
 
@@ -6071,7 +6071,7 @@ Examples:
     if (!parsedIntent.states && !parsedIntent.minFleet) {
       const q = query.toLowerCase();
       // States
-      const stateResults: string[] = [];
+      const stateResults = [];
       for (const [name, code] of Object.entries(US_STATES)) {
         if (q.includes(name) || q.includes(code.toLowerCase())) stateResults.push(code);
       }
@@ -6086,7 +6086,7 @@ Examples:
       const minMatch = q.match(/(\d+)\+?\s*(truck|vehicle|fleet|unit)/i);
       if (minMatch && !fleetMatch) parsedIntent.minFleet = parseInt(minMatch[1]);
       // Industries
-      const indResults: string[] = [];
+      const indResults = [];
       for (const [ind, keywords] of Object.entries(INDUSTRY_MAP)) {
         if (keywords.some((k) => q.includes(k))) indResults.push(ind);
       }
@@ -6122,7 +6122,7 @@ Examples:
       pool.query(`SELECT COUNT(*)::INT AS total FROM companies WHERE ${where}`, params),
     ]);
     const ids = rows.rows.map((r) => r.id);
-    let imported = new Set<number>();
+    let imported = new Set();
     if (ids.length) {
       const ir = await pool.query(`SELECT company_id FROM imports WHERE company_id=ANY($1) AND user_id=$2`, [ids, uid]);
       imported = new Set(ir.rows.map((r) => r.company_id));
@@ -7017,7 +7017,7 @@ app.get('/jobs/aging-map', authMiddleware, async (req, res) => {
   );
 
   // Aggregate by state
-  const byState: Record<string, { fresh: number; aging: number; due: number; overdue: number; vehicles: number }> = {};
+  const byState = {};
   for (const r of rows) {
     const st = r.state === 'Unknown' ? null : r.state;
     if (!st) continue;
@@ -8653,11 +8653,11 @@ COACHING STYLE:
 - You are a senior sales coach who has helped hundreds of wrap shops scale`;
 
     const messages = [
-      ...history.slice(-8).map((m: { role: string; content: string }) => ({
-        role: m.role as 'user' | 'assistant',
+      ...history.slice(-8).map((m) => ({
+        role: m.role,
         content: m.content,
       })),
-      { role: 'user' as const, content: message },
+      { role: 'user', content: message },
     ];
 
     const anthropic = new (require('@anthropic-ai/sdk'))({ apiKey });
@@ -11756,7 +11756,7 @@ app.post('/leads/:id/win-debrief', authMiddleware, async (req, res) => {
     const touchCount = activityR.rows.length;
     const dealValue = quotesR.rows[0]?.total ? parseFloat(quotesR.rows[0].total) : null;
 
-    const REV_EST: Record<string, number> = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+    const REV_EST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
     const estValue = dealValue || REV_EST[lead.category] || 3000;
 
     if (!apiKey) {
@@ -14119,7 +14119,7 @@ app.get('/analytics/seasonal', authMiddleware, async (req, res) => {
     `, [uid]);
 
     // Build month → top category map
-    const monthMap: Record<number, Record<string, number>> = {};
+    const monthMap = {};
     for (const row of historyR.rows) {
       if (!monthMap[row.month]) monthMap[row.month] = {};
       monthMap[row.month][row.category] = (monthMap[row.month][row.category] || 0) + row.wins;
@@ -14133,7 +14133,7 @@ app.get('/analytics/seasonal', authMiddleware, async (req, res) => {
     ];
 
     // Find historically best category this season
-    const seasonCats: Record<string, number> = {};
+    const seasonCats = {};
     for (const m of peakMonths) {
       const mData = monthMap[m] || {};
       for (const [cat, count] of Object.entries(mData)) {
@@ -14850,7 +14850,7 @@ app.post('/leads/:id/counter-objection', authMiddleware, async (req, res) => {
 
     const anthro = getAnthropic();
     if (!anthro) {
-      const FALLBACK: Record<string, { subject: string; body: string }> = {
+      const FALLBACK = {
         price_question: {
           subject: `Re: Pricing for ${lead.company}`,
           body: `Hi ${lead.contact_name || 'there'},\n\nI understand budget is always a factor. Let me share a few options that other ${lead.category === 'fleet' ? 'fleet operators' : 'businesses'} have found helpful — including a flexible payment schedule and a phased approach that can spread the investment over time.\n\nWould a quick 15-minute call this week work to walk through the numbers together?\n\nBest,`,
@@ -15540,7 +15540,7 @@ app.get('/tools/quick-quote', authMiddleware, async (req, res) => {
     const coverage = String(req.query.coverage || 'full');
 
     // Per-vehicle base prices by type (industry averages, USD)
-    const BASE_PRICE: Record<string, Record<string, number>> = {
+    const BASE_PRICE = {
       van:       { full: 3200, partial: 1800, spot: 600 },
       box_truck: { full: 4800, partial: 2600, spot: 900 },
       semi:      { full: 7500, partial: 4200, spot: 1400 },
@@ -15841,7 +15841,7 @@ app.get('/analytics/territory-intel', authMiddleware, async (req, res) => {
 const demoCallLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 3,
-  keyGenerator: (req) => req.ip,
+  // Default keyGenerator already keys on req.ip and is IPv6-safe; no custom one needed.
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => res.status(429).json({ error: 'Maximum 3 demo calls per hour. Sign up for unlimited.' }),
@@ -16866,7 +16866,7 @@ const FLEET_CONCEPT_EXAMPLES = [
   {
     name: 'Bold Identity',
     palette: 'Ember Orange + Gloss Black',
-    description: 'High-contrast half-wrap using your brand's primary color on a gloss black base. Dynamic diagonal sweep from front bumper to rear quarter panel. Wrap specialists recommend this for high-visibility service vehicles. Eye-catching at 60mph.',
+    description: "High-contrast half-wrap using your brand's primary color on a gloss black base. Dynamic diagonal sweep from front bumper to rear quarter panel. Wrap specialists recommend this for high-visibility service vehicles. Eye-catching at 60mph.",
     estimatedCost: '$1,800–$2,400 per vehicle',
   },
   {
