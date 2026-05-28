@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '🔍 Natural Language Lead Search — "Find 20-truck fleets in Ohio"',
+    body: 'The Command Palette (⌘K) now understands natural language. Type "find construction fleets in Texas" or "search freight carriers midwest with 25+ trucks" and it queries the 600K-carrier FMCSA database in real time. Claude parses your intent into structured search params, explains what it searched for, and shows the top matching carriers with one-click Import buttons — all without leaving the keyboard. The fastest path from idea to lead ever built.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '⏱ Quote Follow-up Automation — Never Let a Sent Proposal Go Cold',
     body: 'Every sent quote now shows a "Schedule Follow-ups" button that queues three perfectly-timed follow-up emails: a gentle check-in at Day 3, a value-add touch at Day 7, and a concise final follow-up at Day 14. The emails are written in a real human voice — not templates, but short personal notes. Status indicator shows how many follow-ups are still pending and when the next one sends. The drip worker sends them automatically — nothing to remember.',
   },

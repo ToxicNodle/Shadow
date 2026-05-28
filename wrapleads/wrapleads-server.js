@@ -5993,6 +5993,152 @@ ${text.slice(0, 6000)}`;
   }
 });
 
+// POST /ai/lead-search — natural language FMCSA carrier search
+// User types e.g. "find construction fleets in Ohio with 20-50 trucks"
+// Claude parses the intent into structured search params, then queries the FMCSA DB.
+app.post('/ai/lead-search', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { query } = req.body || {};
+  if (!query?.trim()) return res.status(400).json({ error: 'query is required' });
+
+  const US_STATES: Record<string, string> = {
+    alabama:'AL',alaska:'AK',arizona:'AZ',arkansas:'AR',california:'CA',colorado:'CO',
+    connecticut:'CT',delaware:'DE',florida:'FL',georgia:'GA',hawaii:'HI',idaho:'ID',
+    illinois:'IL',indiana:'IN',iowa:'IA',kansas:'KS',kentucky:'KY',louisiana:'LA',
+    maine:'ME',maryland:'MD',massachusetts:'MA',michigan:'MI',minnesota:'MN',
+    mississippi:'MS',missouri:'MO',montana:'MT',nebraska:'NE',nevada:'NV',
+    'new hampshire':'NH','new jersey':'NJ','new mexico':'NM','new york':'NY',
+    'north carolina':'NC','north dakota':'ND',ohio:'OH',oklahoma:'OK',oregon:'OR',
+    pennsylvania:'PA','rhode island':'RI','south carolina':'SC','south dakota':'SD',
+    tennessee:'TN',texas:'TX',utah:'UT',vermont:'VT',virginia:'VA',washington:'WA',
+    'west virginia':'WV',wisconsin:'WI',wyoming:'WY',
+  };
+  const REGION_MAP: Record<string, string[]> = {
+    midwest: ['OH','MI','IN','IL','WI','MN','IA','MO','ND','SD','NE','KS'],
+    south: ['TX','FL','GA','NC','SC','VA','AL','MS','TN','AR','LA','OK','KY','WV'],
+    northeast: ['NY','PA','NJ','CT','MA','RI','VT','NH','ME','MD','DE'],
+    west: ['CA','WA','OR','NV','AZ','UT','CO','ID','MT','WY','NM','HI','AK'],
+    southeast: ['FL','GA','NC','SC','VA','AL','MS','TN','KY'],
+    southwest: ['TX','AZ','NM','NV','UT'],
+    'great plains': ['ND','SD','NE','KS','MN','IA','MO'],
+    'pacific northwest': ['WA','OR','ID'],
+  };
+  const INDUSTRY_MAP: Record<string, string[]> = {
+    trucking: ['trucking','freight','carrier','transport'],
+    construction: ['construction','contractor','building'],
+    food: ['food','beverage','restaurant','grocery'],
+    healthcare: ['healthcare','medical','hospital'],
+    delivery: ['delivery','courier','logistics'],
+  };
+
+  let parsedIntent: { states: string[] | null; minFleet: number | null; maxFleet: number | null; industries: string[] | null; textQuery: string; explanation: string } = {
+    states: null, minFleet: null, maxFleet: null, industries: null, textQuery: '', explanation: '',
+  };
+
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (apiKey) {
+      const sysPrompt = `You are a lead search assistant for a vehicle wrap shop. Parse natural language queries into structured FMCSA carrier search parameters.`;
+      const userMsg = `Parse this search query into JSON:
+"${query}"
+
+Return JSON with:
+{
+  "states": ["two-letter state codes"] or null,
+  "minFleet": number or null,
+  "maxFleet": number or null,
+  "industries": ["trucking","construction","food","healthcare","delivery"] or null,
+  "textQuery": "company name keyword if mentioned, else empty string",
+  "explanation": "one sentence explaining what you searched for"
+}
+
+Examples:
+- "20-50 truck fleets Ohio" → states:["OH"], minFleet:20, maxFleet:50
+- "large construction fleets midwest" → states:[midwest states], minFleet:25, industries:["construction"]
+- "freight carriers Texas" → states:["TX"], industries:["trucking"]`;
+
+      const resp = await claudeHaiku(apiKey, [{ role: 'user', content: userMsg }], 300, sysPrompt);
+      try {
+        const m = resp.match(/\{[\s\S]*\}/);
+        if (m) {
+          const p = JSON.parse(m[0]);
+          parsedIntent = { ...parsedIntent, ...p };
+        }
+      } catch { /* use fallback */ }
+    }
+
+    // Fallback regex parsing if AI not available or failed
+    if (!parsedIntent.states && !parsedIntent.minFleet) {
+      const q = query.toLowerCase();
+      // States
+      const stateResults: string[] = [];
+      for (const [name, code] of Object.entries(US_STATES)) {
+        if (q.includes(name) || q.includes(code.toLowerCase())) stateResults.push(code);
+      }
+      // Regions
+      for (const [region, codes] of Object.entries(REGION_MAP)) {
+        if (q.includes(region)) codes.forEach((c) => stateResults.push(c));
+      }
+      parsedIntent.states = stateResults.length ? [...new Set(stateResults)] : null;
+      // Fleet size
+      const fleetMatch = q.match(/(\d+)\s*[-–to]+\s*(\d+)\s*(truck|vehicle|fleet|unit)/i);
+      if (fleetMatch) { parsedIntent.minFleet = parseInt(fleetMatch[1]); parsedIntent.maxFleet = parseInt(fleetMatch[2]); }
+      const minMatch = q.match(/(\d+)\+?\s*(truck|vehicle|fleet|unit)/i);
+      if (minMatch && !fleetMatch) parsedIntent.minFleet = parseInt(minMatch[1]);
+      // Industries
+      const indResults: string[] = [];
+      for (const [ind, keywords] of Object.entries(INDUSTRY_MAP)) {
+        if (keywords.some((k) => q.includes(k))) indResults.push(ind);
+      }
+      parsedIntent.industries = indResults.length ? indResults : null;
+      parsedIntent.explanation = `Searching FMCSA database${parsedIntent.states ? ` in ${parsedIntent.states.join(', ')}` : ''}${parsedIntent.minFleet ? ` for fleets of ${parsedIntent.minFleet}+` : ''} vehicles.`;
+    }
+  } catch { /* fall through */ }
+
+  // Build carrier search query
+  const conditions = [];
+  const params = [];
+  if (parsedIntent.states?.length) { params.push(parsedIntent.states); conditions.push(`state = ANY($${params.length})`); }
+  if (parsedIntent.minFleet) { params.push(parsedIntent.minFleet); conditions.push(`fleet_size >= $${params.length}`); }
+  if (parsedIntent.maxFleet) { params.push(parsedIntent.maxFleet); conditions.push(`fleet_size <= $${params.length}`); }
+  if (parsedIntent.textQuery) { params.push(`%${parsedIntent.textQuery}%`); conditions.push(`(name ILIKE $${params.length} OR dba_name ILIKE $${params.length})`); }
+  // Default: require some fleet size
+  if (!parsedIntent.minFleet) { params.push(5); conditions.push(`fleet_size >= $${params.length}`); }
+
+  const where = conditions.length ? conditions.join(' AND ') : 'fleet_size >= 5';
+  const wrapScoreExpr = `(CASE WHEN fleet_size BETWEEN 25 AND 500 THEN 40 WHEN fleet_size > 500 THEN 20 WHEN fleet_size BETWEEN 10 AND 24 THEN 15 WHEN fleet_size BETWEEN 1 AND 9 THEN 5 ELSE 0 END + CASE WHEN last_reported IS NULL THEN 0 WHEN last_reported < NOW() - INTERVAL '5 years' THEN 30 WHEN last_reported < NOW() - INTERVAL '3 years' THEN 20 WHEN last_reported < NOW() - INTERVAL '1 year' THEN 10 ELSE 5 END)`;
+
+  try {
+    const dataParams = [...params, 10, 0];
+    const sql = `
+      SELECT id, source_id AS dot_number, name, dba_name, city, state, phone, email, fleet_size,
+             ${wrapScoreExpr} AS wrap_score
+      FROM companies WHERE ${where}
+      ORDER BY ${wrapScoreExpr} DESC, fleet_size DESC NULLS LAST
+      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}
+    `;
+    const [rows, countR] = await Promise.all([
+      pool.query(sql, dataParams),
+      pool.query(`SELECT COUNT(*)::INT AS total FROM companies WHERE ${where}`, params),
+    ]);
+    const ids = rows.rows.map((r) => r.id);
+    let imported = new Set<number>();
+    if (ids.length) {
+      const ir = await pool.query(`SELECT company_id FROM imports WHERE company_id=ANY($1) AND user_id=$2`, [ids, uid]);
+      imported = new Set(ir.rows.map((r) => r.company_id));
+    }
+    res.json({
+      ok: true,
+      parsedIntent,
+      total: countR.rows[0].total,
+      results: rows.rows.map((r) => ({ ...r, already_imported: imported.has(r.id) })),
+    });
+  } catch (e) {
+    console.error('[ai/lead-search]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/blueprint/scan', authMiddleware, upload.single('pdf'), async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });

@@ -295,6 +295,22 @@ export const api = {
       method: 'POST', body: JSON.stringify({ text }),
     }),
 
+  // Natural language lead search
+  nlLeadSearch: (query: string) =>
+    authFetch<{
+      ok: boolean;
+      parsedIntent: {
+        states: string[] | null; minFleet: number | null; maxFleet: number | null;
+        industries: string[] | null; textQuery: string; explanation: string;
+      };
+      total: number;
+      results: Array<{
+        id: number; dot_number: string; name: string; dba_name: string | null;
+        city: string | null; state: string | null; phone: string | null; email: string | null;
+        fleet_size: number | null; wrap_score: number; already_imported: boolean;
+      }>;
+    }>('/ai/lead-search', { method: 'POST', body: JSON.stringify({ query }) }),
+
   // Analytics
   analytics: () => authFetch<PipelineAnalytics>('/leads/analytics'),
 

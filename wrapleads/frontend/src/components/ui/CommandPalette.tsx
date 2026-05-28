@@ -56,6 +56,15 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const [dotError, setDotError] = useState<string | null>(null);
   const dotQueryRef = useRef<string>('');
 
+  // NL lead search state
+  type NlResult = { id: number; name: string; city: string | null; state: string | null; fleet_size: number | null; wrap_score: number; already_imported: boolean };
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlResults, setNlResults] = useState<NlResult[] | null>(null);
+  const [nlTotal, setNlTotal] = useState(0);
+  const [nlExplanation, setNlExplanation] = useState('');
+  const nlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nlQueryRef = useRef('');
+
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   // ── DOT number lookup ─────────────────────────────────────────────────────
@@ -64,6 +73,12 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const dotMatch = rawQuery.match(/^(?:dot[:\s]+)?(\d{7,9})$/i);
   const isDotQuery = Boolean(dotMatch);
   const dotNumber = dotMatch ? dotMatch[1] : null;
+
+  // ── Natural language lead search detection ────────────────────────────────
+  // Triggers when query starts with "find ", "search ", "show me " + has 3+ words
+  const nlMatch = rawQuery.match(/^(?:find|search|show\s+me|look\s+for)\s+(.{8,})/i);
+  const isNlSearch = Boolean(nlMatch) && !isDotQuery;
+  const nlSearchQuery = nlMatch ? rawQuery : null;
 
   useEffect(() => {
     if (!dotNumber) {
@@ -88,6 +103,34 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         if (dotQueryRef.current === dotNumber) setDotLoading(false);
       });
   }, [dotNumber]);
+
+  // NL search: debounced trigger on query change
+  useEffect(() => {
+    if (!nlSearchQuery) {
+      setNlResults(null);
+      setNlExplanation('');
+      nlQueryRef.current = '';
+      return;
+    }
+    if (nlTimerRef.current) clearTimeout(nlTimerRef.current);
+    nlTimerRef.current = setTimeout(() => {
+      if (nlQueryRef.current === nlSearchQuery) return;
+      nlQueryRef.current = nlSearchQuery;
+      setNlLoading(true);
+      setNlResults(null);
+      api.nlLeadSearch(nlSearchQuery)
+        .then((res) => {
+          if (nlQueryRef.current === nlSearchQuery) {
+            setNlResults(res.results);
+            setNlTotal(res.total);
+            setNlExplanation(res.parsedIntent.explanation || '');
+          }
+        })
+        .catch(() => { if (nlQueryRef.current === nlSearchQuery) setNlResults([]); })
+        .finally(() => { if (nlQueryRef.current === nlSearchQuery) setNlLoading(false); });
+    }, 600);
+    return () => { if (nlTimerRef.current) clearTimeout(nlTimerRef.current); };
+  }, [nlSearchQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const q = query.trim().toLowerCase();
 
@@ -247,8 +290,8 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const visFilters = filt(FILTERS);
 
   // When status command is active, only show status items + suppress lead search
-  // DOT queries show no regular items (dedicated panel handles it)
-  const allItems = isDotQuery
+  // DOT queries and NL searches show no regular items (dedicated panels handle them)
+  const allItems = isDotQuery || isNlSearch
     ? []
     : statusCmd
       ? [...statusItems, ...visNav, ...visActions, ...visFilters]
@@ -322,7 +365,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
             value={query}
             onChange={(e) => { setQuery(e.target.value); setCursor(0); }}
             onKeyDown={onKeyDown}
-            placeholder={overdueCount > 0 ? `${overdueCount} overdue · Search, try "won Acme", or enter a DOT #…` : 'Search leads, run actions, type a DOT number to import…'}
+            placeholder={overdueCount > 0 ? `${overdueCount} overdue · Search, try "won Acme", DOT #, or "find fleets in Ohio"…` : 'Search leads · "find 20-truck fleets TX" · DOT # to import…'}
             autoComplete="off"
             spellCheck={false}
           />
@@ -412,10 +455,80 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
               )}
             </div>
           )}
-          {!isDotQuery && allItems.length === 0 && (
+          {/* ── Natural Language Lead Search Panel ──────────────────────── */}
+          {isNlSearch && (
+            <div style={{ padding: '12px 14px' }}>
+              <div className="cmd-group-label" style={{ color: '#4d8af5' }}>
+                🔍 FMCSA Lead Search
+                {nlExplanation && <span style={{ fontWeight: 400, color: 'var(--text-faint)', marginLeft: 6, textTransform: 'none', fontSize: 11 }}>{nlExplanation}</span>}
+              </div>
+              {nlLoading && (
+                <div style={{ padding: '10px 4px', color: 'var(--text-faint)', fontSize: 13 }}>
+                  Searching 600K carriers…
+                </div>
+              )}
+              {!nlLoading && nlResults !== null && nlResults.length === 0 && (
+                <div style={{ padding: '10px 4px', color: 'var(--text-faint)', fontSize: 13 }}>
+                  No carriers found matching that description.
+                </div>
+              )}
+              {!nlLoading && nlResults && nlResults.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 8 }}>
+                    {nlTotal.toLocaleString()} matching carriers — showing top {nlResults.length}
+                  </div>
+                  {nlResults.map((r) => (
+                    <div key={r.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                      borderRadius: 7, marginBottom: 4,
+                      background: 'var(--surface)', border: '1px solid var(--border)',
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', display: 'flex', gap: 8, marginTop: 2 }}>
+                          {r.city && r.state && <span>📍 {r.city}, {r.state}</span>}
+                          {r.fleet_size != null && <span>🚛 {r.fleet_size} units</span>}
+                          <span style={{ color: 'var(--accent)' }}>Score {r.wrap_score}</span>
+                        </div>
+                      </div>
+                      {r.already_imported ? (
+                        <span style={{ fontSize: 10, background: 'rgba(0,217,126,0.15)', color: '#00d97e', padding: '2px 7px', borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>IN CRM</span>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.importCarrier(r.id);
+                              qc.invalidateQueries({ queryKey: ['leads'] });
+                              store.showToast(`${r.name} imported`);
+                              setNlResults((prev) => prev ? prev.map((x) => x.id === r.id ? { ...x, already_imported: true } : x) : prev);
+                            } catch { store.showToast('Import failed', 'error'); }
+                          }}
+                          style={{
+                            padding: '4px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                            border: '1px solid rgba(77,138,245,0.4)', background: 'rgba(77,138,245,0.1)', color: '#4d8af5', flexShrink: 0,
+                          }}
+                        >
+                          + Import
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => { store.setMode('discover'); onClose(); }}
+                    style={{ width: '100%', marginTop: 4, padding: '7px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)' }}
+                  >
+                    Open full search in Discover →
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {!isDotQuery && !isNlSearch && allItems.length === 0 && (
             <div className="cmd-no-results">No results for "{query}"</div>
           )}
-          {!isDotQuery && (statusCmd ? (
+          {!isDotQuery && !isNlSearch && (statusCmd ? (
             <>
               {renderGroup(statusItems, statusOffset, `Mark as ${STATUS_LABEL[statusCmd.status] ?? statusCmd.status}`)}
               {renderGroup(visNav, navOffset, 'Navigate')}
