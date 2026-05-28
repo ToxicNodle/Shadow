@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Market Signals — News-Based Leads Appear on Mission Dashboard',
+    body: 'WrapOS now monitors Google News RSS feeds around the clock for press releases about fleet expansions, new distribution centers, fleet upgrades, and new vehicles — and auto-creates company leads from the results. The "📡 Market Signals" card on Mission surfaces the latest ones with the headline, source link, and a one-click "Import" button. No competitor watches the news for wrap opportunities. Every signal is a real, recent business event that creates a perfect personalization hook for outreach.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: 'Deal Post-Mortem — AI Analysis of Every Lost Deal',
+    body: 'Lost deals now show a "💀 Deal Post-Mortem" panel. Click it and Claude analyzes the full activity timeline, quote amount, loss reason, and competitor context to explain exactly what went wrong, what the missed pivot moment was, how recoverable the deal is (high/medium/low), and one concrete lesson for the next similar deal. Pairs with the Win Debrief to create a complete learning loop — learn from your wins AND your losses.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Win-Rate Advisor in Quote Builder — Live Pricing Sweet Spot',
     body: 'The quote builder now shows a live color-coded indicator (green/amber/red) that tells you whether your current quote total falls inside your historical sweet spot for that lead category. Based on real proposal win/loss outcomes from your own CRM — not generic benchmarks. As you type prices, the indicator updates in real time. If you\'re outside the sweet spot, it shows your best range. Gets smarter with every proposal you send and close.',
   },

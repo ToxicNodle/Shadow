@@ -217,6 +217,15 @@ export const api = {
     authFetch<{ ok: boolean; fallback: boolean; opener: string; tip: string | null; contactSuffix?: string }>(
       `/leads/${leadId}/call-opener`
     ),
+  generateLossDebrief: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      debrief: {
+        whatWentWrong: string; missedOpportunity: string;
+        recoverability: 'high' | 'medium' | 'low';
+        recoverInstructions: string; whatToDoNext: string; lessonLearned: string;
+      };
+    }>(`/leads/${leadId}/loss-debrief`, { method: 'POST', body: '{}' }),
 
   lookupByDot: (dotNumber: string) =>
     authFetch<{

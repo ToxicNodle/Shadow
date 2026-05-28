@@ -15,6 +15,7 @@ import WinDebriefPanel from './WinDebriefPanel';
 import AccountHealthCard from './AccountHealthCard';
 import MeetingPrepPanel from './MeetingPrepPanel';
 import CallOpenerPanel from './CallOpenerPanel';
+import LossDebriefPanel from './LossDebriefPanel';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -2151,6 +2152,7 @@ export default function InfoTab({ lead }: Props) {
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && local.status === 'won' && <AccountHealthCard lead={local} />}
       {lead.serverId && local.status === 'won' && <WinDebriefPanel lead={local} />}
+      {lead.serverId && local.status === 'lost' && <LossDebriefPanel lead={local} />}
       {lead.serverId && local.status === 'won' && <ReferralAskPanel lead={local} />}
       {lead.serverId && local.status === 'won' && <MultiLocationExpansion lead={local} />}
       {lead.serverId && local.status === 'lost' && <WinBackPanel lead={local} />}

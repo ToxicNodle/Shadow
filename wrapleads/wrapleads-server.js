@@ -11476,6 +11476,112 @@ app.get('/analytics/win-patterns', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /leads/:id/loss-debrief — AI-generated deal post-mortem for a lost deal
+// What went wrong, what could be done differently, whether the deal is recoverable.
+app.post('/leads/:id/loss-debrief', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    const [leadR, actR, quotesR] = await Promise.all([
+      pool.query(
+        `SELECT company, category, status, fleet_size, city, state, created_at, updated_at,
+                lost_reason, lost_competitor, lost_at, notes
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, metadata, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at ASC LIMIT 25`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT total, status FROM shop_quotes WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    if (lead.status !== 'lost') return res.status(400).json({ error: 'Lead is not marked as lost' });
+
+    const daysInPipeline = Math.floor((new Date(lead.lost_at || lead.updated_at).getTime() - new Date(lead.created_at).getTime()) / 86_400_000);
+    const touchCount = actR.rows.length;
+    const lastQuote = quotesR.rows[0]?.total ? parseFloat(quotesR.rows[0].total) : null;
+
+    const categoryLabels = { fleet: 'fleet wraps', dinoc: 'Di-NOC film', construction: 'construction wraps', colorchange: 'color change', racing: 'racing liveries', gc_referral: 'GC referrals', wallgraphics: 'wall graphics', reatec: 'REATEC film', design: 'custom design' };
+    const catLabel = categoryLabels[lead.category] || 'wraps';
+
+    if (!apiKey) {
+      const fallback = {
+        whatWentWrong: lead.lost_reason || (touchCount < 3 ? 'Low engagement — too few touchpoints before the decision was made.' : 'Multiple touches but no conversion — likely a price or timing mismatch.'),
+        missedOpportunity: lead.lost_competitor ? `Competitor ${lead.lost_competitor} likely offered a stronger value proposition or better price.` : 'No competitive context logged — hard to know without more data.',
+        recoverability: touchCount > 5 ? 'medium' : 'low',
+        recoverInstructions: `Wait 60 days and re-approach with a new angle: seasonal offer, portfolio update, or relevant case study.`,
+        whatToDoNext: `Log exactly why this deal was lost (price, timing, or competitor) so the AI can learn your loss patterns.`,
+        lessonLearned: `For ${catLabel} deals, follow up within 48 hours of proposal delivery. Silence = shopping around.`,
+      };
+      return res.json({ ok: true, debrief: fallback, fallback: true });
+    }
+
+    const timeline = actR.rows.map(a => {
+      const meta = a.metadata ? (typeof a.metadata === 'string' ? (() => { try { return JSON.parse(a.metadata); } catch { return {}; } })() : a.metadata) : {};
+      return `[${new Date(a.created_at).toLocaleDateString()}] ${a.type}${a.subject ? ': ' + a.subject : ''}${meta.intent ? ' (' + meta.intent + ')' : ''}`;
+    }).join('\n');
+
+    const messages = [{
+      role: 'user',
+      content: `You are a senior B2B sales coach analyzing a lost deal for a vehicle wrap shop.
+
+DEAL: ${lead.company}
+Category: ${catLabel}
+Fleet size: ${lead.fleet_size || 'unknown'}
+Location: ${[lead.city, lead.state].filter(Boolean).join(', ') || 'unknown'}
+Days in pipeline: ${daysInPipeline}
+Touchpoints: ${touchCount}
+Quote amount: ${lastQuote ? '$' + lastQuote.toLocaleString() : 'none sent'}
+Loss reason logged: ${lead.lost_reason || 'none'}
+Competitor mentioned: ${lead.lost_competitor || 'none'}
+
+ACTIVITY TIMELINE:
+${timeline || 'No activity logged'}
+
+Analyze this loss and respond with EXACTLY this JSON structure:
+{
+  "whatWentWrong": "2 sentences on the likely root cause",
+  "missedOpportunity": "1 sentence on the specific moment that could have changed the outcome",
+  "recoverability": "high|medium|low",
+  "recoverInstructions": "1 concrete action to try in 60-90 days",
+  "whatToDoNext": "1 immediate action for similar future deals",
+  "lessonLearned": "1 memorable lesson for the sales rep"
+}
+
+Return ONLY the JSON. No commentary, no markdown.`,
+    }];
+
+    const raw = await claudeHaiku(apiKey, messages, 400);
+    let debrief;
+    try {
+      const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      debrief = JSON.parse(cleaned);
+    } catch {
+      debrief = {
+        whatWentWrong: raw.slice(0, 200),
+        missedOpportunity: 'Unable to parse full analysis.',
+        recoverability: 'medium',
+        recoverInstructions: 'Follow up in 60 days with a fresh approach.',
+        whatToDoNext: 'Log the loss reason to improve future analysis.',
+        lessonLearned: 'Every lost deal is a data point. Log it.',
+      };
+    }
+
+    res.json({ ok: true, debrief, fallback: false });
+  } catch (e) {
+    console.error('[loss-debrief]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Stale Pipeline — leads stuck with no activity for 14+ days ────────────
 // Used by the Mission StalePipelineCard to surface deals at risk of dying.
 app.get('/mission/stale-pipeline', authMiddleware, async (req, res) => {
