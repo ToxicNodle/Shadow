@@ -20,6 +20,7 @@ import StalePipelineCard from './StalePipelineCard';
 import ReferralEngineCard from './ReferralEngineCard';
 import DailyBriefingCard from './DailyBriefingCard';
 import ObjectionCounterCard from './ObjectionCounterCard';
+import SignalLeadsCard from './SignalLeadsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1837,6 +1838,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Market Signals — press release auto-leads ── */}
+      <SignalLeadsCard />
 
       {/* ── Daily Briefing — AI morning snapshot ── */}
       <DailyBriefingCard />

@@ -13311,6 +13311,29 @@ app.get('/activity/feed', authMiddleware, async (req, res) => {
   }
 });
 
+// ── Mission News Signals — leads auto-created from press releases ──────────────
+app.get('/mission/news-signals', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, name, notes, created_at
+      FROM companies
+      WHERE source = 'news_signal'
+        AND created_at > NOW() - INTERVAL '7 days'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+    const signals = rows.map(r => {
+      let notesObj = null;
+      try { notesObj = r.notes ? JSON.parse(r.notes) : null; } catch {}
+      return { id: r.id, name: r.name, notes: notesObj, createdAt: r.created_at };
+    });
+    res.json({ ok: true, signals });
+  } catch (e) {
+    console.error('[mission/news-signals]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Mission Live Signals ───────────────────────────────────────────────────────
 app.get('/mission/signals', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);

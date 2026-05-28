@@ -846,6 +846,15 @@ export const api = {
       }>;
     }>('/leads/broadcast/preview-ai', { method: 'POST', body: JSON.stringify({ leadIds, subject, body }) }),
 
+  getNewsSignals: () =>
+    authFetch<{
+      ok: boolean;
+      signals: Array<{
+        id: number; name: string;
+        notes: { url: string; headline: string; published: string; category?: string } | null;
+        createdAt: string;
+      }>;
+    }>('/mission/news-signals'),
   getMissionSignals: () =>
     authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
 
