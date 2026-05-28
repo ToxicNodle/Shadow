@@ -2,129 +2,8 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { Bid, BidStatus, BidProjectType, BidPlatform } from '../../api/types';
+import BidCalendarView from './BidCalendarView';
 
-// ── Bid Calendar ──────────────────────────────────────────────────────────────
-const STATUS_COLORS_CAL: Record<string, string> = {
-  tracking: '#6366f1', submitted: '#3b82f6', shortlisted: '#f59e0b',
-  won: '#22c55e', lost: '#6b7280', no_bid: '#6b7280',
-};
-
-function BidCalendar({ bids, onBidClick }: { bids: Bid[]; onBidClick: (bid: Bid) => void }) {
-  const [monthOffset, setMonthOffset] = useState(0);
-
-  const now = new Date();
-  const viewDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-  const year = viewDate.getFullYear();
-  const month = viewDate.getMonth();
-  const monthName = viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-
-  const firstDow = viewDate.getDay(); // 0=Sun
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  // Map bids to due date
-  const bidsByDay = new Map<number, Bid[]>();
-  for (const bid of bids) {
-    if (!bid.bid_due) continue;
-    const d = new Date(bid.bid_due);
-    if (d.getFullYear() === year && d.getMonth() === month) {
-      const day = d.getDate();
-      if (!bidsByDay.has(day)) bidsByDay.set(day, []);
-      bidsByDay.get(day)!.push(bid);
-    }
-  }
-
-  const today = new Date();
-  const todayDay = today.getFullYear() === year && today.getMonth() === month ? today.getDate() : null;
-
-  const cells: (number | null)[] = [
-    ...Array(firstDow).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ];
-
-  return (
-    <div style={{ padding: '16px 0' }}>
-      {/* Calendar header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => setMonthOffset((o) => o - 1)}>‹</button>
-        <span style={{ fontWeight: 700, fontSize: 15, flex: 1, textAlign: 'center' }}>{monthName}</span>
-        <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => setMonthOffset((o) => o + 1)}>›</button>
-        {monthOffset !== 0 && (
-          <button className="btn" style={{ fontSize: 11 }} onClick={() => setMonthOffset(0)}>Today</button>
-        )}
-      </div>
-
-      {/* Day labels */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-          <div key={d} style={{ textAlign: 'center', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.06em', padding: '4px 0' }}>
-            {d}
-          </div>
-        ))}
-      </div>
-
-      {/* Calendar grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
-        {cells.map((day, i) => {
-          if (day === null) {
-            return <div key={`e${i}`} style={{ minHeight: 72, background: 'transparent' }} />;
-          }
-          const dayBids = bidsByDay.get(day) ?? [];
-          const isToday = day === todayDay;
-          const isPast = new Date(year, month, day) < today && day !== todayDay;
-
-          return (
-            <div
-              key={day}
-              style={{
-                minHeight: 72, padding: '4px 5px', borderRadius: 6,
-                background: isToday ? 'rgba(244,85,28,.08)' : isPast ? 'var(--surface)' : 'var(--bg-elev)',
-                border: isToday ? '1px solid rgba(244,85,28,.4)' : '1px solid var(--border)',
-              }}
-            >
-              <div style={{
-                fontSize: 11, fontWeight: isToday ? 800 : 500,
-                color: isToday ? 'var(--accent)' : isPast ? 'var(--text-faint)' : 'var(--text)',
-                marginBottom: 3,
-              }}>
-                {day}
-              </div>
-              {dayBids.slice(0, 3).map((bid) => (
-                <div
-                  key={bid.id}
-                  onClick={() => onBidClick(bid)}
-                  title={bid.project_name}
-                  style={{
-                    cursor: 'pointer', marginBottom: 2, padding: '2px 4px', borderRadius: 3,
-                    fontSize: 9, fontWeight: 600, lineHeight: 1.3,
-                    background: STATUS_COLORS_CAL[bid.status] + '28',
-                    color: STATUS_COLORS_CAL[bid.status],
-                    borderLeft: `2px solid ${STATUS_COLORS_CAL[bid.status]}`,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}
-                >
-                  {bid.project_name}
-                </div>
-              ))}
-              {dayBids.length > 3 && (
-                <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 1 }}>+{dayBids.length - 3}</div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: 12, marginTop: 14, flexWrap: 'wrap' }}>
-        {Object.entries(STATUS_COLORS_CAL).filter(([k]) => k !== 'no_bid').map(([status, color]) => (
-          <div key={status} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--text-muted)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: color, display: 'inline-block' }} />
-            {status.charAt(0).toUpperCase() + status.slice(1)}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function requestBidNotifications(bids: Bid[]) {
   if (!('Notification' in window)) return;
@@ -1172,7 +1051,7 @@ export default function BidsView() {
 
       {tab === 'calendar' ? (
         <div style={{ padding: '0 16px' }}>
-          <BidCalendar
+          <BidCalendarView
             bids={bids}
             onBidClick={(bid) => setModalBid(bid)}
           />
