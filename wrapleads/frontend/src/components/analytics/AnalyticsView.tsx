@@ -150,7 +150,7 @@ function ActivityHeatmap({ data }: { data: { day: string; count: number }[] }) {
   startDay.setDate(startDay.getDate() - startDay.getDay()); // back to Sunday
 
   const weeks: Date[][] = [];
-  let cur = new Date(startDay);
+  const cur = new Date(startDay);
   while (cur <= today) {
     const week: Date[] = [];
     for (let d = 0; d < 7; d++) {

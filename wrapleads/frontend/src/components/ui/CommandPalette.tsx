@@ -130,7 +130,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         .finally(() => { if (nlQueryRef.current === nlSearchQuery) setNlLoading(false); });
     }, 600);
     return () => { if (nlTimerRef.current) clearTimeout(nlTimerRef.current); };
-  }, [nlSearchQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nlSearchQuery]);  
 
   const q = query.trim().toLowerCase();
 
@@ -443,7 +443,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
                           qc.invalidateQueries({ queryKey: ['leads'] });
                           store.showToast(`${dotResult.name} imported to CRM`);
                           store.setMode('leads');
-                        } catch (err) {
+                        } catch {
                           store.showToast('Import failed — try again');
                         }
                         onClose();

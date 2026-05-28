@@ -148,7 +148,7 @@ function BulkActivatePanel({ leads, onDone }: BulkPanelProps) {
 
   const toggle = (id: number) => setSelected((s) => {
     const n = new Set(s);
-    n.has(id) ? n.delete(id) : n.add(id);
+    if (n.has(id)) n.delete(id); else n.add(id);
     return n;
   });
 
@@ -237,7 +237,7 @@ function EnrichPanel({ leads, apolloKey, onDone }: EnrichPanelProps) {
   });
 
   const toggle = (id: number) => setSelected((s) => {
-    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
   });
 
   if (result) {
