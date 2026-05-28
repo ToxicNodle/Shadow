@@ -107,6 +107,7 @@ interface AppStore {
   cardScanOpen: boolean;
   urlImportOpen: boolean;
   truckScanOpen: boolean;
+  quickQuoteOpen: boolean;
   notifOpen: boolean;
   changelogOpen: boolean;
   setAddLeadOpen: (open: boolean) => void;
@@ -124,6 +125,7 @@ interface AppStore {
   setCardScanOpen: (open: boolean) => void;
   setUrlImportOpen: (open: boolean) => void;
   setTruckScanOpen: (open: boolean) => void;
+  setQuickQuoteOpen: (open: boolean) => void;
   setNotifOpen: (open: boolean) => void;
   setChangelogOpen: (open: boolean) => void;
 
@@ -265,6 +267,7 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       cardScanOpen: false,
       urlImportOpen: false,
       truckScanOpen: false,
+      quickQuoteOpen: false,
       notifOpen: false,
       changelogOpen: false,
       setAddLeadOpen: (open) => set({ addLeadOpen: open }),
@@ -282,6 +285,7 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       setCardScanOpen: (open) => set({ cardScanOpen: open }),
       setUrlImportOpen: (open) => set({ urlImportOpen: open }),
       setTruckScanOpen: (open) => set({ truckScanOpen: open }),
+      setQuickQuoteOpen: (open) => set({ quickQuoteOpen: open }),
       setNotifOpen: (open) => set({ notifOpen: open }),
       setChangelogOpen: (open) => set({ changelogOpen: open }),
 

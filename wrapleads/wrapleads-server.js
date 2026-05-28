@@ -14854,6 +14854,66 @@ app.get('/analytics/margin', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /tools/quick-quote — ballpark price range for an on-the-call estimate
+// Takes vehicleType (van/box_truck/semi/other), vehicleCount, coverage (full/partial/spot)
+// Returns min/max/recommended price from job history; falls back to industry defaults.
+app.get('/tools/quick-quote', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const vehicleType = String(req.query.vehicleType || 'van');
+    const vehicleCount = Math.max(1, parseInt(req.query.vehicleCount) || 1);
+    const coverage = String(req.query.coverage || 'full');
+
+    // Per-vehicle base prices by type (industry averages, USD)
+    const BASE_PRICE: Record<string, Record<string, number>> = {
+      van:       { full: 3200, partial: 1800, spot: 600 },
+      box_truck: { full: 4800, partial: 2600, spot: 900 },
+      semi:      { full: 7500, partial: 4200, spot: 1400 },
+      bus:       { full: 8500, partial: 5000, spot: 1600 },
+      pickup:    { full: 2800, partial: 1500, spot: 550 },
+      other:     { full: 3500, partial: 2000, spot: 700 },
+    };
+    const typeKey = BASE_PRICE[vehicleType] ? vehicleType : 'other';
+    const basePerVehicle = BASE_PRICE[typeKey][coverage] ?? BASE_PRICE[typeKey].full;
+
+    // Fleet discount (economy of scale)
+    const fleetMultiplier = vehicleCount >= 20 ? 0.82 : vehicleCount >= 10 ? 0.88 : vehicleCount >= 5 ? 0.93 : 1.0;
+    const baseTotal = Math.round(basePerVehicle * vehicleCount * fleetMultiplier);
+
+    // Try to refine from user's own job history
+    const category = vehicleType === 'semi' ? 'fleet' : vehicleType === 'box_truck' ? 'fleet' : 'fleet';
+    const { rows } = await pool.query(`
+      SELECT
+        ROUND(AVG(job_revenue / NULLIF(vehicle_count, 0)))::INT AS avg_per_vehicle,
+        ROUND(MIN(job_revenue / NULLIF(vehicle_count, 0)))::INT AS min_per_vehicle,
+        ROUND(MAX(job_revenue / NULLIF(vehicle_count, 0)))::INT AS max_per_vehicle,
+        COUNT(*) AS job_count
+      FROM installed_jobs
+      WHERE user_id=$1 AND wrap_category=$2 AND job_revenue > 0 AND vehicle_count > 0
+    `, [uid, category]);
+
+    const hist = rows[0];
+    const hasHistory = hist && parseInt(hist.job_count || '0') >= 3;
+
+    const perVehicle = hasHistory ? Math.round(parseInt(hist.avg_per_vehicle) * (coverage === 'partial' ? 0.6 : coverage === 'spot' ? 0.2 : 1)) : basePerVehicle;
+    const low = Math.round(perVehicle * vehicleCount * (hasHistory ? 0.9 : 0.85) * fleetMultiplier);
+    const high = Math.round(perVehicle * vehicleCount * (hasHistory ? 1.15 : 1.2) * fleetMultiplier);
+    const recommended = Math.round(perVehicle * vehicleCount * fleetMultiplier);
+
+    res.json({
+      ok: true,
+      vehicleCount, vehicleType, coverage,
+      low, high, recommended,
+      perVehicle: Math.round(recommended / vehicleCount),
+      fromHistory: hasHistory,
+      historyJobs: hasHistory ? parseInt(hist.job_count) : 0,
+    });
+  } catch (e) {
+    console.error('[quick-quote]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /analytics/pricing-benchmarks?category=X — per-category job pricing stats from user's history
 app.get('/analytics/pricing-benchmarks', authMiddleware, async (req, res) => {
   try {

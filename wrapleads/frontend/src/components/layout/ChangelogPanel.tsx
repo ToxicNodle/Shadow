@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '⚡ Quick Quote — Instant Ballpark for On-the-Call Estimates',
+    body: 'Hit ⌘K and type "Quick Quote" (or find it in Actions) to instantly pull up a ballpark price calculator. Select vehicle type, number of vehicles, and coverage — and see a price range with per-vehicle breakdown in under a second. Uses your real job history data when available; falls back to industry averages with fleet discounts applied automatically. Perfect for answering "how much would it cost?" on the spot without opening a full quote builder.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Market Signals — News-Based Leads Appear on Mission Dashboard',
     body: 'WrapOS now monitors Google News RSS feeds around the clock for press releases about fleet expansions, new distribution centers, fleet upgrades, and new vehicles — and auto-creates company leads from the results. The "📡 Market Signals" card on Mission surfaces the latest ones with the headline, source link, and a one-click "Import" button. No competitor watches the news for wrap opportunities. Every signal is a real, recent business event that creates a perfect personalization hook for outreach.',
   },

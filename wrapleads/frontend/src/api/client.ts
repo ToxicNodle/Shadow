@@ -1574,4 +1574,11 @@ export const api = {
       recentJobs: Array<{ company: string; job_revenue: number; vehicle_count: number; install_date: string }>;
       overallAvg: number | null;
     }>(`/analytics/pricing-benchmarks?category=${encodeURIComponent(category)}`),
+
+  quickQuote: (vehicleType: string, vehicleCount: number, coverage: string) =>
+    authFetch<{
+      ok: boolean; vehicleCount: number; vehicleType: string; coverage: string;
+      low: number; high: number; recommended: number; perVehicle: number;
+      fromHistory: boolean; historyJobs: number;
+    }>(`/tools/quick-quote?vehicleType=${vehicleType}&vehicleCount=${vehicleCount}&coverage=${coverage}`),
 };

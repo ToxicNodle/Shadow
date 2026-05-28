@@ -29,6 +29,7 @@ import ARPreviewModal from '../components/modals/ARPreviewModal';
 import PitchModeModal from '../components/modals/PitchModeModal';
 import CardScanModal from '../components/modals/CardScanModal';
 import TruckScanModal from '../components/modals/TruckScanModal';
+import QuickQuoteModal from '../components/modals/QuickQuoteModal';
 import PipelineView from '../components/pipeline/PipelineView';
 import BidsView from '../components/bids/BidsView';
 import MissionView from '../components/mission/MissionView';
@@ -57,6 +58,7 @@ export default function CRMPage() {
     pitchOpen, setPitchOpen,
     cardScanOpen, setCardScanOpen,
     truckScanOpen, setTruckScanOpen,
+    quickQuoteOpen, setQuickQuoteOpen,
     notifOpen, setNotifOpen,
     changelogOpen, setChangelogOpen,
     currentLeadId,
@@ -83,6 +85,8 @@ export default function CRMPage() {
     setCardScanOpen: s.setCardScanOpen,
     truckScanOpen: s.truckScanOpen,
     setTruckScanOpen: s.setTruckScanOpen,
+    quickQuoteOpen: s.quickQuoteOpen,
+    setQuickQuoteOpen: s.setQuickQuoteOpen,
     notifOpen: s.notifOpen,
     setNotifOpen: s.setNotifOpen,
     changelogOpen: s.changelogOpen,
@@ -217,6 +221,7 @@ export default function CRMPage() {
       {pitchOpen && <PitchModeModal onClose={() => setPitchOpen(false)} />}
       {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
       {truckScanOpen && <TruckScanModal onClose={() => setTruckScanOpen(false)} />}
+      {quickQuoteOpen && <QuickQuoteModal onClose={() => setQuickQuoteOpen(false)} />}
       {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
       {changelogOpen && <ChangelogPanel onClose={() => { setChangelogOpen(false); }} />}
       {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
