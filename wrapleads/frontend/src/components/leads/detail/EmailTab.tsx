@@ -3,6 +3,7 @@ import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
+import SmartFollowupButton from './SmartFollowupButton';
 
 function UnsubscribedWarning({ leadId }: { leadId: number }) {
   const { data } = useQuery({
@@ -372,10 +373,29 @@ export default function EmailTab({ lead }: Props) {
     }
   }
 
+  function handleSmartFollowupDraft(subject: string, body: string) {
+    setResult({ subject, body });
+    setTabMode('single');
+  }
+
   return (
     <div>
       {/* CAN-SPAM: warn if contact has unsubscribed */}
       {lead.serverId && <UnsubscribedWarning leadId={lead.serverId} />}
+
+      {/* Smart Follow-up AI composer */}
+      {lead.serverId && (
+        <SmartFollowupButton
+          lead={{
+            serverId: lead.serverId,
+            company: lead.company,
+            contactName: lead.contactName ?? null,
+            status: lead.status,
+            email: lead.email ?? null,
+          }}
+          onUseDraft={handleSmartFollowupDraft}
+        />
+      )}
 
       {/* Email engagement tracking */}
       <EmailEngagementTimeline lead={lead} />

@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Smart Follow-up Composer — Context-Aware AI Emails',
+    body: 'The Email tab now has a "✨ Smart Follow-up" button that reads your entire history with a lead — past emails, proposals, activities, time since last contact — and writes a follow-up that references specific things you\'ve actually discussed. Not a template. A real response to a real relationship. The AI also explains why it chose that particular angle in a one-sentence reasoning note.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Client Referral Engine — AI Referral Ask Generation',
     body: 'Mission now shows a "Referral Engine" card listing your top won clients who haven\'t been asked for a referral yet — scored by recency of win, deal value, and vehicles wrapped. Click "Request Referral" on any row and Claude Haiku writes a warm, personalized referral ask email referencing their specific job. Preview the email, copy to clipboard, or send directly via Resend. The lead is stamped with a referral_asked_at timestamp and logged to their activity timeline — no more manual tracking.',
   },
