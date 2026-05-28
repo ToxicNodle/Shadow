@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Objection Counter Engine — AI Re-Engagement for "No" Replies',
+    body: 'Mission now has an "Objection Inbox" card that surfaces every lead from the last 21 days who replied with a pricing question, a "not right now," or a skeptical no — and lets you generate a tailored AI counter-response with one click. The AI reads the full context of your relationship with that lead and writes a warm, specific re-engagement email (not a generic template). Includes a coach tip explaining why that angle works. Copy to clipboard or jump straight to the lead\'s email tab.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Smart Follow-up Composer — Context-Aware AI Emails',
     body: 'The Email tab now has a "✨ Smart Follow-up" button that reads your entire history with a lead — past emails, proposals, activities, time since last contact — and writes a follow-up that references specific things you\'ve actually discussed. Not a template. A real response to a real relationship. The AI also explains why it chose that particular angle in a one-sentence reasoning note.',
   },

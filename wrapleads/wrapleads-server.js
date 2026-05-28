@@ -13990,6 +13990,148 @@ app.get('/mission/referral-opportunities', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Objection Counter Engine ─────────────────────────────────────────────────
+// GET /mission/objections — recent replies with negative/price/not_now intents
+app.get('/mission/objections', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        la.id            AS activity_id,
+        la.lead_id,
+        la.created_at,
+        la.metadata,
+        l.company,
+        l.category,
+        l.contact_name,
+        l.email,
+        l.status
+      FROM lead_activities la
+      JOIN leads l ON l.id = la.lead_id AND l.user_id = $1
+      WHERE la.user_id = $1
+        AND la.type = 'email_reply'
+        AND la.metadata->>'intent' IN ('negative','not_now','price_question')
+        AND l.status NOT IN ('won','lost','unsubscribed')
+        AND la.created_at > NOW() - INTERVAL '21 days'
+      ORDER BY la.created_at DESC
+      LIMIT 8
+    `, [uid]);
+
+    const objections = rows.map((r) => {
+      const meta = r.metadata || {};
+      return {
+        activityId: r.activity_id,
+        leadId: r.lead_id,
+        company: r.company,
+        category: r.category,
+        contactName: r.contact_name,
+        email: r.email,
+        status: r.status,
+        intent: meta.intent,
+        summary: meta.summary || null,
+        body: meta.body || null,
+        receivedAt: r.created_at,
+      };
+    });
+
+    res.json({ ok: true, objections });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/counter-objection — AI-generate a counter-response to an objection
+app.post('/leads/:id/counter-objection', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const { intent, objectionText } = req.body;
+  if (!intent) return res.status(400).json({ error: 'intent required' });
+
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, category, contact_name, city, state, fleet_size, email
+       FROM leads WHERE id=$1 AND user_id=$2 LIMIT 1`,
+      [leadId, uid]
+    );
+    if (!leads.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leads[0];
+
+    const { rows: acts } = await pool.query(
+      `SELECT type, subject, body, metadata, created_at
+       FROM lead_activities
+       WHERE lead_id=$1 AND user_id=$2
+         AND type IN ('email_sent','email_reply','called','note_added')
+       ORDER BY created_at DESC LIMIT 5`,
+      [leadId, uid]
+    );
+
+    const anthro = getAnthropic();
+    if (!anthro) {
+      const FALLBACK: Record<string, { subject: string; body: string }> = {
+        price_question: {
+          subject: `Re: Pricing for ${lead.company}`,
+          body: `Hi ${lead.contact_name || 'there'},\n\nI understand budget is always a factor. Let me share a few options that other ${lead.category === 'fleet' ? 'fleet operators' : 'businesses'} have found helpful — including a flexible payment schedule and a phased approach that can spread the investment over time.\n\nWould a quick 15-minute call this week work to walk through the numbers together?\n\nBest,`,
+        },
+        not_now: {
+          subject: `Staying on your radar — ${lead.company}`,
+          body: `Hi ${lead.contact_name || 'there'},\n\nCompletely understood — timing is everything. I'll plan to follow up in 30 days and keep you posted on anything relevant in the meantime.\n\nOne quick thought: if you have a seasonal push or event coming up, even a few weeks of lead time can make a big difference for scheduling.\n\nBest,`,
+        },
+        negative: {
+          subject: `One more thought — ${lead.company}`,
+          body: `Hi ${lead.contact_name || 'there'},\n\nI appreciate you taking the time to respond. Before I close this out, I wanted to share one quick case study that might change the picture — a similar ${lead.category === 'fleet' ? 'fleet operation' : 'business'} saw a measurable ROI within 6 months.\n\nIf the answer is still no, I completely respect that. Just wanted to make sure you had the full picture first.\n\nBest,`,
+        },
+      };
+      const fb = FALLBACK[intent] || FALLBACK.not_now;
+      return res.json({ ok: true, fallback: true, subject: fb.subject, body: fb.body, tip: null });
+    }
+
+    const intentLabel = intent === 'price_question' ? 'raised a pricing objection' : intent === 'not_now' ? 'said it\'s not the right time' : 'expressed a negative or skeptical response';
+    const actSummary = acts.map((a) => {
+      const m = a.metadata || {};
+      return `- ${a.type} on ${new Date(a.created_at).toLocaleDateString()}: ${m.subject || a.subject || a.body || '(no detail)'}`.slice(0, 120);
+    }).join('\n');
+
+    const prompt = `You are a vehicle wrap sales expert writing a re-engagement email.
+
+Lead: ${lead.company}${lead.city ? ` (${lead.city}, ${lead.state})` : ''}
+Contact: ${lead.contact_name || 'the decision maker'}
+Category: ${lead.category}
+Fleet size: ${lead.fleet_size || 'unknown'}
+
+The contact ${intentLabel}.
+${objectionText ? `Their exact words: "${objectionText.slice(0, 300)}"` : ''}
+
+Recent activity:
+${actSummary || '(no prior activity recorded)'}
+
+Write a SHORT, warm counter-response email (2-3 paragraphs max). Acknowledge their concern genuinely, pivot to a concrete benefit or case study angle, and close with a low-pressure CTA. Do not use clichés like "I understand your concern" or "circle back". Sound like a real person.
+
+Reply ONLY with JSON: {"subject":"...","body":"...","tip":"one-sentence coach note on why this angle works"}`;
+
+    const msg = await anthro.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 500,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    let subject = `Re: ${lead.company} — Following Up`;
+    let body = '';
+    let tip = null;
+    try {
+      const text = msg.content[0].text.trim().replace(/^```json|```$/g, '').trim();
+      const parsed = JSON.parse(text);
+      subject = parsed.subject || subject;
+      body = parsed.body || body;
+      tip = parsed.tip || null;
+    } catch {
+      body = msg.content[0].text;
+    }
+
+    res.json({ ok: true, fallback: false, subject, body, tip });
+  } catch (e) {
+    console.error('[counter-objection]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Market Penetration Analysis ───────────────────────────────────────────────
 // Returns, for each of the user's top states, how many FMCSA-registered fleet
 // carriers exist vs. how many they're already targeting — the "white space".

@@ -19,6 +19,7 @@ import SpeedDialCard from './SpeedDialCard';
 import StalePipelineCard from './StalePipelineCard';
 import ReferralEngineCard from './ReferralEngineCard';
 import DailyBriefingCard from './DailyBriefingCard';
+import ObjectionCounterCard from './ObjectionCounterCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1851,6 +1852,9 @@ export default function MissionView() {
 
       {/* ── Referral Engine — AI referral ask for top won clients ── */}
       <ReferralEngineCard />
+
+      {/* ── Objection Counter — AI responses to pricing/negative replies ── */}
+      <ObjectionCounterCard />
 
       {/* ── Daily Task Queue — AI-generated + manual task list ── */}
       <TaskQueueCard />

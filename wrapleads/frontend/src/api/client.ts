@@ -1131,6 +1131,33 @@ export const api = {
       { method: 'POST' }
     ),
 
+  getObjections: () =>
+    authFetch<{
+      ok: boolean;
+      objections: Array<{
+        activityId: number;
+        leadId: number;
+        company: string;
+        category: string;
+        contactName: string | null;
+        email: string | null;
+        status: string;
+        intent: 'negative' | 'not_now' | 'price_question';
+        summary: string | null;
+        body: string | null;
+        receivedAt: string;
+      }>;
+    }>('/mission/objections'),
+
+  counterObjection: (leadId: number, intent: string, objectionText?: string) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      subject: string; body: string; tip: string | null;
+    }>(`/leads/${leadId}/counter-objection`, {
+      method: 'POST',
+      body: JSON.stringify({ intent, objectionText }),
+    }),
+
   // AI-powered quick lead import from any URL
   importFromUrl: (url: string) =>
     authFetch<{
