@@ -2103,6 +2103,61 @@ app.get('/carriers/imported', authMiddleware, subMiddleware, async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── DOT Number Quick-Lookup ───────────────────────────────────────────────────
+// Looks up a carrier by their FMCSA DOT number and returns import-ready data.
+// Auth-only (no subscription required — any user can look up a DOT).
+app.get('/carriers/by-dot/:dotNumber', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const dotNum = req.params.dotNumber.replace(/\D/g, ''); // strip non-digits
+  if (!dotNum || dotNum.length < 4) return res.status(400).json({ error: 'Invalid DOT number' });
+
+  try {
+    // Query local FMCSA database
+    const { rows } = await pool.query(`
+      SELECT
+        c.id, c.name, c.dba_name, c.city, c.state, c.phone, c.email,
+        c.fleet_size, c.source_id AS dot_number, c.source, c.wrap_score,
+        EXISTS(
+          SELECT 1 FROM leads l2
+          WHERE l2.user_id = $2
+            AND (l2.client_id = c.id::text OR l2.company ILIKE c.name)
+          LIMIT 1
+        ) AS already_in_crm
+      FROM companies c
+      WHERE c.source = 'fmcsa' AND c.source_id = $1
+      LIMIT 1
+    `, [dotNum, uid]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: `DOT #${dotNum} not found in our FMCSA database. Try searching the FMCSA SAFER portal directly.`,
+        saferUrl: `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${dotNum}`,
+      });
+    }
+
+    const c = rows[0];
+    res.json({
+      ok: true,
+      carrier: {
+        id: c.id,
+        dotNumber: c.dot_number,
+        name: c.name,
+        dbaName: c.dba_name,
+        city: c.city,
+        state: c.state,
+        phone: c.phone,
+        email: c.email,
+        fleetSize: c.fleet_size,
+        wrapScore: c.wrap_score,
+        alreadyInCrm: c.already_in_crm,
+      },
+    });
+  } catch (e) {
+    console.error('[by-dot]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // Saved searches
 // ----------------------------------------------------------------------------

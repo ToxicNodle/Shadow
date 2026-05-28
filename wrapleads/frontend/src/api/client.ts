@@ -213,6 +213,16 @@ export const api = {
       method: 'POST', body: JSON.stringify({ companyId }),
     }),
 
+  lookupByDot: (dotNumber: string) =>
+    authFetch<{
+      ok: boolean;
+      carrier: {
+        id: number; dotNumber: string; name: string; dbaName: string | null;
+        city: string | null; state: string | null; phone: string | null; email: string | null;
+        fleetSize: number | null; wrapScore: number; alreadyInCrm: boolean;
+      };
+    }>(`/carriers/by-dot/${dotNumber.replace(/\D/g, '')}`),
+
   // Saved searches
   getSavedSearches: () => authFetch<{ searches: SavedSearch[] }>('/searches/saved'),
   createSavedSearch: (name: string, filters: SavedSearch['filters']) =>

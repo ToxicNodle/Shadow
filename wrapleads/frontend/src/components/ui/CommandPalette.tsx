@@ -42,6 +42,8 @@ function parseStatusCmd(q: string): { status: string; search: string } | null {
   return { status: cmd, search: parts.slice(1).join(' ').toLowerCase() };
 }
 
+type DotResult = { name: string; city: string | null; state: string | null; fleetSize: number | null; wrapScore: number; alreadyInCrm: boolean; id: number } | null;
+
 export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
@@ -49,8 +51,43 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const { leads } = useLeads();
   const store = useAppStore();
   const qc = useQueryClient();
+  const [dotLoading, setDotLoading] = useState(false);
+  const [dotResult, setDotResult] = useState<DotResult>(null);
+  const [dotError, setDotError] = useState<string | null>(null);
+  const dotQueryRef = useRef<string>('');
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  // ── DOT number lookup ─────────────────────────────────────────────────────
+  const rawQuery = query.trim();
+  // Detect: "dot 1234567", "DOT: 1234567", or bare 7-9 digit number
+  const dotMatch = rawQuery.match(/^(?:dot[:\s]+)?(\d{7,9})$/i);
+  const isDotQuery = Boolean(dotMatch);
+  const dotNumber = dotMatch ? dotMatch[1] : null;
+
+  useEffect(() => {
+    if (!dotNumber) {
+      setDotResult(null);
+      setDotError(null);
+      dotQueryRef.current = '';
+      return;
+    }
+    if (dotQueryRef.current === dotNumber) return;
+    dotQueryRef.current = dotNumber;
+    setDotLoading(true);
+    setDotResult(null);
+    setDotError(null);
+    api.lookupByDot(dotNumber)
+      .then((res) => {
+        if (dotQueryRef.current === dotNumber) setDotResult(res.carrier);
+      })
+      .catch((err: Error) => {
+        if (dotQueryRef.current === dotNumber) setDotError(err.message ?? 'Not found');
+      })
+      .finally(() => {
+        if (dotQueryRef.current === dotNumber) setDotLoading(false);
+      });
+  }, [dotNumber]);
 
   const q = query.trim().toLowerCase();
 
@@ -209,9 +246,12 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const visFilters = filt(FILTERS);
 
   // When status command is active, only show status items + suppress lead search
-  const allItems = statusCmd
-    ? [...statusItems, ...visNav, ...visActions, ...visFilters]
-    : [...recentItems, ...overdueItems, ...leadItems, ...visNav, ...visActions, ...visFilters];
+  // DOT queries show no regular items (dedicated panel handles it)
+  const allItems = isDotQuery
+    ? []
+    : statusCmd
+      ? [...statusItems, ...visNav, ...visActions, ...visFilters]
+      : [...recentItems, ...overdueItems, ...leadItems, ...visNav, ...visActions, ...visFilters];
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
@@ -281,7 +321,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
             value={query}
             onChange={(e) => { setQuery(e.target.value); setCursor(0); }}
             onKeyDown={onKeyDown}
-            placeholder={overdueCount > 0 ? `${overdueCount} overdue · Search or try "won Acme"…` : 'Search leads, run actions, try "won Acme"…'}
+            placeholder={overdueCount > 0 ? `${overdueCount} overdue · Search, try "won Acme", or enter a DOT #…` : 'Search leads, run actions, type a DOT number to import…'}
             autoComplete="off"
             spellCheck={false}
           />
@@ -296,10 +336,85 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="cmd-results">
-          {allItems.length === 0 && (
+          {/* ── DOT Number Quick-Import Panel ─────────────────────────────── */}
+          {isDotQuery && (
+            <div style={{ padding: '12px 14px' }}>
+              <div className="cmd-group-label" style={{ color: '#4d8af5' }}>FMCSA DOT Lookup</div>
+              {dotLoading && (
+                <div style={{ padding: '10px 4px', color: 'var(--text-faint)', fontSize: 13 }}>
+                  Searching DOT #{dotNumber}…
+                </div>
+              )}
+              {dotError && !dotLoading && (
+                <div style={{ padding: '10px 4px', color: '#ef4444', fontSize: 13 }}>
+                  {dotError.includes('404') || dotError.includes('not found') || dotError.toLowerCase().includes('not found')
+                    ? `DOT #${dotNumber} not found in FMCSA database.`
+                    : `Error: ${dotError}`}
+                </div>
+              )}
+              {dotResult && !dotLoading && (
+                <div style={{
+                  background: 'var(--bg-surface, rgba(255,255,255,0.04))',
+                  border: '1px solid rgba(77,138,245,0.3)',
+                  borderRadius: 8,
+                  padding: '12px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {dotResult.name}
+                    </span>
+                    {dotResult.alreadyInCrm && (
+                      <span style={{ fontSize: 10, background: 'rgba(0,217,126,0.15)', color: '#00d97e', padding: '2px 7px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.05em' }}>
+                        IN CRM
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-faint)', display: 'flex', gap: 12 }}>
+                    {dotResult.city && dotResult.state && <span>📍 {dotResult.city}, {dotResult.state}</span>}
+                    {dotResult.fleetSize != null && <span>🚛 {dotResult.fleetSize} units</span>}
+                    <span style={{ color: '#f4551c' }}>Score {dotResult.wrapScore}</span>
+                  </div>
+                  {dotResult.alreadyInCrm ? (
+                    <button
+                      className="cmd-item"
+                      style={{ marginTop: 4, background: 'rgba(0,217,126,0.1)', borderRadius: 6, justifyContent: 'center', gap: 6, color: '#00d97e', fontWeight: 600 }}
+                      onClick={() => {
+                        store.setMode('leads');
+                        onClose();
+                      }}
+                    >
+                      <span>✓</span> Already in CRM — view leads
+                    </button>
+                  ) : (
+                    <button
+                      className="cmd-item"
+                      style={{ marginTop: 4, background: 'rgba(77,138,245,0.12)', borderRadius: 6, justifyContent: 'center', gap: 6, color: '#4d8af5', fontWeight: 600 }}
+                      onClick={async () => {
+                        try {
+                          await api.importCarrier(dotResult.id);
+                          qc.invalidateQueries({ queryKey: ['leads'] });
+                          store.showToast(`${dotResult.name} imported to CRM`);
+                          store.setMode('leads');
+                        } catch (err) {
+                          store.showToast('Import failed — try again');
+                        }
+                        onClose();
+                      }}
+                    >
+                      <span>+</span> Import to CRM
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {!isDotQuery && allItems.length === 0 && (
             <div className="cmd-no-results">No results for "{query}"</div>
           )}
-          {statusCmd ? (
+          {!isDotQuery && (statusCmd ? (
             <>
               {renderGroup(statusItems, statusOffset, `Mark as ${STATUS_LABEL[statusCmd.status] ?? statusCmd.status}`)}
               {renderGroup(visNav, navOffset, 'Navigate')}
@@ -315,7 +430,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
               {renderGroup(visActions, actionOffset, 'Actions')}
               {renderGroup(visFilters, filterOffset, 'Filters')}
             </>
-          )}
+          ))}
         </div>
 
         <div className="cmd-footer">

@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'DOT Number Quick-Import — Instant FMCSA Carrier Lookup',
+    body: 'Type any 7–9 digit DOT number directly into the command palette (⌘K) and WrapOS instantly looks up that carrier in the FMCSA database — no searching required. See company name, location, fleet size, and wrap score in a preview card. One click imports the carrier straight into your CRM as a lead. Works with bare DOT numbers ("1234567") or with a prefix ("dot 1234567"). If the carrier is already in your CRM, the panel shows "IN CRM" instead of the import button.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Meeting Prep Brief — AI Call Preparation Guide',
     body: 'Any lead in "Meeting" status now has a 📋 "Meeting Prep Brief" panel in the Info tab. Click it and Claude generates a full call prep document in seconds: company snapshot, exact opening line, 4-step talk track, 3 likely objections with counters, questions to ask, pricing strategy recommendation, closing move, and a social proof note using your similar wins. One-click "Copy Full Brief" to paste into your notes app before the call.',
   },
