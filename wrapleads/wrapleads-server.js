@@ -11357,6 +11357,111 @@ Be hyper-specific. Reference the company name, fleet size, location. No generic 
   }
 });
 
+// ── Discovery Call Guide ──────────────────────────────────────────────────────
+// For replied/meeting-stage leads: generates a structured discovery call guide
+// with qualifying questions, vehicle measurement worksheet, and upsell checklist.
+// Different from meeting-prep (which focuses on pitch) — this is about finding out
+// what the prospect actually needs before writing a proposal.
+app.get('/leads/:id/discovery-guide', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const lr = await pool.query(
+      `SELECT l.*, u.company_name AS shop_name, u.settings_json
+       FROM leads l JOIN users u ON u.id::TEXT = l.user_id
+       WHERE l.id=$1 AND l.user_id=$2`,
+      [leadId, uid]
+    );
+    if (!lr.rows.length) return res.status(404).json({ error: 'lead not found' });
+    const lead = lr.rows[0];
+
+    // Fleet size hint
+    const fleet = parseInt(lead.fleet_size, 10) || 0;
+    const category = lead.category || 'fleet';
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      // Fallback without AI
+      return res.json({
+        ok: true, fallback: true,
+        discoveryQuestions: [
+          `How many vehicles are in your fleet right now?`,
+          `Are all vehicles the same model/size, or a mix?`,
+          `What is the primary goal of the wrap — brand visibility, delivery identification, or both?`,
+          `Do you have existing brand guidelines (colors, logo files)?`,
+          `What is your timeline for completion?`,
+          `Who else is involved in this decision?`,
+        ],
+        vehicleWorksheet: [
+          { type: 'Cargo Van / Sprinter', sqFt: '290–360 sq ft', material: '3–4 rolls', note: 'Full wrap' },
+          { type: 'Box Truck (24ft)', sqFt: '580–680 sq ft', material: '6–7 rolls', note: 'Full wrap' },
+          { type: 'Semi Cab', sqFt: '460–520 sq ft', material: '5–6 rolls', note: 'Full wrap' },
+          { type: 'Pickup Truck', sqFt: '200–260 sq ft', material: '2–3 rolls', note: 'Full wrap' },
+        ],
+        upsellChecklist: [
+          'Partial → Full wrap (3–4× revenue)',
+          `Interior graphics (cab, cargo area)`,
+          'Fleet decal package for remainder vehicles',
+          '3M Certified installation premium',
+        ],
+        redFlags: ['No brand guidelines — price for design time', 'Mixed fleet sizes — measure each class separately'],
+        estimatedValue: `$${(Math.max(1, fleet) * 3500).toLocaleString()}–$${(Math.max(1, fleet) * 5500).toLocaleString()}`,
+      });
+    }
+
+    const activities = await pool.query(
+      `SELECT activity_type, note, created_at FROM lead_activities
+       WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 10`,
+      [leadId, uid]
+    );
+
+    const actLog = activities.rows.map((a) =>
+      `${a.activity_type}: ${(a.note || '').slice(0, 100)} (${new Date(a.created_at).toLocaleDateString()})`
+    ).join('\n');
+
+    const prompt = `You are a senior vehicle wrap sales consultant helping a sales rep prepare for a discovery call with a prospect.
+
+LEAD INFO:
+Company: ${lead.company}
+Category: ${category}
+Fleet size: ${fleet || 'unknown'}
+Location: ${[lead.city, lead.state].filter(Boolean).join(', ') || 'unknown'}
+Current stage: ${lead.status}
+Pitch angle: ${lead.pitch_angle || 'unknown'}
+Recent activity:
+${actLog || 'No activity yet'}
+
+Generate a discovery call guide as JSON with these keys:
+{
+  "discoveryQuestions": ["6-8 specific, probing questions tailored to this lead type and stage — not generic"],
+  "vehicleWorksheet": [{"type": string, "sqFt": string, "material": string, "note": string}],
+  "upsellChecklist": ["3-5 specific upsell opportunities for this lead type"],
+  "redFlags": ["2-4 specific things to watch for with this type of prospect"],
+  "estimatedValue": "string like '$12,000–$28,000'"
+}
+
+Make the discovery questions specific to this account's category (${category}), size, and stage. Not generic.`;
+
+    const aiResp = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    let parsed;
+    try {
+      const m = aiResp.match(/\{[\s\S]*\}/);
+      parsed = m ? JSON.parse(m[0]) : null;
+    } catch { parsed = null; }
+
+    if (!parsed) {
+      return res.json({ ok: true, fallback: true,
+        discoveryQuestions: ['What vehicles do you have?', 'What is your timeline?', 'Who signs off on this?'],
+        vehicleWorksheet: [], upsellChecklist: [], redFlags: [], estimatedValue: 'TBD' });
+    }
+
+    res.json({ ok: true, fallback: false, ...parsed });
+  } catch (e) {
+    console.error('[discovery-guide]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Win Debrief — AI "what worked" brief for a won deal ──────────────────
 // Analyzes the full activity timeline for a won lead and produces a structured
 // brief: key signal, winning tactic, days to close, pattern tags.
@@ -12029,6 +12134,100 @@ app.delete('/quotes/:id', authMiddleware, async (req, res) => {
     await pool.query('DELETE FROM shop_quotes WHERE id=$1 AND user_id=$2', [parseInt(req.params.id), uid]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /quotes/:id/schedule-followup — schedule a 3-email follow-up sequence for a sent quote
+// Inserts Day 3 / Day 7 / Day 14 emails into email_queue. Idempotent — cancels previous
+// quote-followup emails for this lead before scheduling new ones.
+app.post('/quotes/:id/schedule-followup', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const quoteId = parseInt(req.params.id, 10);
+  try {
+    // Fetch the quote + lead
+    const qr = await pool.query(
+      `SELECT sq.*, l.email, l.contact_name, l.company, l.category, l.fleet_size
+       FROM shop_quotes sq
+       JOIN leads l ON l.id = sq.lead_id
+       WHERE sq.id = $1 AND sq.user_id = $2`,
+      [quoteId, uid]
+    );
+    if (!qr.rows.length) return res.status(404).json({ error: 'Quote not found' });
+    const q = qr.rows[0];
+    if (!q.email) return res.status(400).json({ error: 'Lead has no email address' });
+
+    // Cancel any existing quote-followup sequence for this lead
+    await pool.query(
+      `UPDATE email_queue SET status='cancelled', error_msg='replaced by new quote followup'
+       WHERE lead_id=$1 AND user_id=$2 AND status='pending' AND subject LIKE '%[QF]%'`,
+      [q.lead_id, uid]
+    );
+
+    const contact = q.contact_name ? q.contact_name.split(' ')[0] : 'there';
+    const totalFmt = `$${parseFloat(q.total).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    const now = new Date();
+
+    const emails = [
+      {
+        day: 3,
+        subject: `[QF] Quick check-in on the wrap estimate`,
+        body: `Hi ${contact},\n\nI wanted to check in on the wrap estimate I sent over a few days ago — total came in at ${totalFmt}.\n\nDoes the scope look right, or are there any questions I can help clarify? Happy to adjust the proposal if needed.\n\nBest,`,
+      },
+      {
+        day: 7,
+        subject: `[QF] A quick note about your wrap project`,
+        body: `Hi ${contact},\n\nFollowing up one more time on the ${q.company} wrap estimate (${totalFmt}). I know these decisions take time, especially when coordinating across a team.\n\nOne thing I didn't mention — we can phase the install if budget timing is a factor. Happy to walk through options.\n\nLet me know either way,`,
+      },
+      {
+        day: 14,
+        subject: `[QF] Last follow-up — ${q.company} wrap proposal`,
+        body: `Hi ${contact},\n\nI'll keep this short — I haven't heard back on the wrap proposal and I don't want to keep reaching out if the timing isn't right.\n\nIf you'd like to revisit this in a few months, I'll keep your estimate on file. If there's a specific concern I haven't addressed, I'm happy to chat.\n\nEither way — thank you for your time.\n\nBest,`,
+      },
+    ];
+
+    for (const em of emails) {
+      const sendAt = new Date(now.getTime() + em.day * 86_400_000);
+      await pool.query(
+        `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [uid, q.lead_id, em.day, em.subject, em.body, q.email, q.contact_name || null, sendAt]
+      );
+    }
+
+    await logActivity(pool, {
+      leadId: q.lead_id, userId: uid,
+      type: 'sequence_activated',
+      subject: `Quote follow-up sequence scheduled (Day 3, 7, 14 — ${totalFmt} proposal)`,
+      metadata: { quote_id: quoteId },
+    });
+
+    res.json({ ok: true, queued: emails.length, days: [3, 7, 14] });
+  } catch (e) {
+    console.error('[quote-followup]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /quotes/:id/followup-status — check if a follow-up sequence is active for a quote's lead
+app.get('/quotes/:id/followup-status', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const quoteId = parseInt(req.params.id, 10);
+  try {
+    const qr = await pool.query(
+      `SELECT lead_id FROM shop_quotes WHERE id=$1 AND user_id=$2`, [quoteId, uid]
+    );
+    if (!qr.rows.length) return res.status(404).json({ error: 'not found' });
+    const leadId = qr.rows[0].lead_id;
+    const pr = await pool.query(
+      `SELECT id, subject, send_at, status FROM email_queue
+       WHERE lead_id=$1 AND user_id=$2 AND subject LIKE '%[QF]%'
+       ORDER BY send_at ASC`,
+      [leadId, uid]
+    );
+    res.json({ ok: true, scheduled: pr.rows });
+  } catch (e) {
+    console.error('[quote-followup-status]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /leads/:id/quote-timing-intel — for the most recent sent quote, analyze

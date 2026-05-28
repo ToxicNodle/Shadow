@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '⏱ Quote Follow-up Automation — Never Let a Sent Proposal Go Cold',
+    body: 'Every sent quote now shows a "Schedule Follow-ups" button that queues three perfectly-timed follow-up emails: a gentle check-in at Day 3, a value-add touch at Day 7, and a concise final follow-up at Day 14. The emails are written in a real human voice — not templates, but short personal notes. Status indicator shows how many follow-ups are still pending and when the next one sends. The drip worker sends them automatically — nothing to remember.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: '🔍 Discovery Call Guide — AI Qualification Worksheet',
+    body: 'When a lead reaches "Replied" or "Meeting" stage, a new "Generate Discovery Call Guide" button appears in the Info tab. Click it and Claude generates a prospect-specific qualification guide: 6-8 targeted discovery questions (not generic), a vehicle measurement reference table (sq ft + material needed by vehicle type), specific upsell opportunities for this lead\'s category, and red flags to watch for. Checkable question list so you can mark off each one as you go through the call.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '🧠 AI Email Thread Summarizer — One-Click Conversation Digest',
     body: 'The Email tab now has a "Summarize Email Thread" button that reads every email you\'ve sent to a lead and distills the entire conversation into 3-5 bullet points plus a single recommended next action. The AI also reads engagement signals (open counts, last-opened dates) to assess whether the prospect has positive, neutral, or negative momentum. Perfect for getting up to speed before a call without re-reading old emails. Color-coded sentiment indicator (green/amber/red) at a glance.',
   },

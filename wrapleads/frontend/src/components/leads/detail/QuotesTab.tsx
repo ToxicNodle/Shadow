@@ -4,6 +4,7 @@ import { api } from '../../../api/client';
 import { showToast } from '../../../utils/toast';
 import QuoteBuilderModal from '../../modals/QuoteBuilderModal';
 import { useLeads } from '../../../hooks/useLeads';
+import { useAppStore } from '../../../store/useAppStore';
 import type { Lead } from '../../../api/types';
 import type { ShopQuote, QuoteStatus } from '../../../api/types';
 
@@ -165,6 +166,56 @@ const STATUS_COLORS: Record<QuoteStatus, string> = {
   declined: '#ef4444',
   invoiced: '#8b5cf6',
 };
+
+// ── Quote Follow-up Scheduler ─────────────────────────────────────────────────
+function QuoteFollowupButton({ quoteId }: { quoteId: number }) {
+  const qc = useQueryClient();
+  const showToastFn = useAppStore((s) => s.showToast);
+
+  const { data } = useQuery({
+    queryKey: ['quote-followup-status', quoteId],
+    queryFn: () => api.getQuoteFollowupStatus(quoteId),
+    staleTime: 30_000,
+  });
+
+  const scheduleMut = useMutation({
+    mutationFn: () => api.scheduleQuoteFollowup(quoteId),
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ['quote-followup-status', quoteId] });
+      showToastFn(`Follow-up sequence scheduled (Day ${d.days.join(', ')})`);
+    },
+    onError: (e: Error) => showToastFn(e.message, 'error'),
+  });
+
+  const active = (data?.scheduled ?? []).filter((s) => s.status === 'pending');
+  const hasActive = active.length > 0;
+
+  if (hasActive) {
+    const nextSend = active[0];
+    const daysUntil = Math.ceil((new Date(nextSend.send_at).getTime() - Date.now()) / 86_400_000);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#4d8af5' }}>
+        <span>●</span>
+        <span>{active.length} follow-up{active.length !== 1 ? 's' : ''} scheduled</span>
+        <span style={{ color: 'var(--text-faint)' }}>· next in {daysUntil}d</span>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); scheduleMut.mutate(); }}
+      disabled={scheduleMut.isPending}
+      style={{
+        padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: 'pointer',
+        border: '1px solid #4d8af550', background: 'rgba(77,138,245,0.08)',
+        color: '#4d8af5',
+      }}
+    >
+      {scheduleMut.isPending ? '…' : '⏱ Schedule Follow-ups'}
+    </button>
+  );
+}
 
 // ── Wrap Price Estimator ───────────────────────────────────────────────────────
 // Sq footage per vehicle type (printable wrap area including bleed)
@@ -639,10 +690,14 @@ export default function QuotesTab({ lead }: Props) {
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 6 }}>
+              {/* Quote follow-up scheduler — only for sent quotes */}
+              {q.status === 'sent' && (
+                <QuoteFollowupButton quoteId={q.id} />
+              )}
               <button
                 className="btn"
-                style={{ fontSize: 11, color: 'var(--red)', padding: '3px 8px' }}
+                style={{ fontSize: 11, color: 'var(--red)', padding: '3px 8px', marginLeft: 'auto' }}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (confirm(`Delete ${q.quote_number}?`)) deleteMut.mutate(q.id);

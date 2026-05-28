@@ -391,6 +391,17 @@ export const api = {
       articles: Array<{ title: string; link: string; pubDate: string; source: string; pubMs: number }>;
     }>(`/leads/${leadId}/check-news`, { method: 'POST' }),
 
+  // ── Discovery call guide ──
+  getDiscoveryGuide: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      discoveryQuestions: string[];
+      vehicleWorksheet: Array<{ type: string; sqFt: string; material: string; note: string }>;
+      upsellChecklist: string[];
+      redFlags: string[];
+      estimatedValue: string;
+    }>(`/leads/${leadId}/discovery-guide`),
+
   // ── Multi-contact manager ──
   getLeadContacts: (leadId: number) =>
     authFetch<{
@@ -422,6 +433,18 @@ export const api = {
       nextAction: string;
       sentiment: 'positive' | 'neutral' | 'negative';
     }>(`/leads/${leadId}/email-summary`, { method: 'POST' }),
+
+  // ── Quote follow-up automation ──
+  scheduleQuoteFollowup: (quoteId: number) =>
+    authFetch<{ ok: boolean; queued: number; days: number[] }>(
+      `/quotes/${quoteId}/schedule-followup`, { method: 'POST' }
+    ),
+
+  getQuoteFollowupStatus: (quoteId: number) =>
+    authFetch<{
+      ok: boolean;
+      scheduled: Array<{ id: number; subject: string; send_at: string; status: string }>;
+    }>(`/quotes/${quoteId}/followup-status`),
 
   getCaseStudy: (jobId: number) =>
     authFetch<{

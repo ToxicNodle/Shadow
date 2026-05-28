@@ -17,6 +17,7 @@ import MeetingPrepPanel from './MeetingPrepPanel';
 import CallOpenerPanel from './CallOpenerPanel';
 import LossDebriefPanel from './LossDebriefPanel';
 import ContactsPanel from './ContactsPanel';
+import DiscoveryGuidePanel from './DiscoveryGuidePanel';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -2143,6 +2144,8 @@ export default function InfoTab({ lead }: Props) {
       <ContactsPanel lead={local} />
 
       {lead.serverId && <SimilarWinsPanel lead={local} />}
+      {/* Discovery guide — shown for replied/meeting stage to help reps qualify and scope */}
+      {lead.serverId && ['replied', 'meeting'].includes(local.status) && <DiscoveryGuidePanel lead={local} />}
       {lead.serverId && !['won','lost'].includes(local.status) && <CallOpenerPanel lead={local} />}
       {lead.serverId && <MeetingPrepPanel lead={local} />}
       {lead.serverId && <DealCoachPanel lead={local} />}
