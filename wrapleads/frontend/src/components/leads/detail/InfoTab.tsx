@@ -16,6 +16,7 @@ import AccountHealthCard from './AccountHealthCard';
 import MeetingPrepPanel from './MeetingPrepPanel';
 import CallOpenerPanel from './CallOpenerPanel';
 import LossDebriefPanel from './LossDebriefPanel';
+import ContactsPanel from './ContactsPanel';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -2137,6 +2138,9 @@ export default function InfoTab({ lead }: Props) {
         </svg>
         Generate Quote / Proposal
       </button>
+
+      {/* Multi-contact manager — additional stakeholders at this account */}
+      <ContactsPanel lead={local} />
 
       {lead.serverId && <SimilarWinsPanel lead={local} />}
       {lead.serverId && !['won','lost'].includes(local.status) && <CallOpenerPanel lead={local} />}

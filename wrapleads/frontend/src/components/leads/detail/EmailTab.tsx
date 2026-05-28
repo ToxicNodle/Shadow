@@ -5,6 +5,84 @@ import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 import SmartFollowupButton from './SmartFollowupButton';
 
+// ── AI Thread Summarizer ──────────────────────────────────────────────────────
+function ThreadSummaryPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [result, setResult] = useState<{ summary: string[]; nextAction: string; sentiment: 'positive' | 'neutral' | 'negative' } | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () => api.getEmailThreadSummary(lead.serverId!),
+    onSuccess: (d) => { setResult(d); setOpen(true); },
+  });
+
+  if (!lead.serverId) return null;
+
+  const sentColor = result?.sentiment === 'positive' ? '#00d97e' : result?.sentiment === 'negative' ? '#ef4444' : '#f59e0b';
+  const sentLabel = result?.sentiment === 'positive' ? 'Positive momentum' : result?.sentiment === 'negative' ? 'Needs attention' : 'Neutral tone';
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {!open ? (
+        <button
+          onClick={() => mut.mutate()}
+          disabled={mut.isPending}
+          style={{
+            width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+            border: '1px solid var(--border)', background: 'var(--surface)',
+            color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 14 }}>🧠</span>
+          {mut.isPending ? 'Summarizing thread…' : 'Summarize Email Thread'}
+          <span style={{
+            marginLeft: 'auto', fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em',
+            color: '#4d8af5', padding: '1px 5px', border: '1px solid #4d8af550', borderRadius: 4,
+          }}>AI</span>
+        </button>
+      ) : result && (
+        <div style={{
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 14, marginBottom: 4,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-faint)' }}>
+              🧠 Thread Summary
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, color: sentColor, fontWeight: 700 }}>● {sentLabel}</span>
+              <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14 }}>✕</button>
+            </div>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16, marginBottom: 10 }}>
+            {result.summary.map((s, i) => (
+              <li key={i} style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, marginBottom: 4 }}>{s}</li>
+            ))}
+          </ul>
+          <div style={{
+            borderTop: '1px solid var(--border-subtle)', paddingTop: 10,
+            display: 'flex', alignItems: 'flex-start', gap: 8,
+          }}>
+            <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚡</span>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', lineHeight: 1.5 }}>
+              {result.nextAction}
+            </div>
+          </div>
+          <button
+            onClick={() => { setOpen(false); setResult(null); mut.reset(); }}
+            style={{
+              marginTop: 8, fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer',
+            }}
+          >
+            Regenerate
+          </button>
+        </div>
+      )}
+      {mut.isError && (
+        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>Failed to summarize — try again.</div>
+      )}
+    </div>
+  );
+}
+
 function UnsubscribedWarning({ leadId }: { leadId: number }) {
   const { data } = useQuery({
     queryKey: ['unsub-status', leadId],
@@ -396,6 +474,9 @@ export default function EmailTab({ lead }: Props) {
           onUseDraft={handleSmartFollowupDraft}
         />
       )}
+
+      {/* AI thread summarizer */}
+      {lead.serverId && <ThreadSummaryPanel lead={lead} />}
 
       {/* Email engagement tracking */}
       <EmailEngagementTimeline lead={lead} />

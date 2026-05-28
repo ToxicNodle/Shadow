@@ -391,6 +391,38 @@ export const api = {
       articles: Array<{ title: string; link: string; pubDate: string; source: string; pubMs: number }>;
     }>(`/leads/${leadId}/check-news`, { method: 'POST' }),
 
+  // ── Multi-contact manager ──
+  getLeadContacts: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      contacts: Array<{
+        id: number; name: string; title: string | null; email: string | null;
+        phone: string | null; is_primary: boolean; notes: string | null; created_at: string;
+      }>;
+    }>(`/leads/${leadId}/contacts`),
+
+  addLeadContact: (leadId: number, data: { name: string; title?: string; email?: string; phone?: string; is_primary?: boolean; notes?: string }) =>
+    authFetch<{ ok: boolean; contact: { id: number; name: string; title: string | null; email: string | null; phone: string | null; is_primary: boolean; notes: string | null; created_at: string } }>(
+      `/leads/${leadId}/contacts`, { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  updateLeadContact: (leadId: number, cid: number, data: { name?: string; title?: string; email?: string; phone?: string; is_primary?: boolean; notes?: string }) =>
+    authFetch<{ ok: boolean; contact: { id: number; name: string; title: string | null; email: string | null; phone: string | null; is_primary: boolean; notes: string | null; created_at: string } }>(
+      `/leads/${leadId}/contacts/${cid}`, { method: 'PATCH', body: JSON.stringify(data) }
+    ),
+
+  deleteLeadContact: (leadId: number, cid: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/contacts/${cid}`, { method: 'DELETE' }),
+
+  // ── AI email thread summarizer ──
+  getEmailThreadSummary: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      summary: string[];
+      nextAction: string;
+      sentiment: 'positive' | 'neutral' | 'negative';
+    }>(`/leads/${leadId}/email-summary`, { method: 'POST' }),
+
   getCaseStudy: (jobId: number) =>
     authFetch<{
       caseStudy: {

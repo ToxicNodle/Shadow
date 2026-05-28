@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '🧠 AI Email Thread Summarizer — One-Click Conversation Digest',
+    body: 'The Email tab now has a "Summarize Email Thread" button that reads every email you\'ve sent to a lead and distills the entire conversation into 3-5 bullet points plus a single recommended next action. The AI also reads engagement signals (open counts, last-opened dates) to assess whether the prospect has positive, neutral, or negative momentum. Perfect for getting up to speed before a call without re-reading old emails. Color-coded sentiment indicator (green/amber/red) at a glance.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: '👥 Multi-Contact Manager — Track Every Decision Maker',
+    body: 'Fleet deals are almost never one-person decisions. The "Contacts" section in a lead\'s Info tab now lets you add every stakeholder at an account — fleet manager, VP of Operations, CFO, procurement lead — each with their own name, title, email, phone, and role notes. Mark one as the primary contact for email outreach. Additional contacts are stored separately from the main lead record so nothing gets overwritten. An essential upgrade for any deal over $10K.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '⚡ Quick Quote — Instant Ballpark for On-the-Call Estimates',
     body: 'Hit ⌘K and type "Quick Quote" (or find it in Actions) to instantly pull up a ballpark price calculator. Select vehicle type, number of vehicles, and coverage — and see a price range with per-vehicle breakdown in under a second. Uses your real job history data when available; falls back to industry averages with fleet discounts applied automatically. Perfect for answering "how much would it cost?" on the spot without opening a full quote builder.',
   },

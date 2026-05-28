@@ -794,6 +794,28 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create win_debriefs table:', e.message);
   }
+
+  // Lead contacts — multiple decision-makers per lead (fleet manager, VP ops, CFO, etc.)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lead_contacts (
+        id          BIGSERIAL PRIMARY KEY,
+        lead_id     BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        title       TEXT,
+        email       TEXT,
+        phone       TEXT,
+        is_primary  BOOLEAN DEFAULT FALSE,
+        notes       TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_contacts_lead ON lead_contacts(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create lead_contacts table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -14517,6 +14539,206 @@ Rules:
     res.json({ ok: true, fallback: false, opener, tip });
   } catch (e) {
     console.error('[call-opener]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Lead Contacts (multi-contact manager) ────────────────────────────────────
+// Fleet deals often involve multiple decision makers. These routes let users
+// track every stakeholder at a prospect account.
+
+// GET /leads/:id/contacts — list all contacts for a lead
+app.get('/leads/:id/contacts', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const r = await pool.query(
+      `SELECT id, name, title, email, phone, is_primary, notes, created_at
+       FROM lead_contacts
+       WHERE lead_id = $1 AND user_id = $2
+       ORDER BY is_primary DESC, created_at ASC`,
+      [leadId, uid]
+    );
+    res.json({ ok: true, contacts: r.rows });
+  } catch (e) {
+    console.error('[lead-contacts GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/contacts — add a contact
+app.post('/leads/:id/contacts', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const { name, title, email, phone, is_primary, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  try {
+    // Verify lead ownership
+    const check = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'lead not found' });
+
+    // If marking as primary, clear existing primary
+    if (is_primary) {
+      await pool.query(
+        `UPDATE lead_contacts SET is_primary = FALSE WHERE lead_id = $1 AND user_id = $2`,
+        [leadId, uid]
+      );
+    }
+    const r = await pool.query(
+      `INSERT INTO lead_contacts (lead_id, user_id, name, title, email, phone, is_primary, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING id, name, title, email, phone, is_primary, notes, created_at`,
+      [leadId, uid, name.trim(), title?.trim() || null, email?.trim() || null,
+       phone?.trim() || null, !!is_primary, notes?.trim() || null]
+    );
+    res.json({ ok: true, contact: r.rows[0] });
+  } catch (e) {
+    console.error('[lead-contacts POST]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /leads/:id/contacts/:cid — update a contact
+app.patch('/leads/:id/contacts/:cid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const cid = parseInt(req.params.cid, 10);
+  const { name, title, email, phone, is_primary, notes } = req.body;
+  try {
+    // Verify ownership
+    const check = await pool.query(
+      'SELECT id FROM lead_contacts WHERE id=$1 AND lead_id=$2 AND user_id=$3',
+      [cid, leadId, uid]
+    );
+    if (!check.rows.length) return res.status(404).json({ error: 'contact not found' });
+
+    if (is_primary) {
+      await pool.query(
+        `UPDATE lead_contacts SET is_primary = FALSE WHERE lead_id = $1 AND user_id = $2`,
+        [leadId, uid]
+      );
+    }
+    const r = await pool.query(
+      `UPDATE lead_contacts
+       SET name = COALESCE($1, name),
+           title = COALESCE($2, title),
+           email = COALESCE($3, email),
+           phone = COALESCE($4, phone),
+           is_primary = COALESCE($5, is_primary),
+           notes = COALESCE($6, notes),
+           updated_at = NOW()
+       WHERE id = $7
+       RETURNING id, name, title, email, phone, is_primary, notes, created_at`,
+      [name?.trim() || null, title?.trim() || null, email?.trim() || null,
+       phone?.trim() || null, is_primary !== undefined ? !!is_primary : null,
+       notes?.trim() || null, cid]
+    );
+    res.json({ ok: true, contact: r.rows[0] });
+  } catch (e) {
+    console.error('[lead-contacts PATCH]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /leads/:id/contacts/:cid — remove a contact
+app.delete('/leads/:id/contacts/:cid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    await pool.query(
+      'DELETE FROM lead_contacts WHERE id=$1 AND lead_id=$2 AND user_id=$3',
+      [cid, leadId, uid]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[lead-contacts DELETE]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/email-summary — AI summary of the entire email thread with a lead
+// Distills sent emails + any reply content into bullet points + recommended next action.
+app.post('/leads/:id/email-summary', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    // Fetch lead
+    const lr = await pool.query(
+      `SELECT company, contact_name, category, status, email FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!lr.rows.length) return res.status(404).json({ error: 'lead not found' });
+    const lead = lr.rows[0];
+
+    // Fetch email history (last 20 tracked emails)
+    const er = await pool.query(
+      `SELECT subject, body, sent_at, open_count, open_last_at
+       FROM email_tracking WHERE lead_id=$1 AND user_id=$2
+       ORDER BY sent_at DESC LIMIT 20`,
+      [leadId, uid]
+    );
+    const emails = er.rows;
+
+    if (!emails.length) {
+      return res.json({
+        ok: true,
+        summary: ['No tracked emails sent yet.'],
+        nextAction: 'Send the first outreach email.',
+        sentiment: 'neutral',
+        fallback: true,
+      });
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      const bullets = emails.slice(0, 3).map((e) =>
+        `Email sent: "${e.subject}" — ${e.open_count > 0 ? `opened ${e.open_count}x` : 'not opened'}`
+      );
+      return res.json({
+        ok: true,
+        summary: bullets,
+        nextAction: 'Review email history and decide next outreach step.',
+        sentiment: 'neutral',
+        fallback: true,
+      });
+    }
+
+    const emailLog = emails.map((e, i) =>
+      `Email ${i + 1}: Subject: "${e.subject}" | Sent: ${new Date(e.sent_at).toLocaleDateString()} | Opens: ${e.open_count || 0}${e.open_last_at ? ` (last opened ${new Date(e.open_last_at).toLocaleDateString()})` : ''}\nBody excerpt: ${(e.body || '').slice(0, 300)}`
+    ).join('\n\n');
+
+    const sysPrompt = `You are a sales intelligence assistant for a vehicle wrap shop. Summarize this email thread with a prospect and give a recommended next action.`;
+    const userMsg = `Lead: ${lead.company} (${lead.contact_name || 'unknown contact'}) — ${lead.category} — status: ${lead.status}
+
+Email History (newest first):
+${emailLog}
+
+Provide a JSON response with:
+{
+  "summary": ["3-5 bullet points summarizing the conversation history and engagement level"],
+  "nextAction": "One specific recommended next action (e.g., 'Call them today — they opened your proposal email 3 times')",
+  "sentiment": "positive | neutral | negative"
+}
+
+Be direct and actionable. Focus on what matters for closing the deal.`;
+
+    const aiResp = await claudeHaiku(apiKey, [{ role: 'user', content: userMsg }], 500, sysPrompt);
+    let parsed;
+    try {
+      const clean = aiResp.replace(/```json\n?|\n?```/g, '').trim();
+      parsed = JSON.parse(clean);
+    } catch {
+      parsed = {
+        summary: [aiResp.slice(0, 200)],
+        nextAction: 'Review the email history and plan your next touch.',
+        sentiment: 'neutral',
+      };
+    }
+
+    res.json({ ok: true, ...parsed, fallback: false });
+  } catch (e) {
+    console.error('[email-summary]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
