@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Meeting Prep Brief — AI Call Preparation Guide',
+    body: 'Any lead in "Meeting" status now has a 📋 "Meeting Prep Brief" panel in the Info tab. Click it and Claude generates a full call prep document in seconds: company snapshot, exact opening line, 4-step talk track, 3 likely objections with counters, questions to ask, pricing strategy recommendation, closing move, and a social proof note using your similar wins. One-click "Copy Full Brief" to paste into your notes app before the call.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Objection Counter Engine — AI Re-Engagement for "No" Replies',
     body: 'Mission now has an "Objection Inbox" card that surfaces every lead from the last 21 days who replied with a pricing question, a "not right now," or a skeptical no — and lets you generate a tailored AI counter-response with one click. The AI reads the full context of your relationship with that lead and writes a warm, specific re-engagement email (not a generic template). Includes a coach tip explaining why that angle works. Copy to clipboard or jump straight to the lead\'s email tab.',
   },

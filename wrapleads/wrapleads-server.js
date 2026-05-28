@@ -11154,6 +11154,130 @@ Respond ONLY with this exact JSON (no markdown, no explanation):
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Meeting Prep Brief — AI call preparation document ─────────────────────
+// Generates a full pre-meeting brief: company profile, pricing recommendation,
+// talk track, likely objections, questions to ask, similar wins.
+app.post('/leads/:id/meeting-prep', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    const [leadR, actR, settingsR] = await Promise.all([
+      pool.query(
+        `SELECT id, company, contact_name, contact_title, category, status, fleet_size,
+                city, state, email, phone, notes, pitch_angle, website, created_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, metadata, created_at
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 15`, [leadId, uid]
+      ),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const activity = actR.rows;
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our wrap shop';
+    const shopCity = s.city || '';
+
+    // Get similar wins with correct category
+    const { rows: similarWins } = await pool.query(
+      `SELECT company, category, city, state, fleet_size
+       FROM leads
+       WHERE user_id=$1 AND status='won' AND category=$2 AND id != $3
+       ORDER BY updated_at DESC LIMIT 3`, [uid, lead.category, leadId]
+    );
+
+    const REV_EST_PREP = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+    const fleetSize = parseInt(lead.fleet_size) || 0;
+    const pricePerVehicle = REV_EST_PREP[lead.category] || 3500;
+    const estimatedValue = fleetSize > 0 ? fleetSize * pricePerVehicle : pricePerVehicle;
+
+    const actSummary = activity.length
+      ? activity.map((a) => {
+          const m = a.metadata || {};
+          return `- ${a.type}: ${m.subject || a.subject || a.body?.slice(0,80) || '(no detail)'} (${new Date(a.created_at).toLocaleDateString()})`;
+        }).join('\n')
+      : 'No prior activity';
+
+    const similarSummary = similarWins.length
+      ? similarWins.map((w) => `${w.company}${w.city ? ` (${w.city}, ${w.state})` : ''}${w.fleet_size ? ` — ${w.fleet_size} units` : ''}`).join(', ')
+      : 'No similar wins yet';
+
+    const apiKeyPrep = process.env.ANTHROPIC_API_KEY;
+    if (!apiKeyPrep) {
+      // Static fallback prep
+      return res.json({
+        ok: true, fallback: true,
+        companySnapshot: `${lead.company} is a ${lead.category === 'fleet' ? 'fleet operator' : lead.category} business${lead.city ? ` based in ${lead.city}, ${lead.state}` : ''} with ${fleetSize > 0 ? `${fleetSize} vehicles` : 'an unknown fleet size'}. Estimated wrap opportunity: $${estimatedValue.toLocaleString()}.`,
+        openingLine: `"${lead.contact_name || 'Hi'}, I wanted to take a few minutes to walk through what a wrap program could look like specifically for ${lead.company}."`,
+        pricingNote: `At ${shopName}'s standard rates, a fleet of ${fleetSize > 0 ? fleetSize : '10+'} vehicles would be approximately $${estimatedValue.toLocaleString()}. Consider offering a pilot program (5 units) at a slightly better rate to reduce their risk.`,
+        talkTrack: [`Introduce ${shopName} and share a recent ${lead.category} project outcome`, `Ask about their current branding strategy and any previous wrap experience`, `Walk through the ROI: how many eyes see each truck per day × 5-year lifespan`, `Present the pilot program concept — low risk entry point`],
+        objections: [
+          { objection: "It's too expensive", counter: "I understand — let's look at cost-per-impression. A wrapped truck at our rate works out to pennies per thousand views, less than any billboard in your market." },
+          { objection: "We already have a wrap vendor", counter: "That's fair. What I can offer is a side-by-side comparison on one vehicle — let the work speak for itself." },
+          { objection: "Not the right time", counter: "I can lock in today's pricing and push the install date out 60 days. That way there's no rush but you've secured your spot on our calendar." },
+        ],
+        questionsToAsk: [`What's your current vehicle branding strategy?`, `How many vehicles are in your active fleet right now?`, `Have you wrapped vehicles before — what was that experience like?`, `Who else is involved in the decision?`],
+        similarWinsNote: similarWins.length ? `Similar ${lead.category} wins: ${similarSummary}` : 'Build your first win in this category today.',
+        estimatedValue,
+      });
+    }
+
+    const prompt = `You are a top-tier vehicle wrap sales consultant preparing a salesperson for an in-person meeting or call with a prospect. Write a complete, specific meeting prep brief.
+
+PROSPECT DETAILS:
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'unknown'}${lead.contact_title ? ` (${lead.contact_title})` : ''}
+Category: ${lead.category}
+Fleet size: ${fleetSize > 0 ? fleetSize + ' vehicles' : 'unknown'}
+Location: ${lead.city || ''}${lead.state ? ', ' + lead.state : ''}
+Website: ${lead.website || 'unknown'}
+Notes: ${lead.notes || 'none'}
+Pitch angle on file: ${lead.pitch_angle || 'none'}
+
+OUR SHOP: ${shopName}${shopCity ? ` in ${shopCity}` : ''}
+SIMILAR WINS WE CAN REFERENCE: ${similarSummary}
+ESTIMATED DEAL VALUE: $${estimatedValue.toLocaleString()}
+
+PRIOR CONTACT HISTORY:
+${actSummary}
+
+Write a JSON meeting prep brief with these exact keys:
+{
+  "companySnapshot": "2-3 sentence company profile with key wrap opportunity signals",
+  "openingLine": "The exact first sentence to say when the meeting starts — specific to this company",
+  "pricingNote": "Specific pricing strategy note: what to lead with, what to anchor on, whether to offer a pilot",
+  "talkTrack": ["step 1 talking point", "step 2", "step 3", "step 4"],
+  "objections": [
+    {"objection": "...", "counter": "specific 1-2 sentence counter for this company"},
+    {"objection": "...", "counter": "..."},
+    {"objection": "...", "counter": "..."}
+  ],
+  "questionsToAsk": ["question 1", "question 2", "question 3", "question 4"],
+  "closingMove": "The specific closing line or technique to use at the end of this meeting",
+  "similarWinsNote": "How to mention similar wins naturally in conversation",
+  "estimatedValue": ${estimatedValue}
+}
+
+Be hyper-specific. Reference the company name, fleet size, location. No generic advice.`;
+
+    const raw = await claudeHaiku(apiKeyPrep, [{ role: 'user', content: prompt }], 900);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const parsed = JSON.parse(match[0]);
+    res.json({ ok: true, fallback: false, ...parsed });
+  } catch (e) {
+    console.error('[meeting-prep]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Win Debrief — AI "what worked" brief for a won deal ──────────────────
 // Analyzes the full activity timeline for a won lead and produces a structured
 // brief: key signal, winning tactic, days to close, pattern tags.

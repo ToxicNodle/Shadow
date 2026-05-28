@@ -177,6 +177,20 @@ export const api = {
       subject: string; body: string; tone: string; reasoningNote: string;
     }>(`/leads/${leadId}/smart-followup`, { method: 'POST' }),
 
+  generateMeetingPrep: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      companySnapshot: string;
+      openingLine: string;
+      pricingNote: string;
+      talkTrack: string[];
+      objections: Array<{ objection: string; counter: string }>;
+      questionsToAsk: string[];
+      closingMove: string;
+      similarWinsNote: string;
+      estimatedValue: number;
+    }>(`/leads/${leadId}/meeting-prep`, { method: 'POST' }),
+
   getFollowupDue: () =>
     authFetch<{ leads: Lead[]; count: number }>('/leads/followup-due'),
   activateSequence: (serverId: number, tone?: string) =>
