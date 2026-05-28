@@ -11176,6 +11176,68 @@ app.get('/mission/stale-pipeline', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Daily Briefing — short AI-generated morning summary for Mission ───────────
+// Auto-loads on Mission open, cached 4h. 3-sentence briefing: focus/risk/opportunity.
+// Falls back gracefully with data-only summary when AI is unavailable.
+app.get('/mission/daily-briefing', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    // Pipeline snapshot — fast queries for briefing context
+    const [hotR, overdueR, proposalR, wonTodayR] = await Promise.all([
+      pool.query(`
+        SELECT company, status, category FROM leads WHERE user_id=$1
+        AND status IN ('replied','meeting','proposal') ORDER BY updated_at DESC LIMIT 5
+      `, [uid]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads WHERE user_id=$1
+        AND status NOT IN ('won','lost') AND followup_due_at < CURRENT_DATE
+      `, [uid]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads WHERE user_id=$1 AND status='proposal'
+      `, [uid]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads WHERE user_id=$1
+        AND status='won' AND updated_at >= CURRENT_DATE
+      `, [uid]),
+    ]);
+
+    const hotLeads = hotR.rows;
+    const overdueCount = overdueR.rows[0]?.count || 0;
+    const proposalCount = proposalR.rows[0]?.count || 0;
+    const wonToday = wonTodayR.rows[0]?.count || 0;
+
+    // If no AI key, return data summary without narrative
+    if (!apiKey || hotLeads.length === 0) {
+      let briefing = '';
+      if (wonToday > 0) briefing += `🏆 ${wonToday} deal${wonToday > 1 ? 's' : ''} won today. `;
+      if (hotLeads.length > 0) {
+        const best = hotLeads[0];
+        briefing += `Your hottest deal is ${best.company} (${best.status}). `;
+      }
+      if (overdueCount > 0) briefing += `${overdueCount} follow-up${overdueCount > 1 ? 's' : ''} overdue — handle these first.`;
+      else if (proposalCount > 0) briefing += `${proposalCount} proposal${proposalCount > 1 ? 's' : ''} out — follow up on any sent 7+ days ago.`;
+      return res.json({ ok: true, briefing: briefing.trim() || 'Pipeline is healthy. Keep pushing.', dataOnly: true });
+    }
+
+    const hotSummary = hotLeads.map(l => `${l.company} (${l.status})`).join(', ');
+    const prompt = `Write a 2-sentence morning briefing for a vehicle wrap shop sales rep. Be specific and action-oriented. No fluff.
+
+Pipeline data:
+- Hot deals: ${hotSummary || 'none'}
+- Overdue follow-ups: ${overdueCount}
+- Open proposals: ${proposalCount}
+- Deals won today: ${wonToday}
+
+Format: "Sentence 1: what to focus on today. Sentence 2: risk or opportunity to act on."
+Return ONLY the 2 sentences, nothing else.`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 150);
+    res.json({ ok: true, briefing: raw.trim(), dataOnly: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Email Permutator — generate plausible emails from contact name + domain
 // and (optionally) verify via MX + SMTP RCPT.  Free alternative to Apollo
 // enrichment for the common case of "I know who and where, just need email".

@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: 'Daily Briefing — AI Morning Pipeline Snapshot',
+    body: 'Mission now opens with a "Today\'s Briefing" card showing an AI-written 2-sentence summary of your pipeline every morning — how many active deals you have, what\'s overdue, what\'s close to closing, and what to prioritize. Cached for 4 hours so it loads instantly. Falls back to a plain data summary if Claude is not configured. Starts your day with a clear picture, not a wall of data.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: 'Account Health Card for Won Clients',
     body: 'Every won lead now shows a "🤝 Account Health" panel showing the relationship vitals: days since last contact, jobs logged, vehicles wrapped, total revenue, whether you\'ve asked for a referral, and upcoming wrap expiry dates — with a 0-100 health score. Green = strong relationship. Orange = at risk. Red = dormant. One click jumps to the Jobs view to log an install or create a re-order.',
   },

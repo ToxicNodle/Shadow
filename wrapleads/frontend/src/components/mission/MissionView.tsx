@@ -17,6 +17,7 @@ import IntentSignalsCard from './IntentSignalsCard';
 import TaskQueueCard from './TaskQueueCard';
 import SpeedDialCard from './SpeedDialCard';
 import StalePipelineCard from './StalePipelineCard';
+import DailyBriefingCard from './DailyBriefingCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1834,6 +1835,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Daily Briefing — AI morning snapshot ── */}
+      <DailyBriefingCard />
 
       {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
       <InboundRequestsCard />

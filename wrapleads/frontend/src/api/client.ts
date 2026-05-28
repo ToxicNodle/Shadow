@@ -1378,6 +1378,10 @@ export const api = {
       daysInStage: number | null;
     }>(`/leads/${leadId}/deal-coach`),
 
+  // Daily Briefing — AI morning summary for Mission
+  getDailyBriefing: () =>
+    authFetch<{ ok: boolean; briefing: string; dataOnly: boolean }>('/mission/daily-briefing'),
+
   // Stale Pipeline — leads stuck with no activity for 14+ days
   getStalePipeline: () =>
     authFetch<{
