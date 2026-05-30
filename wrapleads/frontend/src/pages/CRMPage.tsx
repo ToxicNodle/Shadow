@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useAppStore } from '../store/useAppStore';
 import { api } from '../api/client';
@@ -6,44 +6,59 @@ import Topbar from '../components/layout/Topbar';
 import NavRail from '../components/layout/NavRail';
 import Sidebar from '../components/layout/Sidebar';
 import TrialBanner from '../components/layout/TrialBanner';
-import NotificationPanel from '../components/layout/NotificationPanel';
-import ChangelogPanel from '../components/layout/ChangelogPanel';
-import AICoachDrawer, { AICoachFAB } from '../components/layout/AICoachDrawer';
 import LivePulse from '../components/layout/LivePulse';
 import PipelineStats from '../components/layout/PipelineStats';
 import LeadList from '../components/leads/LeadList';
 import KanbanBoard from '../components/leads/KanbanBoard';
 import LeadDetail from '../components/leads/detail/LeadDetail';
-import DiscoverPage from '../components/discover/DiscoverPage';
-import CommandPalette from '../components/ui/CommandPalette';
-import ShortcutsModal from '../components/ui/ShortcutsModal';
-import PasteImportModal from '../components/modals/PasteImportModal';
 import AddLeadModal from '../components/modals/AddLeadModal';
 import SettingsModal from '../components/modals/SettingsModal';
 import ApolloModal from '../components/modals/ApolloModal';
 import PaywallModal from '../components/modals/PaywallModal';
-import OnboardingModal from '../components/modals/OnboardingModal';
-import BlueprintScanner from '../components/modals/BlueprintScanner';
-import BulkOutreachModal from '../components/modals/BulkOutreachModal';
-import VisionQuoteModal from '../components/modals/VisionQuoteModal';
-import ARPreviewModal from '../components/modals/ARPreviewModal';
-import PitchModeModal from '../components/modals/PitchModeModal';
-import CardScanModal from '../components/modals/CardScanModal';
-import TruckScanModal from '../components/modals/TruckScanModal';
-import QuickQuoteModal from '../components/modals/QuickQuoteModal';
-import PipelineView from '../components/pipeline/PipelineView';
-import BidsView from '../components/bids/BidsView';
-import MissionView from '../components/mission/MissionView';
-import JobsView from '../components/jobs/JobsView';
-import ContentView from '../components/content/ContentView';
-import AnalyticsView from '../components/analytics/AnalyticsView';
-import GovOpportunitiesView from '../components/gov/GovOpportunitiesView';
-import CSVImportModal from '../components/modals/CSVImportModal';
-import ShopVoxImportModal from '../components/modals/ShopVoxImportModal';
-import ProposalModal from '../components/modals/ProposalModal';
+import PasteImportModal from '../components/modals/PasteImportModal';
 import Toast from '../components/ui/Toast';
 import { useGlobalDraggableModals } from '../hooks/useGlobalDraggableModals';
 import { useLeads } from '../hooks/useLeads';
+
+// ── Lazy-loaded views — only bundle-split from the initial chunk ──────────────
+// Each view is 400–3000 lines; lazy-loading them saves ~900 KB on first load.
+const MissionView         = lazy(() => import('../components/mission/MissionView'));
+const DiscoverPage        = lazy(() => import('../components/discover/DiscoverPage'));
+const PipelineView        = lazy(() => import('../components/pipeline/PipelineView'));
+const BidsView            = lazy(() => import('../components/bids/BidsView'));
+const JobsView            = lazy(() => import('../components/jobs/JobsView'));
+const ContentView         = lazy(() => import('../components/content/ContentView'));
+const AnalyticsView       = lazy(() => import('../components/analytics/AnalyticsView'));
+const GovOpportunitiesView = lazy(() => import('../components/gov/GovOpportunitiesView'));
+
+// ── Lazy-loaded modals & overlays ────────────────────────────────────────────
+const OnboardingModal  = lazy(() => import('../components/modals/OnboardingModal'));
+const BlueprintScanner = lazy(() => import('../components/modals/BlueprintScanner'));
+const BulkOutreachModal = lazy(() => import('../components/modals/BulkOutreachModal'));
+const CSVImportModal   = lazy(() => import('../components/modals/CSVImportModal'));
+const ShopVoxImportModal = lazy(() => import('../components/modals/ShopVoxImportModal'));
+const ProposalModal    = lazy(() => import('../components/modals/ProposalModal'));
+const VisionQuoteModal = lazy(() => import('../components/modals/VisionQuoteModal'));
+const ARPreviewModal   = lazy(() => import('../components/modals/ARPreviewModal'));
+const PitchModeModal   = lazy(() => import('../components/modals/PitchModeModal'));
+const CardScanModal    = lazy(() => import('../components/modals/CardScanModal'));
+const TruckScanModal   = lazy(() => import('../components/modals/TruckScanModal'));
+const QuickQuoteModal  = lazy(() => import('../components/modals/QuickQuoteModal'));
+const NotificationPanel = lazy(() => import('../components/layout/NotificationPanel'));
+const ChangelogPanel   = lazy(() => import('../components/layout/ChangelogPanel'));
+const AICoachDrawer    = lazy(() => import('../components/layout/AICoachDrawer'));
+const AICoachFABLazy   = lazy(() => import('../components/layout/AICoachDrawer').then((m) => ({ default: m.AICoachFAB })));
+const CommandPalette   = lazy(() => import('../components/ui/CommandPalette'));
+const ShortcutsModal   = lazy(() => import('../components/ui/ShortcutsModal'));
+
+// Minimal spinner shown while a lazy chunk loads — keeps layout stable.
+function ViewSpinner() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: 200, color: 'var(--text-faint)', fontSize: 13, gap: 10 }}>
+      <span className="spinner" />
+    </div>
+  );
+}
 
 export default function CRMPage() {
   useGlobalDraggableModals();
@@ -188,53 +203,59 @@ export default function CRMPage() {
         <NavRail />
         {mode === 'leads' && leadView === 'list' && <Sidebar />}
         <main key={`${mode}-${leadView}`} className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}${mode === 'analytics' ? ' analytics-main' : ''}`}>
-          {mode === 'leads'
-            ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
-            : mode === 'pipeline'
-            ? <PipelineView />
-            : mode === 'bids'
-            ? <BidsView />
-            : mode === 'mission'
-            ? <MissionView />
-            : mode === 'jobs'
-            ? <JobsView />
-            : mode === 'content'
-            ? <ContentView />
-            : mode === 'analytics'
-            ? <AnalyticsView />
-            : mode === 'gov'
-            ? <GovOpportunitiesView />
-            : <DiscoverPage />}
+          <Suspense fallback={<ViewSpinner />}>
+            {mode === 'leads'
+              ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
+              : mode === 'pipeline'
+              ? <PipelineView />
+              : mode === 'bids'
+              ? <BidsView />
+              : mode === 'mission'
+              ? <MissionView />
+              : mode === 'jobs'
+              ? <JobsView />
+              : mode === 'content'
+              ? <ContentView />
+              : mode === 'analytics'
+              ? <AnalyticsView />
+              : mode === 'gov'
+              ? <GovOpportunitiesView />
+              : <DiscoverPage />}
+          </Suspense>
         </main>
         {mode === 'leads' && <LeadDetail />}
       </div>
 
-      {/* Modals — all rendered at root level, outside topbar stacking context */}
+      {/* Always-eager modals (auth flow / global) */}
       <AddLeadModal />
       <SettingsModal />
       <ApolloModal />
       <PaywallModal />
-      {showOnboarding && <OnboardingModal onClose={() => setShowOnboarding(false)} />}
-      {blueprintOpen && <BlueprintScanner onClose={() => setBlueprintOpen(false)} />}
-      {bulkOutreachOpen && <BulkOutreachModal />}
-      {csvImportOpen && <CSVImportModal />}
-      {shopvoxImportOpen && <ShopVoxImportModal />}
-      {proposalOpen && <ProposalModal />}
-      {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
-      {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
-      {pitchOpen && <PitchModeModal onClose={() => setPitchOpen(false)} />}
-      {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
-      {truckScanOpen && <TruckScanModal onClose={() => setTruckScanOpen(false)} />}
-      {quickQuoteOpen && <QuickQuoteModal onClose={() => setQuickQuoteOpen(false)} />}
-      {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
-      {changelogOpen && <ChangelogPanel onClose={() => { setChangelogOpen(false); }} />}
-      {aiCoachOpen && <AICoachDrawer onClose={() => setAiCoachOpen(false)} />}
-      {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
-      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
       <PasteImportModal />
       <Toast />
       <LivePulse />
-      <AICoachFAB />
+
+      {/* Lazy modals — each wrapped in its own Suspense so they don't block each other */}
+      <Suspense fallback={null}>
+        {showOnboarding && <OnboardingModal onClose={() => setShowOnboarding(false)} />}
+        {blueprintOpen && <BlueprintScanner onClose={() => setBlueprintOpen(false)} />}
+        {bulkOutreachOpen && <BulkOutreachModal />}
+        {csvImportOpen && <CSVImportModal />}
+        {shopvoxImportOpen && <ShopVoxImportModal />}
+        {proposalOpen && <ProposalModal />}
+        {visionOpen && <VisionQuoteModal onClose={() => setVisionOpen(false)} />}
+        {arOpen && <ARPreviewModal onClose={() => setArOpen(false)} lead={arLead} />}
+        {pitchOpen && <PitchModeModal onClose={() => setPitchOpen(false)} />}
+        {cardScanOpen && <CardScanModal onClose={() => setCardScanOpen(false)} />}
+        {truckScanOpen && <TruckScanModal onClose={() => setTruckScanOpen(false)} />}
+        {quickQuoteOpen && <QuickQuoteModal onClose={() => setQuickQuoteOpen(false)} />}
+        {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
+        {changelogOpen && <ChangelogPanel onClose={() => setChangelogOpen(false)} />}
+        {aiCoachOpen && <AICoachDrawer onClose={() => setAiCoachOpen(false)} />}
+        {commandPaletteOpen && <CommandPalette onClose={() => setCommandPaletteOpen(false)} />}
+        {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+        <AICoachFABLazy />
+      </Suspense>
     </div>
   );
 }
