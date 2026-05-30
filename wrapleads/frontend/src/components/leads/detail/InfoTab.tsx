@@ -1817,6 +1817,34 @@ function TagEditor({ lead, onSave }: { lead: Lead; onSave: (tags: string[]) => v
   );
 }
 
+// ── Deal Heat Score ───────────────────────────────────────────────────────────
+function HeatScoreBadge({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['heat-score', leadId],
+    queryFn: () => api.getHeatScore(leadId),
+    staleTime: 2 * 60_000,
+  });
+
+  if (!data?.ok || data.score < 5) return null;
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: `${data.color}10`, border: `1px solid ${data.color}35`, borderRadius: 9, marginBottom: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 52 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, color: data.color, lineHeight: 1 }}>{data.score}</div>
+        <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: data.color, opacity: 0.8 }}>heat</div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: data.color, marginBottom: 3 }}>{data.label} Deal</div>
+        {data.signals.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+            {data.signals.map((s, i) => <span key={i}>{i > 0 ? ' · ' : ''}{s}</span>)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function InfoTab({ lead }: Props) {
   const { updateLead } = useLeads();
   const { setProposalOpen } = useAppStore((s) => ({ setProposalOpen: s.setProposalOpen }));
@@ -1867,6 +1895,11 @@ export default function InfoTab({ lead }: Props) {
             <CompletenessBar lead={local} />
           </div>
         </div>
+      )}
+
+      {/* Deal Heat Score */}
+      {local.serverId && !['won', 'lost'].includes(local.status) && (
+        <HeatScoreBadge leadId={local.serverId} />
       )}
 
       {['won', 'lost'].includes(local.status) && (

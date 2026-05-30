@@ -451,6 +451,45 @@ export default function SettingsModal() {
         )}
       </div>
 
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+            <path d="M1 10h22" />
+            <circle cx="7" cy="15" r="1" />
+          </svg>
+          Deposit Collection
+        </div>
+        <p className="settings-help">
+          When a client approves a quote in their client portal, show a "Pay Deposit" button that links to your Stripe Payment Link (or any payment URL). Paste your Stripe Payment Link URL below.
+        </p>
+        <div className="field-group">
+          <label className="field-label">Stripe Payment Link URL</label>
+          <input className="input" {...f('depositPaymentLink')} placeholder="https://buy.stripe.com/…" />
+        </div>
+        {local.depositPaymentLink && (
+          <p className="settings-help" style={{ color: 'var(--green)', marginTop: 4 }}>
+            ✓ Deposit button will appear after quote approval in the client portal.
+          </p>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          Hunter.io Integration
+        </div>
+        <p className="settings-help">
+          Hunter.io finds professional email addresses for any company domain. When configured, WrapOS tries Hunter first (25 free searches/month) before falling back to Apollo — saving credits.
+        </p>
+        <div className="field-group">
+          <label className="field-label">Hunter API Key</label>
+          <input className="input" type="password" {...f('hunterApiKey')} placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+        </div>
+      </div>
+
       {(user?.subStatus === 'active' || user?.subStatus === 'past_due' || user?.subStatus === 'trialing') && (
         <div className="settings-section">
           <div className="settings-section-title">

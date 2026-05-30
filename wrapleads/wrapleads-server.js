@@ -520,6 +520,8 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_user  ON portal_links(user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_lead  ON portal_links(lead_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_token ON portal_links(token)`);
+    await pool.query(`ALTER TABLE portal_links ADD COLUMN IF NOT EXISTS deposit_clicked_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE portal_links ADD COLUMN IF NOT EXISTS viewed_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not create portal_links table:', e.message);
   }
@@ -1612,10 +1614,20 @@ app.post('/apollo/search', authMiddleware, subMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Resolve Hunter API key — env var first, then per-user settings_json.
+async function resolveHunterKey(userId) {
+  if (process.env.HUNTER_API_KEY) return process.env.HUNTER_API_KEY;
+  if (userId) {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(userId)]);
+    return r.rows[0]?.settings_json?.hunterApiKey || null;
+  }
+  return null;
+}
+
 // Try Hunter.io /v2/email-finder before spending Apollo credits.
 // Returns null if Hunter is not configured or finds nothing with adequate confidence.
-async function tryHunterEnrich(firstName, lastName, domain) {
-  const hunterKey = process.env.HUNTER_API_KEY;
+async function tryHunterEnrich(firstName, lastName, domain, userId) {
+  const hunterKey = await resolveHunterKey(userId);
   if (!hunterKey || !firstName || !lastName || !domain) return null;
   try {
     const url = `https://api.hunter.io/v2/email-finder?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&domain=${encodeURIComponent(domain)}&api_key=${hunterKey}`;
@@ -1633,8 +1645,8 @@ async function tryHunterEnrich(firstName, lastName, domain) {
 
 // Try Hunter.io /v2/domain-search when we don't have a name.
 // Returns the highest-confidence email found for the domain's most senior contact.
-async function tryHunterDomainSearch(domain) {
-  const hunterKey = process.env.HUNTER_API_KEY;
+async function tryHunterDomainSearch(domain, userId) {
+  const hunterKey = await resolveHunterKey(userId);
   if (!hunterKey || !domain) return null;
   try {
     const url = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&limit=5&api_key=${hunterKey}`;
@@ -1668,9 +1680,10 @@ app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
   const { firstName, lastName, company, domain, email, linkedinUrl } = req.body || {};
   if (!firstName && !lastName && !email) return res.status(400).json({ error: 'Need firstName + lastName, or email' });
 
+  const enrichUid = req.user?.id ? String(req.user.id) : null;
   // Waterfall: Hunter (free) → Apollo (credits)
   if (firstName && lastName && domain && !email) {
-    const hunterResult = await tryHunterEnrich(firstName, lastName, domain);
+    const hunterResult = await tryHunterEnrich(firstName, lastName, domain, enrichUid);
     if (hunterResult) {
       return res.json({
         person: { email: hunterResult.email, first_name: firstName, last_name: lastName },
@@ -1799,14 +1812,15 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
       const domain = lead.website ? lead.website.replace(/^https?:\/\//, '').split('/')[0] : null;
 
       // Waterfall step 1: Hunter.io (free) — try name+domain first, fall back to domain search
-      if (domain && process.env.HUNTER_API_KEY) {
+      const bulkHunterKey = await resolveHunterKey(uid);
+      if (domain && bulkHunterKey) {
         let hunterResult = null;
         if (lead.contact_name) {
           const [firstName, ...rest] = lead.contact_name.trim().split(' ');
-          hunterResult = await tryHunterEnrich(firstName, rest.join(' '), domain);
+          hunterResult = await tryHunterEnrich(firstName, rest.join(' '), domain, uid);
         }
         if (!hunterResult) {
-          hunterResult = await tryHunterDomainSearch(domain);
+          hunterResult = await tryHunterDomainSearch(domain, uid);
         }
         if (hunterResult) {
           const contactName = hunterResult.name || lead.contact_name || null;
@@ -10405,6 +10419,93 @@ app.post('/leads/:id/check-news', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /leads/:id/heat-score — calculate engagement-based "deal temperature"
+// Score from 0–100 based on recency-weighted activity signals.
+app.get('/leads/:id/heat-score', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  try {
+    const [actR, trackR, portalR] = await Promise.all([
+      pool.query(
+        `SELECT type, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 50`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT open_count, open_last_at FROM email_tracking
+         WHERE lead_id=$1 AND user_id=$2
+         ORDER BY open_last_at DESC NULLS LAST LIMIT 10`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT viewed_at, deposit_clicked_at FROM portal_links
+         WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 1`,
+        [leadId, uid]
+      ),
+    ]);
+
+    const now = Date.now();
+    const dayMs = 86_400_000;
+
+    function recencyMultiplier(isoDate) {
+      if (!isoDate) return 0;
+      const ageDays = (now - new Date(isoDate).getTime()) / dayMs;
+      if (ageDays <= 1) return 1.0;
+      if (ageDays <= 3) return 0.8;
+      if (ageDays <= 7) return 0.6;
+      if (ageDays <= 14) return 0.4;
+      if (ageDays <= 30) return 0.2;
+      return 0.05;
+    }
+
+    let score = 0;
+    const signals = [];
+
+    // Activity signals
+    for (const act of actR.rows) {
+      const m = recencyMultiplier(act.created_at);
+      if (act.type === 'email_reply')   { score += 15 * m; if (m > 0.5) signals.push('Replied to email'); }
+      if (act.type === 'called')        { score += 10 * m; if (m > 0.5) signals.push('Call was made'); }
+      if (act.type === 'meeting_set')   { score += 20 * m; if (m > 0.4) signals.push('Meeting scheduled'); }
+      if (act.type === 'status_changed'){ score +=  5 * m; }
+      if (act.type === 'note_added')    { score +=  2 * m; }
+    }
+
+    // Email open signals
+    for (const t of trackR.rows) {
+      const m = recencyMultiplier(t.open_last_at);
+      const opens = Math.min(t.open_count || 1, 10);
+      score += opens * 4 * m;
+      if (m > 0.5 && opens >= 3) signals.push(`Opened email ${opens}x recently`);
+    }
+
+    // Portal engagement
+    const portal = portalR.rows[0];
+    if (portal?.viewed_at) {
+      const m = recencyMultiplier(portal.viewed_at);
+      score += 8 * m;
+      if (m > 0.4) signals.push('Viewed client portal');
+    }
+    if (portal?.deposit_clicked_at) {
+      score += 35;
+      signals.push('Clicked deposit payment link');
+    }
+
+    score = Math.min(Math.round(score), 100);
+
+    let label, color;
+    if (score >= 70) { label = 'Scorching'; color = '#ef4444'; }
+    else if (score >= 45) { label = 'Hot'; color = '#f97316'; }
+    else if (score >= 25) { label = 'Warm'; color = '#eab308'; }
+    else if (score >= 10) { label = 'Cool'; color = '#60a5fa'; }
+    else { label = 'Cold'; color = '#6b7280'; }
+
+    res.json({ ok: true, score, label, color, signals: [...new Set(signals)].slice(0, 4) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /leads/:id/send-timing — analyse this lead's email open history to
 // recommend the best day + hour to send the next email. Falls back to the
 // user's overall best send time when per-lead data is thin.
@@ -10960,6 +11061,11 @@ app.get('/portal/:token', async (req, res) => {
     if (!linkRows.length) return res.status(404).send('<h1>Link not found or expired.</h1>');
     const link = linkRows[0];
 
+    // Track first portal view
+    if (!link.viewed_at) {
+      pool.query('UPDATE portal_links SET viewed_at=NOW() WHERE token=$1', [req.params.token]).catch(() => {});
+    }
+
     // Fetch shop settings
     const { rows: uRows } = await pool.query('SELECT settings_json FROM users WHERE id=$1', [link.user_id]);
     const s = uRows[0]?.settings_json || {};
@@ -11139,7 +11245,20 @@ app.get('/portal/:token', async (req, res) => {
       <form id="approve-form" onsubmit="submitApproval(event)">
         <button type="submit" class="cta-btn" id="approve-btn">✓ Approve This Quote</button>
       </form>
-      <p id="approved-msg" class="approved-badge" style="display:none;margin-top:12px">✓ Quote approved — we'll be in touch shortly!</p>
+      <div id="approved-msg" style="display:none;margin-top:12px">
+        <p class="approved-badge">✓ Quote approved — we'll be in touch shortly!</p>
+        ${s.depositPaymentLink ? `
+        <div style="margin-top:16px;padding:16px;background:#0e1018;border:1px solid #22c55e44;border-radius:12px;">
+          <div style="font-size:11px;font-weight:700;color:#22c55e;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Secure Your Project</div>
+          <p style="font-size:13px;color:#9ca3af;margin:0 0 12px 0;">A deposit is required to reserve your install slot and begin production. Pay securely online — takes about 60 seconds.</p>
+          ${bid?.total_price ? `<div style="font-size:22px;font-weight:800;color:#fff;margin-bottom:12px">50% Deposit: ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(Number(bid.total_price)*0.5)}</div>` : ''}
+          <a href="/portal/${req.params.token}/pay-deposit" target="_blank" rel="noopener" onclick="trackDeposit()" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-weight:700;font-size:15px;border-radius:10px;text-decoration:none;letter-spacing:.02em;">
+            💳 Pay Deposit Now →
+          </a>
+          <p style="font-size:11px;color:#6b7280;margin-top:10px;">Powered by Stripe — your payment info is never stored on our servers.</p>
+        </div>
+        ` : ''}
+      </div>
       ` : `<div class="approved-badge" style="margin-top:12px">✓ Project in progress</div>`}
     </div>
   </div>` : ''}
@@ -11256,8 +11375,12 @@ app.get('/portal/:token', async (req, res) => {
     try {
       await fetch('/portal/${req.params.token}/approve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
       document.getElementById('approve-form').style.display = 'none';
-      document.getElementById('approved-msg').style.display = 'block';
+      document.getElementById('approved-msg').style.display = 'flex';
+      document.getElementById('approved-msg').style.flexDirection = 'column';
     } catch { document.getElementById('approve-btn').disabled = false; document.getElementById('approve-btn').textContent = '✓ Approve This Quote'; }
+  }
+  function trackDeposit() {
+    fetch('/portal/${req.params.token}/pay-deposit', { method: 'POST', headers: {'Content-Type':'application/json'} }).catch(() => {});
   }
   async function approveDesign() {
     const btn = document.getElementById('approve-design-btn');
@@ -11309,18 +11432,49 @@ app.get('/portal/:token', async (req, res) => {
 // Portal actions — PUBLIC (no auth, token identifies)
 app.post('/portal/:token/approve', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM portal_links WHERE token=$1', [req.params.token]);
+    const { rows } = await pool.query('SELECT pl.*, u.settings_json FROM portal_links pl JOIN users u ON u.id=pl.user_id WHERE pl.token=$1', [req.params.token]);
     if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
     const link = rows[0];
+    const settings = link.settings_json || {};
     await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1 AND user_id=$2`, [link.lead_id, link.user_id]);
     await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'status_changed', subject: 'Client approved quote via portal' });
     await createNotification(link.user_id, {
       type: 'email_reply',
       title: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} approved their quote!`,
-      body: 'Client clicked "Approve" on the portal link. Follow up now.',
+      body: settings.depositPaymentLink ? 'Client approved! Payment link shown — watch for deposit.' : 'Client clicked "Approve" on the portal link. Follow up now.',
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true, depositPaymentLink: settings.depositPaymentLink || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: client clicked "Pay Deposit" — track + redirect to shop's payment link
+app.post('/portal/:token/pay-deposit', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT pl.*, u.settings_json FROM portal_links pl JOIN users u ON u.id=pl.user_id WHERE pl.token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    await pool.query('UPDATE portal_links SET deposit_clicked_at=NOW() WHERE token=$1', [req.params.token]);
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'note_added', subject: 'Client clicked Pay Deposit button on portal' });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `Deposit payment initiated! 💰`,
+      body: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} clicked the deposit payment link.`,
       metadata: { lead_id: link.lead_id },
     });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: get deposit/view stats for a lead's portal link
+app.get('/portal-links/lead/:leadId/stats', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      'SELECT token, viewed_at, deposit_clicked_at, created_at FROM portal_links WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1',
+      [req.params.leadId, uid]
+    );
+    res.json({ ok: true, stats: rows[0] || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

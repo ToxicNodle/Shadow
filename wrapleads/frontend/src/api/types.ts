@@ -167,6 +167,8 @@ export interface Settings {
   crewSize: string;
   workingDaysMonth: string;
   avgDealValue: string;
+  depositPaymentLink: string;
+  hunterApiKey: string;
 }
 
 export interface CarrierSearchParams {
@@ -295,6 +297,8 @@ export const DEFAULT_SETTINGS: Settings = {
   crewSize: '2',
   workingDaysMonth: '20',
   avgDealValue: '3500',
+  depositPaymentLink: '',
+  hunterApiKey: '',
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────

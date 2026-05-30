@@ -1709,4 +1709,17 @@ export const api = {
       doors: string | null; fuel: string | null;
       wrapType: string; label: string;
     }>(`/tools/vin/${vin.trim().toUpperCase()}`),
+
+  // ── Deal Heat Score ──
+  getHeatScore: (leadId: number) =>
+    authFetch<{ ok: boolean; score: number; label: string; color: string; signals: string[] }>(
+      `/leads/${leadId}/heat-score`
+    ),
+
+  // ── Portal Link Stats ──
+  getPortalLinkStats: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      stats: { token: string; viewed_at: string | null; deposit_clicked_at: string | null; created_at: string } | null;
+    }>(`/portal-links/lead/${leadId}/stats`),
 };

@@ -9,6 +9,30 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '💰 Deposit Collection — Clients Pay Directly from Their Portal',
+    body: 'When a client approves a quote in their client portal, WrapOS now shows a "Pay Deposit Now" button if you\'ve configured a payment link in Settings → Deposit Collection. Paste your Stripe Payment Link URL once, and it appears automatically on every approval — showing the calculated 50% deposit amount. WrapOS tracks when clients click it and sends you a notification. The deposit button is powered by your own Stripe account, so funds go directly to you. Setup is 30 seconds: Settings → Deposit Collection → paste URL → save.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: '🎙️ Voice Notes — Record Field Notes Hands-Free',
+    body: 'Every lead\'s Notes tab now has a microphone button. Click it, talk, and WrapOS transcribes your voice in real-time using the browser\'s built-in speech recognition (no API key, no upload, instant). Perfect for on-site visits: walk around a fleet, narrate what you see, and hit "Use Note" to save a timestamped entry. Works in Chrome and Safari. Results appear immediately in the note field for review before saving.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: '🌡️ Deal Heat Score — Know Which Deals Are About to Close',
+    body: 'Every active lead now shows a "Deal Heat Score" (0–100) in the Info tab. The score is calculated from real engagement signals: email opens, reply recency, call history, portal views, and whether the client clicked the deposit payment link. A score of 70+ means "Scorching" — act now. The score decays over time when there\'s no engagement, so it rewards recency. Four signal labels explain why the score is high, so you know exactly what triggered it. No guessing — just data.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'improved',
+    title: '🔑 Per-User Hunter.io API Keys',
+    body: 'Hunter.io API keys can now be configured per-user in Settings → Hunter.io Integration, instead of requiring a server environment variable. When configured, WrapOS uses Hunter first (25 free searches/month) before spending Apollo credits on email lookups. The email enrichment waterfall now works for every user with their own Hunter key — ideal for multi-user shops.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '⭐ Google Review Automation — One-Click Review Requests After Every Job',
     body: 'Every completed job in the Jobs view now has a "Reviews" tab. Fill in the client\'s email or phone number, optionally paste your Google Business review URL, and hit "Send Review Request." WrapOS sends a personalized branded email or SMS to the client with a single tap to leave a Google review. The landing page is clean, mobile-first, and tracks opens and clicks — so you know who saw it and who actually left a review. No other wrap CRM has this. More Google reviews = more inbound leads.',
   },
