@@ -5,6 +5,31 @@ import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 import SmartFollowupButton from './SmartFollowupButton';
 
+// ── Per-lead Send Timing Chip ─────────────────────────────────────────────────
+function SendTimingChip({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['send-timing', leadId],
+    queryFn: () => api.getLeadSendTiming(leadId),
+    staleTime: 30 * 60_000,
+  });
+  if (!data) return null;
+  const sourceColor = data.source === 'lead' ? '#00d97e' : data.source === 'global' ? '#4d8af5' : 'var(--text-faint)';
+  const sourceLabel = data.source === 'lead' ? 'contact-specific' : data.source === 'global' ? 'your best time' : 'industry default';
+  return (
+    <div title={data.tip} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '4px 10px', borderRadius: 20, marginBottom: 10,
+      border: `1px solid ${sourceColor}40`, background: `${sourceColor}10`,
+      fontSize: 11, cursor: 'default',
+    }}>
+      <span style={{ fontSize: 13 }}>📬</span>
+      <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Best time to send:</span>
+      <span style={{ color: sourceColor, fontWeight: 700 }}>{data.label}</span>
+      <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>({sourceLabel})</span>
+    </div>
+  );
+}
+
 // ── AI Thread Summarizer ──────────────────────────────────────────────────────
 function ThreadSummaryPanel({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
@@ -477,6 +502,9 @@ export default function EmailTab({ lead }: Props) {
 
       {/* AI thread summarizer */}
       {lead.serverId && <ThreadSummaryPanel lead={lead} />}
+
+      {/* Optimal send timing chip */}
+      {lead.serverId && <SendTimingChip leadId={lead.serverId} />}
 
       {/* Email engagement tracking */}
       <EmailEngagementTimeline lead={lead} />

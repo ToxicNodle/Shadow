@@ -1659,4 +1659,26 @@ export const api = {
       '/ai/coach',
       { method: 'POST', body: JSON.stringify({ message, history }) }
     ),
+
+  // ── Per-lead send timing ──
+  getLeadSendTiming: (leadId: number) =>
+    authFetch<{
+      ok: boolean; source: 'lead' | 'global' | 'default';
+      dow: number; hour: number; dayLabel: string; timeLabel: string;
+      opens: number; label: string; tip: string;
+    }>(`/leads/${leadId}/send-timing`),
+
+  // ── Pre-send Proposal Coach ──
+  getProposalCoach: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      priceRange: string | null;
+      avgWonPrice: number | null;
+      similarDeals: number;
+      emailEngagement: { totalOpens: number; lastOpen: string | null };
+      advice: string[];
+      subjectLine: string;
+      risks: string[];
+      confidence: 'high' | 'medium' | 'low';
+    }>(`/ai/proposal-coach?leadId=${leadId}`),
 };

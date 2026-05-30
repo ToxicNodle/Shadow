@@ -478,6 +478,125 @@ function QuoteTimingPanel({ lead }: { lead: Lead }) {
   );
 }
 
+// ── Pre-send Proposal Coach ───────────────────────────────────────────────────
+// Appears before any quote is built. AI analyses won deals in the same
+// category + this contact's email engagement to give pricing and strategy
+// guidance BEFORE the user builds and sends the proposal.
+function ProposalCoachPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [result, setResult] = useState<{
+    priceRange: string | null; avgWonPrice: number | null; similarDeals: number;
+    emailEngagement: { totalOpens: number; lastOpen: string | null };
+    advice: string[]; subjectLine: string; risks: string[]; confidence: 'high' | 'medium' | 'low';
+  } | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () => api.getProposalCoach(lead.serverId!),
+    onSuccess: (d) => { setResult(d); setOpen(true); },
+  });
+
+  if (!lead.serverId) return null;
+  // Only helpful before or during the proposal stage
+  if (['won', 'lost'].includes(lead.status)) return null;
+
+  const confidenceColor = result?.confidence === 'high' ? '#00d97e' : result?.confidence === 'medium' ? '#f59e0b' : '#94a3b8';
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <button
+        onClick={() => open ? setOpen(false) : (result ? setOpen(true) : mut.mutate())}
+        disabled={mut.isPending}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '10px 14px', cursor: 'pointer',
+          transition: 'border-color 0.15s',
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#4d8af5')}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+      >
+        <span style={{ fontSize: 15 }}>🎯</span>
+        <div style={{ flex: 1, textAlign: 'left' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Pre-Send Proposal Coach
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+            Pricing guidance + risks based on your won deals
+          </div>
+        </div>
+        <span style={{
+          fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+          background: 'rgba(77,138,245,0.15)', color: '#4d8af5', letterSpacing: '.05em',
+        }}>AI</span>
+        {mut.isPending && <span className="spinner" style={{ width: 14, height: 14 }} />}
+        {result && <span style={{ color: 'var(--text-faint)', fontSize: 14 }}>{open ? '▲' : '▼'}</span>}
+      </button>
+
+      {open && result && (
+        <div style={{
+          background: 'var(--bg-input)', border: '1px solid var(--border)',
+          borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '12px 14px',
+        }}>
+          {/* Price range + confidence */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            {result.priceRange && (
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 2 }}>
+                  Winning price range ({result.similarDeals} similar deals)
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: '#00d97e', letterSpacing: '-.02em' }}>
+                  {result.priceRange}
+                </div>
+              </div>
+            )}
+            <div style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 700,
+              background: `${confidenceColor}18`, color: confidenceColor, border: `1px solid ${confidenceColor}40`,
+            }}>
+              {result.confidence} confidence
+            </div>
+          </div>
+
+          {/* Recommended subject line */}
+          <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(77,138,245,0.07)', borderRadius: 7, border: '1px solid rgba(77,138,245,0.2)' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: '#4d8af5', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 3 }}>
+              Recommended subject line
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-primary)', fontStyle: 'italic' }}>
+              &ldquo;{result.subjectLine}&rdquo;
+            </div>
+          </div>
+
+          {/* Advice bullets */}
+          <div style={{ marginBottom: 10 }}>
+            {result.advice.map((a, i) => (
+              <div key={i} style={{ display: 'flex', gap: 7, marginBottom: 5, alignItems: 'flex-start' }}>
+                <span style={{ color: '#00d97e', fontSize: 11, flexShrink: 0, marginTop: 1 }}>✓</span>
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{a}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Risks */}
+          {result.risks.length > 0 && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 4 }}>
+                Watch for
+              </div>
+              {result.risks.map((r, i) => (
+                <div key={i} style={{ display: 'flex', gap: 7, marginBottom: 4 }}>
+                  <span style={{ color: '#f59e0b', fontSize: 11, flexShrink: 0 }}>⚠</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>{r}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProposalDecayMeter({ lead }: { lead: Lead }) {
   if (lead.status !== 'proposal') return null;
 
@@ -631,6 +750,8 @@ export default function QuotesTab({ lead }: Props) {
         </div>
       )}
 
+      {/* Pre-send coach — fires before building the quote */}
+      <ProposalCoachPanel lead={lead} />
       {/* Proposal decay meter — shown when status is 'proposal' */}
       <ProposalDecayMeter lead={lead} />
       {/* Quote Timing Intelligence — actual sent_at + category benchmarks + AI draft */}

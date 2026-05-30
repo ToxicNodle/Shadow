@@ -9,6 +9,24 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '🎯 Pre-Send Proposal Coach — AI Guidance Before You Click Send',
+    body: 'The Quotes tab now has a "Pre-Send Proposal Coach" panel that fires before you build your proposal. Click it and Claude analyzes your won deals in the same category + this contact\'s email engagement history to give you: your historical winning price range (with deal count), a recommended subject line crafted for this specific lead, 3 specific strategy bullets (not generic advice — based on actual numbers), and 2 watch-out risk factors. The goal is to walk into every proposal with the advantage of hindsight from your most similar won deals.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: '📬 Smart Send Timing — "Best Time to Reach This Contact"',
+    body: 'The Email tab now shows a "Best time to send" chip above the compose area. For contacts you\'ve already emailed, it analyzes when they actually opened your emails (time of day, day of week) and shows their personal pattern — e.g., "Tue 9am (contact-specific)". For new contacts, it falls back to your overall best-performing send time across all leads. For brand-new users, it defaults to industry-standard B2B timing. The chip turns green when data is contact-specific, blue when it\'s from your history, gray for the default. Highly personalized send timing like this is something no other wrap CRM comes close to offering.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'improved',
+    title: '⚡ 69% Faster Initial Load — Code-Split Bundle',
+    body: 'The app\'s initial download dropped from 1.2MB to 376KB (gzip: 298KB → 87KB) by lazy-loading all 8 view components and 17 modals separately. Mission, Analytics, Pipeline, Jobs, Content, Bids, Discover, and Gov views now load on demand — only the leads list and core shell are bundled upfront. First paint is dramatically faster, especially on mobile and slower connections. Views are cached after first visit so subsequent navigation is instant.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '🤖 AI Revenue Coach — Your Personal Sales Coach Knows Your Pipeline',
     body: 'A conversational AI coach now lives inside WrapOS, accessible from the 🤖 button in the bottom-right corner or via ⌘K → "AI Revenue Coach". Unlike generic AI tools, this coach has live access to your actual CRM data: pipeline stage breakdown, estimated revenue by stage, hot prospects who opened emails in the last 48 hours, overdue follow-ups, and recent activity across your leads. Ask it "What should I do today?", "Which leads are about to go cold?", "Why am I losing deals?", or anything else — and get specific, data-driven coaching referencing your real company names and numbers. Powered by Claude with full conversation history.',
   },

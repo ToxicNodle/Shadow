@@ -10112,6 +10112,198 @@ app.post('/leads/:id/check-news', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /leads/:id/send-timing — analyse this lead's email open history to
+// recommend the best day + hour to send the next email. Falls back to the
+// user's overall best send time when per-lead data is thin.
+app.get('/leads/:id/send-timing', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  try {
+    // Per-lead opens: each row in email_tracking represents one tracked email.
+    // open_last_at records the most recent open time for that message.
+    const [perLeadR, globalR] = await Promise.all([
+      pool.query(`
+        SELECT EXTRACT(DOW FROM open_last_at)::INT AS dow,
+               EXTRACT(HOUR FROM open_last_at)::INT AS hour,
+               SUM(open_count) AS opens
+        FROM email_tracking
+        WHERE lead_id=$1 AND user_id=$2 AND open_last_at IS NOT NULL
+        GROUP BY 1, 2
+        ORDER BY opens DESC
+        LIMIT 1
+      `, [leadId, uid]),
+      pool.query(`
+        SELECT EXTRACT(DOW FROM open_last_at)::INT AS dow,
+               EXTRACT(HOUR FROM open_last_at)::INT AS hour,
+               SUM(open_count) AS opens
+        FROM email_tracking
+        WHERE user_id=$1 AND open_last_at IS NOT NULL
+        GROUP BY 1, 2
+        ORDER BY opens DESC
+        LIMIT 1
+      `, [uid]),
+    ]);
+
+    const formatHour = (h) => {
+      if (h === 0) return '12am';
+      if (h < 12) return `${h}am`;
+      if (h === 12) return '12pm';
+      return `${h - 12}pm`;
+    };
+
+    if (perLeadR.rows.length) {
+      const r = perLeadR.rows[0];
+      return res.json({
+        ok: true, source: 'lead',
+        dow: r.dow, hour: r.hour,
+        dayLabel: DAYS[r.dow],
+        timeLabel: formatHour(r.hour),
+        opens: parseInt(r.opens),
+        label: `${DAYS[r.dow]} ${formatHour(r.hour)}`,
+        tip: 'Based on this contact\'s actual open history',
+      });
+    }
+
+    if (globalR.rows.length) {
+      const r = globalR.rows[0];
+      return res.json({
+        ok: true, source: 'global',
+        dow: r.dow, hour: r.hour,
+        dayLabel: DAYS[r.dow],
+        timeLabel: formatHour(r.hour),
+        opens: parseInt(r.opens),
+        label: `${DAYS[r.dow]} ${formatHour(r.hour)}`,
+        tip: 'Based on your best-performing send times across all leads',
+      });
+    }
+
+    // Industry default: Tue/Thu 9–10am is the gold standard for B2B
+    res.json({
+      ok: true, source: 'default',
+      dow: 2, hour: 9, dayLabel: 'Tue', timeLabel: '9am',
+      opens: 0, label: 'Tue 9am',
+      tip: 'Industry default — no open history yet. Send a few tracked emails to personalise.',
+    });
+  } catch (e) {
+    console.error('[send-timing]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /ai/proposal-coach?leadId=X — pre-send proposal intelligence.
+// Analyses won deals in the same category/size range and returns
+// pricing guidance, risk factors, and a recommended subject line
+// so the user can optimise their proposal BEFORE clicking send.
+app.get('/ai/proposal-coach', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const uid = String(req.user.id);
+  const leadId = Number(req.query.leadId);
+  if (!leadId) return res.status(400).json({ error: 'leadId required' });
+
+  try {
+    const [leadR, wonDealsR, emailR] = await Promise.all([
+      pool.query(`SELECT company, category, fleet_size, city, state, status, contact_name FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]),
+      pool.query(`
+        SELECT l.company, l.category, l.fleet_size, q.total, q.status AS q_status,
+               l.status AS l_status, q.created_at
+        FROM shop_quotes q
+        JOIN leads l ON l.id=q.lead_id AND l.user_id=q.user_id
+        WHERE q.user_id=$1
+          AND (l.status='won' OR q.status='accepted')
+          AND q.total > 0
+        ORDER BY q.created_at DESC
+        LIMIT 12
+      `, [uid]),
+      pool.query(`
+        SELECT send_count, open_count, open_last_at, click_count
+        FROM email_tracking WHERE lead_id=$1 AND user_id=$2
+        ORDER BY created_at DESC LIMIT 5
+      `, [leadId, uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const wonDeals = wonDealsR.rows;
+    const emails = emailR.rows;
+
+    const totalOpens = emails.reduce((s, e) => s + (e.open_count || 0), 0);
+    const lastOpen = emails.find(e => e.open_last_at)?.open_last_at;
+
+    // Similar won deals (same category, or all if not enough)
+    const similar = wonDeals.filter(d => d.category === lead.category);
+    const dealsForContext = similar.length >= 2 ? similar : wonDeals;
+    const avgWonPrice = dealsForContext.length
+      ? Math.round(dealsForContext.reduce((s, d) => s + parseFloat(d.total), 0) / dealsForContext.length)
+      : null;
+    const wonPrices = dealsForContext.map(d => parseFloat(d.total)).sort((a, b) => a - b);
+    const priceRange = wonPrices.length >= 2
+      ? `$${wonPrices[0].toLocaleString()}–$${wonPrices[wonPrices.length - 1].toLocaleString()}`
+      : avgWonPrice ? `~$${avgWonPrice.toLocaleString()}` : null;
+
+    if (!apiKey) {
+      // Fallback without AI
+      return res.json({
+        ok: true, fallback: true,
+        priceRange,
+        avgWonPrice,
+        similarDeals: dealsForContext.length,
+        emailEngagement: { totalOpens, lastOpen },
+        advice: [
+          priceRange ? `Your won deals in this category range ${priceRange} — price within this window to maximize close probability.` : 'Build more quote history to unlock pricing intelligence.',
+          totalOpens > 0 ? `This contact has opened ${totalOpens} of your emails — they\'re engaged. A personal, specific proposal will outperform a template.` : 'No email opens yet — consider a short email before sending the full proposal to confirm interest.',
+          'Keep the subject line specific: include their company name and fleet size.',
+        ],
+        subjectLine: `${lead.company} — ${lead.fleet_size ? lead.fleet_size + '-vehicle wrap proposal' : 'Custom wrap proposal'} from [Your Shop]`,
+        risks: ['Generic pricing without tiering for fleet size', 'No follow-up plan attached to the proposal'],
+      });
+    }
+
+    const context = `
+Lead: ${lead.company} (${lead.category || 'wrap'}, ${lead.fleet_size ? lead.fleet_size + ' vehicles' : 'fleet size unknown'}, ${lead.city || ''} ${lead.state || ''})
+Email engagement: ${totalOpens} opens, last opened ${lastOpen ? new Date(lastOpen).toLocaleDateString() : 'never'}
+Similar won deals (${dealsForContext.length}): ${dealsForContext.slice(0, 5).map(d => `${d.company} $${parseFloat(d.total).toLocaleString()}`).join(', ')}
+Your average won price in this category: ${avgWonPrice ? '$' + avgWonPrice.toLocaleString() : 'no data'}
+Price range of won deals: ${priceRange || 'no data'}
+    `.trim();
+
+    const { Anthropic } = require('@anthropic-ai/sdk');
+    const anth = new Anthropic({ apiKey });
+    const resp = await anth.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      system: `You are a proposal coach for a vehicle wrap shop. Given data about a lead and the shop's won deals, return a JSON object with these keys:
+- advice: array of 3 specific, actionable bullet points (strings)
+- subjectLine: one recommended email subject line
+- risks: array of 2 specific risks to watch for with this deal
+- confidence: "high" | "medium" | "low" based on data richness
+Keep advice specific to the actual numbers. No generic platitudes.`,
+      messages: [{ role: 'user', content: context }],
+    });
+
+    let parsed;
+    try {
+      const txt = resp.content[0].text;
+      const jsonMatch = txt.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    } catch (_) { parsed = null; }
+
+    res.json({
+      ok: true, fallback: !parsed,
+      priceRange, avgWonPrice, similarDeals: dealsForContext.length,
+      emailEngagement: { totalOpens, lastOpen },
+      advice: parsed?.advice ?? ['Price within your historical win range', 'Reference their specific fleet type in the subject line', 'Include a follow-up date in the proposal'],
+      subjectLine: parsed?.subjectLine ?? `${lead.company} — Vehicle wrap proposal`,
+      risks: parsed?.risks ?? ['Price anchoring too high', 'Delayed follow-up after sending'],
+      confidence: parsed?.confidence ?? 'medium',
+    });
+  } catch (e) {
+    console.error('[proposal-coach]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /leads/:id/create-location — create a new lead from a suggested location
 app.post('/leads/:id/create-location', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
