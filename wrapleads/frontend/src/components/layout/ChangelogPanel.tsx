@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '🧾 Invoice Generator — Professional Invoices in One Click',
+    body: 'Every logged job now has an "Invoice" tab. Click "View Invoice →" to open a clean, branded HTML invoice in a new tab — includes job summary, line items, balance due, payment status badge, and a direct payment link (if configured in Settings). Or email the invoice straight to the client with one click: fill in their email address and hit Send. WrapOS marks the job as "Invoice Sent" automatically and logs the timestamp. Print to PDF from the browser. No accounting software needed.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '💰 Deposit Collection — Clients Pay Directly from Their Portal',
     body: 'When a client approves a quote in their client portal, WrapOS now shows a "Pay Deposit Now" button if you\'ve configured a payment link in Settings → Deposit Collection. Paste your Stripe Payment Link URL once, and it appears automatically on every approval — showing the calculated 50% deposit amount. WrapOS tracks when clients click it and sends you a notification. The deposit button is powered by your own Stripe account, so funds go directly to you. Setup is 30 seconds: Settings → Deposit Collection → paste URL → save.',
   },

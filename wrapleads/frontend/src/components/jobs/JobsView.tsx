@@ -638,12 +638,100 @@ interface JobModalProps {
   onClose: () => void;
 }
 
+// ── Invoice Panel ─────────────────────────────────────────────────────────────
+
+function InvoicePanel({ job }: { job: InstalledJob }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const [sendEmail, setSendEmail] = useState('');
+  const [sendName, setSendName] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const token = localStorage.getItem('wl_token') ?? '';
+  const invoiceUrl = `/jobs/${job.id}/invoice?token=${encodeURIComponent(token)}`;
+
+  async function doSend() {
+    if (!sendEmail.trim()) return;
+    setSending(true);
+    try {
+      await api.sendInvoice(job.id, { toEmail: sendEmail.trim(), toName: sendName.trim() || undefined });
+      showToast('Invoice sent!', 'success');
+      setSendEmail('');
+      setSendName('');
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Failed to send', 'error');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const revenue = Number(job.job_revenue) || 0;
+  const amountPaid = Number(job.amount_paid) || 0;
+  const balance = revenue - amountPaid;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-elev-2)', borderRadius: 8, padding: '12px 14px' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Invoice WOS-{String(job.id).padStart(5, '0')}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+            {revenue > 0 ? `$${revenue.toLocaleString()} total · $${Math.max(0, balance).toLocaleString()} balance due` : 'No revenue logged'}
+          </div>
+        </div>
+        <a
+          href={invoiceUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="btn btn-primary"
+          style={{ fontSize: 12, textDecoration: 'none' }}
+        >
+          View Invoice →
+        </a>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 10 }}>
+          Email Invoice to Client
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <input
+            className="input"
+            type="email"
+            placeholder="client@company.com"
+            value={sendEmail}
+            onChange={(e) => setSendEmail(e.target.value)}
+            style={{ fontSize: 13 }}
+          />
+          <input
+            className="input"
+            type="text"
+            placeholder="Contact name (optional)"
+            value={sendName}
+            onChange={(e) => setSendName(e.target.value)}
+            style={{ fontSize: 13 }}
+          />
+          <button
+            className="btn btn-primary"
+            style={{ alignSelf: 'flex-start', fontSize: 12 }}
+            disabled={!sendEmail.trim() || sending}
+            onClick={doSend}
+          >
+            {sending ? 'Sending…' : 'Send Invoice'}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5 }}>
+          Client receives a branded email with job summary, balance due, and a payment link (if configured in Settings → Deposit Collection).
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function JobModal({ job, onClose }: JobModalProps) {
   const isNew = job === 'new';
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -713,6 +801,7 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'social' ? 'active' : ''}`} onClick={() => setActiveTab('social')}>Social Posts</button>
             <button className={`jobs-tab ${activeTab === 'case-study' ? 'active' : ''}`} onClick={() => setActiveTab('case-study')}>Case Study</button>
             <button className={`jobs-tab ${activeTab === 'review' ? 'active' : ''}`} onClick={() => setActiveTab('review')}>⭐ Reviews</button>
+            <button className={`jobs-tab ${activeTab === 'invoice' ? 'active' : ''}`} onClick={() => setActiveTab('invoice')}>💳 Invoice</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -724,6 +813,8 @@ function JobModal({ job, onClose }: JobModalProps) {
           <CaseStudyPanel job={job as InstalledJob} />
         ) : (!isNew && activeTab === 'review') ? (
           <ReviewRequestPanel job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'invoice') ? (
+          <InvoicePanel job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">

@@ -1797,4 +1797,11 @@ export const api = {
     authFetch<{ ok: boolean; posts: { instagram: string; linkedin: string; facebook: string }; jobId: number; company: string }>(
       `/jobs/${jobId}/social-post`, { method: 'POST' }
     ),
+
+  // ── Invoice ──
+  getInvoiceUrl: (jobId: number) => `/jobs/${jobId}/invoice`,
+  sendInvoice: (jobId: number, opts: { toEmail: string; toName?: string }) =>
+    authFetch<{ ok: boolean; invoiceNum: string }>(
+      `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }
+    ),
 };

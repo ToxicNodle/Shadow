@@ -7450,6 +7450,345 @@ app.get('/jobs/:id/case-study', authMiddleware, async (req, res) => {
   res.json({ caseStudy: rows[0] });
 });
 
+// GET /jobs/:id/invoice — HTML invoice (browser-printable to PDF)
+// Accepts JWT as ?token= query param so the link can be opened in a new browser tab.
+function invoiceAuthMiddleware(req, res, next) {
+  const header = req.headers.authorization || '';
+  const qToken = req.query.token;
+  const raw = header.startsWith('Bearer ') ? header.slice(7) : (qToken || '');
+  if (!raw) return res.status(401).send('<h2>Unauthorized</h2>');
+  try {
+    req.user = jwt.verify(raw, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).send('<h2>Invalid or expired token — please log in again.</h2>');
+  }
+}
+
+app.get('/jobs/:id/invoice', invoiceAuthMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const jobId = parseInt(req.params.id, 10);
+
+    const jobR = await pool.query(
+      `SELECT j.*, u.email AS user_email, u.company_name AS user_company, u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobR.rows.length) return res.status(404).send('<h2>Not found</h2>');
+
+    const job = jobR.rows[0];
+    const s = job.settings_json || {};
+    const shopName = s.companyName || job.user_company || 'Your Shop';
+    const shopEmail = s.senderEmail || job.user_email || '';
+    const shopPhone = s.senderPhone || '';
+    const shopCity = s.city || '';
+    const shopState = s.state || '';
+    const accentColor = s.accentColor || '#f4551c';
+    const paymentLink = s.depositPaymentLink || '';
+
+    const revenue = Number(job.job_revenue) || 0;
+    const materialCost = Number(job.material_cost) || 0;
+    const laborHours = Number(job.labor_hours) || 0;
+    const amountPaid = Number(job.amount_paid) || 0;
+    const balance = revenue - amountPaid;
+    const payStatus = job.payment_status || 'unpaid';
+
+    const VEHICLE_LABELS = {
+      cargo_van: 'Cargo Van', box_truck: 'Box Truck', sprinter: 'Sprinter Van',
+      pickup: 'Pickup Truck', semi_tractor: 'Semi Tractor', semi_trailer: 'Semi Trailer',
+      '53ft_trailer': '53ft Trailer', flatbed: 'Flatbed Truck', bus: 'Bus',
+      rv: 'RV / Motorhome', suv: 'SUV', passenger_car: 'Passenger Car',
+      food_truck: 'Food Truck', boat: 'Boat', trailer: 'Trailer', other: 'Other Vehicle',
+    };
+    const vehicleLabel = VEHICLE_LABELS[job.vehicle_type] || job.vehicle_type;
+
+    const CAT_LABELS = {
+      fleet: 'Fleet Graphics', design: 'Interior Design', construction: 'Construction',
+      dinoc: 'DI-NOC Architectural Film', reatec: 'Rea Tec Film', colorchange: 'Color Change',
+      wallgraphics: 'Wall Graphics', gc_referral: 'GC Referral', racing: 'Motorsport',
+    };
+    const catLabel = CAT_LABELS[job.wrap_category] || job.wrap_category;
+
+    const STATUS_BADGE = {
+      unpaid: { label: 'UNPAID', color: '#ef4444', bg: '#fee2e2' },
+      deposit_paid: { label: 'DEPOSIT PAID', color: '#d97706', bg: '#fef3c7' },
+      invoice_sent: { label: 'INVOICE SENT', color: '#3b82f6', bg: '#eff6ff' },
+      paid: { label: 'PAID IN FULL', color: '#16a34a', bg: '#f0fdf4' },
+      overdue: { label: 'OVERDUE', color: '#dc2626', bg: '#fef2f2' },
+    };
+    const badge = STATUS_BADGE[payStatus] || STATUS_BADGE.unpaid;
+
+    const invoiceNum = `WOS-${String(job.id).padStart(5, '0')}`;
+    const installDate = job.install_date ? new Date(job.install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A';
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice ${invoiceNum} — ${job.company}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #1a1a1a; background: #fff; }
+  .page { max-width: 800px; margin: 0 auto; padding: 48px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
+  .shop-name { font-size: 22px; font-weight: 800; color: ${accentColor}; letter-spacing: -0.5px; }
+  .shop-meta { font-size: 12px; color: #666; line-height: 1.7; margin-top: 4px; }
+  .invoice-meta { text-align: right; }
+  .invoice-num { font-size: 18px; font-weight: 700; color: #111; }
+  .invoice-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #999; margin-bottom: 2px; }
+  .invoice-date { font-size: 12px; color: #555; margin-top: 4px; }
+  .status-badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 800; letter-spacing: 0.1em; margin-top: 8px; background: ${badge.bg}; color: ${badge.color}; }
+  .divider { border: none; border-top: 2px solid ${accentColor}; margin: 0 0 32px; opacity: 0.15; }
+  .bill-section { display: flex; justify-content: space-between; margin-bottom: 36px; }
+  .bill-block h3 { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #999; margin-bottom: 6px; }
+  .bill-block .name { font-size: 15px; font-weight: 700; color: #111; margin-bottom: 3px; }
+  .bill-block .sub { font-size: 12px; color: #666; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
+  thead th { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #999; padding: 0 0 8px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+  thead th:last-child { text-align: right; }
+  tbody td { padding: 12px 0; border-bottom: 1px solid #f3f4f6; font-size: 13px; vertical-align: top; }
+  tbody td:last-child { text-align: right; font-weight: 600; }
+  .item-name { font-weight: 600; color: #111; }
+  .item-desc { font-size: 11px; color: #888; margin-top: 2px; }
+  .totals { width: 260px; margin-left: auto; }
+  .totals-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+  .totals-row.subtotal { color: #666; }
+  .totals-row.paid { color: #16a34a; }
+  .totals-divider { border-top: 1px solid #e5e7eb; margin: 6px 0; }
+  .totals-row.balance { font-size: 16px; font-weight: 800; color: #111; }
+  .totals-row.balance-zero { color: #16a34a; }
+  .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: flex-start; }
+  .footer-note { font-size: 11px; color: #888; line-height: 1.6; max-width: 320px; }
+  .pay-btn { display: inline-block; padding: 10px 20px; background: ${accentColor}; color: #fff; font-weight: 700; font-size: 13px; border-radius: 6px; text-decoration: none; }
+  .powered { font-size: 10px; color: #ccc; margin-top: 32px; text-align: center; }
+  @media print {
+    body { background: #fff; }
+    .page { padding: 24px; }
+    .pay-btn { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div>
+      <div class="shop-name">${shopName}</div>
+      <div class="shop-meta">
+        ${shopCity && shopState ? `${shopCity}, ${shopState}<br>` : ''}
+        ${shopPhone ? `${shopPhone}<br>` : ''}
+        ${shopEmail ? shopEmail : ''}
+      </div>
+    </div>
+    <div class="invoice-meta">
+      <div class="invoice-label">Invoice</div>
+      <div class="invoice-num">${invoiceNum}</div>
+      <div class="invoice-date">Date: ${today}</div>
+      <div class="invoice-date">Install: ${installDate}</div>
+      <div><span class="status-badge">${badge.label}</span></div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <div class="bill-section">
+    <div class="bill-block">
+      <h3>Bill To</h3>
+      <div class="name">${job.company}</div>
+      ${job.notes ? `<div class="sub">${job.notes.slice(0, 120).replace(/</g, '&lt;')}</div>` : ''}
+    </div>
+    <div class="bill-block" style="text-align:right">
+      <h3>Service Details</h3>
+      <div class="sub">${catLabel}</div>
+      <div class="sub">${job.vehicle_count} × ${vehicleLabel}</div>
+      ${job.material ? `<div class="sub">Material: ${job.material.replace(/</g, '&lt;')}</div>` : ''}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:55%">Description</th>
+        <th>Qty</th>
+        <th style="text-align:right">Unit Price</th>
+        <th style="text-align:right">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${revenue > 0 ? `
+      <tr>
+        <td>
+          <div class="item-name">${catLabel} — ${vehicleLabel}</div>
+          <div class="item-desc">${job.vehicle_count} vehicle${job.vehicle_count !== 1 ? 's' : ''} · installed ${installDate}</div>
+        </td>
+        <td>${job.vehicle_count}</td>
+        <td style="text-align:right">$${(revenue / job.vehicle_count).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td>$${revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+      </tr>` : `
+      <tr><td colspan="4" style="padding:16px 0;color:#888;font-style:italic">No pricing added — edit the job to add revenue.</td></tr>
+      `}
+      ${laborHours > 0 ? `
+      <tr>
+        <td>
+          <div class="item-name">Labor</div>
+          <div class="item-desc">${laborHours} hours at project rate</div>
+        </td>
+        <td>${laborHours}</td>
+        <td style="text-align:right">—</td>
+        <td style="text-align:right;color:#888">included</td>
+      </tr>` : ''}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    ${materialCost > 0 ? `
+    <div class="totals-row subtotal">
+      <span>Materials</span>
+      <span>$${materialCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+    <div class="totals-row subtotal">
+      <span>Gross Profit</span>
+      <span>$${(revenue - materialCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>` : ''}
+    <div class="totals-row" style="font-weight:700;color:#111">
+      <span>Total</span>
+      <span>$${revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+    ${amountPaid > 0 ? `
+    <div class="totals-divider"></div>
+    <div class="totals-row paid">
+      <span>Amount Received</span>
+      <span>−$${amountPaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>` : ''}
+    <div class="totals-divider"></div>
+    <div class="totals-row balance ${balance <= 0 ? 'balance-zero' : ''}">
+      <span>Balance Due</span>
+      <span>$${Math.max(0, balance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-note">
+      Thank you for your business!<br>
+      ${shopPhone ? `Questions? Call us at ${shopPhone}.` : ''}
+      ${shopEmail ? ` Email: ${shopEmail}` : ''}
+    </div>
+    ${paymentLink && balance > 0 ? `<a href="${paymentLink}" class="pay-btn" target="_blank">Pay Online →</a>` : ''}
+  </div>
+
+  <div class="powered">Generated by WrapOS · ${today}</div>
+
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `inline; filename="invoice-${invoiceNum}.html"`);
+    res.send(html);
+  } catch (e) {
+    console.error('[invoice]', e.message);
+    res.status(500).send('<h2>Error generating invoice</h2>');
+  }
+});
+
+// POST /jobs/:id/send-invoice — email the invoice to the client contact
+app.post('/jobs/:id/send-invoice', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const jobId = parseInt(req.params.id, 10);
+    const { toEmail, toName } = req.body;
+
+    if (!toEmail) return res.status(400).json({ error: 'toEmail required' });
+
+    const jobR = await pool.query(
+      `SELECT j.*, u.email AS user_email, u.company_name AS user_company, u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobR.rows.length) return res.status(404).json({ error: 'not found' });
+
+    const job = jobR.rows[0];
+    const s = job.settings_json || {};
+    const shopName = s.companyName || job.user_company || 'Your Shop';
+    const shopEmail = s.senderEmail || job.user_email || '';
+    const accentColor = s.accentColor || '#f4551c';
+    const revenue = Number(job.job_revenue) || 0;
+    const amountPaid = Number(job.amount_paid) || 0;
+    const balance = revenue - amountPaid;
+    const invoiceNum = `WOS-${String(job.id).padStart(5, '0')}`;
+    const paymentLink = s.depositPaymentLink || '';
+
+    const subject = `Invoice ${invoiceNum} from ${shopName}`;
+    const invoiceUrl = `${process.env.APP_URL || 'https://wrapos.up.railway.app'}/api/jobs/${jobId}/invoice`;
+
+    const htmlBody = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff">
+  <div style="font-size:20px;font-weight:800;color:${accentColor};margin-bottom:6px">${shopName}</div>
+  <div style="font-size:13px;color:#555;margin-bottom:24px">Invoice ${invoiceNum}</div>
+  <p style="font-size:14px;color:#333;line-height:1.6">
+    Hi ${toName || 'there'},<br><br>
+    Please find your invoice for the ${job.wrap_category} wrap project completed for <strong>${job.company}</strong>.
+  </p>
+  <div style="margin:24px 0;background:#f9fafb;border-radius:8px;padding:20px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Project</span>
+      <span style="font-weight:600;font-size:13px">${job.vehicle_count} × ${job.vehicle_type.replace(/_/g,' ')}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Total</span>
+      <span style="font-weight:700;font-size:16px">$${revenue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+    ${amountPaid > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Paid</span>
+      <span style="color:#16a34a;font-weight:600;font-size:13px">−$${amountPaid.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>` : ''}
+    <div style="border-top:1px solid #e5e7eb;margin:10px 0"></div>
+    <div style="display:flex;justify-content:space-between">
+      <span style="color:#111;font-weight:700;font-size:14px">Balance Due</span>
+      <span style="color:${balance > 0 ? '#ef4444' : '#16a34a'};font-weight:800;font-size:16px">$${Math.max(0,balance).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+  </div>
+  ${paymentLink && balance > 0 ? `
+  <a href="${paymentLink}" style="display:block;text-align:center;background:${accentColor};color:#fff;font-weight:700;font-size:14px;padding:14px 24px;border-radius:8px;text-decoration:none;margin-bottom:16px">
+    Pay Now →
+  </a>` : ''}
+  <p style="font-size:12px;color:#888;margin-top:16px">
+    Questions? Reply to this email or contact us at ${shopEmail}.
+  </p>
+  <div style="margin-top:24px;font-size:11px;color:#ccc;text-align:center">Sent via WrapOS</div>
+</div>`;
+
+    const { sendEmail } = require('./lib/email');
+    await sendEmail({
+      to: toEmail,
+      from: shopEmail || `noreply@${process.env.EMAIL_FROM_DOMAIN || 'wrapos.io'}`,
+      subject,
+      html: htmlBody,
+      replyTo: shopEmail,
+    });
+
+    // Mark invoice_sent if not yet paid
+    if (job.payment_status !== 'paid') {
+      await pool.query(
+        `UPDATE installed_jobs SET payment_status='invoice_sent', invoice_sent_at=NOW() WHERE id=$1 AND user_id=$2`,
+        [jobId, uid]
+      );
+    }
+
+    res.json({ ok: true, invoiceNum });
+  } catch (e) {
+    console.error('[send-invoice]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /case-studies/:token — public SEO page for a completed job case study
 // Every job that has AI-generated case study text gets a shareable public URL.
 // This turns each completed wrap project into an organic SEO landing page.
