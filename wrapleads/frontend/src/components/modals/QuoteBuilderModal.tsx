@@ -386,10 +386,47 @@ export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, q
     quote?.line_items?.length ? quote.line_items : DEFAULT_LINE_ITEMS
   );
   const [saving, setSaving] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+
+  const { data: templatesData, refetch: refetchTemplates } = useQuery({
+    queryKey: ['quote-templates'],
+    queryFn: () => api.getQuoteTemplates(),
+    staleTime: 5 * 60_000,
+  });
+  const userTemplates = templatesData?.templates ?? [];
 
   function loadTemplate(tpl: QuoteTemplate) {
     setLineItems(tpl.items.map((item) => ({ ...item, id: crypto.randomUUID() })));
     if (!isEdit) setTitle(`${tpl.name} Wrap Quote`);
+  }
+
+  async function saveAsTemplate() {
+    const name = newTemplateName.trim();
+    if (!name || lineItems.length === 0) return;
+    setSavingTemplate(true);
+    try {
+      await api.saveQuoteTemplate(name, lineItems.map(({ description, qty, unit, unitPrice, total }) => ({ description, qty, unit, unitPrice, total })));
+      await refetchTemplates();
+      setNewTemplateName('');
+      setShowSaveTemplate(false);
+      showToast(`Template "${name}" saved`);
+    } catch {
+      showToast('Could not save template', 'error');
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function deleteUserTemplate(id: number, name: string) {
+    try {
+      await api.deleteQuoteTemplate(id);
+      await refetchTemplates();
+      showToast(`Template "${name}" deleted`);
+    } catch {
+      showToast('Could not delete template', 'error');
+    }
   }
 
   function applySqft(sqft: number, vehicleLabel: string) {
@@ -559,6 +596,54 @@ export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, q
                 {tpl.name}
               </button>
             ))}
+            {userTemplates.map((tpl) => (
+              <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <button
+                  onClick={() => loadTemplate({ name: tpl.name, items: tpl.items as QuoteLineItem[] })}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: '5px 0 0 5px',
+                    background: '#4d8af508', border: '1px solid #4d8af533', borderRight: 'none',
+                    color: '#4d8af5', cursor: 'pointer',
+                  }}
+                  title={`Load saved template: ${tpl.name}`}
+                >
+                  ★ {tpl.name}
+                </button>
+                <button
+                  onClick={() => deleteUserTemplate(tpl.id, tpl.name)}
+                  style={{
+                    fontSize: 10, padding: '3px 6px', borderRadius: '0 5px 5px 0',
+                    background: '#4d8af508', border: '1px solid #4d8af533',
+                    color: '#6b7280', cursor: 'pointer',
+                  }}
+                  title="Delete this saved template"
+                >✕</button>
+              </div>
+            ))}
+            {!showSaveTemplate ? (
+              <button
+                onClick={() => setShowSaveTemplate(true)}
+                style={{ fontSize: 11, padding: '3px 9px', borderRadius: 5, border: '1px dashed var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                title="Save current line items as a reusable template"
+              >
+                + Save as Template
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <input
+                  autoFocus
+                  placeholder="Template name…"
+                  value={newTemplateName}
+                  onChange={(e) => setNewTemplateName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveAsTemplate(); if (e.key === 'Escape') setShowSaveTemplate(false); }}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--accent)', background: 'var(--bg-elev-2)', color: 'var(--text)', outline: 'none', width: 140 }}
+                />
+                <button onClick={saveAsTemplate} disabled={savingTemplate || !newTemplateName.trim()} style={{ fontSize: 11, padding: '3px 9px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                  {savingTemplate ? '…' : 'Save'}
+                </button>
+                <button onClick={() => setShowSaveTemplate(false)} style={{ fontSize: 11, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>✕</button>
+              </div>
+            )}
           </div>
 
           {/* Pricing benchmarks from job history */}

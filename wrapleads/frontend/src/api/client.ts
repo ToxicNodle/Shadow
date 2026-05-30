@@ -1763,4 +1763,17 @@ export const api = {
       avgMonthly: number;
       bestMonth: string;
     }>('/analytics/revenue-monthly'),
+
+  // ── Quote Line Item Templates ──
+  getQuoteTemplates: () =>
+    authFetch<{
+      ok: boolean;
+      templates: Array<{ id: number; name: string; items: Array<{ description: string; qty: number; unit: string; unitPrice: number; total: number }>; created_at: string }>;
+    }>('/quotes/templates'),
+  saveQuoteTemplate: (name: string, items: Array<{ description: string; qty: number; unit: string; unitPrice: number; total: number }>) =>
+    authFetch<{ ok: boolean; template: { id: number; name: string; items: unknown[]; created_at: string } }>(
+      '/quotes/templates', { method: 'POST', body: JSON.stringify({ name, items }) }
+    ),
+  deleteQuoteTemplate: (id: number) =>
+    authFetch<{ ok: boolean }>(`/quotes/templates/${id}`, { method: 'DELETE' }),
 };

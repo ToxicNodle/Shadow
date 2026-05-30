@@ -657,6 +657,22 @@ async function migrateDb() {
     console.warn('[migrate] Could not create shop_quotes table:', e.message);
   }
 
+  // User-defined quote line item templates
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS quote_templates (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        items      JSONB NOT NULL DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_qt_user ON quote_templates(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create quote_templates table:', e.message);
+  }
+
   // Case studies — auto-generated from completed jobs
   try {
     await pool.query(`
@@ -13168,6 +13184,41 @@ app.delete('/quotes/:id', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
     await pool.query('DELETE FROM shop_quotes WHERE id=$1 AND user_id=$2', [parseInt(req.params.id), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Quote Line Item Templates ──────────────────────────────────────────────
+app.get('/quotes/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, items, created_at FROM quote_templates WHERE user_id=$1 ORDER BY created_at DESC',
+      [uid]
+    );
+    res.json({ ok: true, templates: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/quotes/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { name, items } = req.body || {};
+  if (!name?.trim() || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'name and items[] required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO quote_templates (user_id, name, items) VALUES ($1,$2,$3::jsonb) RETURNING id, name, items, created_at',
+      [uid, name.trim(), JSON.stringify(items)]
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/quotes/templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query('DELETE FROM quote_templates WHERE id=$1 AND user_id=$2', [parseInt(req.params.id), uid]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
