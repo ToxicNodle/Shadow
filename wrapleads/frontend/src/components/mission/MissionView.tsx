@@ -21,6 +21,7 @@ import ReferralEngineCard from './ReferralEngineCard';
 import DailyBriefingCard from './DailyBriefingCard';
 import ObjectionCounterCard from './ObjectionCounterCard';
 import SignalLeadsCard from './SignalLeadsCard';
+import DarkProposalsCard from './DarkProposalsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -2104,6 +2105,9 @@ export default function MissionView() {
 
       {/* ── Perfect Timing — email opens in the last 2 hours ── */}
       <PerfectTimingCard />
+
+      {/* ── Proposals Gone Dark — sent 3+ days ago, no response ── */}
+      <DarkProposalsCard />
 
       {/* ── Proposal Heat Score — ranked by recency × view count ── */}
       <ProposalHeatCard />

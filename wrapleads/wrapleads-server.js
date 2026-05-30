@@ -12487,6 +12487,103 @@ app.delete('/proposals/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /proposals/needs-followup — proposals that went dark: sent 3+ days ago,
+// not approved, either never opened or viewed but no response in 7+ days.
+app.get('/proposals/needs-followup', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.token, p.title, p.status, p.view_count, p.created_at, p.last_viewed_at,
+             l.id AS lead_id, l.company, l.contact_name, l.email,
+             l.status AS lead_status, l.category
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+      WHERE p.user_id = $1
+        AND p.status NOT IN ('approved', 'declined')
+        AND p.created_at < NOW() - INTERVAL '3 days'
+        AND (
+          p.view_count = 0
+          OR (p.view_count > 0 AND p.last_viewed_at < NOW() - INTERVAL '7 days')
+        )
+      ORDER BY p.created_at DESC
+      LIMIT 10
+    `, [uid]);
+
+    res.json({
+      ok: true,
+      proposals: rows.map(r => ({
+        id: r.id, token: r.token, title: r.title, status: r.status,
+        viewCount: r.view_count, createdAt: r.created_at, lastViewedAt: r.last_viewed_at,
+        daysSinceSent: Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86_400_000),
+        daysSinceView: r.last_viewed_at ? Math.floor((Date.now() - new Date(r.last_viewed_at).getTime()) / 86_400_000) : null,
+        lead: r.lead_id ? { id: r.lead_id, company: r.company, contactName: r.contact_name, email: r.email, status: r.lead_status, category: r.category } : null,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/:id/generate-followup — AI-generated follow-up email for a stale proposal
+app.post('/proposals/:id/generate-followup', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const proposalId = parseInt(req.params.id, 10);
+  let proposalRow = null;
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.*, l.company, l.contact_name, l.category, l.fleet_size, l.city, l.state
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+      WHERE p.id = $1 AND p.user_id = $2
+    `, [proposalId, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    proposalRow = rows[0];
+    const p = proposalRow;
+    const daysSince = Math.floor((Date.now() - new Date(p.created_at).getTime()) / 86_400_000);
+    const viewInfo = p.view_count > 0 ? `They viewed it ${p.view_count} time${p.view_count > 1 ? 's' : ''} but haven't responded.` : 'They haven\'t opened it yet.';
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const anthropic = new Anthropic();
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 400,
+      messages: [{
+        role: 'user',
+        content: `Write a brief, genuine follow-up email for a wrap shop proposal that went unanswered.
+
+Context:
+- Company: ${p.company || 'the prospect'}
+- Contact: ${p.contact_name || 'there'}
+- Category: ${p.category || 'vehicle wraps'}
+- Proposal title: ${p.title}
+- Days since sent: ${daysSince}
+- ${viewInfo}
+
+Write a 2-3 sentence email. Subject line first, then the body.
+Tone: professional, not pushy. Reference the specific project. End with a low-friction CTA like "Happy to answer any questions" or "Would a quick call help?".
+
+Format:
+Subject: [subject here]
+[blank line]
+[body here]`,
+      }],
+    });
+
+    const text = msg.content[0].type === 'text' ? msg.content[0].text : '';
+    const lines = text.split('\n');
+    const subjectLine = lines.find(l => l.startsWith('Subject:'));
+    const subject = subjectLine ? subjectLine.replace('Subject:', '').trim() : `Following up on your ${p.category || 'wrap'} proposal`;
+    const body = lines.slice(lines.indexOf(subjectLine ?? '') + 2).join('\n').trim();
+
+    res.json({ ok: true, subject, body, contact: p.contact_name, company: p.company });
+  } catch (e) {
+    console.error('[proposal-followup]', e.message);
+    // Fallback without AI
+    const p = proposalRow;
+    const subject = `Quick check-in on your wrap proposal`;
+    const body = `Hi there,\n\nI wanted to follow up on the wrap proposal I sent a few days ago. Happy to answer any questions or adjust anything to better fit your needs.\n\nWould a quick call help move things forward?`;
+    res.json({ ok: true, subject, body, contact: p?.contact_name ?? null, company: p?.company ?? null, fallback: true });
+  }
+});
+
 // Proposal Heat Score — surface proposals with recent view activity ranked
 // by urgency.  Heat = view_count × recency_factor.  Recency_factor decays
 // exponentially with a 12-hour half-life from the last view.

@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '👻 Proposals Gone Dark — AI Follow-Up Emails for Stale Proposals',
+    body: 'The Mission view now shows a "Proposals Gone Dark" card listing every proposal sent 3+ days ago with no approval, decline, or recent view. Click any proposal to expand it, then hit "Generate Follow-Up Email" — WrapOS uses Claude to write a personalized 2-3 sentence nudge referencing the specific project, days since sent, and whether they opened it. Copy the email directly to clipboard for sending in Gmail, Outlook, or WrapOS\'s built-in email. Regenerate as many times as you want for a fresh angle. Proposals that get approved or declined disappear from the list automatically.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '💳 Batch Invoice Sender — Collect All Outstanding Balances at Once',
     body: 'The Jobs view has a new "Receivables" tab. It shows every job with an outstanding balance — company, install date, aging (color-coded green/amber/red), revenue, balance due, and payment status. Select any or all jobs with checkboxes, then click "Send Invoices" to email all of them at once. WrapOS resolves each client\'s email from the linked lead automatically. Jobs without a linked lead or email are skipped with a skip count. "Select All with Email" filters to only the jobs that can actually be invoiced. Marks each job as "Invoice Sent" and timestamps it. One click instead of opening each job one at a time.',
   },

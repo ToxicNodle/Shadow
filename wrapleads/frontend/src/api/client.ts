@@ -720,6 +720,23 @@ export const api = {
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
   getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
 
+  // Proposals needing follow-up (sent 3+ days ago, no response)
+  getProposalsNeedingFollowup: () =>
+    authFetch<{
+      ok: boolean;
+      proposals: Array<{
+        id: number; token: string; title: string; status: string;
+        viewCount: number; createdAt: string; lastViewedAt: string | null;
+        daysSinceSent: number; daysSinceView: number | null;
+        lead: { id: number; company: string; contactName: string | null; email: string | null; status: string; category: string } | null;
+      }>;
+    }>('/proposals/needs-followup'),
+
+  generateProposalFollowup: (proposalId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string; contact: string | null; company: string | null; fallback?: boolean }>(
+      `/proposals/${proposalId}/generate-followup`, { method: 'POST', body: '{}' }
+    ),
+
   // Proposal Heat — ranked list of proposals with active engagement
   getProposalHeat: () => authFetch<{ count: number; hot: Array<{
     id: number; title: string; token: string; viewCount: number;
