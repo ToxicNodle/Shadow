@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useAppStore } from '../store/useAppStore';
 import { api } from '../api/client';
@@ -27,7 +27,10 @@ import MissionView from '../components/mission/MissionView';
 import JobsView from '../components/jobs/JobsView';
 import ContentView from '../components/content/ContentView';
 import AnalyticsView from '../components/analytics/AnalyticsView';
-import SolarScoutView from '../components/solar/SolarScoutView';
+// HelioScout view is large (charts, maps, monte carlo viz). Lazy-load it so
+// it doesn't bloat the initial CRMPage bundle for users who never open the
+// solar tab.
+const SolarScoutView = lazy(() => import('../components/solar/SolarScoutView'));
 import CSVImportModal from '../components/modals/CSVImportModal';
 import ProposalModal from '../components/modals/ProposalModal';
 import Toast from '../components/ui/Toast';
@@ -154,7 +157,15 @@ export default function CRMPage() {
             : mode === 'analytics'
             ? <AnalyticsView />
             : mode === 'solar_scout'
-            ? <SolarScoutView />
+            ? (
+              <Suspense fallback={
+                <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                  Loading HelioScout intelligence layer…
+                </div>
+              }>
+                <SolarScoutView />
+              </Suspense>
+            )
             : <DiscoverPage />}
         </main>
         {mode === 'leads' && <LeadDetail />}

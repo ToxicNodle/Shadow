@@ -101,3 +101,18 @@ export function useRotateSolarIntakeSecret() {
 export function useCreateSolarProposal() {
   return useMutation({ mutationFn: (leadId: number) => api.createSolarProposal(leadId) });
 }
+
+export function useSolarOverview() {
+  return useQuery({ queryKey: ['solar', 'overview'], queryFn: () => api.getSolarOverview(), staleTime: 60_000 });
+}
+
+export function useImportSolarCsv() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (csvText: string) => api.importSolarCsv(csvText),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['solar'] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+    },
+  });
+}

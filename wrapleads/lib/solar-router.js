@@ -983,6 +983,235 @@ function buildSolarRouter(deps) {
     }
   });
 
+  // ── OVERVIEW DASHBOARD ───────────────────────────────────────────────
+  // Aggregated stats for the HelioScout home screen. Single endpoint so
+  // we don't fire 8 separate queries from the frontend on mount.
+  router.get('/overview', authMiddleware, subMiddleware, async (req, res) => {
+    const uid = String(req.user.id);
+    try {
+      const [byState, bySource, byNaics, scoreDist, monthlyAdds, totals] = await Promise.all([
+        // Top 10 states by lead count
+        pool.query(`
+          SELECT state, COUNT(*)::INT AS n
+          FROM companies
+          WHERE source IN ('google_places_solar','osm_industrial','permit_feed','epa_ghgrp','usa_spending')
+             OR source LIKE 'commercial_csv_%'
+          GROUP BY state ORDER BY n DESC LIMIT 10
+        `),
+        pool.query(`
+          SELECT source, COUNT(*)::INT AS n
+          FROM companies
+          WHERE source IN ('google_places_solar','osm_industrial','permit_feed','epa_ghgrp','usa_spending')
+             OR source LIKE 'commercial_csv_%'
+          GROUP BY source ORDER BY n DESC
+        `),
+        pool.query(`
+          SELECT LEFT(naics_code, 2) AS naics2, COUNT(*)::INT AS n
+          FROM companies
+          WHERE naics_code IS NOT NULL
+            AND (source IN ('epa_ghgrp','usa_spending','osm_industrial','permit_feed','google_places_solar') OR source LIKE 'commercial_csv_%')
+          GROUP BY naics2 ORDER BY n DESC LIMIT 10
+        `),
+        // Bucketed solar-score histogram
+        pool.query(`
+          SELECT
+            COUNT(*) FILTER (WHERE ${SOLAR_SCORE_SQL} >= 80)::INT AS bucket_80_100,
+            COUNT(*) FILTER (WHERE ${SOLAR_SCORE_SQL} BETWEEN 60 AND 79)::INT AS bucket_60_79,
+            COUNT(*) FILTER (WHERE ${SOLAR_SCORE_SQL} BETWEEN 40 AND 59)::INT AS bucket_40_59,
+            COUNT(*) FILTER (WHERE ${SOLAR_SCORE_SQL} BETWEEN 20 AND 39)::INT AS bucket_20_39,
+            COUNT(*) FILTER (WHERE ${SOLAR_SCORE_SQL} < 20)::INT AS bucket_under_20
+          FROM companies
+          WHERE source IN ('google_places_solar','osm_industrial','permit_feed','epa_ghgrp','usa_spending')
+             OR source LIKE 'commercial_csv_%'
+        `),
+        pool.query(`
+          SELECT date_trunc('month', ingested_at)::DATE AS month, COUNT(*)::INT AS n
+          FROM companies
+          WHERE (source IN ('google_places_solar','osm_industrial','permit_feed','epa_ghgrp','usa_spending') OR source LIKE 'commercial_csv_%')
+            AND ingested_at >= NOW() - INTERVAL '12 months'
+          GROUP BY month ORDER BY month
+        `),
+        pool.query(`
+          SELECT
+            (SELECT COUNT(*)::INT FROM companies WHERE source IN ('google_places_solar','osm_industrial','permit_feed','epa_ghgrp','usa_spending') OR source LIKE 'commercial_csv_%') AS total_companies,
+            (SELECT COUNT(*)::INT FROM leads WHERE user_id = $1 AND category = 'commercial_solar') AS my_solar_leads,
+            (SELECT COUNT(*)::INT FROM leads WHERE user_id = $1 AND category = 'commercial_solar' AND status IN ('won')) AS my_won,
+            (SELECT COUNT(*)::INT FROM solar_auctions WHERE user_id = $1 AND status = 'open') AS my_open_auctions,
+            (SELECT COUNT(*)::INT FROM pilot_installers WHERE user_id = $1 AND active = TRUE) AS my_installers
+        `, [uid]),
+      ]);
+
+      res.json({
+        totals: totals.rows[0] || {},
+        by_state:   byState.rows,
+        by_source:  bySource.rows,
+        by_naics2:  byNaics.rows,
+        score_distribution: scoreDist.rows[0] || {},
+        monthly_adds: monthlyAdds.rows,
+      });
+    } catch (e) {
+      console.error('[solar/overview]', e.message);
+      res.status(500).json({ error: 'Could not load overview' });
+    }
+  });
+
+  // ── BYO LEAD CSV IMPORT ──────────────────────────────────────────────
+  // Lets brokers upload their own CSV of leads (e.g. exported from a prior
+  // CRM, LoopNet, or a manual scrape) and bulk-create them as commercial_solar
+  // leads in their CRM. Smart column mapping reuses csv-commercial.js patterns.
+  router.post('/leads/csv-import', authMiddleware, requireShopFlow, async (req, res) => {
+    const uid = String(req.user.id);
+    const { csv_text } = req.body || {};
+    if (!csv_text || typeof csv_text !== 'string' || csv_text.length < 30) {
+      return res.status(400).json({ error: 'Send raw CSV text in the csv_text field.' });
+    }
+    try {
+      const lines = csv_text.split(/\r?\n/).filter(l => l.trim());
+      if (lines.length < 2) return res.status(400).json({ error: 'CSV needs a header + at least one data row.' });
+
+      // Minimal CSV parser (handles quoted commas).
+      const parse = (line) => {
+        const out = []; let cur = ''; let inQ = false;
+        for (let i = 0; i < line.length; i++) {
+          const c = line[i];
+          if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+          else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
+          else cur += c;
+        }
+        out.push(cur); return out;
+      };
+      const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      // Column-name → field mapping. Aliases match the most common headers.
+      const FIELD_ALIASES = {
+        company: ['company','name','propertyname','buildingname','organization'],
+        contact_name: ['contactname','contact','firstname','fullname'],
+        contact_title: ['title','contacttitle','role','position'],
+        email: ['email','emailaddress'],
+        phone: ['phone','phonenumber','telephone'],
+        website: ['website','url','domain'],
+        city: ['city','town'],
+        state: ['state'],
+        street: ['address','street','streetaddress','address1'],
+        zip: ['zip','zipcode','postalcode'],
+        building_sqft: ['sqft','squarefeet','buildingsqft','grosssqft'],
+        roof_type: ['rooftype','roof'],
+        naics_code: ['naics','naicscode'],
+        pitch_angle: ['notes','pitchangle','pitchnotes','comments'],
+      };
+      const headers = parse(lines[0]).map(norm);
+      const colMap = {};
+      for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
+        for (let i = 0; i < headers.length; i++) {
+          if (aliases.includes(headers[i])) { colMap[field] = i; break; }
+        }
+      }
+      if (colMap.company === undefined) {
+        return res.status(400).json({ error: 'CSV must include a company / name column.' });
+      }
+
+      const crypto = require('crypto');
+      let inserted = 0, skipped = 0, errors = 0;
+      for (let i = 1; i < lines.length; i++) {
+        const row = parse(lines[i]);
+        const cell = (field) => colMap[field] !== undefined ? String(row[colMap[field]] ?? '').trim() : '';
+        const company = cell('company');
+        if (!company) { skipped++; continue; }
+        const clientId = `byo-${crypto.randomBytes(8).toString('hex')}`;
+        try {
+          await pool.query(`
+            INSERT INTO leads
+              (user_id, client_id, company, category, state, city, address,
+               contact_name, contact_title, email, phone, website, status, source,
+               consent_basis, created_at, updated_at)
+            VALUES ($1,$2,$3,'commercial_solar',$4,$5,$6,$7,$8,$9,$10,$11,'new','byo_csv',
+                    'imported',NOW(),NOW())
+            ON CONFLICT (user_id, client_id) DO NOTHING
+          `, [uid, clientId, company,
+              (cell('state') || '').toUpperCase().slice(0, 2) || null,
+              cell('city') || null, cell('street') || null,
+              cell('contact_name') || null, cell('contact_title') || null,
+              (cell('email') || '').toLowerCase() || null,
+              cell('phone') || null, cell('website') || null]);
+          inserted++;
+        } catch (e) {
+          errors++;
+        }
+      }
+      res.json({
+        ok: true, inserted, skipped, errors,
+        mapped_columns: Object.keys(colMap),
+      });
+    } catch (e) {
+      console.error('[solar/csv-import]', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── REAL-TIME AUCTION STREAM (Server-Sent Events) ────────────────────
+  // Public endpoint — installers from email links keep a live connection
+  // open and see bid updates streamed in. Polls the auction every 5s
+  // server-side and pushes deltas. Much simpler than WebSockets, works
+  // through every proxy.
+  router.get('/auctions/:token/stream', async (req, res) => {
+    const token = req.params.token;
+    if (!/^[a-f0-9]{40}$/.test(token)) {
+      return res.status(404).end();
+    }
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    let lastSig = '';
+    let alive = true;
+    req.on('close', () => { alive = false; });
+
+    async function tick() {
+      if (!alive) return;
+      try {
+        const a = await pool.query(`SELECT id, status, closes_at FROM solar_auctions WHERE public_token = $1`, [token]);
+        if (!a.rows.length) {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: 'Auction not found' })}\n\n`);
+          return res.end();
+        }
+        const auction = a.rows[0];
+        const bids = await pool.query(`
+          SELECT b.bid_mode, b.amount, b.commission_pct, b.submitted_at
+          FROM solar_auction_bids b
+          WHERE b.auction_id = $1
+          ORDER BY b.submitted_at ASC
+        `, [auction.id]);
+        const payload = {
+          status: auction.status,
+          closes_at: auction.closes_at,
+          bid_count: bids.rows.length,
+          bids: bids.rows.map(b => ({
+            bid_mode: b.bid_mode, amount: Number(b.amount),
+            commission_pct: Number(b.commission_pct),
+            submitted_at: b.submitted_at,
+          })),
+        };
+        const sig = JSON.stringify(payload);
+        if (sig !== lastSig) {
+          res.write(`event: update\ndata: ${sig}\n\n`);
+          lastSig = sig;
+        }
+        if (auction.status !== 'open') {
+          res.write(`event: closed\ndata: ${JSON.stringify({ status: auction.status })}\n\n`);
+          return res.end();
+        }
+      } catch (e) {
+        if (alive) res.write(`event: error\ndata: ${JSON.stringify({ error: e.message })}\n\n`);
+      }
+      // Keep-alive comment every tick so proxies don't kill the connection.
+      if (alive) res.write(': keep-alive\n\n');
+      setTimeout(tick, 5000);
+    }
+    tick();
+  });
+
   // ── SLA DASHBOARD ────────────────────────────────────────────────────
   // Median time-to-first-touch — gamification for speed-to-lead.
   router.get('/sla', authMiddleware, subMiddleware, async (req, res) => {

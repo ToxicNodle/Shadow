@@ -1,22 +1,25 @@
 import { useEffect, useState } from 'react';
-import { useSolarLeads, useQualifiedSolarLeads, useSolarCompany, useImportSolarLead, useQualifyLead, useOpenSolarAuction, useSolarAuctions, useAwardSolarAuction, usePilotInstallers, useCreatePilotInstaller, useSolarSla, useCreateSolarProposal } from '../../hooks/useSolar';
+import { useSolarLeads, useQualifiedSolarLeads, useSolarCompany, useImportSolarLead, useQualifyLead, useOpenSolarAuction, useSolarAuctions, useAwardSolarAuction, usePilotInstallers, useCreatePilotInstaller, useSolarSla, useCreateSolarProposal, useSolarOverview, useImportSolarCsv } from '../../hooks/useSolar';
 import { useAppStore } from '../../store/useAppStore';
 import type { SolarLead, SolarSearchParams, SolarAuction } from '../../api/types';
+import UsHeatmap from './UsHeatmap';
 
 const ROOF_TYPES = ['flat', 'membrane', 'metal', 'shingle', 'unknown'];
 const STATES_QUICK = ['AZ', 'TX', 'CA', 'FL', 'NJ', 'NY', 'IL', 'OH', 'GA', 'NC'];
 
-type Tab = 'discover' | 'qualified' | 'qualify' | 'pilot' | 'auctions' | 'sla';
+type Tab = 'overview' | 'discover' | 'qualified' | 'qualify' | 'csv' | 'pilot' | 'auctions' | 'sla';
 
 export default function SolarScoutView() {
-  const [tab, setTab] = useState<Tab>('discover');
+  const [tab, setTab] = useState<Tab>('overview');
   return (
     <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16, overflow: 'auto' }}>
       <Header />
       <TabBar tab={tab} onChange={setTab} />
+      {tab === 'overview'  && <OverviewTab onJump={setTab} />}
       {tab === 'discover'  && <DiscoverTab />}
       {tab === 'qualified' && <QualifiedTab />}
       {tab === 'qualify'   && <QualifyTab />}
+      {tab === 'csv'       && <CsvImportTab />}
       {tab === 'pilot'     && <PilotTab />}
       {tab === 'auctions'  && <AuctionsTab />}
       {tab === 'sla'       && <SlaTab />}
@@ -43,11 +46,13 @@ function Header() {
 
 function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
   const tabs: { key: Tab; label: string; hint?: string }[] = [
+    { key: 'overview',  label: 'Overview',       hint: 'Dashboard + heatmap + source breakdown' },
     { key: 'discover',  label: 'Discover',       hint: 'Browse all commercial properties' },
     { key: 'qualified', label: 'Hyper-Qualified', hint: 'Only leads passing all 3 gates' },
-    { key: 'qualify',   label: 'Qualify a Lead',  hint: 'Run the full intelligence pipeline' },
+    { key: 'qualify',   label: 'Qualify',         hint: 'Run the full intelligence pipeline on one lead' },
+    { key: 'csv',       label: 'Bring Your Own',  hint: 'Upload your existing CSV of leads' },
     { key: 'auctions',  label: 'Auctions',       hint: 'Live installer bidding' },
-    { key: 'pilot',     label: 'Pilot Installers', hint: 'Manage your installer network' },
+    { key: 'pilot',     label: 'Installers',     hint: 'Manage your installer network' },
     { key: 'sla',       label: 'Speed-to-Lead',  hint: 'Time-to-first-touch dashboard' },
   ];
   return (
@@ -485,6 +490,7 @@ function AuctionsTab() {
 function AuctionCard({ auction, onAward }: { auction: SolarAuction; onAward: (bidId: number) => void }) {
   const econ = auction.snapshot?.economics;
   const [closesSoon, setClosesSoon] = useState(false);
+  const [liveBidCount, setLiveBidCount] = useState<number | null>(null);
   // Tick the "closing soon" badge every 30s so we don't render an impure
   // Date.now() during the render phase.
   useEffect(() => {
@@ -496,6 +502,24 @@ function AuctionCard({ auction, onAward }: { auction: SolarAuction; onAward: (bi
     const id = setInterval(tick, 30_000);
     return () => clearInterval(id);
   }, [auction.closes_at]);
+
+  // Live bid subscription via Server-Sent Events. Public stream — broker
+  // sees new bids stream in as installers submit them, no polling needed.
+  useEffect(() => {
+    if (auction.status !== 'open' || !auction.public_token) return;
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(`/solar/auctions/${auction.public_token}/stream`);
+      es.addEventListener('update', (ev) => {
+        try {
+          const payload = JSON.parse((ev as MessageEvent).data);
+          if (typeof payload.bid_count === 'number') setLiveBidCount(payload.bid_count);
+        } catch { /* malformed payload — ignore */ }
+      });
+      es.addEventListener('closed', () => es?.close());
+    } catch { /* EventSource not supported */ }
+    return () => { try { es?.close(); } catch { /* already closed */ } };
+  }, [auction.public_token, auction.status]);
   return (
     <div style={{ padding: 14, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -527,7 +551,14 @@ function AuctionCard({ auction, onAward }: { auction: SolarAuction; onAward: (bi
           ))}
         </div>
       ) : (
-        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-faint)' }}>No bids yet — installers were invited via email.</div>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-faint)' }}>
+          No bids yet — installers were invited via email. <span style={{ color: '#22c55e' }}>● Live</span>
+        </div>
+      )}
+      {liveBidCount !== null && auction.bids && liveBidCount > auction.bids.length && (
+        <div style={{ marginTop: 8, padding: 6, background: 'rgba(34,197,94,0.1)', borderRadius: 4, fontSize: 11, color: '#22c55e' }}>
+          ● {liveBidCount - auction.bids.length} new bid(s) received — refresh to see details
+        </div>
       )}
     </div>
   );
@@ -626,6 +657,177 @@ function StatusBadge({ status }: { status: string }) {
   };
   const c = colors[status] || '#94a3b8';
   return <span style={{ display: 'inline-block', padding: '4px 10px', background: c + '22', color: c, borderRadius: 6, fontSize: 11, fontWeight: 700 }}>{status}</span>;
+}
+
+// ── Overview tab ────────────────────────────────────────────────────────
+function OverviewTab({ onJump }: { onJump: (t: Tab) => void }) {
+  const { data, isLoading, error } = useSolarOverview();
+  if (isLoading) return <SkeletonList />;
+  if (error) return <ErrorBanner error={String((error as Error).message)} />;
+  if (!data) return null;
+  const t = data.totals || {};
+  const sd = data.score_distribution || {};
+  const totalScored = (sd.bucket_80_100||0) + (sd.bucket_60_79||0) + (sd.bucket_40_59||0) + (sd.bucket_20_39||0) + (sd.bucket_under_20||0);
+  const highFit = (sd.bucket_80_100||0) + (sd.bucket_60_79||0);
+  const highFitPct = totalScored > 0 ? Math.round(highFit / totalScored * 100) : 0;
+  const totalCompanies = (t.total_companies || 0);
+  const fmt = (n?: number) => (n || 0).toLocaleString();
+
+  const SOURCE_LABELS: Record<string, string> = {
+    epa_ghgrp: 'EPA GHGRP',
+    usa_spending: 'USAspending',
+    osm_industrial: 'OpenStreetMap',
+    google_places_solar: 'Google Places',
+    permit_feed: 'Permit feeds',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+        <Card label="Companies in lead pool" value={fmt(totalCompanies)} accent="#f59e0b" />
+        <Card label="High-fit (score 60+)"   value={fmt(highFit)} accent="#22c55e" />
+        <Card label="My commercial-solar leads" value={fmt(t.my_solar_leads)} />
+        <Card label="My won deals"           value={fmt(t.my_won)} accent="#10b981" />
+        <Card label="My active auctions"     value={fmt(t.my_open_auctions)} accent="#3b82f6" />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16 }}>
+        <Panel title="Lead density by state" cta={{ label: 'Filter →', onClick: () => onJump('discover') }}>
+          <UsHeatmap data={data.by_state.reduce((acc, r) => ({ ...acc, [r.state]: r.n }), {} as Record<string, number>)} />
+        </Panel>
+
+        <Panel title={`Solar-score distribution (${totalScored.toLocaleString()} companies)`}>
+          <ScoreBar label="80–100"  count={sd.bucket_80_100 || 0} total={totalScored} color="#22c55e" />
+          <ScoreBar label="60–79"   count={sd.bucket_60_79  || 0} total={totalScored} color="#10b981" />
+          <ScoreBar label="40–59"   count={sd.bucket_40_59  || 0} total={totalScored} color="#f59e0b" />
+          <ScoreBar label="20–39"   count={sd.bucket_20_39  || 0} total={totalScored} color="#f97316" />
+          <ScoreBar label="< 20"    count={sd.bucket_under_20 || 0} total={totalScored} color="#94a3b8" />
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+            <strong style={{ color: '#22c55e' }}>{highFitPct}%</strong> of companies score 60+ — the threshold for "Qualified" lead status.
+          </div>
+        </Panel>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <Panel title="By source">
+          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+            {data.by_source.slice(0, 8).map(s => (
+              <tr key={s.source}>
+                <td style={{ padding: '6px 0', color: 'var(--text)' }}>{SOURCE_LABELS[s.source] || s.source}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', padding: '6px 0' }}>{s.n.toLocaleString()}</td>
+              </tr>
+            ))}
+          </table>
+        </Panel>
+        <Panel title="By NAICS sector (2-digit)">
+          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+            {data.by_naics2.slice(0, 8).map(n => (
+              <tr key={n.naics2}>
+                <td style={{ padding: '6px 0', color: 'var(--text)' }}>NAICS {n.naics2} — {naicsLabel(n.naics2)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', padding: '6px 0' }}>{n.n.toLocaleString()}</td>
+              </tr>
+            ))}
+          </table>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function naicsLabel(code: string): string {
+  const map: Record<string, string> = {
+    '11': 'Agriculture', '21': 'Mining/Extraction', '22': 'Utilities',
+    '23': 'Construction', '31': 'Manufacturing', '32': 'Manufacturing',
+    '33': 'Manufacturing', '42': 'Wholesale', '44': 'Retail', '45': 'Retail',
+    '48': 'Transportation', '49': 'Warehousing', '51': 'Information / data',
+    '52': 'Finance', '53': 'Real estate', '54': 'Professional services',
+    '55': 'HQ / management', '56': 'Admin / support', '61': 'Education',
+    '62': 'Healthcare', '71': 'Arts / entertainment', '72': 'Hospitality',
+    '81': 'Other services', '92': 'Public administration',
+  };
+  return map[code] || 'Industrial';
+}
+
+function Panel({ title, children, cta }: { title: string; children: React.ReactNode; cta?: { label: string; onClick: () => void } }) {
+  return (
+    <div style={{ padding: 14, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>{title}</div>
+        {cta && <button onClick={cta.onClick} style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>{cta.label}</button>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ScoreBar({ label, count, total, color }: { label: string; count: number; total: number; color: string }) {
+  const pct = total > 0 ? Math.round(count / total * 100) : 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+      <span style={{ width: 56, fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{label}</span>
+      <div style={{ flex: 1, height: 16, background: 'rgba(255,255,255,0.05)', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color }} />
+      </div>
+      <span style={{ width: 70, textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+        {count.toLocaleString()} <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>({pct}%)</span>
+      </span>
+    </div>
+  );
+}
+
+// ── CSV import tab ──────────────────────────────────────────────────────
+function CsvImportTab() {
+  const [csv, setCsv] = useState('');
+  const importMut = useImportSolarCsv();
+  const toast = useAppStore(s => s.showToast);
+  const sample = `company,city,state,email,phone,sqft,roof_type\nLineage Logistics,Riverside,CA,fac@lineage.example,555-0100,320000,membrane\nAmericold,Tolleson,AZ,,555-0200,220000,membrane`;
+
+  function submit() {
+    if (csv.trim().split('\n').length < 2) {
+      toast('Need at least a header row and one data row.', 'error');
+      return;
+    }
+    importMut.mutate(csv, {
+      onSuccess: (r) => toast(`Imported ${r.inserted} leads (${r.skipped} skipped, ${r.errors} errors)`, 'success'),
+      onError: (e) => toast(String((e as Error).message), 'error'),
+    });
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
+      <Panel title="Paste your CSV">
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+          We auto-detect columns named <code>company</code>, <code>email</code>, <code>phone</code>, <code>city</code>, <code>state</code>, <code>sqft</code>, etc. (plus common variants). All imports land as <strong>commercial_solar</strong> leads in your CRM tagged <code>source = byo_csv</code>.
+        </p>
+        <textarea
+          value={csv}
+          onChange={(e) => setCsv(e.target.value)}
+          placeholder={sample}
+          style={{
+            width: '100%', minHeight: 280, padding: 12, fontFamily: 'monospace',
+            fontSize: 12, background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)',
+            borderRadius: 8, color: 'var(--text)', resize: 'vertical',
+          }}
+        />
+        <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+          <button onClick={submit} disabled={importMut.isPending} style={primaryButtonStyle()}>
+            {importMut.isPending ? 'Importing…' : `⬆ Import ${csv.split('\n').filter(l => l.trim()).length - 1} rows`}
+          </button>
+          <button onClick={() => setCsv(sample)} style={secondaryButtonStyle()}>Load sample</button>
+        </div>
+      </Panel>
+      <Panel title="Tips">
+        <ul style={{ paddingLeft: 16, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7, margin: 0 }}>
+          <li>Header row is required.</li>
+          <li>Supported columns: company, contact_name, title, email, phone, website, city, state, street, zip, sqft, roof, naics, notes.</li>
+          <li>Variants OK — "Company Name", "Email Address", "Building SqFt" all match.</li>
+          <li>Each row creates a new lead with status <code>new</code>.</li>
+          <li>Duplicates are skipped by a generated <code>client_id</code>.</li>
+          <li>For huge files (&gt;1MB), split into batches.</li>
+        </ul>
+      </Panel>
+    </div>
+  );
 }
 
 // One-click: import the company to CRM (if not already), then generate a

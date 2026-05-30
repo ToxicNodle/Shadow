@@ -934,4 +934,32 @@ export const api = {
       under_one_minute: number;
       under_five_minutes: number;
     }>('/solar/sla'),
+
+  // Aggregated overview for the HelioScout home dashboard
+  getSolarOverview: () =>
+    authFetch<{
+      totals: {
+        total_companies?: number; my_solar_leads?: number; my_won?: number;
+        my_open_auctions?: number; my_installers?: number;
+      };
+      by_state:   Array<{ state: string; n: number }>;
+      by_source:  Array<{ source: string; n: number }>;
+      by_naics2:  Array<{ naics2: string; n: number }>;
+      score_distribution: {
+        bucket_80_100?: number; bucket_60_79?: number; bucket_40_59?: number;
+        bucket_20_39?: number; bucket_under_20?: number;
+      };
+      monthly_adds: Array<{ month: string; n: number }>;
+    }>('/solar/overview'),
+
+  // Bulk import installer's own CSV of leads
+  importSolarCsv: (csvText: string) =>
+    authFetch<{ ok: boolean; inserted: number; skipped: number; errors: number; mapped_columns: string[] }>(
+      '/solar/leads/csv-import',
+      { method: 'POST', body: JSON.stringify({ csv_text: csvText }) }
+    ),
+
+  // EventSource URL for live auction bid streaming (public, tokenized)
+  solarAuctionStreamUrl: (token: string) =>
+    `${window.location.origin}/solar/auctions/${token}/stream`,
 };

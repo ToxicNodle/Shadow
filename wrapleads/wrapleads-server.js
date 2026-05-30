@@ -848,8 +848,10 @@ const apiLimiter = rateLimit({
     // webhooks need consistent sub-5s response times.
     if (p === '/solar/intake')                 return true;
     if (p.startsWith('/solar/auctions/') &&
-        (p.endsWith('/bid') || /^\/solar\/auctions\/[^/]+$/.test(p))) return true;
+        (p.endsWith('/bid') || p.endsWith('/stream') || /^\/solar\/auctions\/[^/]+$/.test(p))) return true;
     if (p.startsWith('/solar/__unsubscribe/')) return true;
+    // Body-large endpoint shouldn't be capped per-minute.
+    if (p === '/solar/leads/csv-import')       return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
