@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../api/client';
@@ -29,6 +30,27 @@ export default function SettingsModal() {
   const [motiveStatus, setMotiveStatus] = useState<FleetStatus>('idle');
   const [motiveCount, setMotiveCount] = useState<number | null>(null);
   const [motiveImported, setMotiveImported] = useState<{ imported: number; skipped: number } | null>(null);
+
+  // Subcontractors
+  const qc = useQueryClient();
+  const [newSubName, setNewSubName] = useState('');
+  const [newSubSpecialty, setNewSubSpecialty] = useState('');
+  const [newSubRate, setNewSubRate] = useState('');
+  const { data: subsData } = useQuery({
+    queryKey: ['subcontractors'],
+    queryFn: () => api.getSubcontractors(),
+    staleTime: 5 * 60_000,
+    enabled: settingsOpen,
+  });
+  const createSubMut = useMutation({
+    mutationFn: () => api.createSubcontractor({ name: newSubName.trim(), specialty: newSubSpecialty.trim() || undefined, labor_rate: newSubRate ? Number(newSubRate) : undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['subcontractors'] }); setNewSubName(''); setNewSubSpecialty(''); setNewSubRate(''); showToast('Subcontractor saved', 'success'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const deleteSubMut = useMutation({
+    mutationFn: (id: number) => api.deleteSubcontractor(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['subcontractors'] }),
+  });
 
   // Sync local form state whenever the modal opens — settings may have loaded from
   // the server after initial mount, so re-initialize when the user actually opens it.
@@ -487,6 +509,43 @@ export default function SettingsModal() {
         <div className="field-group">
           <label className="field-label">Hunter API Key</label>
           <input className="input" type="password" {...f('hunterApiKey')} placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">👷 Subcontractors</div>
+        <p className="settings-help">
+          Add subcontractors you use for installs. Assign them to jobs to track their labor cost and see your true margin.
+        </p>
+        {/* List existing */}
+        {(subsData?.subs ?? []).map((sub) => (
+          <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, background: 'var(--bg-input)', borderRadius: 6, padding: '6px 10px' }}>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{sub.name}</span>
+              {sub.specialty && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.specialty}</span>}
+              {sub.labor_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>${Number(sub.labor_rate)}/hr</span>}
+              {(sub.job_count ?? 0) > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.job_count} jobs · ${Number(sub.total_paid).toLocaleString()} paid</span>}
+            </div>
+            <button className="btn" style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }} onClick={() => deleteSubMut.mutate(sub.id)} disabled={deleteSubMut.isPending}>Remove</button>
+          </div>
+        ))}
+        {/* Add new */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="field-group" style={{ flex: 2 }}>
+            <label className="field-label">Name</label>
+            <input className="input" value={newSubName} onChange={(e) => setNewSubName(e.target.value)} placeholder="Jake's Install Crew" style={{ fontSize: 12 }} />
+          </div>
+          <div className="field-group" style={{ flex: 1 }}>
+            <label className="field-label">Specialty</label>
+            <input className="input" value={newSubSpecialty} onChange={(e) => setNewSubSpecialty(e.target.value)} placeholder="fleet wraps" style={{ fontSize: 12 }} />
+          </div>
+          <div className="field-group" style={{ width: 80 }}>
+            <label className="field-label">$/hr</label>
+            <input className="input" type="number" min={0} value={newSubRate} onChange={(e) => setNewSubRate(e.target.value)} placeholder="65" style={{ fontSize: 12 }} />
+          </div>
+          <button className="btn btn-primary" style={{ fontSize: 12, marginBottom: 1 }} disabled={!newSubName.trim() || createSubMut.isPending} onClick={() => createSubMut.mutate()}>
+            {createSubMut.isPending ? 'Adding…' : '+ Add'}
+          </button>
         </div>
       </div>
 

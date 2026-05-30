@@ -1805,6 +1805,22 @@ export const api = {
       `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }
     ),
 
+  // ── Subcontractors ──
+  getSubcontractors: () =>
+    authFetch<{ ok: boolean; subs: import('./types').Subcontractor[] }>('/subcontractors'),
+  createSubcontractor: (data: { name: string; contact?: string; specialty?: string; labor_rate?: number; notes?: string }) =>
+    authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>('/subcontractors', { method: 'POST', body: JSON.stringify(data) }),
+  updateSubcontractor: (id: number, data: Partial<{ name: string; contact: string; specialty: string; labor_rate: number; notes: string }>) =>
+    authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>(`/subcontractors/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteSubcontractor: (id: number) =>
+    authFetch<{ ok: boolean }>(`/subcontractors/${id}`, { method: 'DELETE' }),
+  getJobSubcontractors: (jobId: number) =>
+    authFetch<{ ok: boolean; assignments: import('./types').SubcontractorAssignment[] }>(`/jobs/${jobId}/subcontractors`),
+  assignSubcontractor: (jobId: number, data: { sub_id: number; hours?: number; labor_cost?: number; notes?: string }) =>
+    authFetch<{ ok: boolean; assignment: import('./types').SubcontractorAssignment }>(`/jobs/${jobId}/subcontractors`, { method: 'POST', body: JSON.stringify(data) }),
+  removeSubAssignment: (assignmentId: number) =>
+    authFetch<{ ok: boolean }>(`/jobs/sub-assignments/${assignmentId}`, { method: 'DELETE' }),
+
   // ── Cash Flow ──
   getCashFlow: () =>
     authFetch<{

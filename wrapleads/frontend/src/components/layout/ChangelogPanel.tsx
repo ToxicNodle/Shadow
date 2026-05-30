@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '👷 Subcontractor Tracker — Know Your True Margin',
+    body: 'Many shops farm out installs but never track sub labor as a cost — so their margin calculation is wrong. WrapOS now has full subcontractor management: add subs in Settings (name, specialty, hourly rate), then assign them to any job in the new "Subs" tab. Enter hours or a flat rate, and WrapOS shows your true cost (material + sub labor) and true margin — alongside the standard gross margin. See total subs paid and job counts in Settings. No more hidden labor costs eating into your profits.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '🚛 Fleet Survey Mode — Log Entire Fleets On-Site in Minutes',
     body: 'A new "Fleet Survey" button in the Jobs view opens a mobile-optimized multi-step wizard. Walk a client\'s lot, tap "+ Add Vehicle" for each vehicle type you see, set the quantity and condition (New / Good / Aging / Damaged), note whether it has an existing wrap to remove, and add field notes. The survey shows a live estimate ($Low–$High) as you add vehicles, calculated from industry-standard square footage per vehicle type. When done, "Export to Quote" copies a structured summary to your clipboard and takes you to your leads list — paste into a note or quote description and build from there. Designed for on-site use: big tap targets, emoji vehicle icons, no typing required.',
   },

@@ -737,6 +737,38 @@ async function migrateDb() {
     console.warn('[migrate] Could not add margin columns to installed_jobs:', e.message);
   }
 
+  // Subcontractor tracking — shops that farm out installs
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subcontractors (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        contact     TEXT,
+        specialty   TEXT,
+        labor_rate  NUMERIC(8,2),
+        notes       TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_subcontractors_user ON subcontractors(user_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_subcontractors (
+        id          BIGSERIAL PRIMARY KEY,
+        job_id      BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        sub_id      BIGINT NOT NULL REFERENCES subcontractors(id) ON DELETE CASCADE,
+        hours       NUMERIC(6,1) DEFAULT 0,
+        labor_cost  NUMERIC(10,2) DEFAULT 0,
+        notes       TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_subs_job ON job_subcontractors(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create subcontractors tables:', e.message);
+  }
+
   // CAN-SPAM compliant unsubscribe records for outbound prospect emails
   try {
     await pool.query(`
@@ -8060,6 +8092,134 @@ app.get('/jobs/:id/review-requests', authMiddleware, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Subcontractor Management ──────────────────────────────────────────────────
+
+// GET /subcontractors — list all subs for this user
+app.get('/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.*,
+              COUNT(js.id)::int              AS job_count,
+              COALESCE(SUM(js.labor_cost),0) AS total_paid
+       FROM subcontractors s
+       LEFT JOIN job_subcontractors js ON js.sub_id = s.id
+       WHERE s.user_id = $1
+       GROUP BY s.id
+       ORDER BY s.name`,
+      [uid]
+    );
+    res.json({ ok: true, subs: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /subcontractors — create a sub
+app.post('/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { name, contact, specialty, labor_rate, notes } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO subcontractors (user_id, name, contact, specialty, labor_rate, notes)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [uid, name.trim(), contact || null, specialty || null, labor_rate || null, notes || null]
+    );
+    res.json({ ok: true, sub: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /subcontractors/:id — update a sub
+app.patch('/subcontractors/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const subId = parseInt(req.params.id, 10);
+  const { name, contact, specialty, labor_rate, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE subcontractors SET
+         name        = COALESCE($3, name),
+         contact     = COALESCE($4, contact),
+         specialty   = COALESCE($5, specialty),
+         labor_rate  = COALESCE($6, labor_rate),
+         notes       = COALESCE($7, notes),
+         updated_at  = NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [subId, uid, name || null, contact || null, specialty || null, labor_rate || null, notes || null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, sub: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /subcontractors/:id — remove a sub
+app.delete('/subcontractors/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const subId = parseInt(req.params.id, 10);
+  try {
+    await pool.query(`DELETE FROM subcontractors WHERE id=$1 AND user_id=$2`, [subId, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /jobs/:id/subcontractors — list subs assigned to a job
+app.get('/jobs/:id/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    // Verify job ownership
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'job not found' });
+    const { rows } = await pool.query(
+      `SELECT js.*, s.name AS sub_name, s.specialty, s.labor_rate AS rate
+       FROM job_subcontractors js
+       JOIN subcontractors s ON s.id = js.sub_id
+       WHERE js.job_id = $1
+       ORDER BY js.created_at`,
+      [jobId]
+    );
+    res.json({ ok: true, assignments: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/:id/subcontractors — assign a sub to a job
+app.post('/jobs/:id/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { sub_id, hours, labor_cost, notes } = req.body;
+  if (!sub_id) return res.status(400).json({ error: 'sub_id required' });
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'job not found' });
+    // Verify sub belongs to user
+    const { rows: subRows } = await pool.query(`SELECT id, labor_rate FROM subcontractors WHERE id=$1 AND user_id=$2`, [sub_id, uid]);
+    if (!subRows.length) return res.status(404).json({ error: 'subcontractor not found' });
+    const rate = subRows[0].labor_rate;
+    const computedCost = labor_cost ?? (hours && rate ? Number(hours) * Number(rate) : 0);
+    const { rows } = await pool.query(
+      `INSERT INTO job_subcontractors (job_id, sub_id, hours, labor_cost, notes)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [jobId, sub_id, hours || 0, computedCost, notes || null]
+    );
+    res.json({ ok: true, assignment: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /jobs/sub-assignments/:id — remove a sub assignment
+app.delete('/jobs/sub-assignments/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const assignId = parseInt(req.params.id, 10);
+  try {
+    // Verify through job ownership
+    const { rowCount } = await pool.query(
+      `DELETE FROM job_subcontractors js
+       USING installed_jobs j
+       WHERE js.id=$1 AND js.job_id=j.id AND j.user_id=$2`,
+      [assignId, uid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /review/:token — public review request landing page

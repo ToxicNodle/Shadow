@@ -359,6 +359,35 @@ export interface InstalledJob {
   amount_paid?: number | null;
 }
 
+// ── Subcontractor ─────────────────────────────────────────────────────────────
+
+export interface Subcontractor {
+  id: number;
+  user_id: string;
+  name: string;
+  contact?: string | null;
+  specialty?: string | null;
+  labor_rate?: number | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  job_count?: number;
+  total_paid?: number;
+}
+
+export interface SubcontractorAssignment {
+  id: number;
+  job_id: number;
+  sub_id: number;
+  sub_name: string;
+  specialty?: string | null;
+  rate?: number | null;
+  hours: number;
+  labor_cost: number;
+  notes?: string | null;
+  created_at: string;
+}
+
 // ── Computer Vision Quote ─────────────────────────────────────────────────────
 
 export interface VisionQuoteResult {

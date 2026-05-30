@@ -56,6 +56,7 @@ export default defineConfig({
       '/tasks':             API,
       '/tools':             API,
       '/review':            API,
+      '/subcontractors':    API,
     },
   },
 });

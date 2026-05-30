@@ -639,6 +639,159 @@ interface JobModalProps {
   onClose: () => void;
 }
 
+// ── Subcontractor Tab ─────────────────────────────────────────────────────────
+
+function SubcontractorTab({ job }: { job: InstalledJob }) {
+  const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+  const [addingSubId, setAddingSubId] = useState<number | null>(null);
+  const [hours, setHours] = useState('');
+  const [laborCost, setLaborCost] = useState('');
+  const [notes, setNotes] = useState('');
+
+  const { data: subsData } = useQuery({
+    queryKey: ['subcontractors'],
+    queryFn: () => api.getSubcontractors(),
+    staleTime: 5 * 60_000,
+  });
+  const { data: assignData, isLoading } = useQuery({
+    queryKey: ['job-subs', job.id],
+    queryFn: () => api.getJobSubcontractors(job.id),
+    staleTime: 30_000,
+  });
+
+  const assignMut = useMutation({
+    mutationFn: () => api.assignSubcontractor(job.id, {
+      sub_id: addingSubId!,
+      hours: hours ? Number(hours) : undefined,
+      labor_cost: laborCost ? Number(laborCost) : undefined,
+      notes: notes || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-subs', job.id] });
+      qc.invalidateQueries({ queryKey: ['installed-jobs'] });
+      setAddingSubId(null);
+      setHours('');
+      setLaborCost('');
+      setNotes('');
+      showToast('Subcontractor assigned', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (id: number) => api.removeSubAssignment(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-subs', job.id] });
+      qc.invalidateQueries({ queryKey: ['installed-jobs'] });
+    },
+  });
+
+  const assignments = assignData?.assignments ?? [];
+  const subs = subsData?.subs ?? [];
+  const totalSubCost = assignments.reduce((s, a) => s + Number(a.labor_cost), 0);
+  const revenue = Number(job.job_revenue) || 0;
+  const materialCost = Number(job.material_cost) || 0;
+  const trueCost = materialCost + totalSubCost;
+  const trueMargin = revenue > 0 ? Math.round(((revenue - trueCost) / revenue) * 100) : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Margin impact */}
+      {revenue > 0 && totalSubCost > 0 && (
+        <div style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 14px', display: 'flex', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Sub Labor</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: '#f59e0b' }}>${totalSubCost.toLocaleString()}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>True Cost</div>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>${trueCost.toLocaleString()}</div>
+          </div>
+          {trueMargin !== null && (
+            <div>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>True Margin</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: trueMargin >= 40 ? '#22c55e' : trueMargin >= 20 ? '#f59e0b' : '#ef4444' }}>
+                {trueMargin}%
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Assigned subs */}
+      {isLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}><span className="spinner" /></div>
+      ) : assignments.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {assignments.map((a) => (
+            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-elev)', borderRadius: 6, padding: '8px 12px', border: '1px solid var(--border)' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{a.sub_name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {a.hours ? `${a.hours}h` : ''}
+                  {a.hours && a.labor_cost ? ' · ' : ''}
+                  {a.labor_cost ? `$${Number(a.labor_cost).toLocaleString()}` : ''}
+                  {a.notes ? ` · ${a.notes}` : ''}
+                  {a.specialty ? <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{a.specialty}</span> : null}
+                </div>
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }}
+                onClick={() => removeMut.mutate(a.id)}
+                disabled={removeMut.isPending}
+              >Remove</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No subcontractors assigned to this job yet.</p>
+      )}
+
+      {/* Add sub form */}
+      {subs.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+          No subcontractors saved yet. Add them in Settings → Subcontractors, then assign them here.
+        </p>
+      ) : addingSubId === null ? (
+        <button className="btn" style={{ fontSize: 12, alignSelf: 'flex-start' }} onClick={() => setAddingSubId(subs[0].id)}>
+          + Assign Subcontractor
+        </button>
+      ) : (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="field-group">
+            <label className="field-label">Subcontractor</label>
+            <select className="input" value={addingSubId} onChange={(e) => setAddingSubId(Number(e.target.value))}>
+              {subs.map((s) => <option key={s.id} value={s.id}>{s.name}{s.specialty ? ` (${s.specialty})` : ''}</option>)}
+            </select>
+          </div>
+          <div className="field-row">
+            <div className="field-group">
+              <label className="field-label">Hours</label>
+              <input className="input" type="number" min={0} step={0.5} value={hours} onChange={(e) => { setHours(e.target.value); const sub = subs.find((s) => s.id === addingSubId); if (sub?.labor_rate && e.target.value) setLaborCost(String(Math.round(Number(e.target.value) * Number(sub.labor_rate)))); }} placeholder="0" />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Labor Cost ($)</label>
+              <input className="input" type="number" min={0} step={50} value={laborCost} onChange={(e) => setLaborCost(e.target.value)} placeholder="0" />
+            </div>
+          </div>
+          <div className="field-group">
+            <label className="field-label">Notes (optional)</label>
+            <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="install only, primer included…" />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={!addingSubId || assignMut.isPending} onClick={() => assignMut.mutate()}>
+              {assignMut.isPending ? 'Assigning…' : 'Assign'}
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setAddingSubId(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Invoice Panel ─────────────────────────────────────────────────────────────
 
 function InvoicePanel({ job }: { job: InstalledJob }) {
@@ -732,7 +885,7 @@ function JobModal({ job, onClose }: JobModalProps) {
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -803,6 +956,7 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'case-study' ? 'active' : ''}`} onClick={() => setActiveTab('case-study')}>Case Study</button>
             <button className={`jobs-tab ${activeTab === 'review' ? 'active' : ''}`} onClick={() => setActiveTab('review')}>⭐ Reviews</button>
             <button className={`jobs-tab ${activeTab === 'invoice' ? 'active' : ''}`} onClick={() => setActiveTab('invoice')}>💳 Invoice</button>
+            <button className={`jobs-tab ${activeTab === 'subs' ? 'active' : ''}`} onClick={() => setActiveTab('subs')}>👷 Subs</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -816,6 +970,8 @@ function JobModal({ job, onClose }: JobModalProps) {
           <ReviewRequestPanel job={job as InstalledJob} />
         ) : (!isNew && activeTab === 'invoice') ? (
           <InvoicePanel job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'subs') ? (
+          <SubcontractorTab job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">
