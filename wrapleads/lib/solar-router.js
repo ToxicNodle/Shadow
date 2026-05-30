@@ -550,8 +550,12 @@ function buildSolarRouter(deps) {
   // GET /solar/auctions/:token  — public auction page (no auth — installer
   // arrives from email link).
   router.get('/auctions/:token', async (req, res) => {
+    const token = req.params.token;
+    if (!/^[a-f0-9]{40}$/.test(token)) {
+      return res.status(404).json({ error: 'Auction not found' });
+    }
     try {
-      const r = await pool.query(`SELECT * FROM solar_auctions WHERE public_token = $1`, [req.params.token]);
+      const r = await pool.query(`SELECT * FROM solar_auctions WHERE public_token = $1`, [token]);
       if (!r.rows.length) return res.status(404).json({ error: 'Auction not found' });
       const a = r.rows[0];
       const bids = await pool.query(`
@@ -801,24 +805,29 @@ function buildSolarRouter(deps) {
 
   // ── ONE-CLICK UNSUBSCRIBE (public, no auth) ──────────────────────────
   router.get('/__unsubscribe/:token', async (req, res) => {
+    const token = req.params.token;
+    if (!/^[a-f0-9]{40}$/.test(token)) {
+      return res.status(404).send(notFoundHtml('Invalid unsubscribe link.'));
+    }
     try {
       const r = await pool.query(
         `SELECT * FROM unsubscribe_tokens WHERE token = $1`,
-        [req.params.token]
+        [token]
       );
-      if (!r.rows.length) return res.status(404).send('Invalid unsubscribe link.');
+      if (!r.rows.length) return res.status(404).send(notFoundHtml('Invalid unsubscribe link.'));
       const t = r.rows[0];
       if (!t.used_at) {
         await compliance.flipOptOut(pool, { leadId: t.lead_id, userId: t.user_id, reason: 'one_click' });
-        await pool.query(`UPDATE unsubscribe_tokens SET used_at = NOW() WHERE token = $1`, [req.params.token]);
+        await pool.query(`UPDATE unsubscribe_tokens SET used_at = NOW() WHERE token = $1`, [token]);
       }
-      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(`<!DOCTYPE html><html><head><title>Unsubscribed</title></head><body style="font-family:-apple-system,sans-serif;text-align:center;padding:80px 20px;background:#f8fafc;">
         <h1 style="font-weight:700;color:#0f172a;">You're unsubscribed</h1>
         <p style="color:#64748b;">You will not receive any further outreach from this sender.</p>
         </body></html>`);
     } catch (e) {
-      res.status(500).send('Error processing unsubscribe.');
+      console.error('[solar/unsubscribe]', e.message);
+      res.status(500).send(notFoundHtml('Unable to process the unsubscribe right now.'));
     }
   });
 
@@ -845,29 +854,37 @@ function buildSolarRouter(deps) {
     }
   });
 
-  // GET /solar/proposal/:token  → public-facing HTML page
+  // GET /solar/proposal/:token  → public HTML page
+  // GET /solar/proposal/:token.pdf  → Chromium-rendered PDF
+  // Single handler dispatches by extension; express 4 path-parameter regex
+  // for ".pdf" suffixes is finicky, so we route on the unprefixed segment
+  // and split here.
   router.get('/proposal/:token', async (req, res) => {
+    const raw = req.params.token;
+    const wantsPdf = raw.endsWith('.pdf');
+    const token = wantsPdf ? raw.slice(0, -4) : raw;
+
+    if (!/^[a-f0-9]{40}$/.test(token)) {
+      return res.status(404).json({ error: 'Proposal not found' });
+    }
+
     try {
-      const html = await solarProposal.getProposalHtmlByToken(pool, req.params.token);
-      if (!html) return res.status(404).send('<h1>Proposal not found</h1>');
+      if (wantsPdf) {
+        const pdf = await solarProposal.getProposalPdfByToken(pool, token);
+        if (!pdf) return res.status(404).json({ error: 'Proposal not found' });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="HelioScout-Proposal-${token.slice(0, 8)}.pdf"`);
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        return res.send(pdf);
+      }
+      const html = await solarProposal.getProposalHtmlByToken(pool, token);
+      if (!html) return res.status(404).send(notFoundHtml('Proposal not found'));
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(html);
-    } catch (e) { res.status(500).send(`Error: ${e.message}`); }
-  });
-
-  // GET /solar/proposal/:token.pdf  → high-fidelity Chromium-rendered PDF
-  router.get('/proposal/:tokenWithExt(*\\.pdf)', async (req, res) => {
-    const token = req.params.tokenWithExt.replace(/\.pdf$/, '');
-    try {
-      const pdf = await solarProposal.getProposalPdfByToken(pool, token);
-      if (!pdf) return res.status(404).send('Proposal not found');
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="HelioScout-Proposal-${token.slice(0, 8)}.pdf"`);
-      res.setHeader('Cache-Control', 'private, max-age=300');
-      res.send(pdf);
     } catch (e) {
-      console.error('[solar/proposal.pdf]', e.message);
-      res.status(500).send(`PDF render error: ${e.message}`);
+      console.error('[solar/proposal]', e.message);
+      // Don't leak DB errors / internal infra in the response body.
+      res.status(500).send(notFoundHtml('Unable to render the proposal right now.'));
     }
   });
 
@@ -1111,6 +1128,19 @@ function startAuctionWorker(pool, deps) {
 
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Stand-alone HTML page for not-found / sanitized error responses. Keeps the
+// public-facing pages on brand instead of leaking raw error text.
+function notFoundHtml(message) {
+  return `<!DOCTYPE html><html><head><title>HelioScout · Not Found</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;text-align:center;padding:80px 20px;">
+  <div style="max-width:480px;margin:0 auto;">
+    <div style="font-size:14px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#f59e0b;margin-bottom:24px;">HelioScout</div>
+    <h1 style="font-weight:800;font-size:28px;letter-spacing:-0.02em;margin:0 0 12px;">Not found</h1>
+    <p style="color:#64748b;font-size:15px;line-height:1.6;margin:0;">${escapeHtml(message || 'The page you are looking for does not exist.')}</p>
+  </div>
+</body></html>`;
 }
 
 module.exports = { buildSolarRouter, startAuctionWorker, closeAuction, SOLAR_SCORE_SQL };

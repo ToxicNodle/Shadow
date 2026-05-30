@@ -9302,6 +9302,48 @@ app.use('/solar', buildSolarRouter({
 // Speed-to-lead intake lives at POST /solar/intake (rate-limit-exempted
 // below). External webhook configs should target that path directly.
 
+// ── 404 guard for unmatched API paths ────────────────────────────────────────
+// Without this, an unmatched API path (e.g. typo'd POST /solr/discover or a
+// GET to a POST-only route) would fall through to the SPA fallback below and
+// return index.html with 200 — which masks bugs and breaks client error
+// handling. Explicit JSON 404s keep the API honest.
+const API_PREFIXES = [
+  '/auth', '/leads', '/carriers', '/searches', '/settings', '/analytics',
+  '/apollo', '/stripe', '/ai', '/bids', '/calls', '/blueprint', '/content',
+  '/devices', '/email-queue', '/integrations', '/jobs', '/me', '/mission',
+  '/notifications', '/portal-links', '/portal', '/portfolio', '/proposals',
+  '/quotes', '/quote-request', '/track', '/vision', '/webhooks', '/health',
+  '/test', '/activity', '/onboarding', '/admin', '/solar', '/u',
+];
+function isApiPath(p) {
+  for (const prefix of API_PREFIXES) {
+    if (p === prefix || p.startsWith(prefix + '/')) return true;
+  }
+  return false;
+}
+app.use((req, res, next) => {
+  if (isApiPath(req.path)) {
+    return res.status(404).json({
+      error: 'Not found',
+      method: req.method,
+      path: req.path,
+      hint: 'This API route does not exist or does not accept this HTTP method.',
+    });
+  }
+  next();
+});
+
+// ── Global error handler — sanitize 500s so we never leak infra details ─────
+// Without this, errors like "connect ECONNREFUSED 127.0.0.1:5432" leak the
+// internal database host/port to the client. Keep the full message in server
+// logs but only surface a generic message externally.
+app.use((err, req, res, _next) => {
+  // Skip if a route already sent a response.
+  if (res.headersSent) return;
+  console.error(`[unhandled-error] ${req.method} ${req.path}:`, err.message);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {

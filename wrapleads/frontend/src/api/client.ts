@@ -30,6 +30,17 @@ function buildQueryString(params?: Record<string, unknown>): string {
   return '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
 }
 
+// Extract { error } from a JSON error response, falling back to a default
+// when parsing fails. Replaces the silent empty-catch pattern.
+async function safeJsonError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string; message?: string } | null;
+    return body?.error ?? body?.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -46,8 +57,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
   }
 
   if (res.status === 402) {
-    let msg = 'Subscription required';
-    try { const e = await res.json(); msg = e.error ?? msg; } catch {}
+    const msg = await safeJsonError(res, 'Subscription required');
     // Open paywall — lazy require to avoid circular import at module load
     import('../store/useAppStore').then(({ useAppStore }) => {
       useAppStore.getState().setPaywallOpen(true);
@@ -56,8 +66,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
   }
 
   if (!res.ok) {
-    let msg = res.statusText;
-    try { const e = await res.json(); msg = e.error ?? e.message ?? msg; } catch {}
+    const msg = await safeJsonError(res, res.statusText);
     throw new ApiError(res.status, msg);
   }
 
