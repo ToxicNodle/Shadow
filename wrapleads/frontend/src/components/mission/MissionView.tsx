@@ -1287,6 +1287,147 @@ function agePctColor(pct: number) {
   return '#10b981';
 }
 
+// ── Top Prospects by Heat Score ──────────────────────────────────────────────
+function TopProspectsCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const setMode = useAppStore((s) => s.setMode);
+  const { data, isLoading } = useQuery({
+    queryKey: ['top-prospects'],
+    queryFn: () => api.getTopProspects(),
+    staleTime: 3 * 60_000,
+  });
+
+  const prospects = data?.prospects ?? [];
+  if (!isLoading && prospects.length === 0) return null;
+
+  function open(id: number) {
+    setMode('leads');
+    setCurrentLeadId(String(id));
+    onLeadClick(id);
+  }
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #f97316' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2" style={{ marginRight: 5 }}>
+            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#f97316" stroke="none"/>
+          </svg>
+          Top Prospects
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>by engagement heat score</span>
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: '12px 0', color: 'var(--text-faint)', fontSize: 12 }}>Loading…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {prospects.map((p) => (
+            <div
+              key={p.id}
+              onClick={() => open(p.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: `${p.color}09`, border: `1px solid ${p.color}22`, borderRadius: 8, cursor: 'pointer', transition: 'background .15s' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = `${p.color}18`)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = `${p.color}09`)}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 44, padding: '2px 4px', background: `${p.color}18`, borderRadius: 6 }}>
+                <span style={{ fontSize: 16, fontWeight: 900, color: p.color, lineHeight: 1 }}>{p.score}</span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: p.color, textTransform: 'uppercase', letterSpacing: '.05em', opacity: 0.9 }}>{p.label}</span>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {p.contactName && <span>{p.contactName} · </span>}
+                  <span style={{ textTransform: 'capitalize' }}>{p.status.replace('_', ' ')}</span>
+                  {p.fleetSize && <span> · {p.fleetSize} units</span>}
+                </div>
+              </div>
+              {p.phone && (
+                <a href={`tel:${p.phone}`} onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: '#4d8af5', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                  Call →
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Expiring Quotes ───────────────────────────────────────────────────────────
+function ExpiringQuotesCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const setMode = useAppStore((s) => s.setMode);
+  const { data, isLoading } = useQuery({
+    queryKey: ['expiring-quotes'],
+    queryFn: () => api.getExpiringQuotes(),
+    staleTime: 5 * 60_000,
+  });
+
+  const quotes = data?.quotes ?? [];
+  if (!isLoading && quotes.length === 0) return null;
+
+  function open(leadId: number) {
+    setMode('leads');
+    setCurrentLeadId(String(leadId));
+    onLeadClick(leadId);
+  }
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #f59e0b' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" style={{ marginRight: 5 }}>
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Expiring Quotes
+        </span>
+        <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>⚠ Act before they lapse</span>
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: '12px 0', color: 'var(--text-faint)', fontSize: 12 }}>Checking…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {quotes.map((q) => {
+            const urgency = q.daysLeft <= 2 ? '#ef4444' : q.daysLeft <= 4 ? '#f97316' : '#f59e0b';
+            return (
+              <div
+                key={q.id}
+                onClick={() => open(q.leadId)}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: `${urgency}08`, border: `1px solid ${urgency}25`, borderRadius: 8, cursor: 'pointer', transition: 'background .15s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = `${urgency}16`)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = `${urgency}08`)}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 40, padding: '3px 5px', background: `${urgency}18`, borderRadius: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: urgency, lineHeight: 1 }}>{q.daysLeft}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, color: urgency, textTransform: 'uppercase', letterSpacing: '.05em' }}>days</span>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.company}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    #{q.quoteNumber} · {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(q.total)}
+                  </div>
+                </div>
+                {q.email && (
+                  <a
+                    href={`mailto:${q.email}?subject=Following up on quote %23${q.quoteNumber}&body=Hi ${q.contactName || 'there'}%2C%0A%0AWanted to follow up on the quote we sent — it expires in ${q.daysLeft} day${q.daysLeft !== 1 ? 's' : ''}. Let me know if you have any questions.%0A%0ABest`}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ fontSize: 11, color: '#4d8af5', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                  >
+                    Email →
+                  </a>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RetentionRadarCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ['retention-radar'],
@@ -1847,6 +1988,12 @@ export default function MissionView() {
 
       {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
       <InboundRequestsCard />
+
+      {/* ── Top Prospects — highest heat score leads ── */}
+      <TopProspectsCard onLeadClick={goToLead} />
+
+      {/* ── Expiring Quotes — quotes about to lapse ── */}
+      <ExpiringQuotesCard onLeadClick={goToLead} />
 
       {/* ── Speed Dial — top 5 leads to contact right now ── */}
       <SpeedDialCard />

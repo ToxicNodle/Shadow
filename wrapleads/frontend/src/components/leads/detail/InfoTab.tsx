@@ -1817,6 +1817,57 @@ function TagEditor({ lead, onSave }: { lead: Lead; onSave: (tags: string[]) => v
   );
 }
 
+// ── Client Lifetime Value ─────────────────────────────────────────────────────
+function ClientLTVCard({ lead }: { lead: Lead }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['lead-ltv', lead.serverId],
+    queryFn: () => api.getLeadLTV(lead.serverId!),
+    staleTime: 5 * 60_000,
+    enabled: !!lead.serverId,
+  });
+
+  if (isLoading || !data?.ok || data.jobCount === 0) return null;
+
+  const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+
+  return (
+    <div style={{ padding: '12px 14px', background: '#22c55e0a', border: '1px solid #22c55e30', borderRadius: 10, marginBottom: 10 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#22c55e', marginBottom: 8 }}>
+        Client Lifetime Value
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#22c55e', lineHeight: 1 }}>{fmt(data.totalRevenue)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>total revenue</div>
+        </div>
+        <div style={{ width: 1, background: '#22c55e20', flexShrink: 0 }} />
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', lineHeight: 1 }}>{data.jobCount}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>job{data.jobCount !== 1 ? 's' : ''}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', lineHeight: 1 }}>{data.totalVehicles}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>vehicles</div>
+        </div>
+        {data.grossMarginPct !== null && (
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: data.grossMarginPct >= 50 ? '#22c55e' : data.grossMarginPct >= 30 ? '#f59e0b' : '#ef4444', lineHeight: 1 }}>
+              {data.grossMarginPct}%
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>margin</div>
+          </div>
+        )}
+      </div>
+      {data.firstJob && (
+        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+          First job {new Date(data.firstJob).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+          {data.lastJob && data.lastJob !== data.firstJob && ` · Last ${new Date(data.lastJob).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Deal Heat Score ───────────────────────────────────────────────────────────
 function HeatScoreBadge({ leadId }: { leadId: number }) {
   const { data } = useQuery({
@@ -2190,6 +2241,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <CompetitiveIntelPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
+      {lead.serverId && local.status === 'won' && <ClientLTVCard lead={local} />}
       {lead.serverId && local.status === 'won' && <AccountHealthCard lead={local} />}
       {lead.serverId && local.status === 'won' && <WinDebriefPanel lead={local} />}
       {lead.serverId && local.status === 'lost' && <LossDebriefPanel lead={local} />}

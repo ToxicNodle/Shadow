@@ -1722,4 +1722,35 @@ export const api = {
       ok: boolean;
       stats: { token: string; viewed_at: string | null; deposit_clicked_at: string | null; created_at: string } | null;
     }>(`/portal-links/lead/${leadId}/stats`),
+
+  // ── Mission: Top Prospects by heat score ──
+  getTopProspects: () =>
+    authFetch<{
+      ok: boolean;
+      prospects: Array<{
+        id: number; company: string; category: string; status: string;
+        contactName: string | null; phone: string | null; email: string | null;
+        fleetSize: number | null; score: number; label: string; color: string;
+      }>;
+    }>('/mission/top-prospects'),
+
+  // ── Lead Lifetime Value ──
+  getLeadLTV: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      jobCount: number; totalRevenue: number; totalCost: number;
+      totalVehicles: number; grossMarginPct: number | null;
+      firstJob: string | null; lastJob: string | null;
+    }>(`/leads/${leadId}/lifetime-value`),
+
+  // ── Mission: Expiring Quotes ──
+  getExpiringQuotes: () =>
+    authFetch<{
+      ok: boolean;
+      quotes: Array<{
+        id: number; quoteNumber: string; title: string; total: number;
+        expiresAt: string; daysLeft: number; leadId: number;
+        company: string; contactName: string | null; email: string | null; phone: string | null;
+      }>;
+    }>('/mission/expiring-quotes'),
 };

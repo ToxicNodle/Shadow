@@ -11813,6 +11813,149 @@ app.get('/mission/intent-signals', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /mission/top-prospects — top leads by engagement heat score
+app.get('/mission/top-prospects', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, category, status, email, phone, fleet_size, contact_name
+       FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost','cold')
+       ORDER BY updated_at DESC LIMIT 60`,
+      [uid]
+    );
+
+    const now = Date.now();
+    const dayMs = 86_400_000;
+
+    function recency(isoDate) {
+      if (!isoDate) return 0;
+      const ageDays = (now - new Date(isoDate).getTime()) / dayMs;
+      if (ageDays <= 1) return 1.0;
+      if (ageDays <= 3) return 0.8;
+      if (ageDays <= 7) return 0.6;
+      if (ageDays <= 14) return 0.4;
+      if (ageDays <= 30) return 0.2;
+      return 0.05;
+    }
+
+    const scored = [];
+    for (const lead of leads) {
+      const [actR, trackR, portalR] = await Promise.all([
+        pool.query(`SELECT type, created_at FROM lead_activities WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 20`, [lead.id, uid]),
+        pool.query(`SELECT open_count, open_last_at FROM email_tracking WHERE lead_id=$1 AND user_id=$2 ORDER BY open_last_at DESC NULLS LAST LIMIT 5`, [lead.id, uid]),
+        pool.query(`SELECT viewed_at, deposit_clicked_at FROM portal_links WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`, [lead.id, uid]),
+      ]);
+
+      let score = 0;
+      for (const act of actR.rows) {
+        const m = recency(act.created_at);
+        if (act.type === 'email_reply')   score += 15 * m;
+        if (act.type === 'called')        score += 10 * m;
+        if (act.type === 'meeting_set')   score += 20 * m;
+        if (act.type === 'status_changed')score +=  5 * m;
+      }
+      for (const t of trackR.rows) {
+        const m = recency(t.open_last_at);
+        score += Math.min(t.open_count || 1, 10) * 4 * m;
+      }
+      const portal = portalR.rows[0];
+      if (portal?.viewed_at) score += 8 * recency(portal.viewed_at);
+      if (portal?.deposit_clicked_at) score += 35;
+
+      score = Math.round(Math.min(score, 100));
+      if (score >= 10) scored.push({ ...lead, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const results = scored.slice(0, 5).map((l) => ({
+      id: l.id, company: l.company, category: l.category, status: l.status,
+      contactName: l.contact_name, phone: l.phone, email: l.email,
+      fleetSize: l.fleet_size, score: l.score,
+      label: l.score >= 70 ? 'Scorching' : l.score >= 45 ? 'Hot' : l.score >= 25 ? 'Warm' : 'Cool',
+      color: l.score >= 70 ? '#ef4444' : l.score >= 45 ? '#f97316' : l.score >= 25 ? '#eab308' : '#60a5fa',
+    }));
+
+    res.json({ ok: true, prospects: results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/lifetime-value — total revenue from this client across all jobs
+app.get('/leads/:id/lifetime-value', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  try {
+    const leadR = await pool.query('SELECT company FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Not found' });
+    const company = leadR.rows[0].company;
+
+    // Sum jobs for this lead directly and fuzzy-match by company name
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*)::INT                                  AS job_count,
+         COALESCE(SUM(job_revenue), 0)::NUMERIC         AS total_revenue,
+         COALESCE(SUM(material_cost), 0)::NUMERIC       AS total_cost,
+         COALESCE(SUM(vehicle_count), 0)::INT           AS total_vehicles,
+         MIN(install_date)                              AS first_job,
+         MAX(install_date)                              AS last_job
+       FROM installed_jobs
+       WHERE user_id=$1 AND (lead_id=$2 OR LOWER(company) = LOWER($3))`,
+      [uid, leadId, company]
+    );
+
+    const r = rows[0];
+    const margin = r.total_revenue > 0
+      ? Math.round(((r.total_revenue - r.total_cost) / r.total_revenue) * 100)
+      : null;
+
+    res.json({
+      ok: true,
+      jobCount: r.job_count,
+      totalRevenue: Number(r.total_revenue),
+      totalCost: Number(r.total_cost),
+      totalVehicles: r.total_vehicles,
+      grossMarginPct: margin,
+      firstJob: r.first_job,
+      lastJob: r.last_job,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /mission/expiring-quotes — quotes expiring within 7 days that are still "sent"
+app.get('/mission/expiring-quotes', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT q.id, q.quote_number, q.title, q.total, q.sent_at, q.valid_days, q.lead_id,
+              l.company, l.contact_name, l.email, l.phone
+       FROM shop_quotes q
+       JOIN leads l ON l.id = q.lead_id
+       WHERE q.user_id=$1 AND q.status='sent'
+         AND q.sent_at IS NOT NULL
+         AND (q.sent_at + (q.valid_days || ' days')::interval) BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+       ORDER BY (q.sent_at + (q.valid_days || ' days')::interval) ASC
+       LIMIT 10`,
+      [uid]
+    );
+
+    const quotes = rows.map((q) => ({
+      id: q.id,
+      quoteNumber: q.quote_number,
+      title: q.title,
+      total: Number(q.total),
+      expiresAt: new Date(new Date(q.sent_at).getTime() + q.valid_days * 86_400_000).toISOString(),
+      daysLeft: Math.ceil((new Date(q.sent_at).getTime() + q.valid_days * 86_400_000 - Date.now()) / 86_400_000),
+      leadId: q.lead_id,
+      company: q.company,
+      contactName: q.contact_name,
+      email: q.email,
+      phone: q.phone,
+    }));
+
+    res.json({ ok: true, quotes });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Speed Dial — top 5 leads to contact RIGHT NOW, ranked by urgency + opportunity
 app.get('/mission/speed-dial', authMiddleware, async (req, res) => {
   try {
