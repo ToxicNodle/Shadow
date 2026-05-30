@@ -1805,6 +1805,12 @@ export const api = {
       `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }
     ),
 
+  // ── Job Schedule ──
+  getJobSchedule: (year: number, month: number) =>
+    authFetch<{ ok: boolean; jobs: import('./types').InstalledJob[] }>(`/jobs/schedule?year=${year}&month=${month}`),
+  scheduleJob: (jobId: number, opts: { scheduled_install_date: string | null; scheduled_crew_count?: number }) =>
+    authFetch<{ ok: boolean; job: import('./types').InstalledJob }>(`/jobs/${jobId}/schedule`, { method: 'PATCH', body: JSON.stringify(opts) }),
+
   // ── Subcontractors ──
   getSubcontractors: () =>
     authFetch<{ ok: boolean; subs: import('./types').Subcontractor[] }>('/subcontractors'),

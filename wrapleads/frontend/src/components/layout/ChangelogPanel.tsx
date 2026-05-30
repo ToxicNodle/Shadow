@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '📅 Install Schedule Calendar — See Your Crew\'s Month at a Glance',
+    body: 'The Jobs view now has a "Schedule" tab with a full monthly calendar showing all your installs by date. Color-coded by service category (fleet = blue, DI-NOC = purple, racing = orange, etc.). Click any day to see the jobs scheduled for that date with vehicle type, count, and crew size. Set or change a scheduled install date from any job\'s Details tab — two fields: "Scheduled Install Date" and "Crew Count." The calendar automatically shows completed installs (by install date) and upcoming scheduled ones (by scheduled date). Navigate months to see your pipeline stretched across time.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '📋 Material PO Generator — Know Exactly What to Order',
     body: 'Every logged job now has a "Material PO" tab. Set the coverage level (full/partial/spot), waste factor (10–25%), material name, and cost per roll — and WrapOS instantly calculates the exact number of 25"×50\' rolls needed, with waste. Shows base sq ft, with-waste sq ft, and rolls to order. "Copy PO to Clipboard" copies a formatted purchase order ready to email your 3M or Avery distributor. "Print PO" opens a clean printable version. Each vehicle type has industry-standard sq footage built in — no looking up spec sheets.',
   },

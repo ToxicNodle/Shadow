@@ -357,6 +357,8 @@ export interface InstalledJob {
   invoice_sent_at?: string | null;
   paid_at?: string | null;
   amount_paid?: number | null;
+  scheduled_install_date?: string | null;
+  scheduled_crew_count?: number | null;
 }
 
 // ── Subcontractor ─────────────────────────────────────────────────────────────

@@ -1141,7 +1141,7 @@ function JobModal({ job, onClose }: JobModalProps) {
           </div>
           <div className="field-row">
             <div className="field-group">
-              <label className="field-label">Install Date</label>
+              <label className="field-label">Install Date (Completed)</label>
               <input className="input" type="date" {...f('install_date')} />
             </div>
             <div className="field-group">
@@ -1154,6 +1154,44 @@ function JobModal({ job, onClose }: JobModalProps) {
               </select>
             </div>
           </div>
+          {!isNew && (
+            <div className="field-row">
+              <div className="field-group">
+                <label className="field-label">📅 Scheduled Install Date</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={(job as InstalledJob).scheduled_install_date?.split('T')[0] ?? ''}
+                  onChange={async (e) => {
+                    try {
+                      await api.scheduleJob((job as InstalledJob).id, { scheduled_install_date: e.target.value || null });
+                      qc.invalidateQueries({ queryKey: ['installed-jobs'] });
+                      qc.invalidateQueries({ queryKey: ['job-schedule'] });
+                    } catch { /* silent */ }
+                  }}
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label">Crew Count</label>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={(job as InstalledJob).scheduled_crew_count ?? 2}
+                  onChange={async (e) => {
+                    try {
+                      await api.scheduleJob((job as InstalledJob).id, {
+                        scheduled_install_date: (job as InstalledJob).scheduled_install_date || null,
+                        scheduled_crew_count: Number(e.target.value),
+                      });
+                      qc.invalidateQueries({ queryKey: ['job-schedule'] });
+                    } catch { /* silent */ }
+                  }}
+                />
+              </div>
+            </div>
+          )}
           <div className="field-group">
             <label className="field-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               Material
@@ -1234,6 +1272,178 @@ function JobModal({ job, onClose }: JobModalProps) {
         )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Install Schedule Calendar ─────────────────────────────────────────────────
+
+const CAT_COLORS: Record<string, string> = {
+  fleet: '#4d8af5', construction: '#f59e0b', dinoc: '#8b5cf6', reatec: '#06b6d4',
+  colorchange: '#ec4899', gc_referral: '#10b981', wallgraphics: '#6366f1',
+  racing: '#f4551c', design: '#84cc16',
+};
+
+function InstallCalendar({ onEditJob }: { onEditJob: (job: InstalledJob) => void }) {
+  const today = new Date();
+  const [viewYear, setViewYear] = useState(today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(today.getMonth() + 1);
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-schedule', viewYear, viewMonth],
+    queryFn: () => api.getJobSchedule(viewYear, viewMonth),
+    staleTime: 30_000,
+  });
+
+  const jobs = data?.jobs ?? [];
+
+  // Build day → jobs map
+  const dayMap = new Map<number, InstalledJob[]>();
+  for (const job of jobs) {
+    const dateStr = job.scheduled_install_date ?? job.install_date;
+    if (!dateStr) continue;
+    const d = new Date(dateStr + 'T12:00:00');
+    if (d.getFullYear() === viewYear && d.getMonth() + 1 === viewMonth) {
+      const day = d.getDate();
+      if (!dayMap.has(day)) dayMap.set(day, []);
+      dayMap.get(day)!.push(job);
+    }
+  }
+
+  // Calendar grid
+  const firstDay = new Date(viewYear, viewMonth - 1, 1).getDay(); // 0=Sun
+  const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
+  const monthName = new Date(viewYear, viewMonth - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  const selectedJobs = selectedDay ? (dayMap.get(selectedDay) ?? []) : [];
+
+  function prevMonth() {
+    if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12); }
+    else setViewMonth(m => m - 1);
+    setSelectedDay(null);
+  }
+  function nextMonth() {
+    if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1); }
+    else setViewMonth(m => m + 1);
+    setSelectedDay(null);
+  }
+
+  const totalVehiclesThisMonth = jobs.reduce((s, j) => s + j.vehicle_count, 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Nav */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button className="btn" style={{ fontSize: 13 }} onClick={prevMonth}>‹</button>
+        <div style={{ flex: 1, textAlign: 'center', fontWeight: 700, fontSize: 15 }}>{monthName}</div>
+        <button className="btn" style={{ fontSize: 13 }} onClick={nextMonth}>›</button>
+      </div>
+
+      {/* Stats strip */}
+      {jobs.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+          <span>{jobs.length} install{jobs.length !== 1 ? 's' : ''}</span>
+          <span>·</span>
+          <span>{totalVehiclesThisMonth} vehicles</span>
+          <span>·</span>
+          <span>{dayMap.size} day{dayMap.size !== 1 ? 's' : ''} booked</span>
+        </div>
+      )}
+
+      {/* Calendar grid */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+        {/* Day headers */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', background: 'var(--bg-elev-2)' }}>
+          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+            <div key={d} style={{ textAlign: 'center', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', padding: '6px 0' }}>
+              {d}
+            </div>
+          ))}
+        </div>
+
+        {/* Day cells */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          {/* Empty cells before month start */}
+          {Array.from({ length: firstDay }, (_, i) => (
+            <div key={`empty-${i}`} style={{ minHeight: 70, borderTop: '1px solid var(--border-soft)', borderRight: '1px solid var(--border-soft)', padding: 4 }} />
+          ))}
+          {/* Day cells */}
+          {Array.from({ length: daysInMonth }, (_, i) => {
+            const day = i + 1;
+            const dayJobs = dayMap.get(day) ?? [];
+            const isToday = today.getFullYear() === viewYear && today.getMonth() + 1 === viewMonth && today.getDate() === day;
+            const isSelected = selectedDay === day;
+            return (
+              <div
+                key={day}
+                onClick={() => setSelectedDay(isSelected ? null : day)}
+                style={{
+                  minHeight: 70, padding: 4, cursor: 'pointer',
+                  borderTop: '1px solid var(--border-soft)',
+                  borderRight: '1px solid var(--border-soft)',
+                  background: isSelected ? 'rgba(244,85,28,0.06)' : 'transparent',
+                  transition: 'background 0.12s ease',
+                }}
+              >
+                <div style={{
+                  fontSize: 11, fontWeight: isToday ? 800 : 500,
+                  color: isToday ? 'var(--accent)' : 'var(--text-dim)',
+                  width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  borderRadius: '50%',
+                  background: isToday ? 'rgba(244,85,28,0.12)' : 'transparent',
+                  marginBottom: 2,
+                }}>
+                  {day}
+                </div>
+                {dayJobs.slice(0, 3).map((j) => (
+                  <div key={j.id} style={{
+                    fontSize: 9, lineHeight: 1.3, color: '#fff',
+                    background: CAT_COLORS[j.wrap_category] ?? 'var(--accent)',
+                    borderRadius: 3, padding: '1px 4px', marginBottom: 1,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {j.company}
+                  </div>
+                ))}
+                {dayJobs.length > 3 && (
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>+{dayJobs.length - 3} more</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Day detail panel */}
+      {selectedDay !== null && (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 10 }}>
+            {new Date(viewYear, viewMonth - 1, selectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          </div>
+          {selectedJobs.length === 0 ? (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No jobs on this day. Click a job from the list and set its scheduled install date to this day.</p>
+          ) : (
+            selectedJobs.map((j) => (
+              <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid var(--border-soft)' }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: CAT_COLORS[j.wrap_category] ?? 'var(--accent)', flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{j.company}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {j.vehicle_count}× {j.vehicle_type.replace(/_/g, ' ')} · {j.wrap_category}
+                    {j.scheduled_crew_count ? ` · ${j.scheduled_crew_count} crew` : ''}
+                  </div>
+                </div>
+                <button className="btn" style={{ fontSize: 10 }} onClick={() => onEditJob(j)}>Edit →</button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {isLoading && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      )}
     </div>
   );
 }
@@ -1365,7 +1575,7 @@ function expiryLabel(days: number | undefined) {
 // ── Main JobsView ─────────────────────────────────────────────────────────────
 
 export default function JobsView() {
-  const [tab, setTab] = useState<'all' | 'aging' | 'map'>('all');
+  const [tab, setTab] = useState<'all' | 'aging' | 'map' | 'calendar'>('all');
   const [modal, setModal] = useState<InstalledJob | 'new' | null>(null);
   const [qrJob, setQrJob] = useState<InstalledJob | null>(null);
   const [creatingLeadFor, setCreatingLeadFor] = useState<number | null>(null);
@@ -1472,15 +1682,23 @@ export default function JobsView() {
         <button className={`jobs-tab ${tab === 'map' ? 'active' : ''}`} onClick={() => setTab('map')}>
           Fleet Map
         </button>
+        <button className={`jobs-tab ${tab === 'calendar' ? 'active' : ''}`} onClick={() => setTab('calendar')}>
+          📅 Schedule
+        </button>
       </div>
 
       {tab === 'map' && <FleetAgingMap />}
+      {tab === 'calendar' && (
+        <div style={{ padding: '16px 0' }}>
+          <InstallCalendar onEditJob={(job) => setModal(job)} />
+        </div>
+      )}
 
-      {tab !== 'map' && isLoading && (
+      {tab !== 'map' && tab !== 'calendar' && isLoading && (
         <div className="pv-loading"><span className="spinner" /><span>Loading jobs…</span></div>
       )}
 
-      {tab !== 'map' && !isLoading && jobs.length === 0 && (
+      {tab !== 'map' && tab !== 'calendar' && !isLoading && jobs.length === 0 && (
         tab === 'aging' ? (
           <div className="empty-state empty-state-sm">
             <div className="empty-state-icon" style={{ color: 'var(--green)' }}>
@@ -1520,7 +1738,7 @@ export default function JobsView() {
         )
       )}
 
-      {tab !== 'map' && !isLoading && jobs.length > 0 && (
+      {tab !== 'map' && tab !== 'calendar' && !isLoading && jobs.length > 0 && (
         <div className="jobs-list">
           {jobs.map((job) => (
             <div key={job.id} className="jobs-row" onClick={() => setModal(job)}>

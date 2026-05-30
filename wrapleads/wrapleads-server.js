@@ -769,6 +769,14 @@ async function migrateDb() {
     console.warn('[migrate] Could not create subcontractors tables:', e.message);
   }
 
+  // Install schedule date on jobs
+  try {
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_install_date DATE`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_crew_count INT DEFAULT 2`);
+  } catch (e) {
+    console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
+  }
+
   // CAN-SPAM compliant unsubscribe records for outbound prospect emails
   try {
     await pool.query(`
@@ -8089,6 +8097,55 @@ app.get('/jobs/:id/review-requests', authMiddleware, async (req, res) => {
       [jobId, uid]
     );
     res.json({ ok: true, requests: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/schedule?year=YYYY&month=M — return jobs with scheduled_install_date in a given month
+app.get('/jobs/schedule', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company, vehicle_type, vehicle_count, wrap_category, scheduled_install_date,
+              scheduled_crew_count, install_date, life_years
+       FROM installed_jobs
+       WHERE user_id = $1
+         AND (
+           (scheduled_install_date IS NOT NULL AND
+            EXTRACT(YEAR FROM scheduled_install_date) = $2 AND
+            EXTRACT(MONTH FROM scheduled_install_date) = $3)
+           OR
+           (scheduled_install_date IS NULL AND
+            EXTRACT(YEAR FROM install_date) = $2 AND
+            EXTRACT(MONTH FROM install_date) = $3)
+         )
+       ORDER BY COALESCE(scheduled_install_date, install_date)`,
+      [uid, year, month]
+    );
+    res.json({ ok: true, jobs: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /jobs/:id/schedule — set scheduled_install_date + crew count
+app.patch('/jobs/:id/schedule', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { scheduled_install_date, scheduled_crew_count } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE installed_jobs
+       SET scheduled_install_date = $3, scheduled_crew_count = COALESCE($4, scheduled_crew_count)
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [jobId, uid, scheduled_install_date || null, scheduled_crew_count || null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, job: rows[0] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
