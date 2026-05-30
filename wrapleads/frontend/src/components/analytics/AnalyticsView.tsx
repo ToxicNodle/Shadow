@@ -2508,6 +2508,144 @@ function CashFlowCard() {
   );
 }
 
+// ── Client Satisfaction Card ──────────────────────────────────────────────────
+function SatisfactionCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['satisfaction'],
+    queryFn: () => api.getSatisfaction(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Client Satisfaction</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      </div>
+    );
+  }
+
+  const totals = data?.totals;
+  if (!totals || totals.ratedCount === 0) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Client Satisfaction</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          No satisfaction ratings yet. Send review requests from the Jobs view (⭐ Reviews tab) — clients rate 1-5 stars privately first, then happy clients get routed to Google.
+        </p>
+      </div>
+    );
+  }
+
+  const recent = data?.recent ?? [];
+  const ratingColor = (r: number | null) => {
+    if (!r) return 'var(--text-faint)';
+    if (r >= 4.5) return '#22c55e';
+    if (r >= 3.5) return '#4d8af5';
+    if (r >= 2.5) return '#f59e0b';
+    return '#ef4444';
+  };
+
+  function starsDisplay(rating: number) {
+    return Array.from({ length: 5 }, (_, i) => (
+      <span key={i} style={{ color: i < rating ? '#f59e0b' : '#e5e7eb', fontSize: 14 }}>★</span>
+    ));
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Client Satisfaction</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Internal ratings from review requests — high scores route clients to Google automatically
+          </div>
+        </div>
+        {totals.avgRating !== null && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 36, fontWeight: 900, letterSpacing: '-1px', color: ratingColor(totals.avgRating), fontFamily: 'var(--mono)' }}>
+              {totals.avgRating.toFixed(1)}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>avg rating</div>
+          </div>
+        )}
+      </div>
+
+      {/* Stats strip */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Reviews Sent', value: String(totals.sentCount), color: 'var(--text)' },
+          { label: 'Rated', value: String(totals.ratedCount), color: 'var(--text)' },
+          { label: 'Response Rate', value: `${totals.responseRate}%`, color: totals.responseRate >= 50 ? '#22c55e' : '#f59e0b' },
+          { label: '5-Star', value: String(totals.fiveStarCount), color: '#f59e0b' },
+          { label: 'Positive (4-5★)', value: String(totals.positiveCount), color: '#22c55e' },
+          { label: 'Needs Attention', value: String(totals.negativeCount), color: totals.negativeCount > 0 ? '#ef4444' : 'var(--text-faint)' },
+        ].map((s) => (
+          <div key={s.label} style={{ flex: 1, minWidth: 80 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.5px', color: s.color, fontFamily: 'var(--mono)' }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Rating distribution */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+        {[5, 4, 3, 2, 1].map((star) => {
+          const count = recent.filter(r => r.starRating === star).length;
+          const pct = totals.ratedCount > 0 ? (count / totals.ratedCount) * 100 : 0;
+          const c = star >= 4 ? '#22c55e' : star === 3 ? '#f59e0b' : '#ef4444';
+          return (
+            <div key={star} style={{ flex: 1, textAlign: 'center' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: c, marginBottom: 4 }}>{star}★</div>
+              <div style={{ height: 40, borderRadius: 4, background: 'var(--border)', display: 'flex', alignItems: 'flex-end', overflow: 'hidden' }}>
+                <div style={{ width: '100%', height: `${Math.max(4, pct)}%`, background: c, borderRadius: '4px 4px 0 0', transition: 'height 0.4s ease' }} />
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 3 }}>{count}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Recent feedback */}
+      {recent.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 10 }}>Recent Reviews</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {recent.slice(0, 6).map((r) => (
+              <div key={r.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 12px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border)' }}>
+                <div style={{ flexShrink: 0, textAlign: 'center', minWidth: 40 }}>
+                  <div style={{ display: 'flex' }}>{starsDisplay(r.starRating)}</div>
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 2 }}>
+                    {r.feedbackAt ? new Date(r.feedbackAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+                  </div>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: r.feedbackText ? 4 : 0 }}>
+                    {r.company ?? 'Client'}
+                    {r.category && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text-faint)', textTransform: 'capitalize' }}>{r.category}</span>}
+                  </div>
+                  {r.feedbackText && (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, fontStyle: 'italic' }}>
+                      &ldquo;{r.feedbackText}&rdquo;
+                    </div>
+                  )}
+                  {!r.feedbackText && (
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>No written feedback</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-faint)' }}>
+        Send review requests from Jobs → ⭐ Reviews tab. Clients who rate 4-5 stars are shown a Google review button. 1-3 star feedback stays private for you to address.
+      </div>
+    </div>
+  );
+}
+
 // ── Job Profitability P&L Table ───────────────────────────────────────────────
 const SORT_OPTIONS = [
   { value: 'profit', label: 'Net Profit' },
@@ -3377,6 +3515,9 @@ export default function AnalyticsView() {
 
         {/* ── Cash Flow / Receivables ── */}
         <CashFlowCard />
+
+        {/* ── Client Satisfaction ── */}
+        <SatisfactionCard />
 
         {/* ── Job Profitability P&L ── */}
         <JobProfitabilityCard />

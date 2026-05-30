@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '⭐ Client Satisfaction Ratings — Review Gating + Private Feedback',
+    body: 'The review request system now collects a 1-5 star rating BEFORE sending clients to Google. Happy clients (4-5 stars) see a "Leave a Google Review" button — unhappy ones (1-3 stars) get a private "we\'ll make it right" message that only you see. Ratings are stored with optional text feedback and shown in a new Analytics card: avg rating, response rate, star distribution chart, and full feedback feed. The review page is redesigned with a proper interactive star rating UI and inline feedback text box. Send review requests from Jobs → ⭐ Reviews tab as before.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '👻 Proposals Gone Dark — AI Follow-Up Emails for Stale Proposals',
     body: 'The Mission view now shows a "Proposals Gone Dark" card listing every proposal sent 3+ days ago with no approval, decline, or recent view. Click any proposal to expand it, then hit "Generate Follow-Up Email" — WrapOS uses Claude to write a personalized 2-3 sentence nudge referencing the specific project, days since sent, and whether they opened it. Copy the email directly to clipboard for sending in Gmail, Outlook, or WrapOS\'s built-in email. Regenerate as many times as you want for a fresh angle. Proposals that get approved or declined disappear from the list automatically.',
   },

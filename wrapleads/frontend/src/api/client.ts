@@ -1214,6 +1214,14 @@ export const api = {
       leadState: string;
     }>(`/leads/${leadId}/similar-wins`),
 
+  // Client Satisfaction — review ratings + NPS
+  getSatisfaction: () =>
+    authFetch<{
+      ok: boolean;
+      totals: { sentCount: number; ratedCount: number; avgRating: number | null; positiveCount: number; negativeCount: number; fiveStarCount: number; responseRate: number };
+      recent: Array<{ id: number; company: string | null; starRating: number; feedbackText: string | null; feedbackAt: string | null; category: string | null; vehicleType: string | null; vehicleCount: number | null }>;
+    }>('/analytics/satisfaction'),
+
   // Job Profitability — per-job P&L including sub labor
   getJobProfitability: (opts: { sort?: 'profit' | 'margin' | 'revenue' | 'install_date'; limit?: number } = {}) => {
     const qs = new URLSearchParams();

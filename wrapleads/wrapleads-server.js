@@ -549,6 +549,9 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_user  ON review_requests(user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_token ON review_requests(token)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_job   ON review_requests(job_id)`);
+    await pool.query(`ALTER TABLE review_requests ADD COLUMN IF NOT EXISTS star_rating INT`);
+    await pool.query(`ALTER TABLE review_requests ADD COLUMN IF NOT EXISTS feedback_text TEXT`);
+    await pool.query(`ALTER TABLE review_requests ADD COLUMN IF NOT EXISTS feedback_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not create review_requests table:', e.message);
   }
@@ -8419,9 +8422,8 @@ app.get('/review/:token', async (req, res) => {
       return res.redirect(r.google_url);
     }
 
-    const googleButton = r.google_url
-      ? `<a class="btn-review" href="/review/${token}/go">Leave a Google Review ⭐</a>`
-      : `<div class="stars-prompt"><p>How would you rate your experience?</p><div class="stars">${[5,4,3,2,1].map(n => `<a href="/review/${token}/rate/${n}" class="star">★</a>`).join('')}</div></div>`;
+    // Always show star rating first (review gating: only route happy clients to Google)
+    const googleButton = `<div class="stars-prompt"><p style="color:#555;font-size:15px;margin-bottom:12px">How would you rate your experience?</p><div class="stars">${[5,4,3,2,1].map(n => `<a href="/review/${token}/rate/${n}" class="star" title="${n} star${n!==1?'s':''}">★</a>`).join('')}</div><p style="color:#aaa;font-size:11px;margin-top:8px">Tap a star to continue</p></div>`;
 
     res.send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -8461,19 +8463,112 @@ app.get('/review/:token/go', async (req, res) => {
   res.redirect(dest);
 });
 
-// GET /review/:token/rate/:stars — for shops without a Google URL, collect star rating
+// GET /review/:token/rate/:stars — enhanced review gating: collect feedback first,
+// route 4-5 star clients to Google, keep 1-3 star feedback private.
 app.get('/review/:token/rate/:stars', async (req, res) => {
   const stars = parseInt(req.params.stars, 10);
+  const token = req.params.token;
   if (stars < 1 || stars > 5) return res.status(400).send('<h2>Invalid rating.</h2>');
-  pool.query(`UPDATE review_requests SET clicked_at = COALESCE(clicked_at, NOW()) WHERE token = $1`, [req.params.stars]).catch(() => {});
-  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Thanks!</title>
-<style>body{font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f0f4f8;margin:0}
-.card{background:#fff;border-radius:12px;padding:48px 36px;text-align:center;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.1)}
-.stars{font-size:40px;margin-bottom:16px}.h1{font-size:22px;font-weight:700;color:#111;margin-bottom:8px}p{color:#666;font-size:15px}</style></head>
-<body><div class="card"><div class="stars">${'★'.repeat(stars)}${'☆'.repeat(5 - stars)}</div>
-<div class="h1">Thank you for your feedback!</div>
-<p>We appreciate you taking the time to share your experience. We'll use this to keep improving.</p>
-</div></body></html>`);
+
+  const { rows } = await pool.query(
+    `SELECT rr.*, u.settings_json, u.company_name FROM review_requests rr JOIN users u ON u.id::TEXT=rr.user_id WHERE rr.token=$1`,
+    [token]
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) return res.status(404).send('<h2>This link has expired.</h2>');
+
+  const r = rows[0];
+  const s = r.settings_json || {};
+  const shopName = s.companyName || r.company_name || 'the shop';
+  const accent = s.accentColor || '#f4551c';
+  const googleUrl = r.google_url;
+
+  // Track click
+  pool.query(`UPDATE review_requests SET clicked_at=COALESCE(clicked_at,NOW()), star_rating=$1 WHERE token=$2`, [stars, token]).catch(() => {});
+
+  const filledStars = '★'.repeat(stars);
+  const emptyStars = '☆'.repeat(5 - stars);
+  const isPositive = stars >= 4;
+
+  const positiveSection = googleUrl ? `
+    <div class="google-section">
+      <p class="section-label">One more thing — would you share your experience on Google?<br>It helps other businesses find us.</p>
+      <a href="/review/${token}/go" class="btn-google" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+        Leave a Google Review
+      </a>
+    </div>` : `<p style="color:#555;font-size:14px;margin-top:16px">We really appreciate the kind words!</p>`;
+
+  const negativeSection = `
+    <div class="private-section">
+      <p class="section-label">Thank you for your honest feedback. We take every concern seriously and will reach out to make things right.</p>
+      <p style="font-size:12px;color:#999;margin-top:8px">Your response is private — only the shop owner sees it.</p>
+    </div>`;
+
+  res.send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thank you — ${he(shopName)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(135deg,#0e1018,#1a1e2e);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:40px 32px;max-width:460px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+.logo{width:52px;height:52px;background:${accent};border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:26px}
+.stars-display{font-size:44px;letter-spacing:2px;margin:10px 0 20px;color:#f59e0b}
+h1{font-size:22px;font-weight:700;color:#111;margin-bottom:10px}
+textarea{width:100%;border:1px solid #ddd;border-radius:8px;padding:12px;font-size:14px;resize:none;height:90px;margin:16px 0 12px;font-family:inherit;color:#333}
+textarea:focus{outline:none;border-color:${accent}}
+.submit-btn{background:${accent};color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:700;cursor:pointer;width:100%;margin-bottom:10px}
+.submit-btn:hover{opacity:.9}
+.skip-link{color:#aaa;font-size:12px;text-decoration:underline;cursor:pointer;background:none;border:none}
+.google-section{margin-top:20px;padding-top:20px;border-top:1px solid #eee}
+.section-label{color:#555;font-size:14px;margin-bottom:14px;line-height:1.5}
+.btn-google{display:inline-flex;align-items:center;gap:8px;background:#fff;color:#333;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;border:1px solid #ddd;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.btn-google:hover{box-shadow:0 4px 12px rgba(0,0,0,.12)}
+.private-section{margin-top:20px;padding:14px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d}
+.footer{color:#bbb;font-size:11px;margin-top:24px}
+#thanks-section{display:none}
+</style></head>
+<body><div class="card">
+  <div class="logo">⭐</div>
+  <div class="stars-display">${filledStars}<span style="color:#e5e7eb">${emptyStars}</span></div>
+  <h1>${stars >= 4 ? 'We\'re so glad you loved it!' : stars === 3 ? 'Thanks for your honest feedback.' : 'Thank you for letting us know.'}</h1>
+
+  <div id="feedback-section">
+    <p style="color:#666;font-size:14px;margin-bottom:4px">${isPositive ? 'Anything specific you loved?' : 'What could we have done better?'} <span style="color:#aaa">(optional)</span></p>
+    <textarea id="fb-text" placeholder="${isPositive ? 'The team was great, install was fast…' : 'The wrap had a few bubbles…'}"></textarea>
+    <button class="submit-btn" onclick="submitFeedback()">Submit Feedback</button>
+    <button class="skip-link" onclick="skipFeedback()">Skip</button>
+  </div>
+
+  <div id="thanks-section">
+    <p style="color:#555;font-size:15px;margin-bottom:16px">Thanks! Your feedback has been recorded.</p>
+    ${isPositive ? positiveSection : negativeSection}
+  </div>
+
+  <p class="footer">Powered by <a href="https://wrapos.app" style="color:#bbb">WrapOS</a></p>
+</div>
+<script>
+async function submitFeedback() {
+  const text = document.getElementById('fb-text').value.trim();
+  await fetch('/review/${token}/feedback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) }).catch(()=>{});
+  document.getElementById('feedback-section').style.display='none';
+  document.getElementById('thanks-section').style.display='block';
+}
+function skipFeedback() {
+  document.getElementById('feedback-section').style.display='none';
+  document.getElementById('thanks-section').style.display='block';
+}
+</script>
+</body></html>`);
+});
+
+// POST /review/:token/feedback — save optional text feedback for a review
+app.post('/review/:token/feedback', async (req, res) => {
+  const { text } = req.body;
+  await pool.query(
+    `UPDATE review_requests SET feedback_text=$1, feedback_at=NOW() WHERE token=$2`,
+    [text || '', req.params.token]
+  ).catch(() => {});
+  res.json({ ok: true });
 });
 
 // ── VIN Decoder (NHTSA free API) ──────────────────────────────────────────────
@@ -17710,6 +17805,54 @@ app.get('/analytics/job-profitability', authMiddleware, async (req, res) => {
     console.error('[job-profitability]', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /analytics/satisfaction — client satisfaction scores from review requests
+app.get('/analytics/satisfaction', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT rr.id, rr.company, rr.star_rating, rr.feedback_text, rr.feedback_at,
+             rr.sent_at, rr.opened_at, rr.clicked_at,
+             ij.vehicle_type, ij.wrap_category, ij.vehicle_count
+      FROM review_requests rr
+      LEFT JOIN installed_jobs ij ON ij.id = rr.job_id
+      WHERE rr.user_id = $1 AND rr.star_rating IS NOT NULL
+      ORDER BY rr.feedback_at DESC NULLS LAST, rr.clicked_at DESC NULLS LAST
+      LIMIT 50
+    `, [uid]);
+
+    const statsR = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE star_rating IS NOT NULL) AS rated_count,
+        COUNT(*) AS total_sent,
+        ROUND(AVG(star_rating)::NUMERIC, 1) AS avg_rating,
+        COUNT(*) FILTER (WHERE star_rating >= 4) AS positive_count,
+        COUNT(*) FILTER (WHERE star_rating <= 2) AS negative_count,
+        COUNT(*) FILTER (WHERE star_rating = 5) AS five_star_count
+      FROM review_requests
+      WHERE user_id = $1
+    `, [uid]);
+    const st = statsR.rows[0];
+
+    res.json({
+      ok: true,
+      totals: {
+        sentCount: Number(st.total_sent),
+        ratedCount: Number(st.rated_count),
+        avgRating: st.avg_rating !== null ? Number(st.avg_rating) : null,
+        positiveCount: Number(st.positive_count),
+        negativeCount: Number(st.negative_count),
+        fiveStarCount: Number(st.five_star_count),
+        responseRate: st.total_sent > 0 ? Math.round((Number(st.rated_count) / Number(st.total_sent)) * 100) : 0,
+      },
+      recent: rows.map(r => ({
+        id: r.id, company: r.company, starRating: r.star_rating,
+        feedbackText: r.feedback_text || null, feedbackAt: r.feedback_at,
+        category: r.wrap_category, vehicleType: r.vehicle_type, vehicleCount: r.vehicle_count,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /analytics/cash-flow — outstanding receivables + collection priority
