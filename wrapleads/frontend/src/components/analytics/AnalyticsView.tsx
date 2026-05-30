@@ -9,6 +9,7 @@ import TerritoryIntelCard from './TerritoryIntelCard';
 import OutreachCalendarCard from './OutreachCalendarCard';
 import PricingIntelCard from './PricingIntelCard';
 import WinPatternsCard from './WinPatternsCard';
+import LeadCoverageCard from './LeadCoverageCard';
 
 function fmtRev(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -3521,6 +3522,9 @@ export default function AnalyticsView() {
 
         {/* ── Job Profitability P&L ── */}
         <JobProfitabilityCard />
+
+        {/* ── Lead Database Coverage ── */}
+        <LeadCoverageCard />
 
         {/* ── Lead Cohort Analysis ── */}
         <CohortAnalysisCard />

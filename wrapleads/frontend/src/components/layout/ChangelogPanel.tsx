@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '🗺️ National Lead Coverage — 18-State SOS + Automated Google Places Sweep',
+    body: 'WrapOS\'s lead database now supports Secretary of State registry data from 18 US states — up from 6 Midwest states. New additions: Texas, California, Florida, Georgia, North Carolina, Pennsylvania, Washington, Colorado, Arizona, New York, Virginia, and Missouri. Each state\'s SOS bulk CSV format is supported with header aliasing (different portals use different column names). Use `npm run ingest:sos <state> <file>` to import any state\'s CSV. A new Google Places National Sweep script (`npm run ingest:sweep`) automatically sweeps 30 major metros across all US regions (south/west/east/midwest) with 10 fleet business categories — trucking, HVAC, plumbing, construction, landscaping, food trucks, and more. Run it by region or all at once. The new "Lead Database Coverage" card in Analytics shows total records by source and state, a color-coded US heatmap, source breakdown bars, and recent ingest run history.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '⭐ Client Satisfaction Ratings — Review Gating + Private Feedback',
     body: 'The review request system now collects a 1-5 star rating BEFORE sending clients to Google. Happy clients (4-5 stars) see a "Leave a Google Review" button — unhappy ones (1-3 stars) get a private "we\'ll make it right" message that only you see. Ratings are stored with optional text feedback and shown in a new Analytics card: avg rating, response rate, star distribution chart, and full feedback feed. The review page is redesigned with a proper interactive star rating UI and inline feedback text box. Send review requests from Jobs → ⭐ Reviews tab as before.',
   },

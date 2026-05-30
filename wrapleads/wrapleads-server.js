@@ -17855,6 +17855,88 @@ app.get('/analytics/satisfaction', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /analytics/lead-coverage — lead database coverage stats by source and state
+// Shows record counts, last ingest run, and geographic coverage across all data sources.
+// No user_id filter — this describes the shared companies table, not per-user leads.
+app.get('/analytics/lead-coverage', authMiddleware, async (req, res) => {
+  try {
+    // Per-source summary
+    const sourceRes = await pool.query(`
+      SELECT
+        source,
+        COUNT(*)::INT            AS total,
+        MAX(updated_at)          AS last_updated,
+        COUNT(DISTINCT state)::INT AS state_count
+      FROM companies
+      WHERE source IS NOT NULL
+      GROUP BY source
+      ORDER BY total DESC
+    `);
+
+    // Per-state summary (all sources combined)
+    const stateRes = await pool.query(`
+      SELECT
+        state,
+        COUNT(*)::INT                                              AS total,
+        COUNT(DISTINCT source)::INT                               AS source_count,
+        COUNT(CASE WHEN source = 'fmcsa' THEN 1 END)::INT         AS fmcsa,
+        COUNT(CASE WHEN source LIKE 'sos_%' THEN 1 END)::INT      AS sos,
+        COUNT(CASE WHEN source = 'google_places' THEN 1 END)::INT AS places,
+        COUNT(CASE WHEN source = 'sam_gov' THEN 1 END)::INT       AS sam,
+        COUNT(CASE WHEN source = 'news_signal' THEN 1 END)::INT   AS signal
+      FROM companies
+      WHERE state IS NOT NULL AND state != '' AND LENGTH(state) = 2
+      GROUP BY state
+      ORDER BY total DESC
+      LIMIT 60
+    `);
+
+    // Ingest run history (last 20 runs)
+    const runRes = await pool.query(`
+      SELECT source, file_name, started_at, finished_at,
+             rows_read, rows_inserted, rows_updated, rows_skipped, notes
+      FROM ingest_runs
+      ORDER BY started_at DESC
+      LIMIT 20
+    `);
+
+    // Grand total
+    const totalRes = await pool.query(`SELECT COUNT(*)::INT AS total FROM companies`);
+
+    res.json({
+      ok: true,
+      grandTotal: totalRes.rows[0].total,
+      sources: sourceRes.rows.map(r => ({
+        source:      r.source,
+        total:       r.total,
+        lastUpdated: r.last_updated,
+        stateCount:  r.state_count,
+      })),
+      states: stateRes.rows.map(r => ({
+        state:  r.state,
+        total:  r.total,
+        sources: r.source_count,
+        fmcsa:  r.fmcsa,
+        sos:    r.sos,
+        places: r.places,
+        sam:    r.sam,
+        signal: r.signal,
+      })),
+      recentRuns: runRes.rows.map(r => ({
+        source:     r.source,
+        fileName:   r.file_name,
+        startedAt:  r.started_at,
+        finishedAt: r.finished_at,
+        rowsRead:   r.rows_read,
+        inserted:   r.rows_inserted,
+        updated:    r.rows_updated,
+        skipped:    r.rows_skipped,
+        notes:      r.notes,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /analytics/cash-flow — outstanding receivables + collection priority
 // Returns: current-month stats, aging buckets (0-14d / 15-29d / 30+d),
 // and a ranked "collect this week" list of overdue jobs.

@@ -1222,6 +1222,16 @@ export const api = {
       recent: Array<{ id: number; company: string | null; starRating: number; feedbackText: string | null; feedbackAt: string | null; category: string | null; vehicleType: string | null; vehicleCount: number | null }>;
     }>('/analytics/satisfaction'),
 
+  // Lead Database Coverage — record counts by source and state
+  getLeadCoverage: () =>
+    authFetch<{
+      ok: boolean;
+      grandTotal: number;
+      sources: Array<{ source: string; total: number; lastUpdated: string | null; stateCount: number }>;
+      states: Array<{ state: string; total: number; sources: number; fmcsa: number; sos: number; places: number; sam: number; signal: number }>;
+      recentRuns: Array<{ source: string; fileName: string; startedAt: string; finishedAt: string | null; rowsRead: number | null; inserted: number | null; updated: number | null; skipped: number | null; notes: string | null }>;
+    }>('/analytics/lead-coverage'),
+
   // Job Profitability — per-job P&L including sub labor
   getJobProfitability: (opts: { sort?: 'profit' | 'margin' | 'revenue' | 'install_date'; limit?: number } = {}) => {
     const qs = new URLSearchParams();
