@@ -9,6 +9,24 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '⭐ Google Review Automation — One-Click Review Requests After Every Job',
+    body: 'Every completed job in the Jobs view now has a "Reviews" tab. Fill in the client\'s email or phone number, optionally paste your Google Business review URL, and hit "Send Review Request." WrapOS sends a personalized branded email or SMS to the client with a single tap to leave a Google review. The landing page is clean, mobile-first, and tracks opens and clicks — so you know who saw it and who actually left a review. No other wrap CRM has this. More Google reviews = more inbound leads.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: '🔍 VIN Decoder — Identify Any Vehicle Instantly',
+    body: 'The Quote Builder now has a "VIN Lookup" widget powered by the NHTSA free API (no key required). Type any 17-character VIN and instantly get the make, model, year, body class, and GVWR — plus WrapOS maps it to the right vehicle type for your sq footage calculator. Hit "Use this vehicle" and the quote title auto-fills. Perfect for on-site sales calls where you\'re looking at a real truck and want to quote it accurately in 30 seconds.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'improved',
+    title: '📱 PWA — Install WrapOS on Your Phone Like a Native App',
+    body: 'WrapOS now ships with a full PWA manifest. On iOS, tap Share → Add to Home Screen. On Android, Chrome prompts you to install automatically. The installed version runs full-screen with no browser chrome, respects your phone\'s safe areas, and uses WrapOS orange as the system theme color. Use it on-site without fumbling with browser tabs.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '🎯 Pre-Send Proposal Coach — AI Guidance Before You Click Send',
     body: 'The Quotes tab now has a "Pre-Send Proposal Coach" panel that fires before you build your proposal. Click it and Claude analyzes your won deals in the same category + this contact\'s email engagement history to give you: your historical winning price range (with deal count), a recommended subject line crafted for this specific lead, 3 specific strategy bullets (not generic advice — based on actual numbers), and 2 watch-out risk factors. The goal is to walk into every proposal with the advantage of hindsight from your most similar won deals.',
   },

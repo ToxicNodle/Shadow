@@ -1,11 +1,99 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import * as QRCode from 'qrcode';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../api/types';
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
 import MaterialCatalogModal from '../modals/MaterialCatalogModal';
 import FleetAgingMap from './FleetAgingMap';
+
+// ── Fleet QR Code Modal ───────────────────────────────────────────────────────
+// Generates a QR code pointing to the shop's public quote-request page.
+// When someone scans the truck's QR sticker, they land on a branded form
+// that creates an inbound lead automatically.
+function FleetQRModal({ job, onClose }: { job: InstalledJob; onClose: () => void }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const { data: quoteLink } = useQuery({
+    queryKey: ['quote-link'],
+    queryFn: () => api.getMyQuoteLink(),
+    staleTime: 60 * 60_000,
+  });
+
+  const qrUrl = quoteLink
+    ? `${window.location.origin}/quote-request/${quoteLink.token}?ref=fleet&company=${encodeURIComponent(job.company)}`
+    : null;
+
+  useEffect(() => {
+    if (!qrUrl) return;
+    QRCode.toDataURL(qrUrl, {
+      width: 280, margin: 2,
+      color: { dark: '#0e1018', light: '#ffffff' },
+      errorCorrectionLevel: 'M',
+    }).then(setDataUrl).catch(() => {});
+  }, [qrUrl]);
+
+  function download() {
+    if (!dataUrl) return;
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `wrapos-fleet-qr-${job.company.toLowerCase().replace(/\s+/g, '-')}.png`;
+    a.click();
+  }
+
+  function copyUrl() {
+    if (!qrUrl) return;
+    navigator.clipboard.writeText(qrUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="modal-title">Fleet QR Code</h2>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
+          <p style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.6, textAlign: 'center', alignSelf: 'stretch' }}>
+            Print this QR code and stick it on the wrapped vehicle. When someone scans it, they land on your quote request form — and the lead goes directly into WrapOS.
+          </p>
+
+          {dataUrl ? (
+            <div style={{ background: '#fff', padding: 12, borderRadius: 12, boxShadow: '0 4px 16px rgba(0,0,0,0.3)' }}>
+              <img src={dataUrl} alt="Fleet QR code" style={{ width: 200, height: 200, display: 'block' }} />
+            </div>
+          ) : (
+            <div style={{ width: 224, height: 224, background: 'var(--bg-elev-2)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="spinner" />
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', textAlign: 'center', wordBreak: 'break-all' }}>
+            {qrUrl || 'Loading…'}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+            <button className="btn" style={{ flex: 1 }} onClick={copyUrl} disabled={!qrUrl}>
+              {copied ? '✓ Copied' : '📋 Copy Link'}
+            </button>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={download} disabled={!dataUrl}>
+              ⬇ Download PNG
+            </button>
+          </div>
+
+          <p style={{ fontSize: 11, color: 'var(--text-faint)', textAlign: 'center', lineHeight: 1.5 }}>
+            Tip: Print at 1.5"×1.5" minimum for easy scanning. Add a sticker to the driver's door or rear panel.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Google Review Request Panel ───────────────────────────────────────────────
 function ReviewRequestPanel({ job }: { job: InstalledJob }) {
@@ -784,6 +872,7 @@ function expiryLabel(days: number | undefined) {
 export default function JobsView() {
   const [tab, setTab] = useState<'all' | 'aging' | 'map'>('all');
   const [modal, setModal] = useState<InstalledJob | 'new' | null>(null);
+  const [qrJob, setQrJob] = useState<InstalledJob | null>(null);
   const [creatingLeadFor, setCreatingLeadFor] = useState<number | null>(null);
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
@@ -962,6 +1051,14 @@ export default function JobsView() {
                     {creatingLeadFor === job.id ? <span className="spinner" style={{ width: 10, height: 10 }} /> : '→ Lead'}
                   </button>
                 )}
+                <button
+                  className="btn"
+                  style={{ fontSize: 11 }}
+                  title="Generate QR code for this vehicle"
+                  onClick={(e) => { e.stopPropagation(); setQrJob(job); }}
+                >
+                  QR
+                </button>
               </div>
             </div>
           ))}
@@ -969,6 +1066,7 @@ export default function JobsView() {
       )}
 
       {modal && <JobModal job={modal} onClose={() => setModal(null)} />}
+      {qrJob && <FleetQRModal job={qrJob} onClose={() => setQrJob(null)} />}
     </div>
   );
 }
