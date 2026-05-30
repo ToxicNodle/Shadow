@@ -27,6 +27,7 @@ import MissionView from '../components/mission/MissionView';
 import JobsView from '../components/jobs/JobsView';
 import ContentView from '../components/content/ContentView';
 import AnalyticsView from '../components/analytics/AnalyticsView';
+import ErrorBoundary from '../components/ui/ErrorBoundary';
 // HelioScout view is large (charts, maps, monte carlo viz). Lazy-load it so
 // it doesn't bloat the initial CRMPage bundle for users who never open the
 // solar tab.
@@ -158,13 +159,15 @@ export default function CRMPage() {
             ? <AnalyticsView />
             : mode === 'solar_scout'
             ? (
-              <Suspense fallback={
-                <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                  Loading HelioScout intelligence layer…
-                </div>
-              }>
-                <SolarScoutView />
-              </Suspense>
+              <ErrorBoundary>
+                <Suspense fallback={
+                  <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                    Loading HelioScout intelligence layer…
+                  </div>
+                }>
+                  <SolarScoutView />
+                </Suspense>
+              </ErrorBoundary>
             )
             : <DiscoverPage />}
         </main>
