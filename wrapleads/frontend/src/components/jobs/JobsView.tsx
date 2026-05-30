@@ -7,6 +7,7 @@ import type { InstalledJob, VehicleType, LeadCategory, JobPhoto } from '../../ap
 import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
 import MaterialCatalogModal from '../modals/MaterialCatalogModal';
 import FleetAgingMap from './FleetAgingMap';
+import FleetSurveyModal from './FleetSurveyModal';
 
 // ── Fleet QR Code Modal ───────────────────────────────────────────────────────
 // Generates a QR code pointing to the shop's public quote-request page.
@@ -1075,6 +1076,7 @@ export default function JobsView() {
   const [modal, setModal] = useState<InstalledJob | 'new' | null>(null);
   const [qrJob, setQrJob] = useState<InstalledJob | null>(null);
   const [creatingLeadFor, setCreatingLeadFor] = useState<number | null>(null);
+  const [surveyOpen, setSurveyOpen] = useState(false);
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
@@ -1135,9 +1137,19 @@ export default function JobsView() {
           <h1 className="jobs-title">Wrap Lifecycle Tracker</h1>
           <p className="jobs-sub">Track every install. Surface re-order opportunities automatically.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setModal('new')}>
-          + Log Completed Job
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn"
+            style={{ fontSize: 12, borderColor: 'rgba(77,138,245,0.35)', color: 'var(--signal-blue, #4d8af5)' }}
+            onClick={() => setSurveyOpen(true)}
+            title="Walk a fleet and log vehicles on-site"
+          >
+            🚛 Fleet Survey
+          </button>
+          <button className="btn btn-primary" onClick={() => setModal('new')}>
+            + Log Completed Job
+          </button>
+        </div>
       </div>
 
       <div className="jobs-stats">
@@ -1268,6 +1280,29 @@ export default function JobsView() {
 
       {modal && <JobModal job={modal} onClose={() => setModal(null)} />}
       {qrJob && <FleetQRModal job={qrJob} onClose={() => setQrJob(null)} />}
+      {surveyOpen && (
+        <FleetSurveyModal
+          onClose={() => setSurveyOpen(false)}
+          onExport={(company, vehicles) => {
+            setSurveyOpen(false);
+            const lines = vehicles.map((v) =>
+              `${v.count}× ${v.type.replace(/_/g, ' ')} — ${v.condition}${v.hasExistingWrap ? ' (removal needed)' : ''}${v.notes ? ` — ${v.notes}` : ''}`
+            );
+            const totalVeh = vehicles.reduce((s, v) => s + v.count, 0);
+            const totalSqFt = vehicles.reduce((s, v) => {
+              const SQ_FT: Record<string, number> = { cargo_van: 340, box_truck: 570, sprinter: 320, pickup: 280, semi_tractor: 620, semi_trailer: 1040, '53ft_trailer': 1180, flatbed: 480, bus: 980, rv: 1200, suv: 230, passenger_car: 195, food_truck: 440, boat: 260, trailer: 360, other: 350 };
+              return s + (SQ_FT[v.type] ?? 350) * v.count;
+            }, 0);
+            const estLow = Math.round(totalSqFt * 4.5 / 100) * 100;
+            const estHigh = Math.round(totalSqFt * 7.0 / 100) * 100;
+            const summary = `Fleet Survey — ${company}\n${lines.join('\n')}\nTotal: ${totalVeh} vehicles · ~${totalSqFt.toLocaleString()} sq ft · Est $${estLow.toLocaleString()}–$${estHigh.toLocaleString()}`;
+            navigator.clipboard.writeText(summary).catch(() => {});
+            showToast(`Survey copied! Open a lead's Notes or Quotes tab to paste it.`, 'success');
+            // Navigate to leads so user can pick the right lead
+            setMode('leads');
+          }}
+        />
+      )}
     </div>
   );
 }

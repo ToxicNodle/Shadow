@@ -2386,6 +2386,128 @@ function CohortAnalysisCard() {
   );
 }
 
+// ── Cash Flow Dashboard ───────────────────────────────────────────────────────
+function CashFlowCard() {
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['cash-flow'],
+    queryFn: () => api.getCashFlow(),
+    staleTime: 5 * 60_000,
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ jobId, status }: { jobId: number; status: string }) =>
+      api.updateJobPayment(jobId, { payment_status: status }),
+    onSuccess: () => refetch(),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Cash Flow</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+          <span className="spinner" />
+        </div>
+      </div>
+    );
+  }
+
+  const outstanding = data?.totalOutstanding ?? 0;
+  const collected = data?.collectedMtd ?? 0;
+  const allJobs = [...(data?.late ?? []), ...(data?.mid ?? []), ...(data?.current ?? [])];
+
+  if (!outstanding && !collected) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Cash Flow</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Log jobs with revenue and track payments to see your receivables dashboard.
+        </p>
+      </div>
+    );
+  }
+
+  function agingColor(days: number) {
+    if (days >= 30) return '#ef4444';
+    if (days >= 15) return '#f59e0b';
+    return '#22c55e';
+  }
+
+  function statusLabel(s: string) {
+    return { unpaid: 'Unpaid', deposit_paid: 'Deposit', invoice_sent: 'Invoice Sent', overdue: 'Overdue', paid: 'Paid' }[s] ?? s;
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Cash Flow</div>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>outstanding receivables</span>
+      </div>
+
+      {/* Hero metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
+        {[
+          { label: 'Outstanding', value: `$${outstanding.toLocaleString()}`, color: outstanding > 0 ? '#ef4444' : '#22c55e' },
+          { label: 'Collected MTD', value: `$${collected.toLocaleString()}`, color: '#22c55e' },
+          { label: 'Late (30+ days)', value: `$${(data?.late ?? []).reduce((s, j) => s + j.balance, 0).toLocaleString()}`, color: (data?.late?.length ?? 0) > 0 ? '#ef4444' : 'var(--text-muted)' },
+        ].map((m) => (
+          <div key={m.label} style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '12px 14px' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 4 }}>{m.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: '-1px', color: m.color }}>{m.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Aging table */}
+      {allJobs.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr>
+                {['Company', 'Category', 'Install', 'Age', 'Revenue', 'Balance', 'Status', ''].map((h) => (
+                  <th key={h} style={{ textAlign: h === '' || h === 'Revenue' || h === 'Balance' ? 'right' : 'left', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allJobs.map((j) => (
+                <tr key={j.id} style={{ borderBottom: '1px solid var(--border-soft)' }}>
+                  <td style={{ padding: '8px 0', fontWeight: 600 }}>{j.company}</td>
+                  <td style={{ padding: '8px 8px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{j.category}</td>
+                  <td style={{ padding: '8px 0', color: 'var(--text-muted)' }}>{j.installDate ? new Date(j.installDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
+                  <td style={{ padding: '8px 8px', fontWeight: 700, color: agingColor(j.daysSinceInstall) }}>{j.daysSinceInstall}d</td>
+                  <td style={{ padding: '8px 0', textAlign: 'right' }}>${j.revenue.toLocaleString()}</td>
+                  <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: agingColor(j.daysSinceInstall) }}>${j.balance.toLocaleString()}</td>
+                  <td style={{ padding: '8px 0' }}>
+                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elev-2)', color: 'var(--text-muted)' }}>
+                      {statusLabel(j.paymentStatus)}
+                    </span>
+                  </td>
+                  <td style={{ padding: '8px 0', textAlign: 'right' }}>
+                    {j.paymentStatus !== 'paid' && (
+                      <button
+                        className="btn"
+                        style={{ fontSize: 10, padding: '2px 8px' }}
+                        disabled={updateMut.isPending}
+                        onClick={() => updateMut.mutate({ jobId: j.id, status: 'paid' })}
+                      >
+                        Mark Paid
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-faint)' }}>
+        Green = 0–14 days · Amber = 15–29 days · Red = 30+ days · Update payment status in Jobs view.
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -3068,6 +3190,9 @@ export default function AnalyticsView() {
 
         {/* ── Material Margin Dashboard ── */}
         <MarginDashboardCard />
+
+        {/* ── Cash Flow / Receivables ── */}
+        <CashFlowCard />
 
         {/* ── Lead Cohort Analysis ── */}
         <CohortAnalysisCard />

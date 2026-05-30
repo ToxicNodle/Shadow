@@ -17201,6 +17201,101 @@ app.get('/analytics/territory-intel', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /analytics/cash-flow — outstanding receivables + collection priority
+// Returns: current-month stats, aging buckets (0-14d / 15-29d / 30+d),
+// and a ranked "collect this week" list of overdue jobs.
+app.get('/analytics/cash-flow', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        j.id,
+        j.company,
+        j.vehicle_type,
+        j.vehicle_count,
+        j.wrap_category,
+        j.install_date,
+        j.job_revenue,
+        COALESCE(j.amount_paid, 0)                   AS amount_paid,
+        j.job_revenue - COALESCE(j.amount_paid, 0)   AS balance,
+        j.payment_status,
+        j.invoice_sent_at,
+        j.paid_at,
+        EXTRACT(EPOCH FROM (NOW() - j.install_date)) / 86400 AS days_since_install
+      FROM installed_jobs j
+      WHERE j.user_id = $1
+        AND j.job_revenue IS NOT NULL
+        AND j.job_revenue > 0
+        AND j.payment_status != 'paid'
+      ORDER BY j.install_date ASC
+    `, [uid]);
+
+    const now = Date.now();
+    const thirtyDaysAgo = now - 30 * 86400_000;
+    const fifteenDaysAgo = now - 15 * 86400_000;
+
+    // Aging buckets
+    const buckets = { current: [], mid: [], late: [] };
+    let totalOutstanding = 0;
+    for (const r of rows) {
+      const balance = Number(r.balance);
+      if (balance <= 0) continue;
+      totalOutstanding += balance;
+      const installMs = r.install_date ? new Date(r.install_date).getTime() : now;
+      if (installMs >= fifteenDaysAgo) buckets.current.push(r);
+      else if (installMs >= thirtyDaysAgo) buckets.mid.push(r);
+      else buckets.late.push(r);
+    }
+
+    // Current month revenue (paid jobs)
+    const { rows: paidRows } = await pool.query(`
+      SELECT COALESCE(SUM(amount_paid), 0) AS collected_mtd
+      FROM installed_jobs
+      WHERE user_id = $1
+        AND payment_status = 'paid'
+        AND DATE_TRUNC('month', COALESCE(paid_at, updated_at)) = DATE_TRUNC('month', NOW())
+    `, [uid]);
+    const collectedMtd = Number(paidRows[0]?.collected_mtd || 0);
+
+    // Total revenue from jobs (all time)
+    const { rows: totRows } = await pool.query(`
+      SELECT COALESCE(SUM(job_revenue), 0) AS total_revenue,
+             COALESCE(SUM(amount_paid), 0) AS total_paid
+      FROM installed_jobs WHERE user_id = $1 AND job_revenue > 0
+    `, [uid]);
+    const totalRevenue = Number(totRows[0]?.total_revenue || 0);
+    const totalPaid = Number(totRows[0]?.total_paid || 0);
+
+    const toItem = (r) => ({
+      id: r.id,
+      company: r.company,
+      vehicleType: r.vehicle_type,
+      vehicleCount: r.vehicle_count,
+      category: r.wrap_category,
+      revenue: Number(r.job_revenue),
+      amountPaid: Number(r.amount_paid),
+      balance: Number(r.balance),
+      paymentStatus: r.payment_status,
+      installDate: r.install_date,
+      invoiceSentAt: r.invoice_sent_at,
+      daysSinceInstall: Math.round(Number(r.days_since_install) || 0),
+    });
+
+    res.json({
+      totalOutstanding,
+      collectedMtd,
+      totalRevenue,
+      totalPaid,
+      current: buckets.current.map(toItem),   // 0-14 days
+      mid: buckets.mid.map(toItem),            // 15-29 days
+      late: buckets.late.map(toItem),          // 30+ days
+    });
+  } catch (e) {
+    console.error('[cash-flow]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Public Demo Call Feature ──────────────────────────────────────────────────
 // Visitors pick a real FMCSA carrier, enter their own phone, and the AI calls
 // THEM (not the carrier) — they experience the call firsthand, first-person.

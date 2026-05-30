@@ -1804,4 +1804,16 @@ export const api = {
     authFetch<{ ok: boolean; invoiceNum: string }>(
       `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }
     ),
+
+  // ── Cash Flow ──
+  getCashFlow: () =>
+    authFetch<{
+      totalOutstanding: number;
+      collectedMtd: number;
+      totalRevenue: number;
+      totalPaid: number;
+      current: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
+      mid: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
+      late: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
+    }>('/analytics/cash-flow'),
 };

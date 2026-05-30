@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '🚛 Fleet Survey Mode — Log Entire Fleets On-Site in Minutes',
+    body: 'A new "Fleet Survey" button in the Jobs view opens a mobile-optimized multi-step wizard. Walk a client\'s lot, tap "+ Add Vehicle" for each vehicle type you see, set the quantity and condition (New / Good / Aging / Damaged), note whether it has an existing wrap to remove, and add field notes. The survey shows a live estimate ($Low–$High) as you add vehicles, calculated from industry-standard square footage per vehicle type. When done, "Export to Quote" copies a structured summary to your clipboard and takes you to your leads list — paste into a note or quote description and build from there. Designed for on-site use: big tap targets, emoji vehicle icons, no typing required.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
+    title: '💵 Cash Flow Dashboard — Outstanding Receivables at a Glance',
+    body: 'Analytics now includes a Cash Flow card showing every unpaid job with a balance due, organized into aging buckets: current (0–14 days), mid (15–29 days), and late (30+ days). Color-coded by age — green, amber, red. See total outstanding balance, collected month-to-date, and how much is overdue at 30+ days. "Mark Paid" directly from the table without navigating to the job. Perfect for weekly AR reviews: one screen shows exactly who owes what.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '🧾 Invoice Generator — Professional Invoices in One Click',
     body: 'Every logged job now has an "Invoice" tab. Click "View Invoice →" to open a clean, branded HTML invoice in a new tab — includes job summary, line items, balance due, payment status badge, and a direct payment link (if configured in Settings). Or email the invoice straight to the client with one click: fill in their email address and hit Send. WrapOS marks the job as "Invoice Sent" automatically and logs the timestamp. Print to PDF from the browser. No accounting software needed.',
   },
