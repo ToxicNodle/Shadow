@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '💳 Batch Invoice Sender — Collect All Outstanding Balances at Once',
+    body: 'The Jobs view has a new "Receivables" tab. It shows every job with an outstanding balance — company, install date, aging (color-coded green/amber/red), revenue, balance due, and payment status. Select any or all jobs with checkboxes, then click "Send Invoices" to email all of them at once. WrapOS resolves each client\'s email from the linked lead automatically. Jobs without a linked lead or email are skipped with a skip count. "Select All with Email" filters to only the jobs that can actually be invoiced. Marks each job as "Invoice Sent" and timestamps it. One click instead of opening each job one at a time.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '📊 Job Profitability P&L — True Margin After All Costs',
     body: 'Analytics now includes a Job Profitability table showing your true per-job P&L: revenue minus material cost minus subcontractor labor. Sort by Net Profit, Margin %, Revenue, or Most Recent. Color-coded margin badges: green ≥50%, blue ≥35%, amber ≥20%, red <20%. Totals strip at the top shows aggregate revenue, material, sub labor, net profit, and average margin across all logged jobs. A mini revenue bar on each row gives instant visual context. Overdue or unpaid jobs are flagged inline. The data feeds from your installed jobs — add Revenue and Material Cost to any job in the Jobs view to populate this table.',
   },

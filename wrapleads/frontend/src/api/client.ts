@@ -401,6 +401,24 @@ export const api = {
   createReorderLead: (jobId: number) =>
     authFetch<{ leadId: number; existing: boolean }>(`/jobs/${jobId}/create-reorder-lead`, { method: 'POST' }),
 
+  getOutstandingJobs: () =>
+    authFetch<{
+      ok: boolean;
+      jobs: Array<{
+        id: number; company: string; vehicleCount: number; vehicleType: string | null;
+        category: string | null; installDate: string | null; revenue: number;
+        amountPaid: number; balance: number; paymentStatus: string;
+        invoiceSentAt: string | null; leadEmail: string | null; leadContact: string | null;
+        daysSinceInstall: number;
+      }>;
+    }>('/jobs/outstanding'),
+
+  batchSendInvoices: (jobIds: number[]) =>
+    authFetch<{
+      ok: boolean; sent: number; skipped: number; failed: number;
+      results: Array<{ jobId: number; ok: boolean; company: string | null; toEmail?: string; reason?: string }>;
+    }>('/jobs/batch-send-invoices', { method: 'POST', body: JSON.stringify({ jobIds }) }),
+
   checkLeadNews: (leadId: number) =>
     authFetch<{
       ok: boolean; company: string;

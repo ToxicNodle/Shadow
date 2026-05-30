@@ -1575,7 +1575,7 @@ function expiryLabel(days: number | undefined) {
 // ── Main JobsView ─────────────────────────────────────────────────────────────
 
 export default function JobsView() {
-  const [tab, setTab] = useState<'all' | 'aging' | 'map' | 'calendar'>('all');
+  const [tab, setTab] = useState<'all' | 'aging' | 'map' | 'calendar' | 'receivables'>('all');
   const [modal, setModal] = useState<InstalledJob | 'new' | null>(null);
   const [qrJob, setQrJob] = useState<InstalledJob | null>(null);
   const [creatingLeadFor, setCreatingLeadFor] = useState<number | null>(null);
@@ -1593,6 +1593,28 @@ export default function JobsView() {
     queryKey: ['jobs', 'aging'],
     queryFn: () => api.getAgingJobs(),
     staleTime: 60_000,
+  });
+
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
+  const [batchResult, setBatchResult] = useState<{ sent: number; skipped: number; failed: number } | null>(null);
+
+  const { data: outstandingData, isLoading: loadingOutstanding, refetch: refetchOutstanding } = useQuery({
+    queryKey: ['jobs', 'outstanding'],
+    queryFn: () => api.getOutstandingJobs(),
+    staleTime: 60_000,
+    enabled: tab === 'receivables',
+  });
+
+  const batchInvoiceMut = useMutation({
+    mutationFn: (ids: number[]) => api.batchSendInvoices(ids),
+    onSuccess: (data) => {
+      setBatchResult({ sent: data.sent, skipped: data.skipped, failed: data.failed });
+      setSelectedInvoiceIds(new Set());
+      refetchOutstanding();
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      showToast(`${data.sent} invoice${data.sent !== 1 ? 's' : ''} sent`, data.sent > 0 ? 'success' : 'info');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
   });
 
   const jobs = tab === 'all' ? (allData?.jobs ?? []) : (agingData?.jobs ?? []);
@@ -1685,6 +1707,9 @@ export default function JobsView() {
         <button className={`jobs-tab ${tab === 'calendar' ? 'active' : ''}`} onClick={() => setTab('calendar')}>
           📅 Schedule
         </button>
+        <button className={`jobs-tab ${tab === 'receivables' ? 'active' : ''}`} onClick={() => { setTab('receivables'); setBatchResult(null); }}>
+          💳 Receivables
+        </button>
       </div>
 
       {tab === 'map' && <FleetAgingMap />}
@@ -1693,12 +1718,158 @@ export default function JobsView() {
           <InstallCalendar onEditJob={(job) => setModal(job)} />
         </div>
       )}
+      {tab === 'receivables' && (
+        <div style={{ padding: '16px 0' }}>
+          {loadingOutstanding ? (
+            <div className="pv-loading"><span className="spinner" /><span>Loading outstanding jobs…</span></div>
+          ) : (outstandingData?.jobs ?? []).length === 0 ? (
+            <div className="empty-state empty-state-sm">
+              <div className="empty-state-icon" style={{ color: 'var(--green)' }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="40" height="40"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              </div>
+              <h3 className="empty-state-title">All invoices settled</h3>
+              <p className="empty-state-sub">No outstanding balances. Every job with revenue logged is marked paid.</p>
+            </div>
+          ) : (() => {
+            const outstanding = outstandingData!.jobs;
+            const totalBalance = outstanding.reduce((s, j) => s + j.balance, 0);
+            const allIds = outstanding.map(j => j.id);
+            const allSelected = allIds.every(id => selectedInvoiceIds.has(id));
+            const someSelected = allIds.some(id => selectedInvoiceIds.has(id));
 
-      {tab !== 'map' && tab !== 'calendar' && isLoading && (
+            function toggleAll() {
+              if (allSelected) setSelectedInvoiceIds(new Set());
+              else setSelectedInvoiceIds(new Set(allIds));
+            }
+            function toggleOne(id: number) {
+              const next = new Set(selectedInvoiceIds);
+              if (next.has(id)) next.delete(id); else next.add(id);
+              setSelectedInvoiceIds(next);
+            }
+
+            function agingColor(days: number) {
+              if (days >= 30) return '#ef4444';
+              if (days >= 15) return '#f59e0b';
+              return '#22c55e';
+            }
+
+            return (
+              <div>
+                {/* Header bar */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <div>
+                      <span style={{ fontSize: 22, fontWeight: 900, color: '#ef4444', fontFamily: 'var(--mono)', letterSpacing: '-1px' }}>
+                        ${totalBalance.toLocaleString()}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>outstanding · {outstanding.length} jobs</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {selectedInvoiceIds.size > 0 && (
+                      <button
+                        className="btn btn-primary"
+                        style={{ fontSize: 12 }}
+                        disabled={batchInvoiceMut.isPending}
+                        onClick={() => batchInvoiceMut.mutate(Array.from(selectedInvoiceIds))}
+                      >
+                        {batchInvoiceMut.isPending ? <><span className="spinner" /> Sending…</> : `✉ Send ${selectedInvoiceIds.size} Invoice${selectedInvoiceIds.size !== 1 ? 's' : ''}`}
+                      </button>
+                    )}
+                    {selectedInvoiceIds.size === 0 && (
+                      <button
+                        className="btn btn-primary"
+                        style={{ fontSize: 12 }}
+                        onClick={() => {
+                          const withEmail = outstanding.filter(j => j.leadEmail);
+                          if (withEmail.length === 0) { showToast('No jobs have a client email. Link jobs to leads with email addresses first.', 'info'); return; }
+                          setSelectedInvoiceIds(new Set(withEmail.map(j => j.id)));
+                        }}
+                      >
+                        Select All with Email
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {batchResult && (
+                  <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 8, background: batchResult.sent > 0 ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${batchResult.sent > 0 ? 'rgba(34,197,94,0.3)' : 'rgba(245,158,11,0.3)'}`, fontSize: 12, color: 'var(--text)' }}>
+                    ✓ {batchResult.sent} sent · {batchResult.skipped} skipped (no email / already paid) · {batchResult.failed} errors
+                  </div>
+                )}
+
+                {/* Table */}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 32, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
+                          <input type="checkbox" checked={someSelected} ref={el => { if (el) el.indeterminate = someSelected && !allSelected; }} onChange={toggleAll} style={{ cursor: 'pointer' }} />
+                        </th>
+                        {['Company', 'Category', 'Install', 'Age', 'Revenue', 'Balance', 'Status', 'Email', ''].map(h => (
+                          <th key={h} style={{ textAlign: ['Revenue', 'Balance'].includes(h) ? 'right' : 'left', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', paddingBottom: 8, borderBottom: '1px solid var(--border)', paddingRight: h === '' ? 0 : 8 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {outstanding.map(j => {
+                        const ac = agingColor(j.daysSinceInstall);
+                        const checked = selectedInvoiceIds.has(j.id);
+                        return (
+                          <tr key={j.id} style={{ borderBottom: '1px solid var(--border-soft)', background: checked ? 'rgba(77,138,245,0.04)' : 'transparent', cursor: 'pointer' }} onClick={() => toggleOne(j.id)}>
+                            <td style={{ padding: '9px 8px 9px 0' }} onClick={e => e.stopPropagation()}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleOne(j.id)} style={{ cursor: 'pointer' }} onClick={e => e.stopPropagation()} />
+                            </td>
+                            <td style={{ padding: '9px 8px 9px 0', fontWeight: 600 }}>{j.company}</td>
+                            <td style={{ padding: '9px 8px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{j.category ?? '—'}</td>
+                            <td style={{ padding: '9px 8px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {j.installDate ? new Date(j.installDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) : '—'}
+                            </td>
+                            <td style={{ padding: '9px 8px', fontWeight: 700, color: ac }}>{j.daysSinceInstall}d</td>
+                            <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)' }}>${j.revenue.toLocaleString()}</td>
+                            <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', fontWeight: 700, color: ac }}>${j.balance.toLocaleString()}</td>
+                            <td style={{ padding: '9px 8px' }}>
+                              <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: '0.04em', background: j.paymentStatus === 'overdue' ? '#ef444418' : j.paymentStatus === 'invoice_sent' ? '#4d8af518' : 'var(--bg-elev-2)', color: j.paymentStatus === 'overdue' ? '#ef4444' : j.paymentStatus === 'invoice_sent' ? '#4d8af5' : 'var(--text-faint)' }}>
+                                {j.paymentStatus === 'invoice_sent' ? 'inv. sent' : j.paymentStatus === 'deposit_paid' ? 'dep. paid' : j.paymentStatus}
+                              </span>
+                            </td>
+                            <td style={{ padding: '9px 8px', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {j.leadEmail ? (
+                                <span style={{ fontSize: 11, color: '#4d8af5' }}>{j.leadEmail}</span>
+                              ) : (
+                                <span style={{ fontSize: 10, color: 'var(--text-faint)', fontStyle: 'italic' }}>no email</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '9px 0', textAlign: 'right' }}>
+                              <button
+                                className="btn"
+                                style={{ fontSize: 10, padding: '2px 8px' }}
+                                onClick={e => { e.stopPropagation(); setModal(allData?.jobs.find(j2 => j2.id === j.id) ?? null); }}
+                              >
+                                Open →
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-faint)' }}>
+                  Green = 0–14 days · Amber = 15–29 days · Red = 30+ days · Invoices are emailed to the lead's email address — link each job to a lead via the Details tab.
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {tab !== 'map' && tab !== 'calendar' && tab !== 'receivables' && isLoading && (
         <div className="pv-loading"><span className="spinner" /><span>Loading jobs…</span></div>
       )}
 
-      {tab !== 'map' && tab !== 'calendar' && !isLoading && jobs.length === 0 && (
+      {tab !== 'map' && tab !== 'calendar' && tab !== 'receivables' && !isLoading && jobs.length === 0 && (
         tab === 'aging' ? (
           <div className="empty-state empty-state-sm">
             <div className="empty-state-icon" style={{ color: 'var(--green)' }}>
@@ -1738,7 +1909,7 @@ export default function JobsView() {
         )
       )}
 
-      {tab !== 'map' && tab !== 'calendar' && !isLoading && jobs.length > 0 && (
+      {tab !== 'map' && tab !== 'calendar' && tab !== 'receivables' && !isLoading && jobs.length > 0 && (
         <div className="jobs-list">
           {jobs.map((job) => (
             <div key={job.id} className="jobs-row" onClick={() => setModal(job)}>

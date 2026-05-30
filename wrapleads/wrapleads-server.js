@@ -7238,6 +7238,117 @@ app.get('/mission/overdue-invoices', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /jobs/batch-send-invoices — email invoices for multiple jobs at once
+// Joins to leads to resolve client email; skips jobs with no email or already paid
+app.post('/jobs/batch-send-invoices', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { jobIds } = req.body;
+  if (!Array.isArray(jobIds) || jobIds.length === 0) return res.status(400).json({ error: 'jobIds required' });
+  if (jobIds.length > 50) return res.status(400).json({ error: 'Max 50 jobs per batch' });
+  try {
+    const userR = await pool.query('SELECT email, company_name, settings_json FROM users WHERE id=$1', [uid]);
+    if (!userR.rows.length) return res.status(404).json({ error: 'user not found' });
+    const u = userR.rows[0];
+    const s = u.settings_json || {};
+    const shopName = s.companyName || u.company_name || 'Your Shop';
+    const shopEmail = s.senderEmail || u.email || '';
+    const accentColor = s.accentColor || '#f4551c';
+    const paymentLink = s.depositPaymentLink || '';
+    const { sendEmail } = require('./lib/email');
+    const results = [];
+    for (const rawId of jobIds) {
+      const jobId = parseInt(rawId, 10);
+      if (isNaN(jobId)) { results.push({ jobId: rawId, ok: false, reason: 'invalid id' }); continue; }
+      try {
+        const { rows } = await pool.query(
+          `SELECT j.*, l.email AS lead_email, l.contact_name AS lead_contact
+           FROM installed_jobs j
+           LEFT JOIN leads l ON l.id = j.lead_id AND l.user_id = j.user_id
+           WHERE j.id=$1 AND j.user_id=$2`,
+          [jobId, uid]
+        );
+        if (!rows.length) { results.push({ jobId, ok: false, reason: 'not found', company: null }); continue; }
+        const job = rows[0];
+        if (job.payment_status === 'paid') { results.push({ jobId, ok: false, reason: 'already paid', company: job.company }); continue; }
+        const toEmail = job.lead_email;
+        if (!toEmail) { results.push({ jobId, ok: false, reason: 'no email', company: job.company }); continue; }
+        const revenue = Number(job.job_revenue) || 0;
+        const amountPaid = Number(job.amount_paid) || 0;
+        const balance = revenue - amountPaid;
+        const invoiceNum = `WOS-${String(job.id).padStart(5, '0')}`;
+        const toName = job.lead_contact || 'there';
+        const subject = `Invoice ${invoiceNum} from ${shopName}`;
+        const htmlBody = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff">
+  <div style="font-size:20px;font-weight:800;color:${accentColor};margin-bottom:6px">${shopName}</div>
+  <div style="font-size:13px;color:#555;margin-bottom:24px">Invoice ${invoiceNum}</div>
+  <p style="font-size:14px;color:#333;line-height:1.6">Hi ${toName},<br><br>Please find your invoice for the wrap project completed for <strong>${job.company}</strong>.</p>
+  <div style="margin:24px 0;background:#f9fafb;border-radius:8px;padding:20px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Project</span>
+      <span style="font-weight:600;font-size:13px">${job.vehicle_count} × ${(job.vehicle_type||'').replace(/_/g,' ')}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Total</span>
+      <span style="font-weight:700;font-size:16px">$${revenue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+    ${amountPaid > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="color:#666;font-size:13px">Paid</span><span style="color:#16a34a;font-weight:600;font-size:13px">−$${amountPaid.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>` : ''}
+    <div style="border-top:1px solid #e5e7eb;margin:10px 0"></div>
+    <div style="display:flex;justify-content:space-between">
+      <span style="color:#111;font-weight:700;font-size:14px">Balance Due</span>
+      <span style="color:${balance>0?'#ef4444':'#16a34a'};font-weight:800;font-size:16px">$${Math.max(0,balance).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+  </div>
+  ${paymentLink && balance > 0 ? `<a href="${paymentLink}" style="display:block;text-align:center;background:${accentColor};color:#fff;font-weight:700;font-size:14px;padding:14px 24px;border-radius:8px;text-decoration:none;margin-bottom:16px">Pay Now →</a>` : ''}
+  <p style="font-size:12px;color:#888;margin-top:16px">Questions? Reply to this email or contact us at ${shopEmail}.</p>
+  <div style="margin-top:24px;font-size:11px;color:#ccc;text-align:center">Sent via WrapOS</div>
+</div>`;
+        await sendEmail({ to: toEmail, from: shopEmail || `noreply@${process.env.EMAIL_FROM_DOMAIN||'wrapos.io'}`, subject, html: htmlBody, replyTo: shopEmail });
+        await pool.query(
+          `UPDATE installed_jobs SET payment_status='invoice_sent', invoice_sent_at=NOW() WHERE id=$1 AND user_id=$2 AND payment_status != 'paid'`,
+          [jobId, uid]
+        );
+        results.push({ jobId, ok: true, company: job.company, toEmail });
+      } catch (innerErr) {
+        results.push({ jobId, ok: false, reason: innerErr.message, company: null });
+      }
+    }
+    const sent = results.filter(r => r.ok).length;
+    const skipped = results.filter(r => !r.ok && (r.reason === 'no email' || r.reason === 'already paid')).length;
+    const failed = results.filter(r => !r.ok && r.reason !== 'no email' && r.reason !== 'already paid').length;
+    res.json({ ok: true, sent, skipped, failed, results });
+  } catch (e) {
+    console.error('[batch-send-invoices]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/outstanding — jobs with outstanding balances, for batch invoice workflow
+app.get('/jobs/outstanding', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT j.id, j.company, j.vehicle_count, j.vehicle_type, j.wrap_category,
+             j.install_date, j.job_revenue, j.amount_paid, j.payment_status,
+             j.invoice_sent_at, l.email AS lead_email, l.contact_name AS lead_contact,
+             (j.job_revenue - COALESCE(j.amount_paid, 0)) AS balance,
+             EXTRACT(DAY FROM NOW() - j.install_date)::INT AS days_since_install
+      FROM installed_jobs j
+      LEFT JOIN leads l ON l.id = j.lead_id AND l.user_id = j.user_id
+      WHERE j.user_id=$1 AND j.job_revenue > 0 AND j.payment_status != 'paid'
+      ORDER BY j.install_date ASC NULLS LAST
+    `, [uid]);
+    res.json({ ok: true, jobs: rows.map(r => ({
+      id: r.id, company: r.company, vehicleCount: r.vehicle_count, vehicleType: r.vehicle_type,
+      category: r.wrap_category, installDate: r.install_date,
+      revenue: Number(r.job_revenue), amountPaid: Number(r.amount_paid), balance: Number(r.balance),
+      paymentStatus: r.payment_status, invoiceSentAt: r.invoice_sent_at,
+      leadEmail: r.lead_email || null, leadContact: r.lead_contact || null,
+      daysSinceInstall: r.days_since_install || 0,
+    })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/jobs/:id', authMiddleware, async (req, res) => {
   await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
   res.json({ ok: true });
@@ -17414,6 +17525,92 @@ app.get('/analytics/territory-intel', authMiddleware, async (req, res) => {
 
     res.json({ territories: results.slice(0, 12) });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/job-profitability — per-job P&L with sub labor costs
+app.get('/analytics/job-profitability', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+  const sortBy = ['profit', 'margin', 'revenue', 'install_date'].includes(req.query.sort) ? req.query.sort : 'profit';
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        j.id,
+        j.company,
+        j.vehicle_type,
+        j.vehicle_count,
+        j.wrap_category,
+        j.install_date,
+        j.material,
+        j.labor_hours,
+        j.payment_status,
+        COALESCE(j.job_revenue, 0)                             AS revenue,
+        COALESCE(j.material_cost, 0)                           AS material_cost,
+        COALESCE(j.amount_paid, 0)                             AS amount_paid,
+        COALESCE(SUM(js.labor_cost), 0)                        AS sub_labor,
+        COALESCE(j.job_revenue, 0)
+          - COALESCE(j.material_cost, 0)
+          - COALESCE(SUM(js.labor_cost), 0)                    AS net_profit,
+        CASE WHEN COALESCE(j.job_revenue, 0) > 0
+          THEN ROUND(
+            (COALESCE(j.job_revenue, 0)
+              - COALESCE(j.material_cost, 0)
+              - COALESCE(SUM(js.labor_cost), 0))
+            / j.job_revenue * 100
+          )
+          ELSE NULL
+        END                                                     AS margin_pct
+      FROM installed_jobs j
+      LEFT JOIN job_subcontractors js ON js.job_id = j.id
+      WHERE j.user_id = $1 AND j.job_revenue IS NOT NULL AND j.job_revenue > 0
+      GROUP BY j.id
+      ORDER BY
+        CASE WHEN $2 = 'profit'  THEN COALESCE(j.job_revenue,0) - COALESCE(j.material_cost,0) - COALESCE((SELECT SUM(x.labor_cost) FROM job_subcontractors x WHERE x.job_id=j.id),0) END DESC,
+        CASE WHEN $2 = 'margin'  THEN CASE WHEN j.job_revenue > 0 THEN (COALESCE(j.job_revenue,0) - COALESCE(j.material_cost,0) - COALESCE((SELECT SUM(x.labor_cost) FROM job_subcontractors x WHERE x.job_id=j.id),0)) / j.job_revenue END END DESC NULLS LAST,
+        CASE WHEN $2 = 'revenue' THEN j.job_revenue END DESC,
+        CASE WHEN $2 = 'install_date' THEN j.install_date END DESC
+      LIMIT $3
+    `, [uid, sortBy, limit]);
+
+    const totals = rows.reduce((acc, r) => {
+      acc.totalRevenue += Number(r.revenue);
+      acc.totalMaterial += Number(r.material_cost);
+      acc.totalSubLabor += Number(r.sub_labor);
+      acc.totalProfit += Number(r.net_profit);
+      return acc;
+    }, { totalRevenue: 0, totalMaterial: 0, totalSubLabor: 0, totalProfit: 0 });
+
+    const avgMargin = totals.totalRevenue > 0
+      ? Math.round(totals.totalProfit / totals.totalRevenue * 100)
+      : null;
+
+    res.json({
+      jobs: rows.map((r) => ({
+        id: r.id,
+        company: r.company,
+        vehicleType: r.vehicle_type,
+        vehicleCount: r.vehicle_count,
+        category: r.wrap_category,
+        installDate: r.install_date,
+        material: r.material,
+        paymentStatus: r.payment_status,
+        revenue: Number(r.revenue),
+        materialCost: Number(r.material_cost),
+        subLabor: Number(r.sub_labor),
+        netProfit: Number(r.net_profit),
+        marginPct: r.margin_pct !== null ? Number(r.margin_pct) : null,
+        amountPaid: Number(r.amount_paid),
+      })),
+      totals: {
+        ...totals,
+        avgMargin,
+        jobCount: rows.length,
+      },
+    });
+  } catch (e) {
+    console.error('[job-profitability]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
