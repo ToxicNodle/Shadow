@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { showToast } from '../../utils/toast';
@@ -297,6 +297,81 @@ function SqftCalculator({ onApply }: { onApply: (sqft: number, vehicleLabel: str
   );
 }
 
+// ── VIN Lookup Widget ─────────────────────────────────────────────────────────
+function VinLookup({ onResult }: { onResult: (label: string, wrapType: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [vin, setVin] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ label: string; bodyClass: string | null; gvwr: string | null; wrapType: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const clean = vin.replace(/\s/g, '').toUpperCase();
+    if (clean.length !== 17) { setResult(null); setError(null); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const d = await api.decodeVin(clean);
+        setResult({ label: d.label, bodyClass: d.bodyClass, gvwr: d.gvwr, wrapType: d.wrapType });
+      } catch (e: unknown) {
+        setError((e as Error).message || 'VIN decode failed');
+        setResult(null);
+      } finally {
+        setLoading(false);
+      }
+    }, 500);
+  }, [vin]);
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5,
+          background: 'var(--bg-elev-2)', border: '1px solid var(--border)',
+          color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+        }}
+      >
+        🔍 VIN Lookup {open ? '▲' : '▾'}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, padding: '10px 12px', borderRadius: 8, background: 'rgba(77,138,245,0.06)', border: '1px solid rgba(77,138,245,0.2)' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 4 }}>Enter a 17-character VIN — auto-decodes via NHTSA</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              className="input"
+              style={{ fontFamily: 'var(--mono)', fontSize: 13, letterSpacing: '0.05em', maxWidth: 210, textTransform: 'uppercase' }}
+              value={vin}
+              maxLength={17}
+              onChange={(e) => setVin(e.target.value)}
+              placeholder="1HGBH41JXMN109186"
+            />
+            {loading && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Looking up…</span>}
+            {error && <span style={{ fontSize: 12, color: 'var(--red)' }}>{error}</span>}
+            {result && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>{result.label}</span>
+                {result.bodyClass && <span style={{ fontSize: 11, color: 'var(--text-dim)', background: 'var(--bg-elev-2)', padding: '2px 6px', borderRadius: 4 }}>{result.bodyClass}</span>}
+                {result.gvwr && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>GVWR {result.gvwr}</span>}
+                <button
+                  className="btn"
+                  style={{ fontSize: 11, padding: '3px 8px' }}
+                  onClick={() => onResult(result.label, result.wrapType)}
+                >
+                  Use this vehicle →
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, quote, onClose, onSaved, onAccepted }: Props) {
   const qc = useQueryClient();
   const isEdit = !!quote;
@@ -492,6 +567,12 @@ export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, q
 
           {/* Scrollable body */}
           <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
+
+            {/* VIN Lookup */}
+            <VinLookup onResult={(label, _wrapType) => {
+              setTitle(`${leadCompany ? leadCompany + ' — ' : ''}${label} Wrap Quote`);
+              showToast(`Vehicle identified: ${label}`, 'success');
+            }} />
 
             {/* Sq Footage Helper */}
             <SqftCalculator onApply={applySqft} />

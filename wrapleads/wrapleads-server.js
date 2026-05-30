@@ -524,6 +524,33 @@ async function migrateDb() {
     console.warn('[migrate] Could not create portal_links table:', e.message);
   }
 
+  // Review Requests — post-install Google review automation
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS review_requests (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        job_id       BIGINT REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        token        TEXT NOT NULL UNIQUE,
+        client_email TEXT,
+        client_phone TEXT,
+        client_name  TEXT,
+        company      TEXT,
+        google_url   TEXT,
+        sent_via     TEXT,
+        sent_at      TIMESTAMPTZ,
+        opened_at    TIMESTAMPTZ,
+        clicked_at   TIMESTAMPTZ,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_user  ON review_requests(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_token ON review_requests(token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_job   ON review_requests(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create review_requests table:', e.message);
+  }
+
   // Notifications
   try {
     await pool.query(`
@@ -7400,6 +7427,272 @@ ${photoGrid ? `
   } catch (e) {
     console.error('[case-study public]', e.message);
     res.status(500).send('<h2>Error loading case study.</h2>');
+  }
+});
+
+// ── Google Review Automation ──────────────────────────────────────────────────
+// After a job is marked complete, shops can send a one-click review request
+// (email or SMS) to the client. The landing page thanks them and links directly
+// to their Google Business review form.
+
+app.post('/jobs/:id/review-request', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { clientEmail, clientPhone, clientName, googleUrl } = req.body || {};
+  if (!clientEmail && !clientPhone) return res.status(400).json({ error: 'Provide clientEmail or clientPhone' });
+
+  try {
+    const { rows: jobRows } = await pool.query(
+      `SELECT j.*, u.settings_json, u.company_name FROM installed_jobs j
+       JOIN users u ON u.id::TEXT = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobRows[0];
+    const settings = job.settings_json || {};
+    const shopName = settings.companyName || job.company_name || 'our shop';
+    const senderEmail = settings.senderEmail || process.env.FROM_EMAIL || `noreply@wrapos.app`;
+
+    const token = require('crypto').randomBytes(20).toString('hex');
+    const reviewUrl = `${process.env.PUBLIC_URL || 'https://wrapos.app'}/review/${token}`;
+    const finalGoogleUrl = googleUrl || settings.googleReviewUrl || null;
+
+    await pool.query(
+      `INSERT INTO review_requests
+         (user_id, job_id, token, client_email, client_phone, client_name, company, google_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [uid, jobId, token, clientEmail || null, clientPhone || null, clientName || job.company, job.company, finalGoogleUrl]
+    );
+
+    let sentVia = [];
+
+    // Send email via Resend if available
+    if (clientEmail && process.env.RESEND_API_KEY) {
+      const emailBody = `
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f7f7f7;margin:0;padding:40px 20px}
+.card{background:#fff;max-width:520px;margin:0 auto;border-radius:12px;padding:40px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+h1{font-size:22px;font-weight:700;color:#111;margin-bottom:12px}
+p{color:#555;font-size:15px;line-height:1.6;margin-bottom:24px}
+.btn{display:inline-block;background:#f4551c;color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:600;margin-bottom:8px}
+.footer{color:#999;font-size:12px;margin-top:32px}</style></head>
+<body><div class="card">
+<h1>Thank you for choosing ${he(shopName)}! 🎉</h1>
+<p>We hope you love your new wrap. If you're happy with how it turned out, a quick Google review would mean the world to us — it only takes 30 seconds.</p>
+${finalGoogleUrl ? `<a class="btn" href="${reviewUrl}?redirect=1">Leave a Google Review ★</a>` : `<a class="btn" href="${reviewUrl}">Share Your Feedback</a>`}
+<p class="footer">You received this because you're a recent customer of ${he(shopName)}.</p>
+</div></body></html>`;
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+        body: JSON.stringify({
+          from: `${shopName} <${senderEmail}>`,
+          to: [clientEmail],
+          subject: `How was your wrap experience with ${shopName}?`,
+          html: emailBody,
+        }),
+      }).catch((err) => console.warn('[review-request] email send failed:', err.message));
+      sentVia.push('email');
+    }
+
+    // Send SMS via Twilio if available
+    if (clientPhone && settings.twilioAccountSid && settings.twilioAuthToken && settings.twilioFromNumber) {
+      const smsBody = `Hi${clientName ? ` ${clientName}` : ''}! Thanks for choosing ${shopName} for your wrap. Mind leaving us a quick Google review? ${reviewUrl} — means a lot to us!`;
+      await fetch(`https://api.twilio.com/2010-04-01/Accounts/${settings.twilioAccountSid}/Messages.json`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: 'Basic ' + Buffer.from(`${settings.twilioAccountSid}:${settings.twilioAuthToken}`).toString('base64'),
+        },
+        body: new URLSearchParams({ To: clientPhone, From: settings.twilioFromNumber, Body: smsBody }),
+      }).catch((err) => console.warn('[review-request] SMS send failed:', err.message));
+      sentVia.push('sms');
+    }
+
+    if (sentVia.length > 0) {
+      await pool.query(
+        `UPDATE review_requests SET sent_at = NOW(), sent_via = $1 WHERE token = $2`,
+        [sentVia.join(','), token]
+      );
+    }
+
+    res.json({ ok: true, token, reviewUrl, sentVia });
+  } catch (e) {
+    console.error('[review-request]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/:id/review-requests — list review requests for a job
+app.get('/jobs/:id/review-requests', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, token, client_name, client_email, client_phone, company,
+              sent_via, sent_at, opened_at, clicked_at, created_at
+       FROM review_requests
+       WHERE job_id = $1 AND user_id = $2
+       ORDER BY created_at DESC`,
+      [jobId, uid]
+    );
+    res.json({ ok: true, requests: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /review/:token — public review request landing page
+app.get('/review/:token', async (req, res) => {
+  const { token } = req.params;
+  if (!token || !/^[a-f0-9]{40}$/.test(token)) return res.status(400).send('<h2>Invalid link.</h2>');
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT rr.*, u.settings_json, u.company_name
+       FROM review_requests rr
+       JOIN users u ON u.id::TEXT = rr.user_id
+       WHERE rr.token = $1`,
+      [token]
+    );
+    if (!rows.length) return res.status(404).send('<h2>This review link has expired or is invalid.</h2>');
+    const r = rows[0];
+    const settings = r.settings_json || {};
+    const shopName = settings.companyName || r.company_name || 'the shop';
+
+    // Track page open
+    if (!r.opened_at) {
+      pool.query(`UPDATE review_requests SET opened_at = NOW() WHERE token = $1`, [token]).catch(() => {});
+    }
+
+    // If Google URL present and ?redirect=1, redirect directly after tracking
+    if (req.query.redirect === '1' && r.google_url) {
+      pool.query(`UPDATE review_requests SET clicked_at = COALESCE(clicked_at, NOW()) WHERE token = $1`, [token]).catch(() => {});
+      return res.redirect(r.google_url);
+    }
+
+    const googleButton = r.google_url
+      ? `<a class="btn-review" href="/review/${token}/go">Leave a Google Review ⭐</a>`
+      : `<div class="stars-prompt"><p>How would you rate your experience?</p><div class="stars">${[5,4,3,2,1].map(n => `<a href="/review/${token}/rate/${n}" class="star">★</a>`).join('')}</div></div>`;
+
+    res.send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Review ${he(shopName)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:linear-gradient(135deg,#0e1018 0%,#1a1e2e 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:48px 36px;max-width:480px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.3)}
+.logo{width:52px;height:52px;background:linear-gradient(135deg,#f4551c,#d44415);border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:26px}
+h1{font-size:22px;font-weight:700;color:#111;margin-bottom:10px}
+p{color:#666;font-size:15px;line-height:1.6;margin-bottom:28px}
+.btn-review{display:inline-block;background:#f4551c;color:#fff;text-decoration:none;padding:16px 32px;border-radius:10px;font-size:17px;font-weight:700;letter-spacing:-.3px;transition:background .15s}
+.btn-review:hover{background:#d44415}
+.stars{font-size:36px;margin:12px 0 24px;display:flex;justify-content:center;gap:4px}
+.star{color:#f59e0b;text-decoration:none;transition:transform .1s}
+.star:hover{transform:scale(1.25)}
+.footer{color:#bbb;font-size:11px;margin-top:32px}
+</style></head>
+<body><div class="card">
+<div class="logo">⭐</div>
+<h1>Thanks for choosing ${he(shopName)}!</h1>
+<p>We hope you're loving your new wrap. If you have a moment, sharing your experience helps other businesses find us — and it means everything to a small shop like ours.</p>
+${googleButton}
+<p class="footer">Powered by <a href="https://wrapos.app" style="color:#bbb">WrapOS</a></p>
+</div></body></html>`);
+  } catch (e) {
+    console.error('[review page]', e.message);
+    res.status(500).send('<h2>Error loading review page.</h2>');
+  }
+});
+
+// GET /review/:token/go — track click and redirect to Google
+app.get('/review/:token/go', async (req, res) => {
+  const { rows } = await pool.query('SELECT google_url FROM review_requests WHERE token=$1', [req.params.token]).catch(() => ({ rows: [] }));
+  pool.query(`UPDATE review_requests SET clicked_at = COALESCE(clicked_at, NOW()) WHERE token = $1`, [req.params.token]).catch(() => {});
+  const dest = rows[0]?.google_url || 'https://search.google.com/local/writereview';
+  res.redirect(dest);
+});
+
+// GET /review/:token/rate/:stars — for shops without a Google URL, collect star rating
+app.get('/review/:token/rate/:stars', async (req, res) => {
+  const stars = parseInt(req.params.stars, 10);
+  if (stars < 1 || stars > 5) return res.status(400).send('<h2>Invalid rating.</h2>');
+  pool.query(`UPDATE review_requests SET clicked_at = COALESCE(clicked_at, NOW()) WHERE token = $1`, [req.params.stars]).catch(() => {});
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Thanks!</title>
+<style>body{font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f0f4f8;margin:0}
+.card{background:#fff;border-radius:12px;padding:48px 36px;text-align:center;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.1)}
+.stars{font-size:40px;margin-bottom:16px}.h1{font-size:22px;font-weight:700;color:#111;margin-bottom:8px}p{color:#666;font-size:15px}</style></head>
+<body><div class="card"><div class="stars">${'★'.repeat(stars)}${'☆'.repeat(5 - stars)}</div>
+<div class="h1">Thank you for your feedback!</div>
+<p>We appreciate you taking the time to share your experience. We'll use this to keep improving.</p>
+</div></body></html>`);
+});
+
+// ── VIN Decoder (NHTSA free API) ──────────────────────────────────────────────
+// Decodes a 17-character VIN into make/model/year/body class and maps it to our
+// vehicle_type enum for use in quotes and job creation.
+// No API key required — NHTSA data is public.
+app.get('/tools/vin/:vin', async (req, res) => {
+  const vin = (req.params.vin || '').trim().toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '');
+  if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be exactly 17 characters (A–Z, 0–9, no I/O/Q)' });
+
+  try {
+    const r = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin}?format=json`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return res.status(502).json({ error: `NHTSA API error: ${r.status}` });
+    const data = await r.json();
+    const results = data.Results || [];
+
+    const find = (varName) => {
+      const match = results.find((x) => x.Variable === varName);
+      return match && match.Value && match.Value !== 'null' && match.Value !== 'Not Applicable'
+        ? match.Value.trim() : null;
+    };
+
+    const make        = find('Make');
+    const model       = find('Model');
+    const year        = find('Model Year');
+    const bodyClass   = find('Body Class');
+    const gvwr        = find('Gross Vehicle Weight Rating From');
+    const vehicleType = find('Vehicle Type');
+    const series      = find('Series');
+    const trim        = find('Trim');
+    const doors       = find('Number of Doors');
+    const fuel        = find('Fuel Type - Primary');
+    const errorCode   = find('Error Code');
+
+    if (errorCode && errorCode !== '0') {
+      return res.status(422).json({ error: `NHTSA decode error: ${find('Error Text') || errorCode}` });
+    }
+
+    // Map to our vehicle_type enum
+    const bc = (bodyClass || '').toLowerCase();
+    const vt = (vehicleType || '').toLowerCase();
+    let wrapType = 'other';
+    if (/cargo van/i.test(bc) || /cargo van/i.test(model || '')) wrapType = 'cargo_van_standard';
+    else if (/van/i.test(bc)) wrapType = 'cargo_van_standard';
+    else if (/bus/i.test(vt) || /bus/i.test(bc)) wrapType = 'bus_school';
+    else if (/tractor|semi/i.test(bc)) wrapType = 'semi_cab_only';
+    else if (/pickup/i.test(bc)) wrapType = 'pickup_truck';
+    else if (/sport utility/i.test(bc) || /\bsuv\b/i.test(bc)) wrapType = 'suv_large';
+    else if (/sedan|coupe/i.test(bc)) wrapType = 'sedan';
+    else if (/minivan|passenger van/i.test(bc)) wrapType = 'minivan';
+    else if (/truck/i.test(bc)) wrapType = 'pickup_truck';
+    else if (/crossover/i.test(bc)) wrapType = 'suv_large';
+
+    const label = [year, make, model, series].filter(Boolean).join(' ');
+
+    res.json({
+      ok: true, vin,
+      make, model, year, series, trim,
+      bodyClass, gvwr, vehicleType, doors, fuel,
+      wrapType, label,
+    });
+  } catch (e) {
+    if (e.name === 'TimeoutError') return res.status(504).json({ error: 'NHTSA API timeout' });
+    res.status(500).json({ error: e.message });
   }
 });
 

@@ -54,6 +54,8 @@ export default defineConfig({
       '/case-studies':      API,
       '/milestones':        API,
       '/tasks':             API,
+      '/tools':             API,
+      '/review':            API,
     },
   },
 });

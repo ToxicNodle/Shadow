@@ -1681,4 +1681,32 @@ export const api = {
       risks: string[];
       confidence: 'high' | 'medium' | 'low';
     }>(`/ai/proposal-coach?leadId=${leadId}`),
+
+  // ── Google Review Automation ──
+  requestReview: (jobId: number, opts: { clientEmail?: string; clientPhone?: string; clientName?: string; googleUrl?: string }) =>
+    authFetch<{ ok: boolean; token: string; reviewUrl: string; sentVia: string[] }>(
+      `/jobs/${jobId}/review-request`,
+      { method: 'POST', body: JSON.stringify(opts) }
+    ),
+
+  getReviewRequests: (jobId: number) =>
+    authFetch<{
+      ok: boolean;
+      requests: Array<{
+        id: number; token: string; client_name: string | null; client_email: string | null;
+        client_phone: string | null; company: string; sent_via: string | null;
+        sent_at: string | null; opened_at: string | null; clicked_at: string | null; created_at: string;
+      }>;
+    }>(`/jobs/${jobId}/review-requests`),
+
+  // ── VIN Decoder (NHTSA free API) ──
+  decodeVin: (vin: string) =>
+    authFetch<{
+      ok: boolean; vin: string;
+      make: string | null; model: string | null; year: string | null;
+      series: string | null; trim: string | null;
+      bodyClass: string | null; gvwr: string | null; vehicleType: string | null;
+      doors: string | null; fuel: string | null;
+      wrapType: string; label: string;
+    }>(`/tools/vin/${vin.trim().toUpperCase()}`),
 };

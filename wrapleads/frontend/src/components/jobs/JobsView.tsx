@@ -7,6 +7,104 @@ import { VEHICLE_TYPE_LABELS, CATEGORIES } from '../../api/types';
 import MaterialCatalogModal from '../modals/MaterialCatalogModal';
 import FleetAgingMap from './FleetAgingMap';
 
+// ── Google Review Request Panel ───────────────────────────────────────────────
+function ReviewRequestPanel({ job }: { job: InstalledJob }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [name, setName] = useState(job.company);
+  const [googleUrl, setGoogleUrl] = useState('');
+  const [sent, setSent] = useState<{ url: string; via: string[] } | null>(null);
+
+  const { data: existing } = useQuery({
+    queryKey: ['review-requests', job.id],
+    queryFn: () => api.getReviewRequests(job.id),
+    staleTime: 60_000,
+  });
+
+  const sendMut = useMutation({
+    mutationFn: () => api.requestReview(job.id, { clientEmail: email || undefined, clientPhone: phone || undefined, clientName: name || undefined, googleUrl: googleUrl || undefined }),
+    onSuccess: (data) => {
+      setSent({ url: data.reviewUrl, via: data.sentVia });
+      showToast(data.sentVia.length > 0 ? `Review request sent via ${data.sentVia.join(' + ')}!` : 'Review link generated!', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString() : '—';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <p style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+        Send your client a personalized review request via email or SMS. When they click the link, they land on a branded "thank you" page that links directly to your Google review form.
+      </p>
+
+      {existing?.requests && existing.requests.length > 0 && (
+        <div style={{ background: 'var(--bg-elev-2)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-faint)', borderBottom: '1px solid var(--border)' }}>
+            Previous Requests
+          </div>
+          {existing.requests.map((r) => (
+            <div key={r.id} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-faint)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+              <span style={{ color: 'var(--text-dim)' }}>{r.client_name || r.company}</span>
+              <div style={{ display: 'flex', gap: 8, color: 'var(--text-faint)', fontSize: 11 }}>
+                {r.sent_at && <span style={{ color: 'var(--blue)' }}>Sent {fmtDate(r.sent_at)}</span>}
+                {r.opened_at && <span style={{ color: 'var(--yellow)' }}>Opened</span>}
+                {r.clicked_at && <span style={{ color: 'var(--ghost-green, #00d97e)' }}>Reviewed ✓</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {sent ? (
+        <div style={{ background: 'rgba(0,217,126,0.08)', border: '1px solid rgba(0,217,126,0.3)', borderRadius: 10, padding: 16, textAlign: 'center' }}>
+          <div style={{ fontSize: 22, marginBottom: 8 }}>🎉</div>
+          <div style={{ fontWeight: 700, color: 'var(--ghost-green, #00d97e)', marginBottom: 4 }}>
+            {sent.via.length > 0 ? `Sent via ${sent.via.join(' + ')}` : 'Review link created'}
+          </div>
+          <a href={sent.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'underline' }}>{sent.url}</a>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="field-row">
+            <div className="field-group">
+              <label className="field-label">Client Name</label>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="John Smith" />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field-group">
+              <label className="field-label">Email (optional)</label>
+              <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="client@company.com" />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Phone / SMS (optional)</label>
+              <input className="input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1 317 555 0100" />
+            </div>
+          </div>
+          <div className="field-group">
+            <label className="field-label">Google Review URL (optional)</label>
+            <input className="input" value={googleUrl} onChange={(e) => setGoogleUrl(e.target.value)} placeholder="https://g.page/r/YOUR_PLACE_ID/review" />
+            <span style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>Find in Google Business Profile → "Get more reviews"</span>
+          </div>
+          <button
+            className="btn btn-primary"
+            disabled={(!email && !phone) || sendMut.isPending}
+            onClick={() => sendMut.mutate()}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            {sendMut.isPending ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '⭐ Send Review Request'}
+          </button>
+          {!email && !phone && (
+            <p style={{ fontSize: 11, color: 'var(--text-faint)' }}>Enter at least an email or phone number to send the request.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Case Study Generator ──────────────────────────────────────────────────────
 function CaseStudyPanel({ job }: { job: InstalledJob }) {
   const qc = useQueryClient();
@@ -353,7 +451,7 @@ function JobModal({ job, onClose }: JobModalProps) {
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -422,6 +520,7 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}>Photos</button>
             <button className={`jobs-tab ${activeTab === 'social' ? 'active' : ''}`} onClick={() => setActiveTab('social')}>Social Posts</button>
             <button className={`jobs-tab ${activeTab === 'case-study' ? 'active' : ''}`} onClick={() => setActiveTab('case-study')}>Case Study</button>
+            <button className={`jobs-tab ${activeTab === 'review' ? 'active' : ''}`} onClick={() => setActiveTab('review')}>⭐ Reviews</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -431,6 +530,8 @@ function JobModal({ job, onClose }: JobModalProps) {
           <SocialPostPanel job={job as InstalledJob} />
         ) : (!isNew && activeTab === 'case-study') ? (
           <CaseStudyPanel job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'review') ? (
+          <ReviewRequestPanel job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">
