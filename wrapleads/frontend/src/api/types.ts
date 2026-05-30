@@ -352,6 +352,11 @@ export interface InstalledJob {
   created_at: string;
   updated_at: string;
   days_until_expiry?: number;
+  payment_status?: 'unpaid' | 'deposit_paid' | 'invoice_sent' | 'paid' | 'overdue';
+  deposit_paid_at?: string | null;
+  invoice_sent_at?: string | null;
+  paid_at?: string | null;
+  amount_paid?: number | null;
 }
 
 // ── Computer Vision Quote ─────────────────────────────────────────────────────

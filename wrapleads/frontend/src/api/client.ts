@@ -1776,4 +1776,25 @@ export const api = {
     ),
   deleteQuoteTemplate: (id: number) =>
     authFetch<{ ok: boolean }>(`/quotes/templates/${id}`, { method: 'DELETE' }),
+
+  // ── Job Payment Status ──
+  updateJobPayment: (jobId: number, opts: { payment_status: string; amount_paid?: number }) =>
+    authFetch<{ ok: boolean; job: Record<string, unknown> }>(
+      `/jobs/${jobId}/payment`, { method: 'PATCH', body: JSON.stringify(opts) }
+    ),
+  getOverdueInvoices: () =>
+    authFetch<{
+      ok: boolean;
+      jobs: Array<{
+        id: number; company: string; vehicleCount: number; vehicleType: string;
+        revenue: number; amountPaid: number; balance: number;
+        installDate: string | null; paymentStatus: string; invoiceSentAt: string | null; daysOverdue: number | null;
+      }>;
+    }>('/mission/overdue-invoices'),
+
+  // ── Job Social Post Generator ──
+  generateJobSocialPost: (jobId: number) =>
+    authFetch<{ ok: boolean; posts: { instagram: string; linkedin: string; facebook: string }; jobId: number; company: string }>(
+      `/jobs/${jobId}/social-post`, { method: 'POST' }
+    ),
 };

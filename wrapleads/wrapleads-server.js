@@ -728,6 +728,11 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS material_cost NUMERIC(10,2) DEFAULT 0`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS job_revenue NUMERIC(10,2) DEFAULT 0`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS labor_hours NUMERIC(6,1) DEFAULT 0`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'unpaid'`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS deposit_paid_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS invoice_sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) DEFAULT 0`);
   } catch (e) {
     console.warn('[migrate] Could not add margin columns to installed_jobs:', e.message);
   }
@@ -7122,6 +7127,77 @@ app.put('/jobs/:id', authMiddleware, async (req, res) => {
   res.json({ job: rows[0] });
 });
 
+// PATCH /jobs/:id/payment — update payment status for a completed job
+app.patch('/jobs/:id/payment', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { payment_status, amount_paid } = req.body || {};
+
+  const VALID_STATUS = ['unpaid', 'deposit_paid', 'invoice_sent', 'paid', 'overdue'];
+  if (!VALID_STATUS.includes(payment_status)) {
+    return res.status(400).json({ error: `payment_status must be one of: ${VALID_STATUS.join(', ')}` });
+  }
+
+  try {
+    const now = new Date();
+    let depositPaidAt = null;
+    let invoiceSentAt = null;
+    let paidAt = null;
+    if (payment_status === 'deposit_paid') depositPaidAt = now;
+    if (payment_status === 'invoice_sent') invoiceSentAt = now;
+    if (payment_status === 'paid') paidAt = now;
+
+    const { rows } = await pool.query(
+      `UPDATE installed_jobs SET
+         payment_status=$1,
+         amount_paid=COALESCE($2, amount_paid),
+         deposit_paid_at=CASE WHEN $3::timestamptz IS NOT NULL THEN $3::timestamptz ELSE deposit_paid_at END,
+         invoice_sent_at=CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE invoice_sent_at END,
+         paid_at=CASE WHEN $5::timestamptz IS NOT NULL THEN $5::timestamptz ELSE paid_at END,
+         updated_at=NOW()
+       WHERE id=$6 AND user_id=$7 RETURNING *`,
+      [payment_status, amount_paid || null, depositPaidAt, invoiceSentAt, paidAt, jobId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Job not found' });
+    res.json({ ok: true, job: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /mission/overdue-invoices — jobs completed 14+ days ago with no payment received
+app.get('/mission/overdue-invoices', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company, vehicle_count, vehicle_type, job_revenue, install_date,
+              payment_status, amount_paid, invoice_sent_at
+       FROM installed_jobs
+       WHERE user_id=$1
+         AND job_revenue > 0
+         AND payment_status NOT IN ('paid')
+         AND (install_date < NOW() - INTERVAL '14 days' OR invoice_sent_at < NOW() - INTERVAL '7 days')
+       ORDER BY install_date ASC NULLS LAST
+       LIMIT 10`,
+      [uid]
+    );
+
+    const jobs = rows.map((j) => ({
+      id: j.id,
+      company: j.company,
+      vehicleCount: j.vehicle_count,
+      vehicleType: j.vehicle_type,
+      revenue: Number(j.job_revenue),
+      amountPaid: Number(j.amount_paid),
+      balance: Number(j.job_revenue) - Number(j.amount_paid),
+      installDate: j.install_date,
+      paymentStatus: j.payment_status,
+      invoiceSentAt: j.invoice_sent_at,
+      daysOverdue: j.install_date ? Math.floor((Date.now() - new Date(j.install_date).getTime()) / 86_400_000) : null,
+    }));
+
+    res.json({ ok: true, jobs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/jobs/:id', authMiddleware, async (req, res) => {
   await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
   res.json({ ok: true });
@@ -7192,6 +7268,80 @@ app.post('/jobs/:id/create-reorder-lead', authMiddleware, async (req, res) => {
     console.error('[create-reorder-lead]', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// POST /jobs/:id/social-post — AI-generated social media post from job metadata + photos
+app.post('/jobs/:id/social-post', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+    const [jobR, settR, photosR] = await Promise.all([
+      pool.query('SELECT * FROM installed_jobs WHERE id=$1 AND user_id=$2', [jobId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+      pool.query(
+        `SELECT image_data, caption, photo_type FROM job_photos WHERE job_id=$1 ORDER BY photo_type='after' DESC, created_at ASC LIMIT 3`,
+        [jobId]
+      ),
+    ]);
+    if (!jobR.rows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+    const photos = photosR.rows;
+
+    const CATEGORY_LABELS = {
+      fleet: 'fleet graphics', design: 'interior design', construction: 'construction fleet',
+      colorchange: 'color change wrap', dinoc: 'DI-NOC architectural film',
+      reatec: 'Rea Tec film', wallgraphics: 'wall graphics', racing: 'motorsport wrap', gc_referral: 'commercial wrap',
+    };
+    const catLabel = CATEGORY_LABELS[job.wrap_category] || 'vehicle wrap';
+
+    const hasAfterPhoto = photos.some((p) => p.photo_type === 'after');
+    const imageContext = hasAfterPhoto
+      ? 'We have a finished install photo showing the completed wrap.'
+      : 'No photos available — focus on the specs and transformation.';
+
+    const { Anthropic } = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey });
+
+    const prompt = `Write three short social media posts for a vehicle wrap shop called "${shopName}" about this completed job:
+
+Job details:
+- Client: ${job.company}
+- Type: ${catLabel}
+- Vehicles: ${job.vehicle_count} ${job.vehicle_type}
+- Material: ${job.material || 'premium cast vinyl'}
+- Installed: ${job.install_date ? new Date(job.install_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'recently'}
+${job.job_revenue > 0 ? '' : ''}
+${imageContext}
+
+Write exactly three versions:
+1. Instagram: Casual, visual-first, 100-150 words, 8-12 relevant hashtags at the end. Start with a hook about the transformation.
+2. LinkedIn: Professional, 80-120 words, focus on business value for the client (brand visibility, fleet unity, ROI). No hashtags.
+3. Facebook: Community-friendly, 60-90 words, conversational, mention the local business if it's a local fleet. 2-3 hashtags.
+
+Format as JSON: { "instagram": "...", "linkedin": "...", "facebook": "..." }`;
+
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1200,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content[0]?.text || '';
+    let posts;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      posts = jsonMatch ? JSON.parse(jsonMatch[0]) : { instagram: text, linkedin: '', facebook: '' };
+    } catch {
+      posts = { instagram: text, linkedin: '', facebook: '' };
+    }
+
+    res.json({ ok: true, posts, jobId, company: job.company });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST /jobs/:id/case-study — generate a shareable case study narrative

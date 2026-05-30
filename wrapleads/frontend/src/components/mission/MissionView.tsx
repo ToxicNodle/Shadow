@@ -1428,6 +1428,89 @@ function ExpiringQuotesCard({ onLeadClick }: { onLeadClick: (id: number) => void
   );
 }
 
+// ── Overdue Invoices Alert ────────────────────────────────────────────────────
+function OverdueInvoicesCard() {
+  const showToast = useAppStore((s) => s.showToast);
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['overdue-invoices'],
+    queryFn: () => api.getOverdueInvoices(),
+    staleTime: 5 * 60_000,
+  });
+
+  const jobs = data?.jobs ?? [];
+  if (!isLoading && jobs.length === 0) return null;
+
+  const totalBalance = jobs.reduce((s, j) => s + j.balance, 0);
+  const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+
+  async function markPaid(jobId: number, company: string) {
+    try {
+      await api.updateJobPayment(jobId, { payment_status: 'paid' });
+      showToast(`${company} marked as paid`);
+      refetch();
+    } catch {
+      showToast('Could not update payment status', 'error');
+    }
+  }
+
+  async function markInvoiceSent(jobId: number) {
+    try {
+      await api.updateJobPayment(jobId, { payment_status: 'invoice_sent' });
+      refetch();
+    } catch { /* ignore */ }
+  }
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #ef4444' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" style={{ marginRight: 5 }}>
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>
+          </svg>
+          Unpaid Invoices
+        </span>
+        {totalBalance > 0 && (
+          <span style={{ fontSize: 13, fontWeight: 800, color: '#ef4444', marginLeft: 'auto' }}>{fmt(totalBalance)} outstanding</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: '12px 0', color: 'var(--text-faint)', fontSize: 12 }}>Checking…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {jobs.map((j) => (
+            <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#ef444408', border: '1px solid #ef444422', borderRadius: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.company}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {j.vehicleCount} {j.vehicleType} · {fmt(j.revenue)}
+                  {j.daysOverdue !== null && <span style={{ color: '#ef4444', marginLeft: 4 }}> · {j.daysOverdue}d ago</span>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {j.paymentStatus !== 'invoice_sent' && (
+                  <button
+                    onClick={() => markInvoiceSent(j.id)}
+                    style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                  >
+                    Invoice Sent
+                  </button>
+                )}
+                <button
+                  onClick={() => markPaid(j.id, j.company)}
+                  style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  Mark Paid ✓
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RetentionRadarCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ['retention-radar'],
@@ -2042,6 +2125,9 @@ export default function MissionView() {
         leads={leads}
         onFilter={(cat) => goToLeadsFiltered(undefined, cat)}
       />
+
+      {/* ── Overdue Invoices — unpaid balances from completed jobs ── */}
+      <OverdueInvoicesCard />
 
       {/* ── Retention Radar — aging wraps ready for re-engagement ── */}
       <RetentionRadarCard onLeadClick={goToLead} />

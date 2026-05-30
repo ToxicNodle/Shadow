@@ -320,19 +320,22 @@ function CaseStudyPanel({ job }: { job: InstalledJob }) {
 // ── Social Post Generator ─────────────────────────────────────────────────────
 
 function SocialPostPanel({ job }: { job: InstalledJob }) {
-  const [posts, setPosts] = useState<{ instagram: string; linkedin: string } | null>(null);
+  const [posts, setPosts] = useState<{ instagram: string; linkedin: string; facebook?: string } | null>(null);
   const [copiedIG, setCopiedIG] = useState(false);
   const [copiedLI, setCopiedLI] = useState(false);
+  const [copiedFB, setCopiedFB] = useState(false);
 
   const genMut = useMutation({
-    mutationFn: () => api.generateSocialPost({
-      company: job.company,
-      vehicle_type: job.vehicle_type,
-      vehicle_count: job.vehicle_count,
-      wrap_category: job.wrap_category,
-      material: job.material ?? undefined,
-      notes: job.notes ?? undefined,
-    }),
+    mutationFn: async () => {
+      try {
+        return await api.generateJobSocialPost(job.id);
+      } catch {
+        return await api.generateSocialPost({
+          company: job.company, vehicle_type: job.vehicle_type, vehicle_count: job.vehicle_count,
+          wrap_category: job.wrap_category, material: job.material ?? undefined, notes: job.notes ?? undefined,
+        }) as { posts: { instagram: string; linkedin: string; facebook?: string } };
+      }
+    },
     onSuccess: (data) => setPosts(data.posts),
   });
 
@@ -384,8 +387,109 @@ function SocialPostPanel({ job }: { job: InstalledJob }) {
               </button>
             </div>
           </div>
+          {posts.facebook && (
+            <div className="social-post-card">
+              <div className="social-post-platform">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                Facebook
+              </div>
+              <div className="social-post-text">{posts.facebook}</div>
+              <div className="social-post-actions">
+                <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => { navigator.clipboard.writeText(posts.facebook!); setCopiedFB(true); setTimeout(() => setCopiedFB(false), 2000); }}>
+                  {copiedFB ? '✓ Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+// ── Payment Status Row ────────────────────────────────────────────────────────
+
+const PAYMENT_LABELS: Record<string, { label: string; color: string }> = {
+  unpaid:       { label: 'Unpaid',        color: '#ef4444' },
+  deposit_paid: { label: 'Deposit Paid',  color: '#f59e0b' },
+  invoice_sent: { label: 'Invoice Sent',  color: '#4d8af5' },
+  paid:         { label: 'Paid in Full',  color: '#00d97e' },
+  overdue:      { label: 'Overdue',       color: '#dc2626' },
+};
+
+function PaymentStatusRow({ job }: { job: InstalledJob }) {
+  const qc = useQueryClient();
+  const [amountInput, setAmountInput] = useState(String(job.amount_paid ?? ''));
+  const status = job.payment_status ?? 'unpaid';
+  const meta = PAYMENT_LABELS[status] ?? PAYMENT_LABELS.unpaid;
+
+  const updateMut = useMutation({
+    mutationFn: (opts: { payment_status?: string; amount_paid?: number }) =>
+      api.updateJobPayment(job.id, { payment_status: opts.payment_status ?? status, amount_paid: opts.amount_paid }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['installed-jobs'] }),
+  });
+
+  const actions: { label: string; next: string }[] = [];
+  if (status === 'unpaid' || status === 'overdue') actions.push({ label: 'Mark Deposit Paid', next: 'deposit_paid' });
+  if (status !== 'invoice_sent' && status !== 'paid') actions.push({ label: 'Mark Invoice Sent', next: 'invoice_sent' });
+  if (status !== 'paid') actions.push({ label: 'Mark Paid in Full', next: 'paid' });
+  if (status !== 'overdue' && status !== 'paid') actions.push({ label: 'Mark Overdue', next: 'overdue' });
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 6 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 10 }}>
+        Payment Status
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: meta.color, background: `${meta.color}22`, padding: '3px 8px', borderRadius: 4 }}>
+          {meta.label}
+        </span>
+        {job.deposit_paid_at && (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Deposit: {new Date(job.deposit_paid_at).toLocaleDateString()}</span>
+        )}
+        {job.invoice_sent_at && (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Invoice: {new Date(job.invoice_sent_at).toLocaleDateString()}</span>
+        )}
+        {job.paid_at && (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Paid: {new Date(job.paid_at).toLocaleDateString()}</span>
+        )}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          type="number"
+          min={0}
+          step={100}
+          value={amountInput}
+          onChange={(e) => setAmountInput(e.target.value)}
+          onBlur={() => {
+            const v = Number(amountInput);
+            if (!isNaN(v) && v !== (job.amount_paid ?? 0)) {
+              updateMut.mutate({ amount_paid: v });
+            }
+          }}
+          placeholder="Amount received"
+          style={{ width: 130, fontSize: 12 }}
+        />
+        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+          {job.amount_paid && job.job_revenue
+            ? `$${Number(job.job_revenue - job.amount_paid).toLocaleString()} remaining`
+            : ''}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+        {actions.map((a) => (
+          <button
+            key={a.next}
+            className="btn"
+            style={{ fontSize: 11 }}
+            disabled={updateMut.isPending}
+            onClick={() => updateMut.mutate({ payment_status: a.next })}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -708,6 +812,12 @@ function JobModal({ job, onClose }: JobModalProps) {
               <input className="input" type="number" min={0} step={0.5} {...f('labor_hours')} placeholder="0" />
             </div>
           </div>
+
+          {/* Payment Status — only show for saved jobs with revenue */}
+          {!isNew && Number(form.job_revenue) > 0 && (
+            <PaymentStatusRow job={job as InstalledJob} />
+          )}
+
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
             {!isNew && (
               <button className="btn" style={{ color: 'var(--red)', marginRight: 'auto' }}
