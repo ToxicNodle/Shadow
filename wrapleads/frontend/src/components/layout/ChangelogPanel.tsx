@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '📊 Job Profitability P&L — True Margin After All Costs',
+    body: 'Analytics now includes a Job Profitability table showing your true per-job P&L: revenue minus material cost minus subcontractor labor. Sort by Net Profit, Margin %, Revenue, or Most Recent. Color-coded margin badges: green ≥50%, blue ≥35%, amber ≥20%, red <20%. Totals strip at the top shows aggregate revenue, material, sub labor, net profit, and average margin across all logged jobs. A mini revenue bar on each row gives instant visual context. Overdue or unpaid jobs are flagged inline. The data feeds from your installed jobs — add Revenue and Material Cost to any job in the Jobs view to populate this table.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '📅 Install Schedule Calendar — See Your Crew\'s Month at a Glance',
     body: 'The Jobs view now has a "Schedule" tab with a full monthly calendar showing all your installs by date. Color-coded by service category (fleet = blue, DI-NOC = purple, racing = orange, etc.). Click any day to see the jobs scheduled for that date with vehicle type, count, and crew size. Set or change a scheduled install date from any job\'s Details tab — two fields: "Scheduled Install Date" and "Crew Count." The calendar automatically shows completed installs (by install date) and upcoming scheduled ones (by scheduled date). Navigate months to see your pipeline stretched across time.',
   },

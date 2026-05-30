@@ -2508,6 +2508,190 @@ function CashFlowCard() {
   );
 }
 
+// ── Job Profitability P&L Table ───────────────────────────────────────────────
+const SORT_OPTIONS = [
+  { value: 'profit', label: 'Net Profit' },
+  { value: 'margin', label: 'Margin %' },
+  { value: 'revenue', label: 'Revenue' },
+  { value: 'install_date', label: 'Recent' },
+] as const;
+
+function JobProfitabilityCard() {
+  type SortKey = 'profit' | 'margin' | 'revenue' | 'install_date';
+  const [sort, setSort] = useState<SortKey>('profit');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-profitability', sort],
+    queryFn: () => api.getJobProfitability({ sort, limit: 25 }),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Job Profitability</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      </div>
+    );
+  }
+
+  const jobs = data?.jobs ?? [];
+  const totals = data?.totals;
+
+  if (!totals || totals.jobCount === 0) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Job Profitability</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          Add Revenue and Material Cost to completed jobs to see your true per-job P&L, including subcontractor labor.
+        </p>
+      </div>
+    );
+  }
+
+  function fmtD(n: number) {
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+    return `$${Math.round(n)}`;
+  }
+
+  function marginColor(pct: number | null) {
+    if (pct === null) return 'var(--text-faint)';
+    if (pct >= 50) return '#22c55e';
+    if (pct >= 35) return '#4d8af5';
+    if (pct >= 20) return '#f59e0b';
+    return '#ef4444';
+  }
+
+  const maxRevenue = Math.max(...jobs.map((j) => j.revenue), 1);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Job Profitability</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            True margin after materials + subcontractor labor — top {totals.jobCount} jobs
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {SORT_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              onClick={() => setSort(o.value)}
+              style={{
+                fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
+                background: sort === o.value ? 'var(--accent-subtle)' : 'var(--bg-elev)',
+                border: sort === o.value ? '1px solid var(--accent-glow)' : '1px solid var(--border)',
+                color: sort === o.value ? 'var(--accent)' : 'var(--text-muted)',
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Totals strip */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Total Revenue', value: fmtD(totals.totalRevenue), color: '#4d8af5' },
+          { label: 'Total Material', value: fmtD(totals.totalMaterial), color: 'var(--text-muted)' },
+          { label: 'Sub Labor', value: fmtD(totals.totalSubLabor), color: '#f59e0b' },
+          { label: 'Net Profit', value: fmtD(totals.totalProfit), color: totals.totalProfit >= 0 ? '#22c55e' : '#ef4444' },
+          { label: 'Avg Margin', value: totals.avgMargin !== null ? `${totals.avgMargin}%` : '—', color: marginColor(totals.avgMargin) },
+        ].map((s) => (
+          <div key={s.label} style={{ flex: 1, minWidth: 90 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-1px', color: s.color, fontFamily: 'var(--mono)' }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr>
+              {['Company', 'Category', 'Install', 'Revenue', 'Material', 'Sub Labor', 'Net Profit', 'Margin', ''].map((h) => (
+                <th key={h} style={{
+                  textAlign: ['Revenue', 'Material', 'Sub Labor', 'Net Profit', 'Margin'].includes(h) ? 'right' : h === '' ? 'center' : 'left',
+                  fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em',
+                  color: 'var(--text-faint)', paddingBottom: 8, borderBottom: '1px solid var(--border)',
+                  paddingRight: h === 'Company' ? 12 : 0,
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((j) => {
+              const barW = maxRevenue > 0 ? Math.round((j.revenue / maxRevenue) * 100) : 0;
+              const mc = marginColor(j.marginPct);
+              const isNegative = j.netProfit < 0;
+              return (
+                <tr key={j.id} style={{ borderBottom: '1px solid var(--border-soft)' }}>
+                  {/* Company + mini revenue bar */}
+                  <td style={{ padding: '9px 12px 9px 0', minWidth: 140 }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--text)', marginBottom: 3 }}>{j.company}</div>
+                    <div style={{ height: 3, borderRadius: 99, background: 'var(--border)', overflow: 'hidden', width: 80 }}>
+                      <div style={{ height: '100%', width: `${barW}%`, borderRadius: 99, background: isNegative ? '#ef4444' : 'var(--accent)' }} />
+                    </div>
+                  </td>
+                  <td style={{ padding: '9px 8px', color: 'var(--text-muted)', textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
+                    {j.category ?? '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {j.installDate ? new Date(j.installDate).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }) : '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', fontWeight: 600 }}>{fmtD(j.revenue)}</td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>
+                    {j.materialCost > 0 ? fmtD(j.materialCost) : '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', color: j.subLabor > 0 ? '#f59e0b' : 'var(--text-faint)' }}>
+                    {j.subLabor > 0 ? fmtD(j.subLabor) : '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', fontWeight: 700, color: isNegative ? '#ef4444' : '#22c55e' }}>
+                    {isNegative ? '-' : ''}{fmtD(Math.abs(j.netProfit))}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right' }}>
+                    {j.marginPct !== null ? (
+                      <span style={{
+                        fontSize: 11, fontWeight: 800, padding: '2px 7px', borderRadius: 5,
+                        background: `${mc}18`, color: mc,
+                        fontFamily: 'var(--mono)',
+                      }}>
+                        {j.marginPct}%
+                      </span>
+                    ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                  </td>
+                  {/* Payment status pill */}
+                  <td style={{ padding: '9px 0 9px 8px', textAlign: 'center' }}>
+                    {j.paymentStatus && j.paymentStatus !== 'paid' && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                        background: j.paymentStatus === 'overdue' ? '#ef444418' : 'var(--bg-elev-2)',
+                        color: j.paymentStatus === 'overdue' ? '#ef4444' : 'var(--text-faint)',
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
+                      }}>
+                        {j.paymentStatus === 'unpaid' ? 'unpaid' : j.paymentStatus === 'overdue' ? 'overdue' : j.paymentStatus === 'deposit_paid' ? 'dep.' : 'inv.'}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-soft)', fontSize: 10, color: 'var(--text-faint)' }}>
+        Green ≥50% · Blue ≥35% · Amber ≥20% · Red &lt;20% · Sub Labor from the Subcontractors tab in each job.
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -3193,6 +3377,9 @@ export default function AnalyticsView() {
 
         {/* ── Cash Flow / Receivables ── */}
         <CashFlowCard />
+
+        {/* ── Job Profitability P&L ── */}
+        <JobProfitabilityCard />
 
         {/* ── Lead Cohort Analysis ── */}
         <CohortAnalysisCard />

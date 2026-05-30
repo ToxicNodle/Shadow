@@ -1179,6 +1179,22 @@ export const api = {
       leadState: string;
     }>(`/leads/${leadId}/similar-wins`),
 
+  // Job Profitability — per-job P&L including sub labor
+  getJobProfitability: (opts: { sort?: 'profit' | 'margin' | 'revenue' | 'install_date'; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.sort) qs.set('sort', opts.sort);
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    return authFetch<{
+      jobs: Array<{
+        id: number; company: string; vehicleType: string | null; vehicleCount: number | null;
+        category: string | null; installDate: string | null; material: string | null;
+        paymentStatus: string | null; revenue: number; materialCost: number; subLabor: number;
+        netProfit: number; marginPct: number | null; amountPaid: number;
+      }>;
+      totals: { totalRevenue: number; totalMaterial: number; totalSubLabor: number; totalProfit: number; avgMargin: number | null; jobCount: number };
+    }>('/analytics/job-profitability?' + qs.toString());
+  },
+
   // Material Margin Analytics
   getMarginAnalytics: () =>
     authFetch<{
