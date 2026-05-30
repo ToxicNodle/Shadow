@@ -28,6 +28,88 @@ const CAT_COLORS: Record<string, string> = {
   reatec: '#06b6d4', design: '#84cc16', wallgraphics: '#a78bfa', other: '#6b7280',
 };
 
+// ── Monthly Revenue Trend ─────────────────────────────────────────────────────
+function RevenueMonthlyCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['revenue-monthly'],
+    queryFn: () => api.getMonthlyRevenue(),
+    staleTime: 10 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="an-card-title">Revenue Trend</div>
+      <div style={{ color: 'var(--text-faint)', fontSize: 12, padding: '16px 0' }}>Loading…</div>
+    </div>
+  );
+
+  const months = data?.months ?? [];
+  const hasData = months.some((m) => m.revenue > 0);
+  if (!hasData) return null;
+
+  const maxRevenue = Math.max(...months.map((m) => m.revenue), 1);
+  const fmt = (n: number) => n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${n}`;
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Revenue Trend — Last 18 Months</div>
+        <div style={{ display: 'flex', gap: 16 }}>
+          {data?.avgMonthly ? (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{fmt(data.avgMonthly)}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>avg/mo</div>
+            </div>
+          ) : null}
+          {data?.bestMonth ? (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: '#22c55e' }}>{data.bestMonth}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>best month</div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 120, overflowX: 'auto', paddingBottom: 8 }}>
+        {months.map((m) => {
+          const pct = maxRevenue > 0 ? (m.revenue / maxRevenue) : 0;
+          const barH = Math.max(pct * 96, m.revenue > 0 ? 4 : 2);
+          const isCurrentMonth = m.month === new Date().toISOString().slice(0, 7);
+          return (
+            <div key={m.month} style={{ flex: '1 0 0', minWidth: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              {m.revenue > 0 && (
+                <div style={{ fontSize: 9, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmt(m.revenue)}</div>
+              )}
+              <div
+                style={{
+                  width: '100%', height: barH,
+                  background: isCurrentMonth ? '#f4551c' : m.revenue > 0 ? '#4d8af5' : '#ffffff10',
+                  borderRadius: '3px 3px 0 0',
+                  transition: 'height .3s ease',
+                  position: 'relative',
+                }}
+                title={`${m.label}: ${fmt(m.revenue)} (${m.jobCount} job${m.jobCount !== 1 ? 's' : ''})`}
+              />
+              <div style={{ fontSize: 9, color: isCurrentMonth ? '#f4551c' : 'var(--text-faint)', fontWeight: isCurrentMonth ? 700 : 400, whiteSpace: 'nowrap', textAlign: 'center', lineHeight: 1.1 }}>{m.label}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-faint)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: '#4d8af5', display: 'inline-block' }} />
+          Completed months
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-faint)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: '#f4551c', display: 'inline-block' }} />
+          Current month
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RevenueAttributionCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['revenue-attribution'],
@@ -2977,6 +3059,9 @@ export default function AnalyticsView() {
 
         {/* ── Pipeline Health Score ── */}
         <PipelineHealthCard />
+
+        {/* ── Revenue Trend — monthly bar chart ── */}
+        <RevenueMonthlyCard />
 
         {/* ── Revenue Attribution ── */}
         <RevenueAttributionCard />

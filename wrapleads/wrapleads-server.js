@@ -16236,6 +16236,52 @@ app.get('/analytics/cohort', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /analytics/revenue-monthly — monthly revenue trend from installed_jobs (last 18 months)
+app.get('/analytics/revenue-monthly', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         TO_CHAR(install_date, 'YYYY-MM')        AS month,
+         COUNT(*)::INT                           AS job_count,
+         COALESCE(SUM(job_revenue), 0)::INT      AS revenue,
+         COALESCE(SUM(material_cost), 0)::INT    AS cost,
+         COALESCE(SUM(vehicle_count), 0)::INT    AS vehicles
+       FROM installed_jobs
+       WHERE user_id=$1
+         AND install_date IS NOT NULL
+         AND install_date >= NOW() - INTERVAL '18 months'
+       GROUP BY month
+       ORDER BY month ASC`,
+      [uid]
+    );
+
+    // Fill in missing months with 0
+    const months = [];
+    const now = new Date();
+    for (let i = 17; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const found = rows.find((r) => r.month === key);
+      months.push({
+        month: key,
+        label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        jobCount: found?.job_count || 0,
+        revenue: found?.revenue || 0,
+        cost: found?.cost || 0,
+        vehicles: found?.vehicles || 0,
+        margin: found?.revenue > 0 ? Math.round(((found.revenue - found.cost) / found.revenue) * 100) : null,
+      });
+    }
+
+    const totalRevenue = months.reduce((s, m) => s + m.revenue, 0);
+    const avgMonthly = Math.round(totalRevenue / 18);
+    const bestMonth = months.reduce((a, b) => b.revenue > a.revenue ? b : a, months[0]);
+
+    res.json({ ok: true, months, totalRevenue, avgMonthly, bestMonth: bestMonth.label });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /analytics/margin — material margin dashboard
 // Gross margin = job_revenue - material_cost per vehicle, per category.
 // Only shows jobs with both revenue and cost > 0 entered.

@@ -1753,4 +1753,14 @@ export const api = {
         company: string; contactName: string | null; email: string | null; phone: string | null;
       }>;
     }>('/mission/expiring-quotes'),
+
+  // ── Analytics: Monthly Revenue Trend ──
+  getMonthlyRevenue: () =>
+    authFetch<{
+      ok: boolean;
+      months: Array<{ month: string; label: string; jobCount: number; revenue: number; cost: number; vehicles: number; margin: number | null }>;
+      totalRevenue: number;
+      avgMonthly: number;
+      bestMonth: string;
+    }>('/analytics/revenue-monthly'),
 };
