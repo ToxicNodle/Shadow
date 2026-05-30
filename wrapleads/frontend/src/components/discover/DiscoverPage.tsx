@@ -7,6 +7,7 @@ import FilterRow from './FilterRow';
 import CarrierTable from './CarrierTable';
 import SavedChips from './SavedChips';
 import DiscoverMapView from './DiscoverMapView';
+import DataSourcesPanel from './DataSourcesPanel';
 
 const CAT_LABEL: Record<string, string> = {
   fleet: 'Fleet Wraps', dinoc: 'DI-NOC', gc_referral: 'GC Referrals',
@@ -188,7 +189,7 @@ export default function DiscoverPage() {
     setTruckScanOpen: s.setTruckScanOpen,
   }));
   const [campaignLoading, setCampaignLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<'table' | 'map'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'map' | 'sources'>('table');
   const pendingSearch = useCarrierSearch();
 
   useEffect(() => {
@@ -294,7 +295,7 @@ export default function DiscoverPage() {
           🚛 Scan Truck
         </button>
         <div style={{ display: 'flex', gap: 4 }}>
-          {(['table', 'map'] as const).map((mode) => (
+          {([['table', '≡ Table'], ['map', '⊞ Map'], ['sources', '⬡ Sources']] as const).map(([mode, label]) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
@@ -305,7 +306,7 @@ export default function DiscoverPage() {
                 color: viewMode === mode ? 'var(--accent)' : 'var(--text-faint)',
               }}
             >
-              {mode === 'table' ? '≡ Table' : '⊞ Map'}
+              {label}
             </button>
           ))}
         </div>
@@ -315,8 +316,10 @@ export default function DiscoverPage() {
         <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
           <CarrierTable />
         </div>
-      ) : (
+      ) : viewMode === 'map' ? (
         <DiscoverMapView />
+      ) : (
+        <DataSourcesPanel />
       )}
 
       {selectedCarrierIds.size > 0 && (

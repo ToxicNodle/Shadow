@@ -20063,6 +20063,42 @@ app.listen(PORT, async () => {
     } catch (e) {
       console.warn('· News Signal worker not started:', e.message);
     }
+    // SAM.gov weekly auto-refresh — runs every Sunday at 4AM if SAM_API_KEY set
+    if (process.env.SAM_API_KEY) {
+      console.log('· SAM.gov: configured — weekly auto-refresh enabled (Sundays 4AM)');
+      (function scheduleSamRefresh() {
+        const now = new Date();
+        const next = new Date(now);
+        // Find next Sunday 4:00 AM local time
+        const daysUntilSun = (7 - now.getDay()) % 7 || 7;
+        next.setDate(now.getDate() + daysUntilSun);
+        next.setHours(4, 0, 0, 0);
+        const msUntil = next - now;
+        setTimeout(async () => {
+          console.log('[sam] Starting weekly SAM.gov refresh...');
+          try {
+            const samIngest = require('./lib/ingest-sam.js');
+            if (typeof samIngest.runIngest === 'function') {
+              await samIngest.runIngest({ pool, limit: 5000 });
+            } else {
+              // Fallback: spawn as child process
+              const { execFile } = require('child_process');
+              execFile('node', ['lib/ingest-sam.js', '--limit=5000'], { env: process.env, cwd: __dirname }, (err, stdout, stderr) => {
+                if (err) console.error('[sam] refresh error:', err.message);
+                else console.log('[sam] weekly refresh complete');
+              });
+            }
+          } catch (e) {
+            console.error('[sam] refresh failed:', e.message);
+          }
+          scheduleSamRefresh(); // reschedule for next week
+        }, msUntil);
+        const h = Math.round(msUntil / 3600000);
+        console.log(`· SAM.gov: next refresh in ~${h}h (Sunday 4AM)`);
+      })();
+    } else {
+      console.log('· SAM.gov: not configured (set SAM_API_KEY for weekly federal contractor refresh)');
+    }
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {
       console.log('· Companies table empty — seeding sample carriers...');
