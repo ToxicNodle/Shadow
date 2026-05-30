@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '📋 Material PO Generator — Know Exactly What to Order',
+    body: 'Every logged job now has a "Material PO" tab. Set the coverage level (full/partial/spot), waste factor (10–25%), material name, and cost per roll — and WrapOS instantly calculates the exact number of 25"×50\' rolls needed, with waste. Shows base sq ft, with-waste sq ft, and rolls to order. "Copy PO to Clipboard" copies a formatted purchase order ready to email your 3M or Avery distributor. "Print PO" opens a clean printable version. Each vehicle type has industry-standard sq footage built in — no looking up spec sheets.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '👷 Subcontractor Tracker — Know Your True Margin',
     body: 'Many shops farm out installs but never track sub labor as a cost — so their margin calculation is wrong. WrapOS now has full subcontractor management: add subs in Settings (name, specialty, hourly rate), then assign them to any job in the new "Subs" tab. Enter hours or a flat rate, and WrapOS shows your true cost (material + sub labor) and true margin — alongside the standard gross margin. See total subs paid and job counts in Settings. No more hidden labor costs eating into your profits.',
   },
