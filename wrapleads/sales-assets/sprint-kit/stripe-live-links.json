@@ -1,0 +1,23 @@
+[
+  {
+    "product_id": "prod_UcQq0JF8l4BZVX",
+    "price_id": "price_1TdByNAfw8U7fJFYSNQBEjD8",
+    "payment_link": "https://buy.stripe.com/aFa9ASccX8zi2dt2cEefC00",
+    "pack_key": "metro",
+    "price_usd": 497
+  },
+  {
+    "product_id": "prod_UcQqDinBGYMwDj",
+    "price_id": "price_1TdByPAfw8U7fJFYeMkplmc0",
+    "payment_link": "https://buy.stripe.com/3cI5kC6SDeXG05ldVmefC01",
+    "pack_key": "state",
+    "price_usd": 1497
+  },
+  {
+    "product_id": "prod_UcQqnieu7BsoRf",
+    "price_id": "price_1TdByQAfw8U7fJFY7adA3jkq",
+    "payment_link": "https://buy.stripe.com/14AcN4ccXaHqcS7dVmefC02",
+    "pack_key": "national",
+    "price_usd": 4997
+  }
+]
