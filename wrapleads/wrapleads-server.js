@@ -10356,6 +10356,111 @@ ${photoGrid ? `
 });
 
 // ── Google Review Automation ──────────────────────────────────────────────────
+// POST /jobs/:id/notify-ready — send "vehicle ready for pickup" notification to client
+app.post('/jobs/:id/notify-ready', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { via = 'email', toEmail, toPhone, toName, customMessage } = req.body || {};
+
+  if (!toEmail && !toPhone) return res.status(400).json({ error: 'Provide toEmail or toPhone' });
+
+  try {
+    const { rows: jobRows } = await pool.query(
+      `SELECT j.*, u.settings_json, u.company_name, u.email AS owner_email
+       FROM installed_jobs j
+       JOIN users u ON u.id::TEXT = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+
+    const job      = jobRows[0];
+    const settings = typeof job.settings_json === 'string' ? JSON.parse(job.settings_json) : (job.settings_json || {});
+    const shopName = job.company_name || settings.companyName || 'Your Wrap Shop';
+    const shopPhone = settings.phone || '';
+    const shopAddr  = [settings.street, settings.city, settings.state].filter(Boolean).join(', ');
+    const senderEmail = settings.senderEmail || job.owner_email || '';
+    const accentColor = settings.accentColor || '#f4551c';
+
+    const revenue    = Number(job.job_revenue)  || 0;
+    const amountPaid = Number(job.amount_paid)  || 0;
+    const balance    = Math.max(0, revenue - amountPaid);
+
+    const defaultMsg = customMessage ||
+      `Your vehicle wrap is complete and ready for pickup! ${shopAddr ? `We're located at ${shopAddr}.` : ''} ${shopPhone ? `Call us at ${shopPhone} with any questions.` : ''}`.trim();
+
+    let sentVia = [];
+
+    // ── Email notification ──
+    if ((via === 'email' || via === 'both') && toEmail && resend) {
+      const balanceNote = balance > 0
+        ? `<p style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 14px;color:#856404;font-size:14px;margin:16px 0"><strong>Balance due at pickup:</strong> $${balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</p>`
+        : `<p style="background:#d4edda;border:1px solid #28a745;border-radius:6px;padding:10px 14px;color:#155724;font-size:14px;margin:16px 0">✓ Account paid in full — no balance due.</p>`;
+
+      await resend.emails.send({
+        from: senderEmail ? `${shopName} <${senderEmail}>` : `${shopName} <onboarding@resend.dev>`,
+        to: toEmail,
+        subject: `Your vehicle wrap is ready for pickup! — ${shopName}`,
+        html: `
+<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px">
+  <div style="background:${accentColor};border-radius:8px 8px 0 0;padding:20px 24px">
+    <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.5px">${shopName}</div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:24px">
+    <h2 style="font-size:20px;font-weight:800;color:#111;margin:0 0 8px">🎉 Your wrap is complete!</h2>
+    <p style="color:#444;font-size:14px;line-height:1.6;margin:0 0 16px">
+      Hi ${toName || 'there'},<br><br>
+      Great news — your vehicle wrap job for <strong>${job.company}</strong> is finished and ready for pickup.
+    </p>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin:0 0 16px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px">Job Details</div>
+      <div style="font-size:13px;color:#333;line-height:1.8">
+        <strong>Vehicle count:</strong> ${job.vehicle_count || 1} vehicle${(job.vehicle_count||1)>1?'s':''}<br>
+        ${job.material ? `<strong>Material:</strong> ${job.material}<br>` : ''}
+        ${shopAddr ? `<strong>Pickup location:</strong> ${shopAddr}<br>` : ''}
+        ${shopPhone ? `<strong>Phone:</strong> ${shopPhone}` : ''}
+      </div>
+    </div>
+    ${balanceNote}
+    ${customMessage ? `<p style="font-size:14px;color:#333;line-height:1.6">${customMessage}</p>` : ''}
+    <p style="font-size:13px;color:#666;margin-top:20px;border-top:1px solid #eee;padding-top:16px">
+      Please call ahead if you need to schedule a specific pickup time. We look forward to seeing you!<br><br>
+      — ${shopName}
+    </p>
+  </div>
+</div>`,
+      }).catch((err) => console.warn('[notify-ready] email failed:', err.message));
+      sentVia.push('email');
+    }
+
+    // ── SMS notification ──
+    const twilioClient = (typeof twilio !== 'undefined' && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER)
+      ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+      : null;
+
+    if ((via === 'sms' || via === 'both') && toPhone && twilioClient) {
+      const smsBody = `${shopName}: Your vehicle wrap is ready for pickup! ${shopAddr ? shopAddr + '. ' : ''}${shopPhone ? 'Call: ' + shopPhone : ''} ${balance > 0 ? `Balance due: $${balance.toLocaleString('en-US',{minimumFractionDigits:2})}` : 'Paid in full.'}`.trim();
+      await twilioClient.messages.create({
+        body: smsBody.slice(0, 320),
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: toPhone,
+      }).catch((err) => console.warn('[notify-ready] SMS failed:', err.message));
+      sentVia.push('sms');
+    }
+
+    // ── Log activity to job ──
+    await pool.query(
+      `UPDATE installed_jobs SET notes = COALESCE(notes,'') || $1 WHERE id = $2 AND user_id = $3`,
+      [`\n[${new Date().toLocaleDateString()}] Pickup notification sent via ${sentVia.join('+')||via} to ${toName||toEmail||toPhone}.`, jobId, uid]
+    );
+
+    res.json({ ok: true, sentVia });
+  } catch (e) {
+    console.error('[notify-ready]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // After a job is marked complete, shops can send a one-click review request
 // (email or SMS) to the client. The landing page thanks them and links directly
 // to their Google Business review form.

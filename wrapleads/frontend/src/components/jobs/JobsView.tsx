@@ -933,6 +933,12 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
   const [sendEmail, setSendEmail] = useState('');
   const [sendName, setSendName] = useState('');
   const [sending, setSending] = useState(false);
+  const [notifyEmail, setNotifyEmail] = useState('');
+  const [notifyPhone, setNotifyPhone] = useState('');
+  const [notifyName, setNotifyName] = useState('');
+  const [notifyVia, setNotifyVia] = useState<'email' | 'sms' | 'both'>('email');
+  const [notifyMsg, setNotifyMsg] = useState('');
+  const [notifying, setNotifying] = useState(false);
 
   const token = localStorage.getItem('wl_token') ?? '';
   const invoiceUrl = `/jobs/${job.id}/invoice?token=${encodeURIComponent(token)}`;
@@ -951,6 +957,28 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
       showToast(e instanceof Error ? e.message : 'Failed to send', 'error');
     } finally {
       setSending(false);
+    }
+  }
+
+  async function doNotifyReady() {
+    const hasEmail = notifyEmail.trim();
+    const hasPhone = notifyPhone.trim();
+    if (!hasEmail && !hasPhone) { showToast('Add email or phone to send notification', 'error'); return; }
+    setNotifying(true);
+    try {
+      const r = await api.notifyJobReady(job.id, {
+        via: notifyVia,
+        toEmail: hasEmail || undefined,
+        toPhone: hasPhone || undefined,
+        toName: notifyName.trim() || undefined,
+        customMessage: notifyMsg.trim() || undefined,
+      });
+      showToast(`Pickup notification sent via ${r.sentVia.join(' + ') || notifyVia}!`, 'success');
+      setNotifyEmail(''); setNotifyPhone(''); setNotifyName(''); setNotifyMsg('');
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Failed to send', 'error');
+    } finally {
+      setNotifying(false);
     }
   }
 
@@ -1030,6 +1058,74 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5 }}>
           Client receives a branded email with job summary, balance due, and a payment link (if configured in Settings → Deposit Collection).
+        </div>
+      </div>
+
+      {/* ── Notify Client — vehicle ready for pickup ── */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 10 }}>
+          📲 Notify Client — Vehicle Ready for Pickup
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['email', 'sms', 'both'] as const).map((v) => (
+              <button
+                key={v}
+                className={`btn${notifyVia === v ? ' btn-primary' : ''}`}
+                style={{ fontSize: 11, padding: '3px 10px', fontWeight: 700 }}
+                onClick={() => setNotifyVia(v)}
+              >
+                {v === 'email' ? '✉ Email' : v === 'sms' ? '📱 SMS' : '⚡ Both'}
+              </button>
+            ))}
+          </div>
+          {(notifyVia === 'email' || notifyVia === 'both') && (
+            <input
+              className="input"
+              type="email"
+              placeholder="Client email"
+              value={notifyEmail}
+              onChange={(e) => setNotifyEmail(e.target.value)}
+              style={{ fontSize: 13 }}
+            />
+          )}
+          {(notifyVia === 'sms' || notifyVia === 'both') && (
+            <input
+              className="input"
+              type="tel"
+              placeholder="Client phone (+1XXXXXXXXXX)"
+              value={notifyPhone}
+              onChange={(e) => setNotifyPhone(e.target.value)}
+              style={{ fontSize: 13 }}
+            />
+          )}
+          <input
+            className="input"
+            type="text"
+            placeholder="Contact name (optional)"
+            value={notifyName}
+            onChange={(e) => setNotifyName(e.target.value)}
+            style={{ fontSize: 13 }}
+          />
+          <textarea
+            className="input"
+            placeholder="Custom message (optional — default includes shop address + phone)"
+            value={notifyMsg}
+            onChange={(e) => setNotifyMsg(e.target.value)}
+            rows={2}
+            style={{ fontSize: 12, resize: 'vertical' }}
+          />
+          <button
+            className="btn"
+            style={{ alignSelf: 'flex-start', fontSize: 12, background: '#10b98118', color: '#10b981', border: '1px solid #10b98130', fontWeight: 700 }}
+            disabled={notifying || (!notifyEmail.trim() && !notifyPhone.trim())}
+            onClick={doNotifyReady}
+          >
+            {notifying ? 'Sending…' : '📲 Send Pickup Notification'}
+          </button>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            Sends a branded "your vehicle is ready" message with shop address, balance due, and your custom note. Logged to job notes automatically.
+          </div>
         </div>
       </div>
     </div>

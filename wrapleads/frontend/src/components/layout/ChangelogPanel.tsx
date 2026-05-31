@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📲 Pickup Notification — "Your Vehicle is Ready" in One Click',
+    body: 'The Invoice tab on every job now has a "Notify Client — Vehicle Ready for Pickup" section. Choose email, SMS, or both, enter the client\'s contact info, and click Send. The client receives a branded message with your shop name, address, phone, balance due (or "Paid in full"), and an optional custom note you write. Works out of the box for email via Resend; SMS via Twilio if configured. The notification is automatically logged to the job\'s notes with a timestamp and method ("Pickup notification sent via email+sms to John Smith"). No more manual texts or calls to tell clients their vehicle is done. Combined with the Completion Receipt, the handoff workflow is now: notify → client arrives → do the walkthrough → sign the receipt → hand over the keys.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '✅ Completion Receipt — Client Sign-Off at Vehicle Pickup',
     body: 'Every job in the Jobs view now has a "Completion Receipt" button alongside the Work Order and Invoice. Click it to open a print-ready document designed to be signed by the client at vehicle pickup. The receipt includes: client name and contact info, service type and vehicle details, a 6-item QC confirmation checklist (wrap installed to spec, edges sealed, vehicle cleaned), pre-existing damage notes, warranty terms (2-year material and workmanship coverage), and a full care-and-maintenance guide (hand-wash only, no pressure washing, no harsh chemicals, park in shade). The payment summary shows total, amount paid, and balance due — with a green "PAID" stamp if the account is settled. Bottom of the document has three signature lines for the client: Signature, Printed Name, and Date — plus a Shop Representative signature block pre-filled with your name. The receipt number (CR-XXXXX) is unique per job. Protects you from post-delivery disputes and gives clients a professional, branded document at every handoff.',
   },

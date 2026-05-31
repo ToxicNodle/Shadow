@@ -1934,6 +1934,10 @@ export const api = {
     authFetch<{ ok: boolean; invoiceNum: string }>(
       `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }
     ),
+  notifyJobReady: (jobId: number, opts: { via: 'email' | 'sms' | 'both'; toEmail?: string; toPhone?: string; toName?: string; customMessage?: string }) =>
+    authFetch<{ ok: boolean; sentVia: string[] }>(
+      `/jobs/${jobId}/notify-ready`, { method: 'POST', body: JSON.stringify(opts) }
+    ),
 
   // ── Job Schedule ──
   getJobSchedule: (year: number, month: number) =>
