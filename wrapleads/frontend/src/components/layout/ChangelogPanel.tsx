@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '💰 Job Expense Tracking — True Margin After Every Cost',
+    body: 'Every job now has a "💰 Expenses" tab where you can log any cost that reduces actual margin: fuel for a delivery drive, parking at the client\'s facility, rush shipping for materials, freelance graphic design, equipment rental, travel and hotel for a remote install, or any other miscellaneous cost. Each expense has a category (with icon), description, amount, optional date, and receipt reference number. A "Total Expenses" strip at the top shows the running total plus the true margin after all expenses are subtracted from revenue. The category buttons (⛽ Fuel, 🅿 Parking, 📦 Shipping, 🎨 Design, 🔧 Equipment, ✈ Travel, 💰 Misc) make quick entry fast — tap a category, type the description and amount, and done. Delete any entry with ✕. Previously, material cost and labor were the only logged costs — meaning a job that required 200 miles of driving was showing a false margin. Now every dollar that leaves the shop for a job is accounted for.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🚛 Fleet Vehicle Intake Log — Individual Vehicle Records with Wrap Progress',
     body: 'Every job in WrapOS now has a "🚛 Vehicles" tab where you can log each individual vehicle in a fleet job. Add year, make, model, color, license plate, VIN, mileage at drop-off, and pre-existing damage notes. A checkbox per vehicle lets you mark it as wrapped, with a progress bar showing "X of Y wrapped" at a glance. Damage notes appear with a ⚠ warning in amber — a legal record that the dent was there before the vehicle entered your shop. The VIN is auto-uppercased and plates are normalized. Check the box when each vehicle is done and the bar fills green — satisfying for the crew and instantly visible to the owner. Use case: 20-truck fleet job — log each truck at check-in with any pre-existing damage photographed and noted here, then check them off as you complete the wrap. If a client disputes damage later, you have a timestamped intake record. No other wrap-shop software does per-vehicle intake documentation.',
   },

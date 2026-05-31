@@ -639,9 +639,174 @@ interface JobModalProps {
   onClose: () => void;
 }
 
-// ── Vehicle Intake Tab ────────────────────────────────────────────────────────
+// ── Job Expenses Tab ──────────────────────────────────────────────────────────
 
-import type { JobVehicle } from '../../api/types';
+import type { JobVehicle, JobExpense } from '../../api/types';
+
+const EXPENSE_CATS: Array<{ value: JobExpense['category']; label: string; icon: string }> = [
+  { value: 'fuel',      label: 'Fuel',       icon: '⛽' },
+  { value: 'parking',   label: 'Parking',    icon: '🅿' },
+  { value: 'shipping',  label: 'Shipping',   icon: '📦' },
+  { value: 'design',    label: 'Design',     icon: '🎨' },
+  { value: 'equipment', label: 'Equipment',  icon: '🔧' },
+  { value: 'travel',    label: 'Travel',     icon: '✈' },
+  { value: 'misc',      label: 'Misc',       icon: '💰' },
+];
+
+function JobExpensesTab({ job }: { job: InstalledJob }) {
+  const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-expenses', job.id],
+    queryFn: () => api.getJobExpenses(job.id),
+    staleTime: 30_000,
+  });
+
+  const expenses = data?.expenses ?? [];
+  const total = data?.total ?? 0;
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [cat, setCat] = useState<JobExpense['category']>('misc');
+  const [desc, setDesc] = useState('');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState('');
+  const [note, setNote] = useState('');
+
+  const addMut = useMutation({
+    mutationFn: () => api.addJobExpense(job.id, {
+      category: cat, description: desc, amount: Number(amount),
+      expense_date: date || undefined, receipt_note: note || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-expenses', job.id] });
+      setShowAdd(false); setCat('misc'); setDesc(''); setAmount(''); setDate(''); setNote('');
+      showToast('Expense added', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (eid: number) => api.deleteJobExpense(job.id, eid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-expenses', job.id] }),
+  });
+
+  const revenue = Number(job.job_revenue) || 0;
+  const materialCost = Number(job.material_cost) || 0;
+  const trueMargin = revenue > 0 ? Math.round(((revenue - materialCost - total) / revenue) * 100) : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Summary strip */}
+      {expenses.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 14px' }}>
+          <div>
+            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Total Expenses</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#f59e0b' }}>${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          </div>
+          {trueMargin !== null && revenue > 0 && (
+            <div>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>True Margin</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: trueMargin >= 40 ? '#22c55e' : trueMargin >= 20 ? '#f59e0b' : '#ef4444' }}>{trueMargin}%</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Expense list */}
+      {isLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><span className="spinner" /></div>
+      ) : expenses.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          No expenses logged yet. Track fuel, parking, shipping, and other costs that reduce actual margin.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {expenses.map((e) => {
+            const catInfo = EXPENSE_CATS.find((c) => c.value === e.category) ?? EXPENSE_CATS[6];
+            return (
+              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-elev)', borderRadius: 6, padding: '7px 10px', border: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 14, flexShrink: 0 }}>{catInfo.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{e.description}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                    {catInfo.label}
+                    {e.expense_date ? ` · ${new Date(e.expense_date).toLocaleDateString()}` : ''}
+                    {e.receipt_note ? ` · ${e.receipt_note}` : ''}
+                  </div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#f59e0b', flexShrink: 0 }}>
+                  ${Number(e.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <button
+                  className="btn"
+                  style={{ fontSize: 10, padding: '2px 7px', color: 'var(--red)', flexShrink: 0 }}
+                  onClick={() => deleteMut.mutate(e.id)}
+                  disabled={deleteMut.isPending}
+                >✕</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add expense form */}
+      {showAdd ? (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {EXPENSE_CATS.map((c) => (
+              <button
+                key={c.value}
+                className={`btn${cat === c.value ? ' btn-primary' : ''}`}
+                style={{ fontSize: 11, padding: '3px 10px' }}
+                onClick={() => setCat(c.value)}
+              >
+                {c.icon} {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="field-row">
+            <div className="field-group" style={{ flex: 2 }}>
+              <label className="field-label">Description</label>
+              <input className="input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Fuel for 200mi delivery drive" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: '0 0 100px' }}>
+              <label className="field-label">Amount ($)</label>
+              <input className="input" type="number" min={0} step={1} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="47.50" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field-group">
+              <label className="field-label">Date (optional)</label>
+              <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Receipt / Note (optional)</label>
+              <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Receipt #4521" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12 }}
+              disabled={!desc.trim() || !amount || addMut.isPending}
+              onClick={() => addMut.mutate()}
+            >
+              {addMut.isPending ? 'Adding…' : 'Add Expense'}
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowAdd(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" style={{ fontSize: 12, alignSelf: 'flex-start' }} onClick={() => setShowAdd(true)}>
+          + Add Expense
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Vehicle Intake Tab ────────────────────────────────────────────────────────
 
 function VehicleIntakeTab({ job }: { job: InstalledJob }) {
   const qc = useQueryClient();
@@ -1421,7 +1586,7 @@ function JobModal({ job, onClose }: JobModalProps) {
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po' | 'vehicles'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po' | 'vehicles' | 'expenses'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -1495,6 +1660,7 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'subs' ? 'active' : ''}`} onClick={() => setActiveTab('subs')}>👷 Subs</button>
             <button className={`jobs-tab ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>📋 Material PO</button>
             <button className={`jobs-tab ${activeTab === 'vehicles' ? 'active' : ''}`} onClick={() => setActiveTab('vehicles')}>🚛 Vehicles</button>
+            <button className={`jobs-tab ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => setActiveTab('expenses')}>💰 Expenses</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1514,6 +1680,8 @@ function JobModal({ job, onClose }: JobModalProps) {
           <MaterialPOPanel job={job as InstalledJob} />
         ) : (!isNew && activeTab === 'vehicles') ? (
           <VehicleIntakeTab job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'expenses') ? (
+          <JobExpensesTab job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">

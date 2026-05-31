@@ -916,6 +916,26 @@ async function migrateDb() {
     console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
   }
 
+  // Miscellaneous job expenses (fuel, shipping, design, parking, etc.)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_expenses (
+        id          BIGSERIAL PRIMARY KEY,
+        job_id      BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL,
+        category    TEXT NOT NULL DEFAULT 'misc',
+        description TEXT NOT NULL,
+        amount      NUMERIC(10,2) NOT NULL DEFAULT 0,
+        expense_date DATE DEFAULT CURRENT_DATE,
+        receipt_note TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_expenses_job ON job_expenses(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create job_expenses table:', e.message);
+  }
+
   // Per-vehicle intake records for fleet jobs — track each vehicle individually
   try {
     await pool.query(`
@@ -10928,6 +10948,58 @@ app.get('/subcontractors/payables', authMiddleware, async (req, res) => {
     );
     const totalOwed = rows.reduce((s, r) => s + Number(r.labor_cost), 0);
     res.json({ ok: true, payables: rows, totalOwed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Job Expense Routes ───────────────────────────────────────────────────────
+// Miscellaneous costs that reduce true job margin: fuel, parking, shipping, etc.
+
+// GET /jobs/:id/expenses — list expenses for a job
+app.get('/jobs/:id/expenses', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `SELECT * FROM job_expenses WHERE job_id=$1 ORDER BY expense_date ASC, created_at ASC`,
+      [jobId]
+    );
+    const total = rows.reduce((s, r) => s + Number(r.amount), 0);
+    res.json({ ok: true, expenses: rows, total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/:id/expenses — add an expense
+app.post('/jobs/:id/expenses', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { category = 'misc', description, amount, expense_date, receipt_note } = req.body || {};
+  if (!description || !amount) return res.status(400).json({ error: 'description and amount required' });
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `INSERT INTO job_expenses (job_id, user_id, category, description, amount, expense_date, receipt_note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [jobId, uid, category, description.trim(), Number(amount), expense_date || null, receipt_note || null]
+    );
+    res.json({ ok: true, expense: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /jobs/:id/expenses/:eid — remove an expense
+app.delete('/jobs/:id/expenses/:eid', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const eid   = parseInt(req.params.eid, 10);
+  try {
+    const { rowCount } = await pool.query(
+      `DELETE FROM job_expenses WHERE id=$1 AND job_id=$2 AND user_id=$3`,
+      [eid, jobId, uid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

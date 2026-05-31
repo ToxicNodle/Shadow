@@ -422,6 +422,20 @@ export interface SubcontractorAssignment {
   created_at: string;
 }
 
+// ── Job Expenses ──────────────────────────────────────────────────────────────
+
+export interface JobExpense {
+  id: number;
+  job_id: number;
+  user_id: string;
+  category: 'fuel' | 'parking' | 'shipping' | 'design' | 'equipment' | 'travel' | 'misc';
+  description: string;
+  amount: number;
+  expense_date?: string | null;
+  receipt_note?: string | null;
+  created_at: string;
+}
+
 // ── Job Vehicle Intake ────────────────────────────────────────────────────────
 
 export interface JobVehicle {
