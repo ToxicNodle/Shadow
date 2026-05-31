@@ -1221,6 +1221,8 @@ export const api = {
     authFetch<{ ok: boolean; quote: import('./types').ShopQuote }>(`/quotes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteQuote: (id: number) =>
     authFetch<{ ok: boolean }>(`/quotes/${id}`, { method: 'DELETE' }),
+  convertQuoteToJob: (quoteId: number) =>
+    authFetch<{ ok: boolean; job: import('./types').InstalledJob; leadId: number }>(`/quotes/${quoteId}/convert-to-job`, { method: 'POST' }),
 
   // Market White Space Map
   getMarketMap: () =>

@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🏆 Quote → Job Conversion — One Click from Accepted Quote to Booked Job',
+    body: 'Accepted quotes now have a "Convert to Job" button. Click it and WrapOS automatically: creates a new job in the Wrap Lifecycle view pre-filled with the client\'s company, vehicle count (extracted from line items), wrap category, and revenue from the accepted quote total — marks the lead as Won — logs the conversion to the activity timeline ("Quote accepted → Job created · Lead marked Won"). No more manually navigating to Jobs, typing the company name again, and re-entering the revenue. The job opens in the Jobs view with all fields pre-populated. You can then set the install date, assign a subcontractor, and upload before/after photos. The button only appears on quotes with "Accepted" status — gray quotes (Draft), blue (Sent), and declined ones are unaffected.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📦 Material Inventory — Track Your Vinyl Stock, Eliminate Run-Outs',
     body: 'WrapOS now includes a live material inventory system built for wrap shops. In Settings → Material Inventory, add every vinyl and film roll you stock — brand, product name, finish, current roll count, reorder threshold, and cost per roll. The "±" button lets you log rolls received or used with a quick delta adjustment. Set a reorder threshold (default: 2 rolls) and WrapOS will surface a "Low Material Stock" alert card on your Mission view the moment you drop to or below that level — with a "Receive" button to update stock without going back to Settings. The card shows a color-coded stock bar: green = healthy, amber = approaching reorder, red = out. Multiple materials at once are all shown together so nothing sneaks up on you mid-job. Integrates with the Material Catalog (reference guide for 3M, Avery, Arlon, DI-NOC, Rea Tec specs) already in the Jobs view.',
   },

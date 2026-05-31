@@ -16048,6 +16048,63 @@ app.delete('/quotes/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /quotes/:id/convert-to-job — create an installed_jobs entry from an accepted quote
+// Marks the lead as won, creates a pre-filled job record, logs the conversion.
+app.post('/quotes/:id/convert-to-job', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const quoteId = parseInt(req.params.id, 10);
+  try {
+    // Fetch quote + lead in one round-trip
+    const { rows: qrows } = await pool.query(
+      `SELECT q.*, l.company, l.category, l.fleet_size
+       FROM shop_quotes q
+       JOIN leads l ON l.id = q.lead_id AND l.user_id = $1
+       WHERE q.id = $2 AND q.user_id = $1`,
+      [uid, quoteId]
+    );
+    if (!qrows.length) return res.status(404).json({ error: 'Quote not found' });
+    const q = qrows[0];
+
+    // Extract vehicle count from line items if possible
+    const items = Array.isArray(q.line_items) ? q.line_items : [];
+    let vehicleCount = 1;
+    const countItem = items.find((it) => /vehicle|truck|van|unit/i.test(it.description || ''));
+    if (countItem?.qty) vehicleCount = Math.max(1, Math.round(Number(countItem.qty)));
+    if (q.fleet_size && Number(q.fleet_size) > 0) vehicleCount = Math.max(vehicleCount, Number(q.fleet_size));
+
+    // Map category to wrap_category
+    const CAT_MAP = {
+      fleet: 'fleet', dinoc: 'dinoc', gc_referral: 'fleet', construction: 'fleet',
+      colorchange: 'colorchange', racing: 'racing', reatec: 'reatec', design: 'fleet',
+      wallgraphics: 'wallgraphics',
+    };
+    const wrapCategory = CAT_MAP[q.category] || 'fleet';
+
+    // Create the job
+    const { rows: jrows } = await pool.query(
+      `INSERT INTO installed_jobs
+         (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours)
+       VALUES ($1,$2,$3,'other',$4,$5,null,null,5,$6,0,$7,0) RETURNING *`,
+      [uid, q.lead_id, q.company, vehicleCount, wrapCategory,
+       `Converted from ${q.quote_number || 'quote'} — "${q.title}"`,
+       Number(q.total) || 0]
+    );
+    const job = jrows[0];
+
+    // Move lead to won
+    await pool.query(
+      `UPDATE leads SET status='won', updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+      [q.lead_id, uid]
+    );
+    await logActivity(pool, {
+      leadId: q.lead_id, userId: uid, type: 'status_changed',
+      subject: `Quote accepted → Job created (${q.quote_number || 'Quote'} · $${Number(q.total).toLocaleString()}) · Lead marked Won`,
+    });
+
+    res.json({ ok: true, job, leadId: q.lead_id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Quote Line Item Templates ──────────────────────────────────────────────
 app.get('/quotes/templates', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
