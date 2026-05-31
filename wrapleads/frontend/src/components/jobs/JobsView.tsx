@@ -639,6 +639,228 @@ interface JobModalProps {
   onClose: () => void;
 }
 
+// ── Vehicle Intake Tab ────────────────────────────────────────────────────────
+
+import type { JobVehicle } from '../../api/types';
+
+function VehicleIntakeTab({ job }: { job: InstalledJob }) {
+  const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-vehicles', job.id],
+    queryFn: () => api.getJobVehicles(job.id),
+    staleTime: 30_000,
+  });
+
+  const vehicles = data?.vehicles ?? [];
+  const wrappedCount = vehicles.filter((v) => v.wrapped).length;
+
+  const EMPTY_FORM = (): Partial<JobVehicle> => ({
+    vehicle_num: vehicles.length + 1,
+    year: '', make: '', model: '', color: '', vin: '', plate: '',
+    mileage: undefined, condition_notes: '',
+  });
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState<Partial<JobVehicle>>(EMPTY_FORM);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editNotes, setEditNotes] = useState('');
+
+  const addMut = useMutation({
+    mutationFn: () => api.addJobVehicle(job.id, form),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] });
+      setForm(EMPTY_FORM());
+      setShowAdd(false);
+      showToast('Vehicle added', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const toggleWrapped = useMutation({
+    mutationFn: ({ vehicleId, wrapped }: { vehicleId: number; wrapped: boolean }) =>
+      api.updateJobVehicle(job.id, vehicleId, { wrapped }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] }),
+  });
+
+  const saveNotesMut = useMutation({
+    mutationFn: (vehicleId: number) => api.updateJobVehicle(job.id, vehicleId, { condition_notes: editNotes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] });
+      setEditId(null);
+      showToast('Notes saved', 'success');
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (vehicleId: number) => api.deleteJobVehicle(job.id, vehicleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] }),
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Progress header */}
+      {vehicles.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 14px', alignItems: 'center' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Wrap Progress</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: wrappedCount === vehicles.length ? '#10b981' : 'var(--accent)' }}>
+              {wrappedCount} / {vehicles.length} wrapped
+            </div>
+          </div>
+          <div style={{ width: 80, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${vehicles.length > 0 ? (wrappedCount / vehicles.length) * 100 : 0}%`, background: wrappedCount === vehicles.length ? '#10b981' : 'var(--accent)', borderRadius: 4, transition: 'width .3s' }} />
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle list */}
+      {isLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><span className="spinner" /></div>
+      ) : vehicles.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          No vehicles logged yet. Add each vehicle in the fleet to track intake condition and wrap progress. This creates a legal record of pre-existing damage.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {vehicles.map((v) => (
+            <div key={v.id} style={{ background: 'var(--bg-elev)', borderRadius: 6, border: `1px solid ${v.wrapped ? '#10b98130' : 'var(--border)'}`, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
+                {/* Wrap checkbox */}
+                <button
+                  title={v.wrapped ? 'Mark as not wrapped' : 'Mark as wrapped'}
+                  style={{ width: 20, height: 20, borderRadius: 4, border: `2px solid ${v.wrapped ? '#10b981' : 'var(--text-faint)'}`, background: v.wrapped ? '#10b981' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, color: '#fff', fontSize: 12, fontWeight: 900 }}
+                  onClick={() => toggleWrapped.mutate({ vehicleId: v.id, wrapped: !v.wrapped })}
+                  disabled={toggleWrapped.isPending}
+                >
+                  {v.wrapped ? '✓' : ''}
+                </button>
+
+                {/* Vehicle info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+                    {v.vehicle_num ? `#${v.vehicle_num} ` : ''}
+                    {[v.year, v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}
+                    {v.color ? <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>{v.color}</span> : null}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 1 }}>
+                    {v.plate && <span>🏷 {v.plate}</span>}
+                    {v.vin && <span title={v.vin}>VIN: {v.vin.slice(-6)}</span>}
+                    {v.mileage && <span>{v.mileage.toLocaleString()} mi</span>}
+                    {v.wrapped_at && <span style={{ color: '#10b981' }}>Wrapped {new Date(v.wrapped_at).toLocaleDateString()}</span>}
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 10, padding: '2px 8px' }}
+                    onClick={() => { setEditId(editId === v.id ? null : v.id); setEditNotes(v.condition_notes || ''); }}
+                  >Notes</button>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 10, padding: '2px 8px', color: 'var(--red)' }}
+                    onClick={() => deleteMut.mutate(v.id)}
+                    disabled={deleteMut.isPending}
+                  >✕</button>
+                </div>
+              </div>
+
+              {/* Condition notes */}
+              {(v.condition_notes || editId === v.id) && (
+                <div style={{ padding: '0 12px 10px', borderTop: '1px solid var(--border)' }}>
+                  {editId === v.id ? (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <input
+                        className="input"
+                        value={editNotes}
+                        onChange={(e) => setEditNotes(e.target.value)}
+                        placeholder="Pre-existing damage, scratches, dents…"
+                        style={{ flex: 1, fontSize: 12 }}
+                      />
+                      <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => saveNotesMut.mutate(v.id)} disabled={saveNotesMut.isPending}>Save</button>
+                      <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setEditId(null)}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6, fontStyle: 'italic' }}>
+                      ⚠ {v.condition_notes}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add vehicle form */}
+      {showAdd ? (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)' }}>Add Vehicle</div>
+          <div className="field-row">
+            <div className="field-group" style={{ flex: '0 0 60px' }}>
+              <label className="field-label">#</label>
+              <input className="input" type="number" min={1} value={form.vehicle_num ?? ''} onChange={(e) => setForm((f) => ({ ...f, vehicle_num: e.target.value ? Number(e.target.value) : undefined }))} style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: '0 0 70px' }}>
+              <label className="field-label">Year</label>
+              <input className="input" value={form.year ?? ''} onChange={(e) => setForm((f) => ({ ...f, year: e.target.value }))} placeholder="2022" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Make</label>
+              <input className="input" value={form.make ?? ''} onChange={(e) => setForm((f) => ({ ...f, make: e.target.value }))} placeholder="Ford" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Model</label>
+              <input className="input" value={form.model ?? ''} onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))} placeholder="Transit" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field-group">
+              <label className="field-label">Color</label>
+              <input className="input" value={form.color ?? ''} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))} placeholder="White" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Plate</label>
+              <input className="input" value={form.plate ?? ''} onChange={(e) => setForm((f) => ({ ...f, plate: e.target.value }))} placeholder="ABC1234" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Mileage</label>
+              <input className="input" type="number" min={0} value={form.mileage ?? ''} onChange={(e) => setForm((f) => ({ ...f, mileage: e.target.value ? Number(e.target.value) : undefined }))} placeholder="47000" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div className="field-group">
+            <label className="field-label">VIN (optional)</label>
+            <input className="input" value={form.vin ?? ''} onChange={(e) => setForm((f) => ({ ...f, vin: e.target.value }))} placeholder="1FTMF1CB0AKA12345" style={{ fontSize: 12 }} />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Pre-Existing Damage / Condition Notes</label>
+            <input className="input" value={form.condition_notes ?? ''} onChange={(e) => setForm((f) => ({ ...f, condition_notes: e.target.value }))} placeholder="Small dent rear bumper, scratch driver door…" style={{ fontSize: 12 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => addMut.mutate()} disabled={addMut.isPending}>
+              {addMut.isPending ? 'Adding…' : 'Add Vehicle'}
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowAdd(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" style={{ fontSize: 12, alignSelf: 'flex-start' }} onClick={() => setShowAdd(true)}>
+          + Log Vehicle
+        </button>
+      )}
+
+      {vehicles.length > 0 && (
+        <div style={{ fontSize: 10, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+          Check the box when each vehicle is wrapped. Condition notes are printed on the Completion Receipt as pre-existing damage disclosure.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Subcontractor Tab ─────────────────────────────────────────────────────────
 
 function SubcontractorTab({ job }: { job: InstalledJob }) {
@@ -1199,7 +1421,7 @@ function JobModal({ job, onClose }: JobModalProps) {
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po' | 'vehicles'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -1272,6 +1494,7 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'invoice' ? 'active' : ''}`} onClick={() => setActiveTab('invoice')}>💳 Invoice</button>
             <button className={`jobs-tab ${activeTab === 'subs' ? 'active' : ''}`} onClick={() => setActiveTab('subs')}>👷 Subs</button>
             <button className={`jobs-tab ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>📋 Material PO</button>
+            <button className={`jobs-tab ${activeTab === 'vehicles' ? 'active' : ''}`} onClick={() => setActiveTab('vehicles')}>🚛 Vehicles</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1289,6 +1512,8 @@ function JobModal({ job, onClose }: JobModalProps) {
           <SubcontractorTab job={job as InstalledJob} />
         ) : (!isNew && activeTab === 'po') ? (
           <MaterialPOPanel job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'vehicles') ? (
+          <VehicleIntakeTab job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">

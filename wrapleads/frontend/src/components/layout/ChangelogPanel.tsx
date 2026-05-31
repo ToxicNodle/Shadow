@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🚛 Fleet Vehicle Intake Log — Individual Vehicle Records with Wrap Progress',
+    body: 'Every job in WrapOS now has a "🚛 Vehicles" tab where you can log each individual vehicle in a fleet job. Add year, make, model, color, license plate, VIN, mileage at drop-off, and pre-existing damage notes. A checkbox per vehicle lets you mark it as wrapped, with a progress bar showing "X of Y wrapped" at a glance. Damage notes appear with a ⚠ warning in amber — a legal record that the dent was there before the vehicle entered your shop. The VIN is auto-uppercased and plates are normalized. Check the box when each vehicle is done and the bar fills green — satisfying for the crew and instantly visible to the owner. Use case: 20-truck fleet job — log each truck at check-in with any pre-existing damage photographed and noted here, then check them off as you complete the wrap. If a client disputes damage later, you have a timestamped intake record. No other wrap-shop software does per-vehicle intake documentation.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '💸 Subcontractor Payment Tracking — Know Who You Owe and When You Paid',
     body: 'Every subcontractor assigned to a job now has payment status tracking. In the 👷 Subs tab, each assignment shows an "Owed" amount and a green "Mark Paid" button. Click it, enter the amount paid (pre-filled with the owed amount), and confirm — the assignment is stamped with the date and amount. A green PAID badge appears and the border turns green. Undo is available if you need to reverse an entry. A new "💸 Unpaid Subcontractors" card on Mission shows all outstanding sub payments across every job — with a quick "Pay" button that marks it done from Mission without digging into the job. The total outstanding liability across all subs is shown at the top of the card. This is critical for: (1) cash flow — knowing what you owe before it piles up; (2) 1099 accuracy — a complete record of payments to each sub throughout the year; (3) job profitability — your margin isn\'t real until you\'ve accounted for what you actually paid the sub.',
   },

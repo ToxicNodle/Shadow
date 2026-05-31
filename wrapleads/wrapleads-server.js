@@ -916,6 +916,32 @@ async function migrateDb() {
     console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
   }
 
+  // Per-vehicle intake records for fleet jobs — track each vehicle individually
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_vehicles (
+        id            BIGSERIAL PRIMARY KEY,
+        job_id        BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        user_id       TEXT NOT NULL,
+        vehicle_num   INT,
+        year          TEXT,
+        make          TEXT,
+        model         TEXT,
+        color         TEXT,
+        vin           TEXT,
+        plate         TEXT,
+        mileage       INT,
+        condition_notes TEXT,
+        wrapped       BOOLEAN DEFAULT FALSE,
+        wrapped_at    TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_vehicles_job ON job_vehicles(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create job_vehicles table:', e.message);
+  }
+
   // CAN-SPAM compliant unsubscribe records for outbound prospect emails
   try {
     await pool.query(`
@@ -10902,6 +10928,89 @@ app.get('/subcontractors/payables', authMiddleware, async (req, res) => {
     );
     const totalOwed = rows.reduce((s, r) => s + Number(r.labor_cost), 0);
     res.json({ ok: true, payables: rows, totalOwed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Job Vehicle Intake Routes ────────────────────────────────────────────────
+// Track each individual vehicle in a fleet job for legal protection and QC.
+
+// GET /jobs/:id/vehicles — list intake records for a job
+app.get('/jobs/:id/vehicles', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `SELECT * FROM job_vehicles WHERE job_id=$1 ORDER BY vehicle_num ASC NULLS LAST, created_at ASC`,
+      [jobId]
+    );
+    res.json({ ok: true, vehicles: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/:id/vehicles — add a vehicle intake record
+app.post('/jobs/:id/vehicles', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { vehicle_num, year, make, model, color, vin, plate, mileage, condition_notes } = req.body || {};
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `INSERT INTO job_vehicles (job_id, user_id, vehicle_num, year, make, model, color, vin, plate, mileage, condition_notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [jobId, uid, vehicle_num || null, year || null, make || null, model || null, color || null,
+       vin ? vin.trim().toUpperCase() : null, plate ? plate.trim().toUpperCase() : null,
+       mileage || null, condition_notes || null]
+    );
+    res.json({ ok: true, vehicle: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /jobs/:id/vehicles/:vid — update a vehicle record (wrapped status, notes, etc.)
+app.patch('/jobs/:id/vehicles/:vid', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const vid   = parseInt(req.params.vid, 10);
+  const { vehicle_num, year, make, model, color, vin, plate, mileage, condition_notes, wrapped } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE job_vehicles SET
+         vehicle_num     = COALESCE($1, vehicle_num),
+         year            = COALESCE($2, year),
+         make            = COALESCE($3, make),
+         model           = COALESCE($4, model),
+         color           = COALESCE($5, color),
+         vin             = COALESCE($6, vin),
+         plate           = COALESCE($7, plate),
+         mileage         = COALESCE($8, mileage),
+         condition_notes = COALESCE($9, condition_notes),
+         wrapped         = COALESCE($10, wrapped),
+         wrapped_at      = CASE WHEN $10 = TRUE AND wrapped = FALSE THEN NOW() WHEN $10 = FALSE THEN NULL ELSE wrapped_at END
+       WHERE id=$11 AND job_id=$12 AND user_id=$13
+       RETURNING *`,
+      [vehicle_num ?? null, year ?? null, make ?? null, model ?? null, color ?? null,
+       vin ? vin.trim().toUpperCase() : null, plate ? plate.trim().toUpperCase() : null,
+       mileage ?? null, condition_notes ?? null, wrapped ?? null, vid, jobId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json({ ok: true, vehicle: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /jobs/:id/vehicles/:vid — remove a vehicle record
+app.delete('/jobs/:id/vehicles/:vid', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const vid   = parseInt(req.params.vid, 10);
+  try {
+    const { rowCount } = await pool.query(
+      `DELETE FROM job_vehicles WHERE id=$1 AND job_id=$2 AND user_id=$3`,
+      [vid, jobId, uid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

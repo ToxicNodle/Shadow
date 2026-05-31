@@ -1968,6 +1968,16 @@ export const api = {
   getSubPayables: () =>
     authFetch<{ ok: boolean; payables: (import('./types').SubcontractorAssignment & { job_company: string; install_date: string | null; job_revenue: number; sub_email?: string })[]; totalOwed: number }>('/subcontractors/payables'),
 
+  // ── Job Vehicle Intake ──
+  getJobVehicles: (jobId: number) =>
+    authFetch<{ ok: boolean; vehicles: import('./types').JobVehicle[] }>(`/jobs/${jobId}/vehicles`),
+  addJobVehicle: (jobId: number, data: Partial<import('./types').JobVehicle>) =>
+    authFetch<{ ok: boolean; vehicle: import('./types').JobVehicle }>(`/jobs/${jobId}/vehicles`, { method: 'POST', body: JSON.stringify(data) }),
+  updateJobVehicle: (jobId: number, vehicleId: number, data: Partial<import('./types').JobVehicle>) =>
+    authFetch<{ ok: boolean; vehicle: import('./types').JobVehicle }>(`/jobs/${jobId}/vehicles/${vehicleId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteJobVehicle: (jobId: number, vehicleId: number) =>
+    authFetch<{ ok: boolean }>(`/jobs/${jobId}/vehicles/${vehicleId}`, { method: 'DELETE' }),
+
   // ── Cash Flow ──
   getCashFlow: () =>
     authFetch<{

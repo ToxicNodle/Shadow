@@ -422,6 +422,26 @@ export interface SubcontractorAssignment {
   created_at: string;
 }
 
+// ── Job Vehicle Intake ────────────────────────────────────────────────────────
+
+export interface JobVehicle {
+  id: number;
+  job_id: number;
+  user_id: string;
+  vehicle_num?: number | null;
+  year?: string | null;
+  make?: string | null;
+  model?: string | null;
+  color?: string | null;
+  vin?: string | null;
+  plate?: string | null;
+  mileage?: number | null;
+  condition_notes?: string | null;
+  wrapped: boolean;
+  wrapped_at?: string | null;
+  created_at: string;
+}
+
 // ── Computer Vision Quote ─────────────────────────────────────────────────────
 
 export interface VisionQuoteResult {
