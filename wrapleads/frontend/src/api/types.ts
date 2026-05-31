@@ -371,6 +371,26 @@ export interface InstalledJob {
   scheduled_crew_count?: number | null;
 }
 
+// ── Material Inventory ────────────────────────────────────────────────────────
+
+export interface MaterialItem {
+  id: number;
+  user_id: string;
+  brand: string;
+  product_name: string;
+  sku?: string | null;
+  finish?: string | null;
+  roll_width_in: number;
+  roll_length_ft: number;
+  rolls_in_stock: number;
+  rolls_on_order: number;
+  unit_cost: number;
+  reorder_at: number;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── Subcontractor ─────────────────────────────────────────────────────────────
 
 export interface Subcontractor {

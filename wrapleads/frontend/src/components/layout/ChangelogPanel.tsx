@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📦 Material Inventory — Track Your Vinyl Stock, Eliminate Run-Outs',
+    body: 'WrapOS now includes a live material inventory system built for wrap shops. In Settings → Material Inventory, add every vinyl and film roll you stock — brand, product name, finish, current roll count, reorder threshold, and cost per roll. The "±" button lets you log rolls received or used with a quick delta adjustment. Set a reorder threshold (default: 2 rolls) and WrapOS will surface a "Low Material Stock" alert card on your Mission view the moment you drop to or below that level — with a "Receive" button to update stock without going back to Settings. The card shows a color-coded stock bar: green = healthy, amber = approaching reorder, red = out. Multiple materials at once are all shown together so nothing sneaks up on you mid-job. Integrates with the Material Catalog (reference guide for 3M, Avery, Arlon, DI-NOC, Rea Tec specs) already in the Jobs view.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📄 Installation Contract Generator — Print-Ready Contracts in One Click',
     body: 'The Quotes tab now has a "Generate Contract" button that creates a professional, print-ready installation contract pre-filled with your shop info, the client\'s details, the scope of work from the most recent quote, and standard wrap shop terms. Contract includes: warranty (3 years), care instructions, design approval process, pre-existing condition disclosure, payment schedule (50% deposit + balance on delivery), cancellation policy, liability limitation, and signature blocks for both parties. Click "Print / Save PDF" inside the contract to save it as a PDF — no PDF software needed. No other wrap CRM generates contracts. Works immediately with no AI credits — runs from your settings + quote data.',
   },

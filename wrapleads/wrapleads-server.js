@@ -784,6 +784,32 @@ async function migrateDb() {
     console.warn('[migrate] Could not create email_templates table:', e.message);
   }
 
+  // Material inventory — live vinyl/film stock tracking per shop
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS material_inventory (
+        id               BIGSERIAL PRIMARY KEY,
+        user_id          TEXT NOT NULL,
+        brand            TEXT NOT NULL,
+        product_name     TEXT NOT NULL,
+        sku              TEXT,
+        finish           TEXT,
+        roll_width_in    INT NOT NULL DEFAULT 60,
+        roll_length_ft   INT NOT NULL DEFAULT 25,
+        rolls_in_stock   NUMERIC(6,1) NOT NULL DEFAULT 0,
+        rolls_on_order   NUMERIC(6,1) NOT NULL DEFAULT 0,
+        unit_cost        NUMERIC(10,2) NOT NULL DEFAULT 0,
+        reorder_at       NUMERIC(6,1) NOT NULL DEFAULT 2,
+        notes            TEXT,
+        created_at       TIMESTAMPTZ DEFAULT NOW(),
+        updated_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_material_inv_user ON material_inventory(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create material_inventory table:', e.message);
+  }
+
   // Case studies — auto-generated from completed jobs
   try {
     await pool.query(`
@@ -9976,6 +10002,118 @@ app.patch('/jobs/:id/schedule', authMiddleware, async (req, res) => {
 // ── Subcontractor Management ──────────────────────────────────────────────────
 
 // GET /subcontractors — list all subs for this user
+// ── Material Inventory CRUD ───────────────────────────────────────────────────
+// GET /materials — list all inventory items for this user
+app.get('/materials', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM material_inventory WHERE user_id=$1 ORDER BY brand, product_name`,
+      [uid]
+    );
+    res.json({ ok: true, materials: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /materials/low-stock — items at or below reorder threshold
+app.get('/materials/low-stock', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM material_inventory
+       WHERE user_id=$1 AND rolls_in_stock <= reorder_at
+       ORDER BY (rolls_in_stock - reorder_at) ASC, brand, product_name`,
+      [uid]
+    );
+    res.json({ ok: true, materials: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /materials — add new material to inventory
+app.post('/materials', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, rolls_on_order, unit_cost, reorder_at, notes } = req.body;
+  if (!brand?.trim() || !product_name?.trim()) return res.status(400).json({ error: 'brand and product_name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO material_inventory
+         (user_id, brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, rolls_on_order, unit_cost, reorder_at, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [uid, brand.trim(), product_name.trim(), sku || null, finish || null,
+       roll_width_in || 60, roll_length_ft || 25,
+       rolls_in_stock || 0, rolls_on_order || 0,
+       unit_cost || 0, reorder_at != null ? reorder_at : 2,
+       notes || null]
+    );
+    res.json({ ok: true, material: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /materials/:id — update an inventory item
+app.put('/materials/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const matId = parseInt(req.params.id, 10);
+  const { brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, rolls_on_order, unit_cost, reorder_at, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE material_inventory SET
+         brand          = COALESCE($3, brand),
+         product_name   = COALESCE($4, product_name),
+         sku            = $5,
+         finish         = $6,
+         roll_width_in  = COALESCE($7, roll_width_in),
+         roll_length_ft = COALESCE($8, roll_length_ft),
+         rolls_in_stock = COALESCE($9, rolls_in_stock),
+         rolls_on_order = COALESCE($10, rolls_on_order),
+         unit_cost      = COALESCE($11, unit_cost),
+         reorder_at     = COALESCE($12, reorder_at),
+         notes          = $13,
+         updated_at     = NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [matId, uid,
+       brand || null, product_name || null,
+       sku ?? null, finish ?? null,
+       roll_width_in || null, roll_length_ft || null,
+       rolls_in_stock != null ? rolls_in_stock : null,
+       rolls_on_order != null ? rolls_on_order : null,
+       unit_cost != null ? unit_cost : null,
+       reorder_at != null ? reorder_at : null,
+       notes ?? null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, material: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /materials/:id/adjust — adjust stock by delta (positive = received, negative = used)
+app.post('/materials/:id/adjust', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const matId = parseInt(req.params.id, 10);
+  const { delta, reason } = req.body;
+  if (delta == null || isNaN(Number(delta))) return res.status(400).json({ error: 'delta required' });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE material_inventory
+       SET rolls_in_stock = GREATEST(0, rolls_in_stock + $3),
+           updated_at     = NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [matId, uid, Number(delta)]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, material: rows[0], reason: reason || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /materials/:id — remove an inventory item
+app.delete('/materials/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const matId = parseInt(req.params.id, 10);
+  try {
+    await pool.query(`DELETE FROM material_inventory WHERE id=$1 AND user_id=$2`, [matId, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/subcontractors', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   try {

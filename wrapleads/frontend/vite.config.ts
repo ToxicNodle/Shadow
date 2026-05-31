@@ -61,6 +61,7 @@ export default defineConfig({
       '/fleet':             API,
       '/push':              API,
       '/email-templates':  API,
+      '/materials':        API,
     },
   },
 });

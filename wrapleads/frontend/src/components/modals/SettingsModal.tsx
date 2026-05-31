@@ -4,7 +4,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../api/client';
 import Modal from '../ui/Modal';
-import type { Settings } from '../../api/types';
+import type { Settings, MaterialItem } from '../../api/types';
 
 type FleetStatus = 'idle' | 'testing' | 'ok' | 'fail' | 'importing' | 'imported';
 
@@ -133,6 +133,58 @@ export default function SettingsModal() {
   const deleteSubMut = useMutation({
     mutationFn: (id: number) => api.deleteSubcontractor(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['subcontractors'] }),
+  });
+
+  // Material inventory
+  const [matForm, setMatForm] = useState<Partial<MaterialItem>>({ brand: '', product_name: '', finish: '', roll_width_in: 60, roll_length_ft: 25, rolls_in_stock: 0, reorder_at: 2, unit_cost: 0 });
+  const [matEditId, setMatEditId] = useState<number | null>(null);
+  const [matAdjustId, setMatAdjustId] = useState<number | null>(null);
+  const [matAdjustDelta, setMatAdjustDelta] = useState('');
+  const [matShowAdd, setMatShowAdd] = useState(false);
+  const { data: matsData } = useQuery({
+    queryKey: ['materials'],
+    queryFn: () => api.getMaterials(),
+    staleTime: 5 * 60_000,
+    enabled: settingsOpen,
+  });
+  const createMatMut = useMutation({
+    mutationFn: () => api.createMaterial(matForm),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+      setMatForm({ brand: '', product_name: '', finish: '', roll_width_in: 60, roll_length_ft: 25, rolls_in_stock: 0, reorder_at: 2, unit_cost: 0 });
+      setMatShowAdd(false);
+      showToast('Material added', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const updateMatMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<MaterialItem> }) => api.updateMaterial(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+      setMatEditId(null);
+      showToast('Material updated', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const deleteMatMut = useMutation({
+    mutationFn: (id: number) => api.deleteMaterial(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+    },
+  });
+  const adjustMatMut = useMutation({
+    mutationFn: ({ id, delta }: { id: number; delta: number }) => api.adjustMaterialStock(id, delta),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+      setMatAdjustId(null);
+      setMatAdjustDelta('');
+      showToast('Stock updated', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
   });
 
   // Sync local form state whenever the modal opens — settings may have loaded from
@@ -667,6 +719,186 @@ export default function SettingsModal() {
             {createSubMut.isPending ? 'Adding…' : '+ Add'}
           </button>
         </div>
+      </div>
+
+      {/* ── Material Inventory ── */}
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+            <line x1="12" y1="22.08" x2="12" y2="12" />
+          </svg>
+          Material Inventory
+        </div>
+        <p className="settings-help">
+          Track your vinyl and film stock by brand, color, and finish. Set a reorder threshold — WrapOS will alert you on the Mission view when you're running low.
+        </p>
+
+        {/* Inventory list */}
+        {(matsData?.materials ?? []).length === 0 && (
+          <p className="settings-help" style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>
+            No materials tracked yet. Add your first vinyl roll below.
+          </p>
+        )}
+        {(matsData?.materials ?? []).map((mat) => {
+          const isLow = Number(mat.rolls_in_stock) <= Number(mat.reorder_at);
+          const isEditing = matEditId === mat.id;
+          const isAdjusting = matAdjustId === mat.id;
+
+          if (isEditing) {
+            return (
+              <div key={mat.id} style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px', marginBottom: 6, border: '1px solid var(--accent)30' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 6 }}>
+                  <div>
+                    <label className="field-label">Brand</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.brand} id={`mat-edit-brand-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Product Name</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.product_name} id={`mat-edit-name-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Finish / Color</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.finish ?? ''} id={`mat-edit-finish-${mat.id}`} placeholder="Gloss Black" />
+                  </div>
+                  <div>
+                    <label className="field-label">SKU</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.sku ?? ''} id={`mat-edit-sku-${mat.id}`} placeholder="3M-1080-G12" />
+                  </div>
+                  <div>
+                    <label className="field-label">Rolls in Stock</label>
+                    <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} defaultValue={mat.rolls_in_stock} id={`mat-edit-stock-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Reorder When Below</label>
+                    <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} defaultValue={mat.reorder_at} id={`mat-edit-reorder-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Cost / Roll ($)</label>
+                    <input className="input" type="number" min={0} step={1} style={{ fontSize: 12 }} defaultValue={mat.unit_cost} id={`mat-edit-cost-${mat.id}`} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={updateMatMut.isPending}
+                    onClick={() => {
+                      const brand = (document.getElementById(`mat-edit-brand-${mat.id}`) as HTMLInputElement).value.trim();
+                      const product_name = (document.getElementById(`mat-edit-name-${mat.id}`) as HTMLInputElement).value.trim();
+                      const finish = (document.getElementById(`mat-edit-finish-${mat.id}`) as HTMLInputElement).value.trim();
+                      const sku = (document.getElementById(`mat-edit-sku-${mat.id}`) as HTMLInputElement).value.trim();
+                      const rolls_in_stock = parseFloat((document.getElementById(`mat-edit-stock-${mat.id}`) as HTMLInputElement).value) || 0;
+                      const reorder_at = parseFloat((document.getElementById(`mat-edit-reorder-${mat.id}`) as HTMLInputElement).value) || 2;
+                      const unit_cost = parseFloat((document.getElementById(`mat-edit-cost-${mat.id}`) as HTMLInputElement).value) || 0;
+                      if (!brand || !product_name) return;
+                      updateMatMut.mutate({ id: mat.id, data: { brand, product_name, finish: finish || null, sku: sku || null, rolls_in_stock, reorder_at, unit_cost } });
+                    }}>
+                    {updateMatMut.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => setMatEditId(null)}>Cancel</button>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={mat.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, background: 'var(--bg-input)', borderRadius: 8, padding: '8px 12px', border: `1px solid ${isLow ? '#f59e0b30' : 'transparent'}` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mat.product_name}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)', background: 'var(--surface)', padding: '1px 5px', borderRadius: 3 }}>{mat.brand}</span>
+                  {mat.finish && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{mat.finish}</span>}
+                  {isLow && <span style={{ fontSize: 9, color: '#f59e0b', fontWeight: 700, background: '#f59e0b18', padding: '1px 5px', borderRadius: 3 }}>LOW</span>}
+                </div>
+                {isAdjusting ? (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 4 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>+/− rolls:</span>
+                    <input
+                      type="number"
+                      step={0.5}
+                      value={matAdjustDelta}
+                      onChange={(e) => setMatAdjustDelta(e.target.value)}
+                      style={{ width: 60, fontSize: 12, padding: '2px 6px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', textAlign: 'center' }}
+                      autoFocus
+                      placeholder="e.g. 3"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const d = parseFloat(matAdjustDelta);
+                          if (!isNaN(d)) adjustMatMut.mutate({ id: mat.id, delta: d });
+                        }
+                        if (e.key === 'Escape') { setMatAdjustId(null); setMatAdjustDelta(''); }
+                      }}
+                    />
+                    <button className="btn btn-primary" style={{ fontSize: 11 }}
+                      onClick={() => { const d = parseFloat(matAdjustDelta); if (!isNaN(d)) adjustMatMut.mutate({ id: mat.id, delta: d }); }}>
+                      Apply
+                    </button>
+                    <button className="btn" style={{ fontSize: 11 }} onClick={() => { setMatAdjustId(null); setMatAdjustDelta(''); }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: isLow ? '#f59e0b' : 'var(--text-muted)', marginTop: 2 }}>
+                    {Number(mat.rolls_in_stock).toFixed(1)} rolls in stock
+                    {mat.rolls_on_order > 0 && <span style={{ color: '#4d8af5', marginLeft: 6 }}>· {Number(mat.rolls_on_order).toFixed(1)} on order</span>}
+                    · reorder at {Number(mat.reorder_at).toFixed(1)}
+                    {mat.unit_cost > 0 && <span style={{ marginLeft: 6 }}>· ${Number(mat.unit_cost).toFixed(0)}/roll</span>}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => { setMatAdjustId(mat.id); setMatAdjustDelta(''); }}>±</button>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => setMatEditId(mat.id)}>Edit</button>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px', color: 'var(--red)' }} onClick={() => deleteMatMut.mutate(mat.id)} disabled={deleteMatMut.isPending}>Remove</button>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Add new material form */}
+        {matShowAdd ? (
+          <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px', marginTop: 8, border: '1px solid var(--accent)30' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 6 }}>
+              <div>
+                <label className="field-label">Brand *</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.brand ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, brand: e.target.value }))} placeholder="3M" />
+              </div>
+              <div>
+                <label className="field-label">Product Name *</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.product_name ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, product_name: e.target.value }))} placeholder="1080-G12 Gloss Black" />
+              </div>
+              <div>
+                <label className="field-label">Finish / Color</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.finish ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, finish: e.target.value }))} placeholder="Gloss Black" />
+              </div>
+              <div>
+                <label className="field-label">SKU</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.sku ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, sku: e.target.value }))} placeholder="3M-1080-G12" />
+              </div>
+              <div>
+                <label className="field-label">Rolls in Stock</label>
+                <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} value={matForm.rolls_in_stock ?? 0} onChange={(e) => setMatForm((p) => ({ ...p, rolls_in_stock: parseFloat(e.target.value) || 0 }))} />
+              </div>
+              <div>
+                <label className="field-label">Reorder When Below</label>
+                <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} value={matForm.reorder_at ?? 2} onChange={(e) => setMatForm((p) => ({ ...p, reorder_at: parseFloat(e.target.value) || 2 }))} />
+              </div>
+              <div>
+                <label className="field-label">Cost / Roll ($)</label>
+                <input className="input" type="number" min={0} step={1} style={{ fontSize: 12 }} value={matForm.unit_cost ?? 0} onChange={(e) => setMatForm((p) => ({ ...p, unit_cost: parseFloat(e.target.value) || 0 }))} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="btn btn-primary" style={{ fontSize: 12 }}
+                disabled={!matForm.brand?.trim() || !matForm.product_name?.trim() || createMatMut.isPending}
+                onClick={() => createMatMut.mutate()}>
+                {createMatMut.isPending ? 'Adding…' : '+ Add Material'}
+              </button>
+              <button className="btn" style={{ fontSize: 12 }} onClick={() => setMatShowAdd(false)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn" style={{ fontSize: 12, marginTop: 8 }} onClick={() => setMatShowAdd(true)}>
+            + Add Material
+          </button>
+        )}
       </div>
 
       {/* ── Mobile Push Notifications ── */}

@@ -57,7 +57,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink, MaterialItem } from './types';
 
 export const api = {
   // Auth
@@ -2006,4 +2006,18 @@ export const api = {
     authFetch<{ ok: boolean }>(`/email-templates/${id}`, { method: 'DELETE' }),
   recordEmailTemplateUse: (id: number) =>
     authFetch<{ ok: boolean }>(`/email-templates/${id}/use`, { method: 'POST' }),
+
+  // Material inventory
+  getMaterials: () =>
+    authFetch<{ ok: boolean; materials: MaterialItem[] }>('/materials'),
+  getLowStockMaterials: () =>
+    authFetch<{ ok: boolean; materials: MaterialItem[] }>('/materials/low-stock'),
+  createMaterial: (data: Partial<MaterialItem>) =>
+    authFetch<{ ok: boolean; material: MaterialItem }>('/materials', { method: 'POST', body: JSON.stringify(data) }),
+  updateMaterial: (id: number, data: Partial<MaterialItem>) =>
+    authFetch<{ ok: boolean; material: MaterialItem }>(`/materials/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adjustMaterialStock: (id: number, delta: number, reason?: string) =>
+    authFetch<{ ok: boolean; material: MaterialItem }>(`/materials/${id}/adjust`, { method: 'POST', body: JSON.stringify({ delta, reason }) }),
+  deleteMaterial: (id: number) =>
+    authFetch<{ ok: boolean }>(`/materials/${id}`, { method: 'DELETE' }),
 };
