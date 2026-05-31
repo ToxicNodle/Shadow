@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📍 Nearby Carriers — Untouched Fleets in the Same City as Your Lead',
+    body: 'Every lead detail now has a "Nearby Carriers in [City, State]" section. Expand it and WrapOS queries the FMCSA database for carriers in the same city you haven\'t contacted yet — sorted by fleet size, with wrap score and phone number. Click "+ Add" to add any of them to your CRM as a new lead. Use case: you\'re working ABCs Trucking in Cincinnati — expand Nearby Carriers and find 6 other fleets you could contact in the same trip. Optimizes call routing by city. Only shows carriers with 5+ vehicles not already in your leads. Pairs naturally with the Call Session modal for batching calls by geography.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔗 Webhook Lead Receiver — Capture Leads from Any Source Automatically',
     body: 'WrapOS now has a unique inbound webhook URL in Settings → Webhook Lead Receiver. Point any external lead source here and leads appear in WrapOS automatically — no manual import, no CSV. Use cases: Facebook Lead Ads (via Zapier → POST to your URL), Google Ads Lead Form Extensions, any website contact form, or any tool that can POST JSON. Accepted fields: company, name, email, phone, fleet_size, vehicle_type, message, city, state, source — WrapOS maps them automatically and handles alternate naming conventions (full_name, first_name+last_name, phone_number, etc.). Every received lead fires a push notification and appears in your lead list with source=webhook. The URL doubles as the Zapier "Webhooks by Zapier" endpoint — no API key needed, the URL itself is your auth.',
   },

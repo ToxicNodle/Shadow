@@ -1850,6 +1850,15 @@ export const api = {
       `/leads/${leadId}/heat-score`
     ),
 
+  getNearbyCarriers: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      carriers: Array<{ id: number; dot_number: string; name: string; city: string; state: string; fleet_size: number | null; phone: string | null; website: string | null; wrap_score: number }>;
+      city?: string;
+      state?: string;
+      reason?: string;
+    }>(`/leads/${leadId}/nearby-carriers`),
+
   // ── Portal Link Stats ──
   getPortalLinkStats: (leadId: number) =>
     authFetch<{

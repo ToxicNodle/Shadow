@@ -549,6 +549,87 @@ function WrapROICalculator({ lead }: { lead: Lead }) {
   );
 }
 
+function NearbyCarriersPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['nearby-carriers', lead.serverId],
+    queryFn: () => api.getNearbyCarriers(lead.serverId!),
+    enabled: open && !!lead.serverId,
+    staleTime: 5 * 60_000,
+  });
+
+  const carriers = data?.carriers ?? [];
+  if (!lead.city && !lead.state) return null;
+
+  const addMut = useMutation({
+    mutationFn: (c: { name: string; dot_number: string; fleet_size: number | null; phone: string | null; website: string | null; city: string; state: string }) =>
+      api.createLead({
+        company: c.name,
+        category: 'fleet',
+        status: 'new',
+        dotNumber: c.dot_number,
+        phone: c.phone ?? undefined,
+        website: c.website ?? undefined,
+        city: c.city,
+        state: c.state,
+        fleetSize: c.fleet_size != null ? String(c.fleet_size) : undefined,
+        notes: `Nearby FMCSA carrier — found while reviewing ${lead.company} in ${lead.city}, ${lead.state}.`,
+      }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); showToast('Lead added!'); },
+  });
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 12 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-dim)', fontSize: 12, fontWeight: 600 }}
+      >
+        <span style={{ fontSize: 14 }}>📍</span>
+        Nearby Carriers in {lead.city}, {lead.state}
+        <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.6 }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {isLoading && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Finding carriers...</div>}
+          {!isLoading && carriers.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+              No untouched carriers found in {lead.city} with 5+ vehicles.
+            </div>
+          )}
+          {carriers.map((c) => (
+            <div key={c.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
+              background: 'var(--bg-elev)', borderRadius: 8, marginBottom: 6,
+              border: '1px solid var(--border)',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {c.fleet_size ? `${c.fleet_size} vehicles` : 'fleet size unknown'}{c.phone ? ` · ${c.phone}` : ''}
+                </div>
+              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent)15', borderRadius: 4, padding: '2px 6px', flexShrink: 0 }}>
+                {c.wrap_score}
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 10, padding: '3px 8px', flexShrink: 0 }}
+                onClick={() => addMut.mutate(c)}
+                disabled={addMut.isPending}
+              >
+                + Add
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CallScriptPanel({ lead }: { lead: Lead }) {
   const [open, setOpen] = useState(false);
   const [script, setScript] = useState<{ opening: string; pitch: string; objections: { q: string; a: string }[]; close: string } | null>(null);
@@ -2271,6 +2352,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <ProspectNewsPanel lead={local} />}
       {lead.serverId && <LeadIntelBriefPanel lead={local} />}
       {lead.serverId && <CompetitiveIntelPanel lead={local} />}
+      {lead.serverId && <NearbyCarriersPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && local.status === 'won' && <ClientLTVCard lead={local} />}

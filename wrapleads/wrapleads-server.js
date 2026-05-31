@@ -14058,6 +14058,45 @@ app.post('/leads/:id/check-news', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /leads/:id/nearby-carriers — untouched FMCSA carriers in the same city as a lead.
+// Surfaces cluster opportunities: while working a city, here are similar fleets you haven't contacted.
+app.get('/leads/:id/nearby-carriers', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  try {
+    const leadR = await pool.query(
+      `SELECT city, state, company FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+
+    const { city, state, company } = leadR.rows[0];
+    if (!city || !state) return res.json({ ok: true, carriers: [], reason: 'no_location' });
+
+    const { rows } = await pool.query(`
+      SELECT c.id, c.source_id AS dot_number, c.name, c.city, c.state,
+             c.fleet_size, c.phone, c.website,
+             LEAST(100, 40 + COALESCE(c.fleet_size, 0) / 5) AS wrap_score
+      FROM companies c
+      WHERE c.city ILIKE $1 AND c.state = $2
+        AND COALESCE(c.fleet_size, 0) >= 5
+        AND similarity(c.name, $3) < 0.6
+        AND NOT EXISTS (
+          SELECT 1 FROM leads l
+          WHERE l.user_id = $4
+            AND (l.company ILIKE c.name OR l.dot_number::text = c.source_id)
+        )
+      ORDER BY c.fleet_size DESC NULLS LAST
+      LIMIT 8
+    `, [city, state.toUpperCase(), company, uid]);
+
+    res.json({ ok: true, carriers: rows, city, state });
+  } catch (e) {
+    console.error('[leads/:id/nearby-carriers]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /leads/:id/heat-score — calculate engagement-based "deal temperature"
 // Score from 0–100 based on recency-weighted activity signals.
 app.get('/leads/:id/heat-score', authMiddleware, async (req, res) => {
