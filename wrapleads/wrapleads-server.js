@@ -1252,6 +1252,8 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/portal/'))        return true;
     if (p.startsWith('/portfolio/'))     return true;
     if (p.startsWith('/quote-request/')) return true;
+    if (p.startsWith('/hook/'))          return true;
+    if (p.startsWith('/embed.js'))       return true;
     if (p.startsWith('/demo'))           return true;
     if (p.startsWith('/migrate/'))       return true;
     if (p.startsWith('/for/'))           return true;
@@ -17796,6 +17798,89 @@ Return ONLY a bulleted list (3 bullets, max 15 words each). No intro, no sign-of
 
     res.json({ ok: true, lead_id: leadId });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Inbound Lead Webhook Receiver ─────────────────────────────────────────────
+// Accepts POSTs from any external source: Facebook Lead Ads, Google Ads Lead Forms,
+// Zapier, Make.com, or any other system that can POST JSON.
+// Endpoint: POST /hook/:shopToken
+// Auth: none — uses the shop token as auth. Public but unforgeable (SHA-256 derived).
+// Field mapping: accepts common naming conventions from major ad platforms.
+app.post('/hook/:shopToken', express.json(), express.urlencoded({ extended: true }), async (req, res) => {
+  try {
+    const user = await findUserByShopToken(req.params.shopToken);
+    if (!user) return res.status(404).json({ error: 'Invalid token' });
+
+    const b = req.body || {};
+
+    // Field normalization — map common field names from different platforms
+    const company = (b.company || b.company_name || b.business_name || b.organization || '').trim();
+    const fullName = (b.name || b.full_name || `${b.first_name || ''} ${b.last_name || ''}`.trim() || b.contact_name || '').trim();
+    const email    = (b.email || b.email_address || '').trim().toLowerCase();
+    const phone    = (b.phone || b.phone_number || b.mobile || b.cell || '').trim();
+    const fleet    = parseInt(b.fleet_size || b.fleet_count || b.vehicles || b.num_vehicles || '0') || 0;
+    const category = (b.category || b.service_type || b.wrap_type || 'fleet').toLowerCase();
+    const message  = (b.message || b.notes || b.description || b.comments || b.custom_message || '').trim();
+    const website  = (b.website || b.url || '').trim();
+    const city     = (b.city || '').trim();
+    const state    = (b.state || b.province || '').trim().toUpperCase().slice(0, 2);
+    const source   = (b.source || b.utm_source || b.ad_source || 'webhook').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+
+    if (!company && !email && !phone && !fullName) {
+      return res.status(400).json({ error: 'At least one of company, email, phone, or name is required' });
+    }
+
+    const companyOrFallback = company || fullName || 'Unknown from webhook';
+    const uid = String(user.id);
+    const VALID_CATEGORIES = ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing'];
+    const finalCategory = VALID_CATEGORIES.includes(category) ? category : 'fleet';
+
+    const leadRes = await pool.query(`
+      INSERT INTO leads (user_id, company, contact_name, email, phone, fleet_size, website, city, state, category, status, source, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'new',$11,$12)
+      RETURNING id
+    `, [uid, companyOrFallback, fullName, email, phone, fleet || null, website || null,
+        city || null, state || null, finalCategory,
+        `webhook_${source}`,
+        message || null]);
+
+    const leadId = leadRes.rows[0].id;
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note_added',
+      subject: `Lead received via webhook (${source})`,
+      body: `Inbound lead from ${source}. Fields received: ${Object.keys(b).join(', ')}.`,
+      metadata: { source, raw: b },
+    });
+
+    await createNotification(uid, {
+      type: 'new_lead',
+      title: `📥 Webhook lead — ${companyOrFallback}`,
+      body: `From: ${source}${email ? ' · ' + email : ''}${phone ? ' · ' + phone : ''}`,
+      metadata: { lead_id: leadId, source },
+    });
+
+    fireWebhooks(uid, 'inbound.lead', {
+      leadId, company: companyOrFallback, contactName: fullName || null,
+      email: email || null, phone: phone || null, source,
+    });
+
+    res.json({ ok: true, lead_id: leadId, company: companyOrFallback });
+  } catch (e) {
+    console.error('[webhook/receive]', e.message);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// GET /me/webhook-url — return the user's inbound webhook receiver URL
+app.get('/me/webhook-url', authMiddleware, async (req, res) => {
+  try {
+    const token = await ensureShopToken(req.user.id);
+    const base = process.env.APP_BASE_URL || process.env.APP_URL || 'https://wrapos.app';
+    res.json({ url: `${base}/hook/${token}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Fleet Maintenance Dashboard — shareable wrap history + care guide for fleet clients ──

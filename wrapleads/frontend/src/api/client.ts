@@ -720,6 +720,7 @@ export const api = {
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
+  getMyWebhookUrl: () => authFetch<{ url: string }>('/me/webhook-url'),
   getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
 
   // Proposals needing follow-up (sent 3+ days ago, no response)

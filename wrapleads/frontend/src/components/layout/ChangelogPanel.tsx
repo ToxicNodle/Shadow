@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔗 Webhook Lead Receiver — Capture Leads from Any Source Automatically',
+    body: 'WrapOS now has a unique inbound webhook URL in Settings → Webhook Lead Receiver. Point any external lead source here and leads appear in WrapOS automatically — no manual import, no CSV. Use cases: Facebook Lead Ads (via Zapier → POST to your URL), Google Ads Lead Form Extensions, any website contact form, or any tool that can POST JSON. Accepted fields: company, name, email, phone, fleet_size, vehicle_type, message, city, state, source — WrapOS maps them automatically and handles alternate naming conventions (full_name, first_name+last_name, phone_number, etc.). Every received lead fires a push notification and appears in your lead list with source=webhook. The URL doubles as the Zapier "Webhooks by Zapier" endpoint — no API key needed, the URL itself is your auth.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '⏳ Auto Quote Expiry Reminder — Recover Deals While They\'re Still Warm',
     body: 'WrapOS now automatically emails your client a branded reminder 3 days before their quote expires — without you doing anything. The email includes the quote number, service title, total, and exact expiry date in a clean, professional design with your shop name. After sending, the activity is logged to the lead\'s timeline as a sent email. The feature is on by default when Resend is configured; toggle it off in Settings → Inbound Quote Form → "Auto-send expiry reminder to client." Previously, expiring quotes created an internal notification but nothing reached the prospect — this closes that gap and recovers deals that would otherwise go cold because the client forgot.',
   },

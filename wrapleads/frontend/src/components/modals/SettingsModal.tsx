@@ -22,6 +22,8 @@ export default function SettingsModal() {
   const [quoteLink, setQuoteLink] = useState<string | null>(null);
   const [quoteLinkCopied, setQuoteLinkCopied] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
+  const [webhookCopied, setWebhookCopied] = useState(false);
   const [portfolioLink, setPortfolioLink] = useState<string | null>(null);
   const [portfolioLinkCopied, setPortfolioLinkCopied] = useState(false);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
@@ -666,6 +668,44 @@ export default function SettingsModal() {
             </div>
           );
         })()}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Webhook Lead Receiver</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Your unique inbound URL. Point Facebook Lead Ads, Google Ads Lead Forms, Zapier, or any system that POSTs JSON here — leads arrive in WrapOS automatically.
+          Accepts fields: <code style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 3, padding: '1px 4px', fontSize: 10 }}>company, name, email, phone, fleet_size, vehicle_type, message, city, state, source</code>
+        </p>
+        {webhookUrl ? (
+          <div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <code style={{ flex: 1, fontSize: 10, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all', color: 'var(--text-muted)' }}>
+                {webhookUrl}
+              </code>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                onClick={() => { navigator.clipboard.writeText(webhookUrl); setWebhookCopied(true); setTimeout(() => setWebhookCopied(false), 2000); }}
+              >
+                {webhookCopied ? '✓ Copied!' : 'Copy URL'}
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+              Method: <strong>POST</strong> · Content-Type: <strong>application/json</strong> or <strong>application/x-www-form-urlencoded</strong> · No API key needed — the URL is your auth.
+            </p>
+          </div>
+        ) : (
+          <button
+            className="btn"
+            style={{ fontSize: 12 }}
+            onClick={async () => {
+              const r = await api.getMyWebhookUrl();
+              setWebhookUrl(r.url);
+            }}
+          >
+            Get My Webhook URL
+          </button>
+        )}
       </div>
 
       <div className="settings-section">
