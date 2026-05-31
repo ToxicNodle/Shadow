@@ -47,6 +47,11 @@
     <a href="/buy-solar-leads">Buy leads →</a>
   </nav>
 
+  <div id="itc-roast-banner" style="margin-bottom:16px;padding:12px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;display:flex;align-items:center;gap:10px;">
+    <span style="font-size:18px;font-weight:800;color:#dc2626;" id="itc-roast-days"></span>
+    <span style="font-size:12px;font-weight:600;color:#991b1b;">days until ITC construction-start deadline. Your pitch better mention it.</span>
+  </div>
+
   <div class="eyebrow">Free AI tool · No signup</div>
   <h1>Roast my <span class="accent">solar pitch</span></h1>
   <p class="lede">
@@ -104,6 +109,15 @@ Let me know!"></textarea>
 </div>
 
 <script>
+  // ITC countdown
+  (function() {
+    const deadline = new Date('2026-07-04T00:00:00Z');
+    const days = Math.max(0, Math.ceil((deadline - new Date()) / (1000*60*60*24)));
+    const el = document.getElementById('itc-roast-days');
+    if (el) el.textContent = days;
+    if (days <= 0) { const b = document.getElementById('itc-roast-banner'); if (b) b.style.display = 'none'; }
+  })();
+
   function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
   document.getElementById('roast-btn').addEventListener('click', async () => {

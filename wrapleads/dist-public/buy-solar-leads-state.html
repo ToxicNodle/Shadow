@@ -66,6 +66,11 @@
     <a class="back" href="/buy-solar-leads">← All packs</a>
   </nav>
 
+  <div id="itc-state-banner" style="margin-bottom:20px;padding:14px 18px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;display:flex;align-items:center;gap:12px;">
+    <span style="font-size:22px;font-weight:800;color:#dc2626;" id="itc-state-days"></span>
+    <span style="font-size:13px;font-weight:600;color:#991b1b;">days until ITC construction-start deadline — property owners who haven't started design risk losing the full 30% credit.</span>
+  </div>
+
   <div id="content">
     <div class="loading">Loading state data…</div>
   </div>
@@ -78,6 +83,15 @@
 </div>
 
 <script>
+  // ITC countdown
+  (function() {
+    const deadline = new Date('2026-07-04T00:00:00Z');
+    const days = Math.max(0, Math.ceil((deadline - new Date()) / (1000*60*60*24)));
+    const el = document.getElementById('itc-state-days');
+    if (el) el.textContent = days;
+    if (days <= 0) { const b = document.getElementById('itc-state-banner'); if (b) b.style.display = 'none'; }
+  })();
+
   // Pull state from URL path (?state=TX or /buy-solar-leads/tx) or default chooser
   const path = window.location.pathname;
   const queryState = (new URLSearchParams(window.location.search)).get('state');
