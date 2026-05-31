@@ -295,6 +295,10 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_asked_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add referral_asked_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add sms_opted_out column:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -2402,6 +2406,7 @@ function leadRow(row) {
     lost_reason: row.lost_reason || null,
     lost_competitor: row.lost_competitor || null,
     lost_at: row.lost_at ? row.lost_at.toISOString() : null,
+    smsOptedOut: row.sms_opted_out || false,
   };
 }
 
@@ -5058,6 +5063,85 @@ app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Twilio inbound SMS webhook — handles replies from prospects (STOP opt-outs and messages)
+// Twilio sends application/x-www-form-urlencoded. This route must be public (no auth).
+// Shop owners configure their Twilio number's webhook URL to:
+//   https://wrapos.app/twilio/incoming-sms
+app.post('/twilio/incoming-sms', express.urlencoded({ extended: false }), async (req, res) => {
+  // Respond with empty TwiML immediately so Twilio doesn't retry
+  res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+
+  try {
+    const from = (req.body.From || '').trim();
+    const to   = (req.body.To   || '').trim();
+    const body = (req.body.Body || '').trim();
+    if (!from || !to) return;
+
+    const STOP_WORDS = ['stop','unsubscribe','cancel','end','quit','stopall','remove'];
+    const isOptOut = STOP_WORDS.includes(body.toLowerCase());
+
+    // Match `to` to a user by their Twilio fromNumber setting
+    const usersR = await pool.query(
+      `SELECT id, settings_json FROM users WHERE settings_json->>'twilioFromNumber' = $1 LIMIT 5`,
+      [to]
+    );
+    if (!usersR.rows.length) return;
+
+    for (const user of usersR.rows) {
+      const uid = String(user.id);
+
+      // Find matching lead by phone number
+      const leadR = await pool.query(
+        `SELECT id, company FROM leads WHERE user_id=$1 AND phone=$2 LIMIT 1`,
+        [uid, from]
+      );
+      const lead = leadR.rows[0];
+      if (!lead) continue;
+
+      if (isOptOut) {
+        // Mark lead as SMS opted out + cancel active sequences
+        await pool.query(
+          `UPDATE leads SET sms_opted_out=TRUE, sms_opted_out_at=NOW() WHERE id=$1 AND user_id=$2`,
+          [lead.id, uid]
+        );
+        const seqR = await pool.query(
+          `UPDATE sms_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active' RETURNING id`,
+          [lead.id, uid]
+        );
+        if (seqR.rows.length) {
+          await pool.query(
+            `UPDATE sms_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`,
+            [seqR.rows[0].id]
+          );
+        }
+        await logActivity(pool, {
+          leadId: lead.id, userId: uid, type: 'note',
+          subject: 'SMS opt-out received',
+          body: `${lead.company} replied "${body}" — SMS sequences cancelled, lead marked opted out.`,
+          metadata: { from, to, optOut: true },
+        });
+        console.log(`[twilio] Opt-out from ${from} → lead ${lead.id} (${lead.company})`);
+      } else {
+        // Log inbound message as activity
+        await logActivity(pool, {
+          leadId: lead.id, userId: uid, type: 'email_reply',
+          subject: `SMS reply from ${lead.company}`,
+          body: body,
+          metadata: { from, to, channel: 'sms' },
+        });
+        // Create notification
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, lead_id) VALUES ($1,'sms_reply',$2,$3,$4) ON CONFLICT DO NOTHING`,
+          [uid, `SMS reply from ${lead.company}`, body.slice(0, 200), lead.id]
+        ).catch(() => {});
+        console.log(`[twilio] Inbound SMS from ${from} → lead ${lead.id}: "${body.slice(0, 60)}"`);
+      }
+    }
+  } catch (e) {
+    console.error('[twilio/incoming-sms]', e.message);
+  }
+});
+
 // ── SMS Campaign sequences ────────────────────────────────────────────────────
 // Category-aware 3-touch templates. Variables: {first} {company} {shop} {sender} {portfolio}
 const SMS_TEMPLATES = {
@@ -5103,12 +5187,13 @@ app.post('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
     const leadId = Number(req.params.id);
 
     const [leadR, settR] = await Promise.all([
-      pool.query('SELECT phone, company, contact_name, category FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT phone, company, contact_name, category, sms_opted_out FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
       pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
     ]);
     const lead = leadR.rows[0];
     const s = settR.rows[0]?.settings_json || {};
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    if (lead.sms_opted_out) return res.status(400).json({ error: 'This lead has opted out of SMS — respect their preference' });
     if (!lead.phone) return res.status(400).json({ error: 'No phone number on this lead — add one first' });
     if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
       return res.status(400).json({ error: 'Twilio not configured — add credentials in Settings → SMS' });
@@ -5893,7 +5978,7 @@ function startSmsSequenceWorker() {
       const { rows: due } = await pool.query(`
         SELECT s.id AS step_id, s.sequence_id, s.message, s.step_num,
                seq.user_id, seq.lead_id,
-               l.phone, l.company,
+               l.phone, l.company, l.sms_opted_out,
                u.settings_json
         FROM sms_sequence_steps s
         JOIN sms_sequences seq ON seq.id = s.sequence_id
@@ -5908,6 +5993,11 @@ function startSmsSequenceWorker() {
 
       for (const step of due) {
         const settings = step.settings_json || {};
+        if (step.sms_opted_out) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='skipped', error='Lead opted out' WHERE id=$1`, [step.step_id]);
+          await pool.query(`UPDATE sms_sequences SET status='cancelled' WHERE id=$1`, [step.sequence_id]);
+          continue;
+        }
         if (!settings.twilioAccountSid || !settings.twilioAuthToken || !settings.twilioFromNumber) {
           await pool.query(`UPDATE sms_sequence_steps SET status='failed', error='Twilio not configured' WHERE id=$1`, [step.step_id]);
           continue;

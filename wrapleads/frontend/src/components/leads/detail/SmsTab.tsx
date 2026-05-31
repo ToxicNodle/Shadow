@@ -94,12 +94,25 @@ export default function SmsTab({ lead }: Props) {
 
   const seq = seqData?.sequence;
   const hasPhone = !!lead.phone;
+  const optedOut = !!lead.smsOptedOut;
 
   return (
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+      {/* SMS opted out banner */}
+      {optedOut && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 8,
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+          fontSize: 12, color: '#ef4444',
+        }}>
+          🚫 This contact replied STOP and has opted out of SMS. All campaigns were cancelled.
+          You can still reach them by email or phone.
+        </div>
+      )}
+
       {/* No phone warning */}
-      {!hasPhone && (
+      {!hasPhone && !optedOut && (
         <div style={{
           padding: '12px 14px', borderRadius: 8,
           background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
@@ -251,16 +264,16 @@ export default function SmsTab({ lead }: Props) {
             </div>
             <button
               onClick={() => startMut.mutate()}
-              disabled={startMut.isPending || !hasPhone}
+              disabled={startMut.isPending || !hasPhone || optedOut}
               style={{
                 fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 7,
-                border: 'none', cursor: hasPhone ? 'pointer' : 'not-allowed',
-                background: hasPhone ? '#4d8af5' : 'rgba(255,255,255,0.1)',
-                color: hasPhone ? '#fff' : 'var(--text-faint)',
+                border: 'none', cursor: hasPhone && !optedOut ? 'pointer' : 'not-allowed',
+                background: hasPhone && !optedOut ? '#4d8af5' : 'rgba(255,255,255,0.1)',
+                color: hasPhone && !optedOut ? '#fff' : 'var(--text-faint)',
                 opacity: startMut.isPending ? 0.6 : 1,
               }}
             >
-              {startMut.isPending ? 'Launching…' : 'Launch Campaign'}
+              {startMut.isPending ? 'Launching…' : optedOut ? 'Opted Out' : 'Launch Campaign'}
             </button>
           </div>
 

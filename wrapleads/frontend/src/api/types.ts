@@ -28,6 +28,7 @@ export interface Lead {
   lost_reason?: string | null;
   lost_competitor?: string | null;
   lost_at?: string | null;
+  smsOptedOut?: boolean;
   createdAt: string;
   updatedAt: string;
 }
