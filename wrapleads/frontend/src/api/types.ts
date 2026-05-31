@@ -401,6 +401,10 @@ export interface Subcontractor {
   specialty?: string | null;
   labor_rate?: number | null;
   notes?: string | null;
+  tax_id?: string | null;
+  business_type?: 'individual' | 'business' | null;
+  email?: string | null;
+  address?: string | null;
   created_at: string;
   updated_at: string;
   job_count?: number;

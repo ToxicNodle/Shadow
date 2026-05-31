@@ -2924,6 +2924,114 @@ function JobProfitabilityCard() {
   );
 }
 
+function Sub1099Card() {
+  const [year, setYear] = useState(new Date().getFullYear());
+  const { data, isLoading } = useQuery({
+    queryKey: ['1099-summary', year],
+    queryFn: () => api.get1099Summary(year),
+    staleTime: 5 * 60_000,
+  });
+
+  const subs = data?.subs ?? [];
+  const totalPaid = data?.totalPaid ?? 0;
+  const needs1099 = subs.filter((s) => Number(s.confirmed_paid) >= 600);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div className="an-card-title">📋 1099 Subcontractor Summary</div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Year:</span>
+          <select
+            className="input"
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            style={{ fontSize: 12, padding: '3px 8px', width: 80 }}
+          >
+            {[0, 1, 2].map((n) => {
+              const y = new Date().getFullYear() - n;
+              return <option key={y} value={y}>{y}</option>;
+            })}
+          </select>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      ) : subs.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+          No subcontractor payments recorded for {year}.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 16px' }}>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Total Paid {year}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#f59e0b' }}>${totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+            <div style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 16px' }}>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Need 1099 (≥$600)</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: needs1099.length > 0 ? '#ef4444' : '#22c55e' }}>{needs1099.length} sub{needs1099.length !== 1 ? 's' : ''}</div>
+            </div>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {['Subcontractor', 'Type', 'Tax ID', 'Email', 'Jobs', 'Confirmed Paid', 'Outstanding', '1099?'].map((h) => (
+                    <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {subs.map((s) => {
+                  const confirmed = Number(s.confirmed_paid);
+                  const needs = confirmed >= 600;
+                  return (
+                    <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 10px', fontWeight: 700 }}>{s.name}</td>
+                      <td style={{ padding: '8px 10px', color: 'var(--text-muted)' }}>{s.business_type === 'business' ? 'Business' : 'Individual'}</td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {s.tax_id ? (
+                          <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{s.tax_id}</span>
+                        ) : (
+                          <span style={{ color: needs ? '#ef4444' : 'var(--text-faint)', fontStyle: 'italic', fontSize: 11 }}>{needs ? '⚠ Missing' : '—'}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '8px 10px', color: 'var(--text-muted)', fontSize: 11 }}>{s.email || '—'}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>{s.assignment_count}</td>
+                      <td style={{ padding: '8px 10px', fontWeight: 700, color: '#10b981' }}>${confirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '8px 10px', color: Number(s.outstanding) > 0 ? '#f59e0b' : 'var(--text-faint)' }}>
+                        {Number(s.outstanding) > 0 ? `$${Number(s.outstanding).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {needs ? (
+                          <span style={{ fontSize: 10, fontWeight: 700, background: '#ef444420', color: '#ef4444', padding: '2px 6px', borderRadius: 3, textTransform: 'uppercase' }}>
+                            Yes {!s.tax_id && '⚠'}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>No</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {needs1099.some((s) => !s.tax_id) && (
+            <div style={{ marginTop: 12, padding: '8px 12px', background: '#ef444412', border: '1px solid #ef444430', borderRadius: 6, fontSize: 11, color: '#ef4444' }}>
+              ⚠ Some subs paid ≥$600 are missing Tax IDs. Add them in Settings → Subcontractors before filing 1099-NEC forms. The IRS threshold for 1099-NEC is $600 in payments during the calendar year.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -3633,6 +3741,9 @@ export default function AnalyticsView() {
 
         {/* ── Territory Intel ── */}
         <TerritoryIntelCard />
+
+        {/* ── 1099 Sub Summary ── */}
+        <Sub1099Card />
 
         {/* ── Customer Lifetime Value ── */}
         {topCustomers && topCustomers.length > 0 && (

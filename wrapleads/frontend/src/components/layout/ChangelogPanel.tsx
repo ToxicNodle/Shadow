@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📊 1099-NEC Subcontractor Summary — Tax Season Without the Panic',
+    body: 'WrapOS now has a full 1099-NEC preparation dashboard in the Analytics view. The "1099 Subcontractor Tax Summary" card shows every subcontractor you paid in a given year — with total confirmed payments, job count, and a clear "1099 Required" badge for anyone who received ≥$600 (the IRS threshold for 1099-NEC issuance). A warning banner fires the moment any sub crosses $600 without a Tax ID on file, so you can collect it before year-end instead of scrambling in January. Each sub row also shows outstanding (logged but unpaid) amounts separately from confirmed payments. In Settings → Subcontractors, each sub now has fields for Tax ID (EIN or SSN), Business Type (individual/sole proprietor vs. business entity), email, and address — all required for filing. The year selector lets you audit any prior year. Combine this with the payment tracking feature: every "Mark Paid" click logs to the confirmed payment total, so by December 31 your 1099 prep is already done.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '💰 Job Expense Tracking — True Margin After Every Cost',
     body: 'Every job now has a "💰 Expenses" tab where you can log any cost that reduces actual margin: fuel for a delivery drive, parking at the client\'s facility, rush shipping for materials, freelance graphic design, equipment rental, travel and hotel for a remote install, or any other miscellaneous cost. Each expense has a category (with icon), description, amount, optional date, and receipt reference number. A "Total Expenses" strip at the top shows the running total plus the true margin after all expenses are subtracted from revenue. The category buttons (⛽ Fuel, 🅿 Parking, 📦 Shipping, 🎨 Design, 🔧 Equipment, ✈ Travel, 💰 Misc) make quick entry fast — tap a category, type the description and amount, and done. Delete any entry with ✕. Previously, material cost and labor were the only logged costs — meaning a job that required 200 miles of driving was showing a false margin. Now every dollar that leaves the shop for a job is accounted for.',
   },

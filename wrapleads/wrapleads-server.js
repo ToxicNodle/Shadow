@@ -890,6 +890,10 @@ async function migrateDb() {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_subcontractors_user ON subcontractors(user_id)`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS tax_id TEXT`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS business_type TEXT DEFAULT 'individual'`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS email TEXT`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS address TEXT`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS job_subcontractors (
         id          BIGSERIAL PRIMARY KEY,
@@ -10806,13 +10810,14 @@ app.get('/subcontractors', authMiddleware, async (req, res) => {
 // POST /subcontractors — create a sub
 app.post('/subcontractors', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
-  const { name, contact, specialty, labor_rate, notes } = req.body;
+  const { name, contact, specialty, labor_rate, notes, tax_id, business_type, email, address } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO subcontractors (user_id, name, contact, specialty, labor_rate, notes)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [uid, name.trim(), contact || null, specialty || null, labor_rate || null, notes || null]
+      `INSERT INTO subcontractors (user_id, name, contact, specialty, labor_rate, notes, tax_id, business_type, email, address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [uid, name.trim(), contact || null, specialty || null, labor_rate || null, notes || null,
+       tax_id || null, business_type || 'individual', email || null, address || null]
     );
     res.json({ ok: true, sub: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -10822,18 +10827,23 @@ app.post('/subcontractors', authMiddleware, async (req, res) => {
 app.patch('/subcontractors/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const subId = parseInt(req.params.id, 10);
-  const { name, contact, specialty, labor_rate, notes } = req.body;
+  const { name, contact, specialty, labor_rate, notes, tax_id, business_type, email, address } = req.body;
   try {
     const { rows } = await pool.query(
       `UPDATE subcontractors SET
-         name        = COALESCE($3, name),
-         contact     = COALESCE($4, contact),
-         specialty   = COALESCE($5, specialty),
-         labor_rate  = COALESCE($6, labor_rate),
-         notes       = COALESCE($7, notes),
-         updated_at  = NOW()
+         name          = COALESCE($3, name),
+         contact       = COALESCE($4, contact),
+         specialty     = COALESCE($5, specialty),
+         labor_rate    = COALESCE($6, labor_rate),
+         notes         = COALESCE($7, notes),
+         tax_id        = COALESCE($8, tax_id),
+         business_type = COALESCE($9, business_type),
+         email         = COALESCE($10, email),
+         address       = COALESCE($11, address),
+         updated_at    = NOW()
        WHERE id=$1 AND user_id=$2 RETURNING *`,
-      [subId, uid, name || null, contact || null, specialty || null, labor_rate || null, notes || null]
+      [subId, uid, name || null, contact || null, specialty || null, labor_rate || null, notes || null,
+       tax_id || null, business_type || null, email || null, address || null]
     );
     if (!rows.length) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true, sub: rows[0] });
@@ -21304,6 +21314,35 @@ app.get('/analytics/speed-to-lead', authMiddleware, async (req, res) => {
     });
   } catch (e) {
     console.error('[speed-to-lead]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/1099-summary — subcontractors paid this year, grouped for 1099 reporting
+app.get('/analytics/1099-summary', authMiddleware, async (req, res) => {
+  const uid  = String(req.user.id);
+  const year = parseInt(String(req.query.year || new Date().getFullYear()), 10);
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.id, s.name, s.email, s.tax_id, s.business_type, s.specialty, s.address,
+              COUNT(js.id)::INT AS assignment_count,
+              COALESCE(SUM(js.paid_amount), SUM(js.labor_cost))::NUMERIC AS total_paid,
+              SUM(CASE WHEN js.paid_at IS NOT NULL THEN js.paid_amount ELSE 0 END)::NUMERIC AS confirmed_paid,
+              SUM(CASE WHEN js.paid_at IS NULL THEN js.labor_cost ELSE 0 END)::NUMERIC AS outstanding
+       FROM subcontractors s
+       LEFT JOIN job_subcontractors js ON js.sub_id = s.id
+         AND EXTRACT(YEAR FROM COALESCE(js.paid_at, js.created_at)) = $2
+       WHERE s.user_id = $1
+       GROUP BY s.id
+       HAVING COALESCE(SUM(js.paid_amount), SUM(js.labor_cost)) > 0 OR COUNT(js.id) > 0
+       ORDER BY total_paid DESC NULLS LAST`,
+      [uid, year]
+    );
+    const totalPaid      = rows.reduce((s, r) => s + Number(r.confirmed_paid || 0), 0);
+    const needsForm1099  = rows.filter((r) => Number(r.confirmed_paid || 0) >= 600);
+    res.json({ ok: true, year, subs: rows, totalPaid, needs1099Count: needsForm1099.length });
+  } catch (e) {
+    console.error('[1099-summary]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

@@ -1301,6 +1301,17 @@ export const api = {
     }>('/analytics/job-profitability?' + qs.toString());
   },
 
+  // 1099 Subcontractor Summary
+  get1099Summary: (year?: number) =>
+    authFetch<{
+      ok: boolean; year: number; totalPaid: number; needs1099Count: number;
+      subs: Array<{
+        id: number; name: string; email?: string | null; tax_id?: string | null;
+        business_type?: string | null; specialty?: string | null; address?: string | null;
+        assignment_count: number; total_paid: number; confirmed_paid: number; outstanding: number;
+      }>;
+    }>(`/analytics/1099-summary${year ? `?year=${year}` : ''}`),
+
   // Material Margin Analytics
   getMarginAnalytics: () =>
     authFetch<{
@@ -1950,7 +1961,7 @@ export const api = {
     authFetch<{ ok: boolean; subs: import('./types').Subcontractor[] }>('/subcontractors'),
   createSubcontractor: (data: { name: string; contact?: string; specialty?: string; labor_rate?: number; notes?: string }) =>
     authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>('/subcontractors', { method: 'POST', body: JSON.stringify(data) }),
-  updateSubcontractor: (id: number, data: Partial<{ name: string; contact: string; specialty: string; labor_rate: number; notes: string }>) =>
+  updateSubcontractor: (id: number, data: Partial<{ name: string; contact: string; specialty: string; labor_rate: number; notes: string; tax_id: string; business_type: 'individual' | 'business'; email: string; address: string }>) =>
     authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>(`/subcontractors/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteSubcontractor: (id: number) =>
     authFetch<{ ok: boolean }>(`/subcontractors/${id}`, { method: 'DELETE' }),

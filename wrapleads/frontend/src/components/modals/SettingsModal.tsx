@@ -36,6 +36,8 @@ export default function SettingsModal() {
   const [newSubName, setNewSubName] = useState('');
   const [newSubSpecialty, setNewSubSpecialty] = useState('');
   const [newSubRate, setNewSubRate] = useState('');
+  const [editSubId, setEditSubId] = useState<number | null>(null);
+  const [editSubForm, setEditSubForm] = useState<{name:string;specialty:string;labor_rate:string;tax_id:string;business_type:string;email:string;address:string}>({name:'',specialty:'',labor_rate:'',tax_id:'',business_type:'individual',email:'',address:''});
 
   // Web Push notifications
   const [pushLoading, setPushLoading] = useState(false);
@@ -133,6 +135,19 @@ export default function SettingsModal() {
   const deleteSubMut = useMutation({
     mutationFn: (id: number) => api.deleteSubcontractor(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['subcontractors'] }),
+  });
+  const updateSubMut = useMutation({
+    mutationFn: (id: number) => api.updateSubcontractor(id, {
+      name: editSubForm.name.trim() || undefined,
+      specialty: editSubForm.specialty.trim() || undefined,
+      labor_rate: editSubForm.labor_rate ? Number(editSubForm.labor_rate) : undefined,
+      tax_id: editSubForm.tax_id.trim() || undefined,
+      business_type: (editSubForm.business_type as 'individual' | 'business') || undefined,
+      email: editSubForm.email.trim() || undefined,
+      address: editSubForm.address.trim() || undefined,
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['subcontractors'] }); setEditSubId(null); showToast('Subcontractor updated', 'success'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
   });
 
   // Material inventory
@@ -691,14 +706,53 @@ export default function SettingsModal() {
         </p>
         {/* List existing */}
         {(subsData?.subs ?? []).map((sub) => (
-          <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, background: 'var(--bg-input)', borderRadius: 6, padding: '6px 10px' }}>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{sub.name}</span>
-              {sub.specialty && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.specialty}</span>}
-              {sub.labor_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>${Number(sub.labor_rate)}/hr</span>}
-              {(sub.job_count ?? 0) > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.job_count} jobs · ${Number(sub.total_paid).toLocaleString()} paid</span>}
+          <div key={sub.id} style={{ marginBottom: 6, background: 'var(--bg-input)', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px' }}>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{sub.name}</span>
+                {sub.specialty && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.specialty}</span>}
+                {sub.labor_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>${Number(sub.labor_rate)}/hr</span>}
+                {sub.tax_id && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6, fontFamily: 'monospace' }}>TIN: {sub.tax_id}</span>}
+                {(sub.job_count ?? 0) > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.job_count} jobs</span>}
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 10, padding: '2px 8px' }}
+                onClick={() => {
+                  if (editSubId === sub.id) { setEditSubId(null); return; }
+                  setEditSubId(sub.id);
+                  setEditSubForm({ name: sub.name, specialty: sub.specialty || '', labor_rate: sub.labor_rate ? String(sub.labor_rate) : '', tax_id: sub.tax_id || '', business_type: sub.business_type || 'individual', email: sub.email || '', address: sub.address || '' });
+                }}
+              >{editSubId === sub.id ? 'Cancel' : 'Edit'}</button>
+              <button className="btn" style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }} onClick={() => deleteSubMut.mutate(sub.id)} disabled={deleteSubMut.isPending}>Remove</button>
             </div>
-            <button className="btn" style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }} onClick={() => deleteSubMut.mutate(sub.id)} disabled={deleteSubMut.isPending}>Remove</button>
+            {editSubId === sub.id && (
+              <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8 }}>
+                  <div><label className="field-label">Name</label><input className="input" value={editSubForm.name} onChange={(e) => setEditSubForm((f) => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} /></div>
+                  <div><label className="field-label">Specialty</label><input className="input" value={editSubForm.specialty} onChange={(e) => setEditSubForm((f) => ({ ...f, specialty: e.target.value }))} style={{ fontSize: 12 }} /></div>
+                  <div><label className="field-label">$/hr</label><input className="input" type="number" min={0} value={editSubForm.labor_rate} onChange={(e) => setEditSubForm((f) => ({ ...f, labor_rate: e.target.value }))} style={{ fontSize: 12 }} /></div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                  <div>
+                    <label className="field-label">Tax ID (EIN/SSN)</label>
+                    <input className="input" value={editSubForm.tax_id} onChange={(e) => setEditSubForm((f) => ({ ...f, tax_id: e.target.value }))} placeholder="XX-XXXXXXX" style={{ fontSize: 12 }} />
+                  </div>
+                  <div>
+                    <label className="field-label">Business Type</label>
+                    <select className="input" value={editSubForm.business_type} onChange={(e) => setEditSubForm((f) => ({ ...f, business_type: e.target.value }))} style={{ fontSize: 12 }}>
+                      <option value="individual">Individual / Sole Prop</option>
+                      <option value="business">Business / LLC / Corp</option>
+                    </select>
+                  </div>
+                  <div><label className="field-label">Email</label><input className="input" type="email" value={editSubForm.email} onChange={(e) => setEditSubForm((f) => ({ ...f, email: e.target.value }))} placeholder="installer@email.com" style={{ fontSize: 12 }} /></div>
+                </div>
+                <div><label className="field-label">Address (for 1099)</label><input className="input" value={editSubForm.address} onChange={(e) => setEditSubForm((f) => ({ ...f, address: e.target.value }))} placeholder="123 Main St, City, State ZIP" style={{ fontSize: 12 }} /></div>
+                <button className="btn btn-primary" style={{ fontSize: 12, alignSelf: 'flex-start' }} disabled={!editSubForm.name.trim() || updateSubMut.isPending} onClick={() => updateSubMut.mutate(sub.id)}>
+                  {updateSubMut.isPending ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {/* Add new */}
