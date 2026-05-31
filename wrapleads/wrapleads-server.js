@@ -302,6 +302,9 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_searched_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add email_searched_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_enriched_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add fmcsa_enriched_at column:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -5649,6 +5652,118 @@ app.delete('/leads/:id/omni-sequence', authMiddleware, async (req, res) => {
 });
 
 // ============================================================================
+// FMCSA SAFER enrichment — fetch phone + safety data from DOT number
+// ============================================================================
+
+// POST /leads/:id/enrich-fmcsa
+// Looks up the lead's source carrier in FMCSA SAFER, patches phone + safety rating.
+// Works for any lead whose source_company_id points to a companies row with source='fmcsa'.
+// FMCSA_SAFER_API_KEY is optional — free key from https://mobile.fmcsa.dot.gov/developer/home
+app.post('/leads/:id/enrich-fmcsa', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    // Load lead + its source company DOT number
+    const { rows } = await pool.query(`
+      SELECT l.id, l.phone, l.email, l.company, l.contact_name,
+             c.source_id AS dot_number, c.source AS company_source, c.phone AS company_phone
+      FROM leads l
+      LEFT JOIN companies c ON c.id = l.source_company_id
+      WHERE l.id = $1 AND l.user_id = $2
+    `, [leadId, uid]);
+
+    if (!rows[0]) return res.status(404).json({ error: 'Lead not found' });
+    const lead = rows[0];
+
+    // Must have a DOT number from an FMCSA company record
+    if (!lead.dot_number || lead.company_source !== 'fmcsa') {
+      // Also accept category='fleet' leads where dot_number was passed in body
+      const bodyDot = req.body?.dotNumber;
+      if (!bodyDot) return res.status(400).json({ error: 'Lead has no FMCSA DOT number. Only fleet leads imported from the Discover tab can be enriched this way.' });
+      lead.dot_number = String(bodyDot);
+    }
+
+    const saferKey = process.env.FMCSA_SAFER_API_KEY || 'eLxXIHPJOGBX2sLcyIHdqLZ6YlU3z0gp8sSHI0Cq';
+    const saferUrl = `https://mobile.fmcsa.dot.gov/qc/services/carriers/${lead.dot_number}?webKey=${saferKey}`;
+
+    let saferData;
+    try {
+      const resp = await fetch(saferUrl, { signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) throw new Error(`FMCSA SAFER returned HTTP ${resp.status}`);
+      saferData = await resp.json();
+    } catch (e) {
+      return res.status(502).json({ error: `FMCSA SAFER API error: ${e.message}` });
+    }
+
+    const carrier = saferData?.content?.carrier || saferData?.carrier;
+    if (!carrier) return res.status(404).json({ error: 'DOT number not found in FMCSA SAFER' });
+
+    // Extract useful fields
+    const saferPhone = carrier.telephone
+      ? carrier.telephone.replace(/\D/g, '').replace(/^1(\d{10})$/, '$1').replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3')
+      : null;
+    const safetyRating = carrier.safetyRating || carrier.carrierSafetyRating || null;
+    const operatingStatus = carrier.carrierOperation?.carrierOperationDesc || null;
+    const entityType = carrier.entityType || null;
+    const legalName = carrier.legalName || null;
+
+    // Update lead — only patch phone if currently empty
+    const updates = [];
+    const params = [];
+    let pi = 1;
+
+    if (saferPhone && (!lead.phone || lead.phone.trim() === '')) {
+      updates.push(`phone=$${pi++}`); params.push(saferPhone);
+    }
+    updates.push(`updated_at=NOW()`);
+
+    if (updates.length > 1) {
+      params.push(leadId, uid);
+      await pool.query(
+        `UPDATE leads SET ${updates.join(', ')} WHERE id=$${pi++} AND user_id=$${pi++}`,
+        params
+      );
+    }
+
+    // Also patch the companies row with any better phone data
+    if (saferPhone && lead.company_phone !== saferPhone) {
+      await pool.query(
+        `UPDATE companies SET phone=$1 WHERE source='fmcsa' AND source_id=$2`,
+        [saferPhone, lead.dot_number]
+      );
+    }
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'FMCSA SAFER data fetched',
+      body: [
+        saferPhone ? `Phone: ${saferPhone}` : null,
+        safetyRating ? `Safety rating: ${safetyRating}` : null,
+        operatingStatus ? `Operating status: ${operatingStatus}` : null,
+        entityType ? `Entity type: ${entityType}` : null,
+        legalName && legalName !== lead.company ? `Legal name: ${legalName}` : null,
+      ].filter(Boolean).join(' · ') || 'No new data found',
+      metadata: { dot_number: lead.dot_number, safety_rating: safetyRating, operating_status: operatingStatus, source: 'fmcsa_safer' },
+    });
+
+    res.json({
+      ok: true,
+      patched: updates.length > 1,
+      phone: saferPhone,
+      safetyRating,
+      operatingStatus,
+      entityType,
+      legalName,
+      dotNumber: lead.dot_number,
+    });
+  } catch (e) {
+    console.error('[enrich-fmcsa]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================================
 // Today's Mission — AI-prioritized daily action list
 // ============================================================================
 
@@ -6609,6 +6724,64 @@ function startEmailEnrichmentWorker() {
 
   // First run after 3 minutes
   setTimeout(run, 3 * 60 * 1000);
+  setInterval(run, INTERVAL_MS);
+}
+
+// Polls leads with source_company_id → fmcsa carrier → no phone, and auto-fills
+// phone from FMCSA SAFER API. Runs hourly with a cap of 20 leads per run.
+function startFmcsaSaferWorker() {
+  const saferKey = process.env.FMCSA_SAFER_API_KEY;
+  if (!saferKey) {
+    console.log('· FMCSA SAFER: not configured (set FMCSA_SAFER_API_KEY to auto-fill fleet phone numbers)');
+    return;
+  }
+  console.log('· FMCSA SAFER worker started (hourly, auto-fills missing phone from DOT registry)');
+
+  const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+  async function run() {
+    try {
+      // Find fleet leads with an FMCSA source company but no phone
+      const { rows: targets } = await pool.query(`
+        SELECT l.id AS lead_id, l.user_id, c.source_id AS dot_number
+        FROM leads l
+        JOIN companies c ON c.id = l.source_company_id AND c.source = 'fmcsa'
+        WHERE (l.phone IS NULL OR l.phone = '')
+          AND (l.fmcsa_enriched_at IS NULL OR l.fmcsa_enriched_at < NOW() - INTERVAL '30 days')
+        LIMIT 20
+      `);
+
+      if (!targets.length) return;
+
+      for (const t of targets) {
+        try {
+          const url = `https://mobile.fmcsa.dot.gov/qc/services/carriers/${t.dot_number}?webKey=${saferKey}`;
+          const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          // Mark attempted regardless of result
+          await pool.query(`UPDATE leads SET fmcsa_enriched_at=NOW() WHERE id=$1`, [t.lead_id]);
+          if (!resp.ok) continue;
+          const json = await resp.json();
+          const carrier = json?.content?.carrier || json?.carrier;
+          if (!carrier?.telephone) continue;
+          const phone = carrier.telephone.replace(/\D/g, '').replace(/^1(\d{10})$/, '$1').replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');
+          await pool.query(
+            `UPDATE leads SET phone=$1, updated_at=NOW() WHERE id=$2 AND (phone IS NULL OR phone='')`,
+            [phone, t.lead_id]
+          );
+          console.log(`[fmcsa-safer] Filled phone for lead ${t.lead_id}: ${phone}`);
+          // Small delay to avoid hammering the free API
+          await new Promise(r => setTimeout(r, 400));
+        } catch (e) {
+          await pool.query(`UPDATE leads SET fmcsa_enriched_at=NOW() WHERE id=$1`, [t.lead_id]).catch(() => {});
+          console.warn(`[fmcsa-safer] lead ${t.lead_id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[fmcsa-safer worker] error:', e.message);
+    }
+  }
+
+  setTimeout(run, 5 * 60 * 1000); // first run 5 min after boot
   setInterval(run, INTERVAL_MS);
 }
 
@@ -21378,6 +21551,7 @@ app.listen(PORT, async () => {
   console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
   console.log(process.env.HUNTER_API_KEY ? '· Hunter.io: configured (email waterfall active)' : '· Hunter.io: not configured (set HUNTER_API_KEY for free enrichment)');
+  console.log(process.env.FMCSA_SAFER_API_KEY ? '· FMCSA SAFER: configured (auto-fill fleet phone numbers active)' : '· FMCSA SAFER: not configured (set FMCSA_SAFER_API_KEY for fleet phone lookup)');
   // Run migrations first so checkDb works on a fresh database
   try { await migrateDb(); } catch (e) { console.error('migrateDb error:', e.message); }
   const db = await checkDb();
@@ -21389,6 +21563,7 @@ app.listen(PORT, async () => {
     startSmsSequenceWorker();
     startOmniSequenceWorker();
     startEmailEnrichmentWorker();
+    startFmcsaSaferWorker();
     startDigestWorker();
     startColdNurtureWorker();
     startReOrderWorker();

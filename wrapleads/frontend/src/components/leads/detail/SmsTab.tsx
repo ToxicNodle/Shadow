@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../api/client';
 import type { Lead } from '../../../api/types';
@@ -37,6 +37,78 @@ const STATUS_ICON: Record<string, string> = {
   failed:  '✗',
   skipped: '—',
 };
+
+// ── SMS Conversation Thread ───────────────────────────────────────────────────
+function SmsConversation({ leadId, contactName }: { leadId: number; contactName: string }) {
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['lead-activities', leadId],
+    queryFn: () => api.getActivities(leadId),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  const messages = (data?.activities || [])
+    .filter((a) => a.type === 'sms_sent' || a.type === 'sms_received')
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  if (isLoading) return null;
+  if (!messages.length) return null;
+
+  return (
+    <div style={{
+      background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '8px 14px', borderBottom: '1px solid var(--border)',
+        fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em',
+        color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+        SMS Conversation · {messages.length} messages
+      </div>
+      <div style={{
+        maxHeight: 280, overflowY: 'auto', padding: '10px 12px',
+        display: 'flex', flexDirection: 'column', gap: 6,
+      }}>
+        {messages.map((msg) => {
+          const isOut = msg.type === 'sms_sent';
+          return (
+            <div key={msg.id} style={{
+              display: 'flex', flexDirection: 'column',
+              alignItems: isOut ? 'flex-end' : 'flex-start',
+            }}>
+              <div style={{
+                maxWidth: '78%', padding: '7px 10px', borderRadius: isOut ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
+                background: isOut ? '#f4551c' : 'rgba(255,255,255,0.08)',
+                color: isOut ? '#fff' : 'var(--text)',
+                fontSize: 12, lineHeight: 1.45,
+                wordBreak: 'break-word',
+              }}>
+                {msg.body || '(no message body)'}
+              </div>
+              <div style={{
+                fontSize: 9, color: 'var(--text-faint)', marginTop: 2,
+                paddingLeft: isOut ? 0 : 4, paddingRight: isOut ? 4 : 0,
+              }}>
+                {isOut ? 'You' : contactName} · {relFmt(msg.created_at)}
+              </div>
+            </div>
+          );
+        })}
+        <div ref={endRef} />
+      </div>
+    </div>
+  );
+}
 
 export default function SmsTab({ lead }: Props) {
   const qc = useQueryClient();
@@ -83,7 +155,7 @@ export default function SmsTab({ lead }: Props) {
     try {
       await api.sendSms(leadId, singleMsg.trim());
       setSingleMsg('');
-      qc.invalidateQueries({ queryKey: ['lead-activity', leadId] });
+      qc.invalidateQueries({ queryKey: ['lead-activities', leadId] });
       showToast('SMS sent');
     } catch (e: any) {
       showToast(e.message || 'Failed to send SMS');
@@ -334,6 +406,9 @@ export default function SmsTab({ lead }: Props) {
           </button>
         </div>
       )}
+
+      {/* SMS conversation thread */}
+      <SmsConversation leadId={leadId} contactName={lead.contactName || lead.company} />
 
       {/* Single SMS compose */}
       <div style={{

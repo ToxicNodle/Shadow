@@ -938,6 +938,16 @@ export const api = {
     authFetch<{ ok: boolean; sequence: import('./types').OmniSequence | null }>(`/leads/${leadId}/omni-sequence`),
   cancelOmniSequence: (leadId: number) =>
     authFetch<{ ok: boolean }>(`/leads/${leadId}/omni-sequence`, { method: 'DELETE' }),
+  enrichFmcsa: (leadId: number, dotNumber?: string) =>
+    authFetch<{
+      ok: boolean; patched: boolean;
+      phone: string | null; safetyRating: string | null;
+      operatingStatus: string | null; entityType: string | null;
+      legalName: string | null; dotNumber: string;
+    }>(`/leads/${leadId}/enrich-fmcsa`, {
+      method: 'POST',
+      body: dotNumber ? JSON.stringify({ dotNumber }) : '{}',
+    }),
 
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),

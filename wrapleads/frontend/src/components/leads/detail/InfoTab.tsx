@@ -8,6 +8,7 @@ import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 import FindEmailPanel from './FindEmailPanel';
+import FmcsaEnrichPanel from './FmcsaEnrichPanel';
 import SimilarWinsPanel from './SimilarWinsPanel';
 import LossReasonModal from '../../modals/LossReasonModal';
 import DealCoachPanel from './DealCoachPanel';
@@ -2083,6 +2084,12 @@ export default function InfoTab({ lead }: Props) {
               </div>
             )}
           </div>
+          {!local.phone && lead.sourceCompanyId && lead.serverId && (
+            <FmcsaEnrichPanel
+              lead={lead}
+              onPhoneFound={(phone) => { setLocal({ ...local, phone }); patch('phone', phone); }}
+            />
+          )}
         </div>
         <div className="field-group">
           <label className="field-label">Fleet Size</label>

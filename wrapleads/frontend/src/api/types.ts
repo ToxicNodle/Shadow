@@ -29,11 +29,13 @@ export interface Lead {
   lost_competitor?: string | null;
   lost_at?: string | null;
   smsOptedOut?: boolean;
+  dotNumber?: string | null;
+  fmcsaEnrichedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply' | 'design_approved' | 'call_logged' | 'news_intel' | 'call_initiated' | 'call_completed';
+export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply' | 'design_approved' | 'call_logged' | 'news_intel' | 'call_initiated' | 'call_completed' | 'sms_sent' | 'sms_received' | 'note';
 
 export interface LeadActivity {
   id: string;
