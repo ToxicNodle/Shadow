@@ -1,0 +1,302 @@
+[
+  {
+    "ts": "2026-05-31T16:17:06.088Z",
+    "company": "AFC Solar",
+    "state": "TX",
+    "to": "sales@afcsolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:06.877Z",
+    "company": "Freedom Solar Power",
+    "state": "TX",
+    "to": "sales@freedomsolarpower.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:07.602Z",
+    "company": "Big Sun Solar",
+    "state": "TX",
+    "to": "sales@bigsunsolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:08.341Z",
+    "company": "IntegrateSun",
+    "state": "TX",
+    "to": "sales@integratesun.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:09.070Z",
+    "company": "Sunshine Renewable Solutions",
+    "state": "TX",
+    "to": "sales@sunshinerenewable.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:09.817Z",
+    "company": "Native Solar",
+    "state": "TX",
+    "to": "sales@nativesolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:11.721Z",
+    "company": "Lighthouse Solar",
+    "state": "TX",
+    "to": "sales@lighthousesolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:12.456Z",
+    "company": "A.M. Sun Solar",
+    "state": "CA",
+    "to": "sales@amsunsolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:13.288Z",
+    "company": "M Bar C Construction",
+    "state": "CA",
+    "to": "sales@mbarcconstruction.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:14.037Z",
+    "company": "New Era Electric",
+    "state": "CA",
+    "to": "sales@newera-electric.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:14.760Z",
+    "company": "Renova Energy",
+    "state": "CA",
+    "to": "sales@renovaenergy.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:15.496Z",
+    "company": "Sandbar Solar",
+    "state": "CA",
+    "to": "sales@sandbarsolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:16.221Z",
+    "company": "Scudder Solar Energy Systems",
+    "state": "CA",
+    "to": "sales@scuddersolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:16.939Z",
+    "company": "Teichert Solar",
+    "state": "CA",
+    "to": "sales@teichertsolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:17.684Z",
+    "company": "Sunworks",
+    "state": "CA",
+    "to": "sales@sunworksusa.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:18.415Z",
+    "company": "Brooklyn SolarWorks",
+    "state": "NY",
+    "to": "sales@brooklynsolarworks.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:19.150Z",
+    "company": "Harvest Power",
+    "state": "NY",
+    "to": "sales@harvestpower.solar",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:19.893Z",
+    "company": "John Mills Electric",
+    "state": "NY",
+    "to": "sales@johnmillselectric.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:20.652Z",
+    "company": "Solar by CIR",
+    "state": "NY",
+    "to": "sales@solarbycir.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:21.394Z",
+    "company": "SUNation Energy",
+    "state": "NY",
+    "to": "sales@sunation.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:22.112Z",
+    "company": "Sunrise Power Solutions",
+    "state": "NY",
+    "to": "sales@sunrisepowersolutions.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:22.850Z",
+    "company": "CleanCapital",
+    "state": "NY",
+    "to": "sales@cleancapital.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:23.579Z",
+    "company": "Berkowatts Electric",
+    "state": "NJ",
+    "to": "sales@berkowatts.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:24.326Z",
+    "company": "Geoscape Solar",
+    "state": "NJ",
+    "to": "sales@geoscapesolar.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  },
+  {
+    "ts": "2026-05-31T16:17:25.059Z",
+    "company": "Harmon Electric",
+    "state": "AZ",
+    "to": "sales@harmonelectric.com",
+    "error": {
+      "statusCode": 403,
+      "name": "validation_error",
+      "message": "You can only send testing emails to your own email address (bjakebenson@gmail.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain."
+    },
+    "ok": false
+  }
+]
