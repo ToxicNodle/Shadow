@@ -291,6 +291,7 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason TEXT`);
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_competitor TEXT`);
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS competitor_price NUMERIC(10,2)`);
   } catch (e) { console.warn('[migrate] Could not add lost_reason columns:', e.message); }
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_asked_at TIMESTAMPTZ`);
@@ -4813,20 +4814,22 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
     const leadId = Number(req.params.id);
     const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
     if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
-    const { factor = 'other', notes = '', competitor = '' } = req.body || {};
+    const { factor = 'other', notes = '', competitor = '', competitorPrice = null } = req.body || {};
+    const compPrice = competitorPrice ? parseFloat(competitorPrice) : null;
     // Persist structured loss data to the lead row itself
     await pool.query(
-      `UPDATE leads SET lost_reason=$1, lost_competitor=$2, lost_at=NOW(), updated_at=NOW() WHERE id=$3 AND user_id=$4`,
-      [factor || null, competitor || null, leadId, uid]
+      `UPDATE leads SET lost_reason=$1, lost_competitor=$2, competitor_price=$3, lost_at=NOW(), updated_at=NOW() WHERE id=$4 AND user_id=$5`,
+      [factor || null, competitor || null, compPrice, leadId, uid]
     );
     await logActivity(pool, {
       leadId, userId: uid, type: 'status_changed',
-      subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}`,
+      subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}${compPrice ? ` — competitor priced at $${compPrice.toLocaleString()}` : ''}`,
       body: notes,
       metadata: {
         win_loss_factor: factor,
         win_loss_notes: notes,
         ...(competitor ? { competitor } : {}),
+        ...(compPrice ? { competitor_price: compPrice } : {}),
       },
     });
     res.json({ ok: true });
@@ -4976,12 +4979,14 @@ app.get('/analytics/loss-analysis', authMiddleware, async (req, res) => {
         ORDER BY count DESC
       `, [uid]),
 
-      // Top competitors mentioned in losses
+      // Top competitors mentioned in losses, with avg competitor price
       pool.query(`
         SELECT
           lost_competitor AS competitor,
           COUNT(*)::INT AS losses,
-          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories
+          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories,
+          ROUND(AVG(competitor_price) FILTER (WHERE competitor_price IS NOT NULL), 0)::INT AS avg_competitor_price,
+          COUNT(competitor_price) FILTER (WHERE competitor_price IS NOT NULL)::INT AS price_data_points
         FROM leads
         WHERE user_id=$1 AND status='lost' AND lost_competitor IS NOT NULL AND lost_competitor != ''
         GROUP BY lost_competitor

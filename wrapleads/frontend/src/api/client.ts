@@ -906,8 +906,8 @@ export const api = {
   },
 
   // Win/Loss capture
-  captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
-    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),
+  captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string, competitorPrice?: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor, competitorPrice }) }),
 
   // SMS outreach
   sendSms: (leadId: number, message: string) =>
