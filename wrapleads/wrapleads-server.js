@@ -9212,7 +9212,10 @@ async function generateSolarOpener({ lead, settings, building_sqft, roof_type, u
   });
   const netCost = intel.stack.net_cost;
   const netPayback = incentives.netPaybackYears(netCost, econ.annual_savings_usd);
-  const urgencyLine = intel.urgency;
+  const itcDays = require('./lib/itc-deadline').daysUntilITCDeadline();
+  const urgencyLine = itcDays > 0 && itcDays <= 90
+    ? `CRITICAL: Only ${itcDays} days until the July 4, 2026 ITC construction-start deadline. ${intel.urgency}`
+    : intel.urgency;
   // Adjust the recommendation to PPA/lease for tax-exempt entities so we
   // never pitch the ITC to a buyer who can't use it.
   const ownershipModel = fit?.ownership_model || 'direct_purchase';

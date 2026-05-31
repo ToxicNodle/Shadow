@@ -27,12 +27,13 @@ const incentives = require('../lib/solar-incentives');
 const HOT_STATES = ['TX', 'CA', 'FL', 'NY', 'NJ', 'AZ', 'PA', 'OH', 'IL', 'GA'];
 
 const COLS = [
-  'company','city','state','source','source_id',
+  'company','city','state','source','source_id','provenance_url',
   'naics_code','naics_sector','solar_fit_score','energy_intensity',
   'tax_appetite','recommended_ownership','load_profile',
   'est_system_kw','est_annual_kwh','est_annual_savings_usd',
   'est_net_payback_yrs','est_25yr_npv_p50_usd',
-  'sales_script','pitch_angle',
+  'sales_script','script_cfo','script_facilities','script_sustainability',
+  'pitch_angle',
 ];
 
 function loadAllSeeds() {
@@ -92,6 +93,20 @@ const NAICS_LABEL = {
   '23': 'Construction', '44': 'Retail', '45': 'Retail',
 };
 
+function buildProvenanceUrl(source, sourceId) {
+  if (!source || !sourceId) return '';
+  if (source === 'epa_ghgrp' || source === 'epa') {
+    return `https://ghgdata.epa.gov/ghgp/main.do#/facilityDetail?facilityId=${encodeURIComponent(sourceId)}`;
+  }
+  if (source === 'usaspending' || source === 'usa_spending') {
+    return `https://www.usaspending.gov/search/?hash=${encodeURIComponent(sourceId)}`;
+  }
+  if (source === 'osm' || source === 'osm_industrial') {
+    return `https://www.openstreetmap.org/${sourceId.includes('/') ? sourceId : 'way/' + sourceId}`;
+  }
+  return '';
+}
+
 function enrichLead(lead) {
   const naics = (lead.naics_code || '').toString() ||
     (naicsFit.inferNaicsFromIndustry(lead.industry || lead.pitchAngle || '')) || '';
@@ -121,6 +136,7 @@ function enrichLead(lead) {
     state: lead.state || '',
     source: lead.source || '',
     source_id: lead.clientId || '',
+    provenance_url: buildProvenanceUrl(lead.source, lead.clientId),
     naics_code: naics || '',
     naics_sector: NAICS_LABEL[naics.slice(0, 2)] || '',
     solar_fit_score: fit?.fit || '',
@@ -134,6 +150,9 @@ function enrichLead(lead) {
     est_net_payback_yrs: netPayback || '',
     est_25yr_npv_p50_usd: npv25 || '',
     sales_script: fit?.sales_script || '',
+    script_cfo: fit?.script_cfo || '',
+    script_facilities: fit?.script_facilities || '',
+    script_sustainability: fit?.script_sustainability || '',
     pitch_angle: lead.pitchAngle || '',
   };
 }

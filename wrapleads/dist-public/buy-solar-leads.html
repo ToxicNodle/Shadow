@@ -95,6 +95,29 @@
       <div class="proof-stat"><div class="v">93</div><div class="l">NAICS fit profiles</div></div>
       <div class="proof-stat"><div class="v">50</div><div class="l">Free sample leads</div></div>
     </div>
+
+    <div id="itc-banner" style="margin-top:24px;padding:16px 20px;background:linear-gradient(135deg,#fef2f2,#fff7ed);border:1px solid #fca5a5;border-radius:10px;display:flex;align-items:center;gap:14px;">
+      <div style="font-size:32px;font-weight:800;color:#dc2626;line-height:1;" id="itc-days"></div>
+      <div>
+        <div style="font-size:14px;font-weight:700;color:#991b1b;">days until ITC construction-start deadline (July 4, 2026)</div>
+        <div style="font-size:12px;color:#92400e;margin-top:2px;">Projects that haven't started design NOW risk missing the full 30% federal Investment Tax Credit.</div>
+      </div>
+    </div>
+
+    <div style="margin-top:24px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(255,255,255,0.04);border:1px solid #2a2e36;border-radius:8px;">
+        <span style="font-size:14px;">🔒</span>
+        <span style="font-size:12px;font-weight:700;color:#f4f5f7;">1 buyer per lead</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(255,255,255,0.04);border:1px solid #2a2e36;border-radius:8px;">
+        <span style="font-size:14px;">🔗</span>
+        <span style="font-size:12px;font-weight:700;color:#f4f5f7;">Provenance URL on every row</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(255,255,255,0.04);border:1px solid #2a2e36;border-radius:8px;">
+        <span style="font-size:14px;">↩️</span>
+        <span style="font-size:12px;font-weight:700;color:#f4f5f7;">30-day refund guarantee</span>
+      </div>
+    </div>
   </header>
 
   <section id="sample">
@@ -226,6 +249,16 @@
     </div>
 
     <div class="faq-item">
+      <h4>Are these shared leads?</h4>
+      <p><strong>No. Exclusive by default.</strong> Unlike lead vendors that sell the same prospect to 5-10 installers, each territory pack is sold to a single buyer. Plus, every row has a public-domain provenance URL linking to the EPA, USAspending.gov, or OSM source record — you can verify the data yourself. No black-box scraping, no fabricated contacts.</p>
+    </div>
+
+    <div class="faq-item">
+      <h4>What's the provenance URL?</h4>
+      <p>Every lead in your CSV includes a direct link to the original government source record. EPA facility? Link to ghgdata.epa.gov. Federal awardee? Link to usaspending.gov. This is an anti-fraud signal no competitor can fake — the underlying data is authoritative US government or OpenStreetMap.</p>
+    </div>
+
+    <div class="faq-item">
       <h4>What if I don't close a deal from the leads?</h4>
       <p>30-day money-back if you don't get at least one qualified conversation. Email <code>support@helioscout.io</code> with your outreach record — we'll refund and keep the relationship intact.</p>
     </div>
@@ -273,6 +306,19 @@
       }
     });
   });
+
+  // ITC countdown
+  (function() {
+    const deadline = new Date('2026-07-04T00:00:00Z');
+    const now = new Date();
+    const days = Math.max(0, Math.ceil((deadline - now) / (1000*60*60*24)));
+    const el = document.getElementById('itc-days');
+    if (el) el.textContent = days;
+    if (days <= 0) {
+      const banner = document.getElementById('itc-banner');
+      if (banner) banner.style.display = 'none';
+    }
+  })();
 
   document.getElementById('sample-form').addEventListener('submit', async function(ev) {
     ev.preventDefault();

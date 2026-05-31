@@ -84,6 +84,11 @@
     full incentive stack (ITC + state programs), and net payback — the same engine that powers our installer proposals.
   </p>
 
+  <div id="itc-calc-banner" style="margin-bottom:20px;padding:14px 18px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;display:flex;align-items:center;gap:12px;">
+    <span style="font-size:22px;font-weight:800;color:#dc2626;" id="itc-calc-days"></span>
+    <span style="font-size:13px;font-weight:600;color:#991b1b;">days until ITC construction-start deadline (July 4, 2026) — projects not under construction by then may miss the full 30% federal credit.</span>
+  </div>
+
   <div class="calc">
     <div class="form-card">
       <div class="field">
@@ -139,6 +144,15 @@
 </div>
 
 <script>
+  // ITC countdown
+  (function() {
+    const deadline = new Date('2026-07-04T00:00:00Z');
+    const days = Math.max(0, Math.ceil((deadline - new Date()) / (1000*60*60*24)));
+    const el = document.getElementById('itc-calc-days');
+    if (el) el.textContent = days;
+    if (days <= 0) { const b = document.getElementById('itc-calc-banner'); if (b) b.style.display = 'none'; }
+  })();
+
   const STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
   const sel = document.getElementById('state');
   STATES.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o); });

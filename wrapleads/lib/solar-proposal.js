@@ -30,6 +30,7 @@ const tariffs = require('./solar-tariffs');
 const dsire = require('./dsire-api');
 const monteCarlo = require('./solar-monte-carlo');
 const pdfRenderer = require('./pdf-renderer');
+const itcDeadline = require('./itc-deadline');
 
 // ── HTML helpers ─────────────────────────────────────────────────────────
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -198,7 +199,7 @@ function renderHtml({ lead, naics, tariff, econ, intel, netPayback, dsireProgram
     </div>
   </div>
 
-  ${intel.urgency ? `<section><div class="urgency">⏰ ${esc(intel.urgency)}</div></section>` : ''}
+  <section>${itcDeadline.htmlBanner()}${intel.urgency && intel.urgency !== itcDeadline.urgencyBanner().detail ? `<div class="urgency" style="margin-top:12px;">⏰ ${esc(intel.urgency)}</div>` : ''}</section>
 
   <section>
     <h2>The Property</h2>
