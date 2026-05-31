@@ -937,6 +937,7 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
   const token = localStorage.getItem('wl_token') ?? '';
   const invoiceUrl = `/jobs/${job.id}/invoice?token=${encodeURIComponent(token)}`;
   const workOrderUrl = api.getWorkOrderUrl(job.id);
+  const completionReceiptUrl = api.getCompletionReceiptUrl(job.id);
 
   async function doSend() {
     if (!sendEmail.trim()) return;
@@ -975,6 +976,15 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
             style={{ fontSize: 12, textDecoration: 'none' }}
           >
             🗂 Work Order
+          </a>
+          <a
+            href={completionReceiptUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn"
+            style={{ fontSize: 12, textDecoration: 'none', color: '#10b981', border: '1px solid #10b98130', background: '#10b98112' }}
+          >
+            ✅ Completion Receipt
           </a>
           <a
             href={invoiceUrl}

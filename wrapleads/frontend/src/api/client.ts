@@ -1926,6 +1926,10 @@ export const api = {
     const token = getToken();
     return `/jobs/${jobId}/work-order?token=${encodeURIComponent(token || '')}`;
   },
+  getCompletionReceiptUrl: (jobId: number) => {
+    const token = getToken();
+    return `/jobs/${jobId}/completion-receipt?token=${encodeURIComponent(token || '')}`;
+  },
   sendInvoice: (jobId: number, opts: { toEmail: string; toName?: string }) =>
     authFetch<{ ok: boolean; invoiceNum: string }>(
       `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }

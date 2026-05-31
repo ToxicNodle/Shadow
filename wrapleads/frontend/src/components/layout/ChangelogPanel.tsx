@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '✅ Completion Receipt — Client Sign-Off at Vehicle Pickup',
+    body: 'Every job in the Jobs view now has a "Completion Receipt" button alongside the Work Order and Invoice. Click it to open a print-ready document designed to be signed by the client at vehicle pickup. The receipt includes: client name and contact info, service type and vehicle details, a 6-item QC confirmation checklist (wrap installed to spec, edges sealed, vehicle cleaned), pre-existing damage notes, warranty terms (2-year material and workmanship coverage), and a full care-and-maintenance guide (hand-wash only, no pressure washing, no harsh chemicals, park in shade). The payment summary shows total, amount paid, and balance due — with a green "PAID" stamp if the account is settled. Bottom of the document has three signature lines for the client: Signature, Printed Name, and Date — plus a Shop Representative signature block pre-filled with your name. The receipt number (CR-XXXXX) is unique per job. Protects you from post-delivery disputes and gives clients a professional, branded document at every handoff.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🗂 Installer Work Order — Print-Ready Job Sheet for Your Install Crew',
     body: 'Every job in the Jobs view now has a "Work Order" button in the Invoice tab. Click it to open a print-ready HTML page designed to be printed and handed to your install crew before they show up to a job. The work order includes: client name and contact info, scheduled install date, vehicle type and count, crew size, material specification, job revenue and margin (internal, marked clearly), design notes and special instructions, a 9-item pre-install checklist (vehicle cleaned, temperature check, damage documentation, material confirmation, design file confirmation, etc.), and signature blocks for installer sign-off and owner QC. The work order number (WO-XXXXX) is unique per job. "Print / Save as PDF" button at the bottom uses the browser\'s native print. No email required — just hand the paper to your installer.',
   },

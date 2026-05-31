@@ -9818,6 +9818,290 @@ app.get('/jobs/:id/work-order', invoiceAuthMiddleware, async (req, res) => {
   }
 });
 
+// GET /jobs/:id/completion-receipt — client-facing delivery sign-off document
+app.get('/jobs/:id/completion-receipt', invoiceAuthMiddleware, async (req, res) => {
+  try {
+    const uid   = String(req.user.id);
+    const jobId = parseInt(req.params.id, 10);
+
+    const jobR = await pool.query(
+      `SELECT j.*, u.company_name, u.name AS owner_name, u.email AS owner_email,
+              u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobR.rows.length) return res.status(404).send('<h2>Completion receipt not found</h2>');
+    const job      = jobR.rows[0];
+    const settings = typeof job.settings_json === 'string' ? JSON.parse(job.settings_json) : (job.settings_json || {});
+
+    let contactName = '', contactPhone = '', contactEmail = '';
+    if (job.lead_id) {
+      const lr = await pool.query(
+        `SELECT contact_name, phone, email FROM leads WHERE id=$1 LIMIT 1`, [job.lead_id]
+      );
+      if (lr.rows.length) {
+        contactName  = lr.rows[0].contact_name || '';
+        contactPhone = lr.rows[0].phone || '';
+        contactEmail = lr.rows[0].email || '';
+      }
+    }
+
+    const shopName    = job.company_name || settings.companyName || 'Your Shop';
+    const shopPhone   = settings.phone   || '';
+    const shopAddress = [settings.street, settings.city, settings.state].filter(Boolean).join(', ');
+    const accent      = '#f4551c';
+
+    const CR_NUM   = `CR-${String(job.id).padStart(5, '0')}`;
+    const today    = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const installDateDisplay = job.install_date || job.scheduled_install_date
+      ? new Date(job.install_date || job.scheduled_install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+      : 'See job record';
+
+    const CAT_LABEL = {
+      fleet: 'Fleet Wrap', dinoc: 'DI-NOC Architectural Film', colorchange: 'Full Color Change',
+      construction: 'Construction Fleet Wrap', racing: 'Motorsport Livery', reatec: 'Rea-Tec Film',
+      design: 'Custom Design Wrap', wallgraphics: 'Wall Graphics', gc_referral: 'Commercial Graphics',
+    };
+    const catLabel = CAT_LABEL[job.wrap_category] || job.wrap_category || 'Vehicle Wrap';
+
+    const VT_LABEL = {
+      cargo_van_standard: 'Cargo Van', cargo_van_high_roof: 'High-Roof Van / Sprinter',
+      box_truck_16: '16ft Box Truck', box_truck_24: '24ft Box Truck',
+      semi_full: 'Semi + 53ft Trailer', semi_cab_only: 'Semi Cab (No Trailer)',
+      pickup_truck: 'Full-Size Pickup Truck', suv_large: 'Large SUV / Crossover',
+      sedan: 'Sedan', minivan: 'Minivan / Passenger Van',
+      bus_school: 'School / Transit Bus', flatbed: 'Flatbed Truck', other: 'Vehicle',
+    };
+    const vtLabel = VT_LABEL[job.vehicle_type] || job.vehicle_type || 'Vehicle';
+
+    const revenue    = Number(job.job_revenue)  || 0;
+    const amountPaid = Number(job.amount_paid)  || 0;
+    const balance    = Math.max(0, revenue - amountPaid);
+    const isPaidFull = revenue > 0 && balance === 0;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Completion Receipt ${CR_NUM} — ${he(job.company)}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:#111;background:#fff;padding:32px}
+  @media print{body{padding:0} .no-print{display:none} .page{padding:24px}}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid ${accent}}
+  .shop-name{font-size:22px;font-weight:900;color:${accent};letter-spacing:-0.5px}
+  .shop-meta{font-size:11px;color:#555;line-height:1.6}
+  .cr-meta{text-align:right}
+  .cr-num{font-size:18px;font-weight:800;color:#111}
+  .cr-date{font-size:11px;color:#777;margin-top:2px}
+  .badge{display:inline-block;background:${accent};color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:.06em;margin-left:6px;vertical-align:middle}
+  .badge-green{background:#10b981}
+  .section{margin-bottom:20px}
+  .section-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:${accent};margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #eee}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .field{margin-bottom:8px}
+  .field-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:2px}
+  .field-value{font-size:13px;font-weight:600;color:#111}
+  .field-value.big{font-size:16px;font-weight:900}
+  .care-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+  .care-item{display:flex;align-items:flex-start;gap:6px;font-size:12px;line-height:1.5;color:#333}
+  .care-dot{width:5px;height:5px;border-radius:50%;background:${accent};flex-shrink:0;margin-top:5px}
+  .warranty-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:12px 16px}
+  .warranty-header{font-size:12px;font-weight:800;color:#065f46;margin-bottom:4px}
+  .warranty-text{font-size:11px;color:#064e3b;line-height:1.6}
+  .notes-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;min-height:56px;font-size:13px;line-height:1.6;color:#333}
+  .checklist{list-style:none}
+  .checklist li{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f0f0;font-size:13px}
+  .checklist li:last-child{border-bottom:none}
+  .checkbox{width:16px;height:16px;border:2px solid #d1d5db;border-radius:3px;flex-shrink:0}
+  .ack-box{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:12px 16px;margin-bottom:20px}
+  .ack-text{font-size:11px;color:#7c2d12;line-height:1.7}
+  .payment-strip{display:flex;gap:20px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:16px;align-items:center}
+  .pay-item{flex:1}
+  .pay-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:2px}
+  .pay-value{font-size:15px;font-weight:800;color:#111}
+  .pay-value.green{color:#10b981}
+  .pay-value.red{color:#ef4444}
+  .paid-stamp{font-size:22px;font-weight:900;color:#10b981;text-transform:uppercase;letter-spacing:.12em;border:3px solid #10b981;border-radius:6px;padding:4px 14px;display:inline-block;transform:rotate(-2deg)}
+  .sig-section{margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
+  .sig-block{margin-bottom:12px}
+  .sig-line{border-bottom:2px solid #d1d5db;margin-bottom:4px;height:36px}
+  .sig-label{font-size:10px;color:#777;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+  .no-print{margin-top:24px;text-align:center}
+  .print-btn{background:${accent};color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="shop-name">${he(shopName)}</div>
+      <div class="shop-meta">
+        ${shopAddress ? `${he(shopAddress)}<br>` : ''}
+        ${shopPhone ? `${he(shopPhone)}<br>` : ''}
+      </div>
+    </div>
+    <div class="cr-meta">
+      <div class="cr-num">COMPLETION RECEIPT <span style="color:${accent}">${CR_NUM}</span></div>
+      <div class="cr-date">Date Issued: ${today}</div>
+      <div style="margin-top:6px">
+        <span class="badge">${he(catLabel)}</span>
+        ${isPaidFull ? '<span class="badge badge-green">PAID IN FULL</span>' : ''}
+      </div>
+    </div>
+  </div>
+
+  <!-- Client + Job Info -->
+  <div class="grid-2" style="margin-bottom:20px">
+    <div class="section">
+      <div class="section-title">Client</div>
+      <div class="field">
+        <div class="field-label">Company</div>
+        <div class="field-value big">${he(job.company)}</div>
+      </div>
+      ${contactName ? `<div class="field"><div class="field-label">Contact</div><div class="field-value">${he(contactName)}</div></div>` : ''}
+      ${contactPhone ? `<div class="field"><div class="field-label">Phone</div><div class="field-value">${he(contactPhone)}</div></div>` : ''}
+      ${contactEmail ? `<div class="field"><div class="field-label">Email</div><div class="field-value">${he(contactEmail)}</div></div>` : ''}
+    </div>
+
+    <div class="section">
+      <div class="section-title">Work Completed</div>
+      <div class="field">
+        <div class="field-label">Service</div>
+        <div class="field-value">${he(catLabel)}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Vehicle Type</div>
+        <div class="field-value">${he(vtLabel)}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Vehicle Count</div>
+        <div class="field-value big">${job.vehicle_count || 1} vehicle${(job.vehicle_count || 1) > 1 ? 's' : ''}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Install Date</div>
+        <div class="field-value">${installDateDisplay}</div>
+      </div>
+      ${job.material ? `<div class="field"><div class="field-label">Material Applied</div><div class="field-value">${he(job.material)}</div></div>` : ''}
+    </div>
+  </div>
+
+  <!-- QC Confirmation (installer-signed at delivery) -->
+  <div class="section">
+    <div class="section-title">Quality Confirmation — Verified at Delivery</div>
+    <ul class="checklist">
+      <li><div class="checkbox"></div> Wrap installed to approved design — all panels complete</li>
+      <li><div class="checkbox"></div> Edges sealed — no lifting, bubbling, or exposed adhesive</li>
+      <li><div class="checkbox"></div> Trim pieces, mirrors, and door handles addressed</li>
+      <li><div class="checkbox"></div> No visible silvering, fish-eyes, or stretch defects</li>
+      <li><div class="checkbox"></div> Vehicle surface cleaned and debris removed post-install</li>
+      <li><div class="checkbox"></div> Client walkthrough completed — no outstanding concerns noted</li>
+    </ul>
+  </div>
+
+  <!-- Pre-Existing Damage Notes -->
+  <div class="section">
+    <div class="section-title">Pre-Existing Damage / Notes</div>
+    <div class="notes-box">${job.notes ? he(job.notes).replace(/\n/g,'<br>') : '<span style="color:#aaa">None documented — vehicle delivered in standard condition.</span>'}</div>
+  </div>
+
+  <!-- Warranty -->
+  <div class="section">
+    <div class="section-title">Warranty &amp; Coverage</div>
+    <div class="warranty-box">
+      <div class="warranty-header">2-Year Material &amp; Workmanship Warranty</div>
+      <div class="warranty-text">
+        ${he(shopName)} warrants that materials and workmanship are free from defects under normal use and exposure for <strong>24 months</strong> from the installation date. Coverage includes edge lifting, delamination, and print failure under standard conditions. Coverage does not apply to damage caused by pressure washing, chemical cleaners, abrasion, improper vehicle modifications, or unreported pre-existing surface defects.
+      </div>
+    </div>
+  </div>
+
+  <!-- Care Instructions -->
+  <div class="section">
+    <div class="section-title">Care &amp; Maintenance Instructions</div>
+    <div class="care-grid">
+      <div class="care-item"><div class="care-dot"></div><span><strong>Hand wash only</strong> with mild soap and water</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>No pressure washers</strong> — forces water under edges</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>No automated brush car washes</strong> — damages surface</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>No harsh chemicals</strong> — petroleum-based, acid, or solvent</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>Park in shade</strong> when possible — prolongs color vibrancy</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>Report edge lifting early</strong> — small repairs prevent full replacement</span></div>
+    </div>
+  </div>
+
+  <!-- Payment Summary -->
+  ${revenue > 0 ? `
+  <div class="section">
+    <div class="section-title">Payment Summary</div>
+    <div class="payment-strip">
+      <div class="pay-item"><div class="pay-label">Job Total</div><div class="pay-value">$${revenue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="pay-item"><div class="pay-label">Amount Paid</div><div class="pay-value green">$${amountPaid.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="pay-item"><div class="pay-label">Balance Due</div><div class="pay-value ${balance > 0 ? 'red' : 'green'}">$${balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      ${isPaidFull ? `<div style="margin-left:auto"><div class="paid-stamp">PAID</div></div>` : ''}
+    </div>
+  </div>` : ''}
+
+  <!-- Client Acknowledgment -->
+  <div class="ack-box">
+    <div class="ack-text">
+      <strong>Client Acknowledgment:</strong> By signing below, I confirm that I have inspected the vehicle(s) listed above and accept them in the condition described. I acknowledge receipt of care and maintenance instructions and understand that failure to follow care guidelines may void the warranty. Any concerns not noted above are accepted as-is. This document serves as the final delivery receipt for the wrap installation services performed by ${he(shopName)}.
+    </div>
+  </div>
+
+  <!-- Signatures -->
+  <div class="sig-section">
+    <div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Client Signature</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Printed Name</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Date</div>
+      </div>
+    </div>
+    <div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Shop Representative Signature</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line" style="padding-top:6px"><span style="font-size:12px;color:#555">${he(job.owner_name || shopName)}</span></div>
+        <div class="sig-label">Printed Name</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Date</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="no-print" style="margin-top:32px">
+    <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `inline; filename="completion-receipt-${CR_NUM}.html"`);
+    res.send(html);
+  } catch (e) {
+    console.error('[completion-receipt]', e.message);
+    res.status(500).send('<h2>Error generating completion receipt</h2>');
+  }
+});
+
 // POST /jobs/:id/send-invoice — email the invoice to the client contact
 app.post('/jobs/:id/send-invoice', authMiddleware, async (req, res) => {
   try {
