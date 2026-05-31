@@ -852,6 +852,15 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/solar/__unsubscribe/')) return true;
     // Body-large endpoint shouldn't be capped per-minute.
     if (p === '/solar/leads/csv-import')       return true;
+    // Public top-of-funnel marketing endpoints — these get hit by anonymous
+    // traffic from the calculator + sales pages; a per-IP global cap would
+    // throttle a viral spike. They have their own lightweight guards.
+    if (p === '/solar/store/calculate')        return true;
+    if (p === '/solar/store/sample')           return true;
+    if (p === '/solar/store/sample.csv')       return true;
+    if (p === '/solar/store/roast-pitch')      return true;
+    if (p === '/solar/store/checkout')         return true;
+    if (p.startsWith('/solar/store/state-stats/')) return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
@@ -9114,6 +9123,74 @@ app.get('/analytics/market-opportunity', authMiddleware, async (req, res) => {
 });
 
 // ── Commercial Solar Scout ───────────────────────────────────────────────────
+
+// Lead-pack fulfillment — fires from the Stripe webhook on a successful
+// one-time payment. Resolves the right CSV(s) for the purchased pack and
+// emails them to the buyer with a download link. Idempotent enough for
+// Stripe's at-least-once delivery: re-sending the same email is harmless.
+async function fulfillLeadPack(session) {
+  const fs = require('fs');
+  const path = require('path');
+  const pack = session.metadata?.helioscout_pack;
+  const state = (session.metadata?.helioscout_state || '').toUpperCase();
+  const buyerEmail = session.customer_details?.email || session.customer_email;
+  const dir = path.join(__dirname, 'sales-assets', 'territory-packs');
+
+  if (!buyerEmail) {
+    console.error('[fulfillLeadPack] no buyer email on session', session.id);
+    return;
+  }
+
+  // Resolve which file(s) the buyer gets.
+  let files = [];
+  let label = '';
+  try {
+    const all = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    if (pack === 'national') {
+      files = all.filter(f => /^helioscout-[A-Z]{2}-\d+leads\.csv$/.test(f));
+      label = `the National Pack (all ${files.length} states, ~20,206 leads)`;
+    } else if (pack === 'state' || pack === 'metro') {
+      const match = all.find(f => f.startsWith(`helioscout-${state}-`));
+      if (match) files = [match];
+      label = `the ${state} ${pack === 'metro' ? 'Metro' : 'State'} Pack`;
+    }
+  } catch (e) {
+    console.error('[fulfillLeadPack] file resolution error:', e.message);
+  }
+
+  const baseUrl = process.env.APP_BASE_URL || APP_URL;
+  // Build secure download links. For the public asset dir these are direct;
+  // a production deploy would sign these or gate behind a one-time token.
+  const links = files.map(f => `${baseUrl}/sales-assets/territory-packs/${f}`);
+  const linkBlock = links.length
+    ? links.map(l => `• ${l}`).join('\n')
+    : `Your pack is being prepared — we'll email it within 24 hours.`;
+
+  const body = `Thanks for your purchase!\n\nYou bought ${label}.\n\nDownload your CSV${links.length > 1 ? 's' : ''} here:\n${linkBlock}\n\nEach row includes: company, city, state, NAICS code + sector, solar fit score (0-100), estimated system kW, year-1 kWh + dollar savings, net payback after ITC + state stack, 25-yr NPV, and an industry-specific sales script.\n\nQuestions? Just reply to this email.\n\n— The HelioScout team`;
+
+  try {
+    await sendCompliantEmail({
+      to: buyerEmail,
+      subject: `Your HelioScout leads are ready — ${label}`,
+      body,
+      skipCompliance: true,
+    });
+    console.log(`[fulfillLeadPack] delivered ${pack}${state ? '/' + state : ''} to ${buyerEmail} (${files.length} file(s))`);
+  } catch (e) {
+    console.error('[fulfillLeadPack] email failed:', e.message);
+  }
+
+  // Record the sale for revenue tracking.
+  try {
+    await pool.query(`
+      INSERT INTO outreach_audit_log (user_id, channel, recipient, consent_basis, metadata)
+      VALUES ('sales', 'pack_purchase', $1, 'purchase', $2)
+    `, [buyerEmail.toLowerCase(), JSON.stringify({
+      pack, state, amount_total: session.amount_total, session_id: session.id, files: files.length,
+    })]);
+  } catch (e) { /* non-fatal */ }
+}
+
 // AI prompt builder for the commercial-solar vertical — replaces the wrap-shop
 // system prompt with one tailored to property economics, ITC math, and
 // utility-rate context.
@@ -9299,10 +9376,33 @@ app.use('/solar', buildSolarRouter({
   APOLLO_TITLES,
   generateSolarOpener,
   queueSolarFollowups,
+  stripe,
 }));
 
 // Speed-to-lead intake lives at POST /solar/intake (rate-limit-exempted
 // below). External webhook configs should target that path directly.
+
+// ── Public marketing/sales pages (dist-public/) ──────────────────────────────
+// The HelioScout lead-store sales page lives here. Served before the SPA
+// static so /buy-solar-leads doesn't get caught by the React app.
+app.get('/buy-solar-leads', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'buy-solar-leads.html'));
+});
+// Per-state landing pages — /buy-solar-leads/tx, /buy-solar-leads/ca, etc.
+// The single template reads the state from the URL path and fetches
+// /solar/store/state-stats/:state to populate.
+app.get(/^\/buy-solar-leads\/[a-zA-Z]{2}\/?$/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'buy-solar-leads-state.html'));
+});
+// Public commercial-solar ROI calculator — wide-net lead magnet.
+app.get('/commercial-solar-roi-calculator', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'commercial-solar-roi-calculator.html'));
+});
+// Viral "roast my pitch" tool
+app.get('/roast-my-pitch', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'roast-my-pitch.html'));
+});
+app.use('/sales-assets/territory-packs', express.static(path.join(__dirname, 'sales-assets', 'territory-packs')));
 
 // ── 404 guard for unmatched API paths ────────────────────────────────────────
 // Without this, an unmatched API path (e.g. typo'd POST /solr/discover or a

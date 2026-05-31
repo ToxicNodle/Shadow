@@ -68,6 +68,7 @@ function buildSolarRouter(deps) {
     sendCompliantEmail, // (item) => Promise<{ id }>
     appBaseUrl,
     APOLLO_TITLES,
+    stripe,             // Stripe SDK instance (may be null when not configured)
   } = deps;
 
   const router = express.Router();
@@ -1212,6 +1213,328 @@ function buildSolarRouter(deps) {
     tick();
   });
 
+  // ── PUBLIC SAMPLE LEAD DELIVERY (top-of-funnel) ──────────────────────
+  // POST /solar/store/sample — visitor on the marketing page submits email
+  // + company, gets the 50-lead sample pack delivered as a CSV attachment.
+  // We capture them as a marketing-funnel lead in their own right.
+  router.post('/store/sample', express.json(), async (req, res) => {
+    const { email, company } = req.body || {};
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Valid email required' });
+    }
+    try {
+      // Log the inbound prospect so we can follow up.
+      await pool.query(`
+        INSERT INTO outreach_audit_log (user_id, channel, recipient, consent_basis, metadata)
+        VALUES ('marketing', 'sample_request', $1, 'opt_in', $2)
+      `, [email.toLowerCase(), JSON.stringify({ company: company || null, kind: 'free_sample_50' })])
+        .catch(() => { /* table may not exist in dev — non-fatal */ });
+
+      // Read the pre-baked sample CSV from disk.
+      const path = require('path');
+      const fs = require('fs');
+      const csvPath = path.join(__dirname, '..', 'sales-assets', 'territory-packs', 'helioscout-sample-50leads.csv');
+      const csv = fs.existsSync(csvPath) ? fs.readFileSync(csvPath, 'utf-8') : '';
+      if (!csv) {
+        console.error('[store/sample] sample CSV missing at', csvPath);
+        return res.status(500).json({ error: 'Sample unavailable — try again shortly' });
+      }
+
+      // Email delivery (best-effort — works only if Resend is configured).
+      try {
+        await sendCompliantEmail({
+          to: email,
+          subject: 'Your 50 free commercial solar leads (HelioScout)',
+          body: `Hi${company ? ' from ' + company : ''},\n\nThanks for grabbing the sample. Attached are 50 fully-enriched commercial solar leads — every row has a NAICS fit score, system-size estimate, 25-year NPV, and a sales script you can lift verbatim.\n\nIf you want the full state pack (your state, all leads) it's $1,497 one-time. The national pack with all 20,206 leads is $4,997.\n\nReply to this email with the state you want and I'll send the Stripe link.\n\n— Jake @ HelioScout`,
+          skipCompliance: true,
+        });
+      } catch (e) { /* logged inside sendCompliantEmail */ }
+
+      // Always return success even if email failed — the user still gets the
+      // direct download URL so the funnel doesn't break in dev environments.
+      res.json({
+        ok: true,
+        download_url: '/solar/store/sample.csv',
+        message: 'Check your inbox in the next 60 seconds. If you do not see it, grab the CSV directly via the download_url.',
+      });
+    } catch (e) {
+      console.error('[store/sample]', e.message);
+      res.status(500).json({ error: 'Could not send sample right now.' });
+    }
+  });
+
+  // Direct-download endpoint so the funnel works even when email delivery is
+  // disabled in dev. Also gives the sales page a backup CTA.
+  router.get('/store/sample.csv', (req, res) => {
+    const path = require('path');
+    const fs = require('fs');
+    const csvPath = path.join(__dirname, '..', 'sales-assets', 'territory-packs', 'helioscout-sample-50leads.csv');
+    if (!fs.existsSync(csvPath)) return res.status(404).json({ error: 'Sample unavailable' });
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="HelioScout-Sample-50-Leads.csv"');
+    fs.createReadStream(csvPath).pipe(res);
+  });
+
+  // ── STRIPE CHECKOUT FOR LEAD PACKS (auto-fulfillment) ────────────────
+  // POST /solar/store/checkout — one-time Stripe Checkout for a lead pack.
+  // On payment success the /stripe/webhook reads the metadata and emails the
+  // buyer the right CSV(s). Pricing via env price IDs (STRIPE_PRICE_METRO /
+  // STRIPE_PRICE_STATE / STRIPE_PRICE_NATIONAL) with inline price_data
+  // fallback so it works in test mode without pre-created products.
+  router.post('/store/checkout', express.json(), async (req, res) => {
+    if (!stripe) return res.status(400).json({ error: 'Payments not configured (no STRIPE_SECRET_KEY)' });
+    const { pack, state, email } = req.body || {};
+    const CATALOG = {
+      metro:    { name: 'HelioScout — Single Metro Pack',  amount: 49700,  envPrice: 'STRIPE_PRICE_METRO' },
+      state:    { name: 'HelioScout — State Pack',         amount: 149700, envPrice: 'STRIPE_PRICE_STATE' },
+      national: { name: 'HelioScout — National Pack (all 20,206 leads)', amount: 499700, envPrice: 'STRIPE_PRICE_NATIONAL' },
+    };
+    const item = CATALOG[pack];
+    if (!item) return res.status(400).json({ error: 'pack must be one of: metro, state, national' });
+    if ((pack === 'state' || pack === 'metro') && !state) {
+      return res.status(400).json({ error: `${pack} pack requires a target state` });
+    }
+    try {
+      const envPriceId = process.env[item.envPrice];
+      const baseUrl = appBaseUrl();
+      const lineItem = envPriceId
+        ? { price: envPriceId, quantity: 1 }
+        : {
+            quantity: 1,
+            price_data: {
+              currency: 'usd',
+              unit_amount: item.amount,
+              product_data: {
+                name: item.name + (state ? ` (${String(state).toUpperCase()})` : ''),
+                description: 'EPA-verified commercial solar leads, NAICS-scored with ROI math + sales scripts.',
+              },
+            },
+          };
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        line_items: [lineItem],
+        success_url: `${baseUrl}/buy-solar-leads?purchase=success&pack=${pack}`,
+        cancel_url: `${baseUrl}/buy-solar-leads?purchase=cancel`,
+        customer_email: email || undefined,
+        metadata: {
+          helioscout_pack: pack,
+          helioscout_state: String(state || '').toUpperCase(),
+          fulfillment: 'lead_pack',
+        },
+      });
+      res.json({ url: session.url });
+    } catch (e) {
+      console.error('[store/checkout]', e.message);
+      res.status(500).json({ error: 'Could not create checkout session' });
+    }
+  });
+
+  // ── PUBLIC ROI CALCULATOR (no auth — top-of-funnel) ─────────────────
+  // POST /solar/store/calculate — anyone can run an ROI estimate on their
+  // own building. Returns the full Monte Carlo + incentive stack so the
+  // public calculator page renders inline. We skip firmographic + Google
+  // Solar API enrichment to avoid burning API quota on anonymous traffic.
+  router.post('/store/calculate', express.json(), async (req, res) => {
+    const { building_sqft, state, naics_code, roof_type, utility, city, zip } = req.body || {};
+    if (!building_sqft || building_sqft < 1000) {
+      return res.status(400).json({ error: 'building_sqft must be at least 1,000' });
+    }
+    try {
+      const solarMath = require('./solar-math');
+      const incentives = require('./solar-incentives');
+      const naicsFitMod = require('./naics-solar-fit');
+      const tariffsMod = require('./solar-tariffs');
+      const monteCarlo = require('./solar-monte-carlo');
+
+      // Per-state mean commercial rate fallback when no specific utility.
+      const STATE_RATE = {
+        AK:0.21,AL:0.13,AR:0.10,AZ:0.13,CA:0.27,CO:0.12,CT:0.22,DC:0.16,DE:0.13,FL:0.12,
+        GA:0.13,HI:0.40,IA:0.10,ID:0.10,IL:0.11,IN:0.13,KS:0.13,KY:0.12,LA:0.10,MA:0.23,
+        MD:0.13,ME:0.18,MI:0.14,MN:0.13,MO:0.11,MS:0.13,MT:0.12,NC:0.10,ND:0.10,NE:0.10,
+        NH:0.20,NJ:0.17,NM:0.12,NV:0.12,NY:0.21,OH:0.12,OK:0.10,OR:0.11,PA:0.13,RI:0.20,
+        SC:0.12,SD:0.11,TN:0.13,TX:0.10,UT:0.10,VA:0.10,VT:0.20,WA:0.10,WI:0.13,WV:0.11,WY:0.11,
+      };
+      const tariff = tariffsMod.lookup(utility);
+      const rate = tariff?.retail_rate_commercial || STATE_RATE[(state || '').toUpperCase()] || 0.13;
+      const fit = naics_code ? naicsFitMod.lookup(naics_code) : null;
+      const econ = solarMath.fullEstimate({
+        buildingSqft: parseInt(building_sqft, 10),
+        roofType: roof_type || 'membrane',
+        latitude: null,
+        utilityRate: rate,
+        estAnnualKwh: null,
+      });
+      const intel = incentives.buildPropertyIntel({
+        state: (state || '').toUpperCase(),
+        city: city || null,
+        zip: zip || null,
+        systemKw: econ.system_kw,
+        annualKwh: econ.annual_kwh,
+        grossCost: econ.gross_cost_usd,
+        tariff,
+        bonuses: {},
+      });
+      // Lighter Monte Carlo for public traffic (1000 runs vs 5000).
+      const sim = monteCarlo.simulate({
+        systemKw: econ.system_kw,
+        year1AnnualKwh: econ.annual_kwh,
+        year1RatePerKwh: rate,
+        netInstallCost: intel.stack.net_cost,
+        runs: 1000,
+      });
+      const netPayback = sim ? sim.payback_years.p50 : null;
+      res.json({
+        ok: true,
+        inputs: { building_sqft, state, naics_code, roof_type, utility },
+        economics: econ,
+        incentive_stack: intel.stack,
+        urgency: intel.urgency,
+        simulation: sim ? { npv: sim.npv, payback_years: sim.payback_years, lcoe_per_kwh: sim.lcoe_per_kwh } : null,
+        net_payback_years_p50: netPayback,
+        naics_fit: fit,
+        tariff,
+        rate_per_kwh: rate,
+        // Funnel cross-sell — point them at the lead pack for their state.
+        cross_sell: state
+          ? { state: state.toUpperCase(), pack_url: `/buy-solar-leads#pricing` }
+          : null,
+      });
+    } catch (e) {
+      console.error('[store/calculate]', e.message);
+      res.status(500).json({ error: 'Calculator unavailable right now' });
+    }
+  });
+
+  // ── "ROAST MY PITCH" — viral lead magnet ─────────────────────────────
+  // POST /solar/store/roast-pitch — installer pastes their cold email,
+  // we rewrite it using a NAICS-aware angle. Captures their email +
+  // industry as a soft lead and demonstrates our intelligence layer.
+  router.post('/store/roast-pitch', express.json(), async (req, res) => {
+    const { email_text, target_naics, target_state, sender_email, sender_company } = req.body || {};
+    if (!email_text || email_text.length < 30) {
+      return res.status(400).json({ error: 'Paste your cold email (at least 30 characters)' });
+    }
+    try {
+      const naicsFitMod = require('./naics-solar-fit');
+      const fit = target_naics ? naicsFitMod.lookup(target_naics) : null;
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        // Deterministic fallback when no AI key — still useful, just less magical.
+        return res.json({
+          ok: true,
+          original: email_text,
+          rewrite: deterministicRewrite(email_text, fit),
+          fit,
+          rewrite_engine: 'deterministic',
+        });
+      }
+      const prompt = `You are a B2B solar sales coach. Rewrite the cold email below so it lands harder for a commercial solar installer reaching out to a prospect in ${target_state || 'US'}, NAICS ${target_naics || 'commercial'} (${fit?.code ? `industry profile: ${fit.kwhDriver}, load profile: ${fit.load_profile}, tax appetite: ${fit.tax_appetite}` : 'generic commercial'}).
+
+Critical constraints:
+- Open with a hyper-specific property/industry hook (no "I hope this finds you well")
+- Reference dollar numbers and payback math the prospect cares about
+- If tax_appetite is "tax_exempt", pitch PPA not direct purchase
+- Use ${fit?.sales_script ? `this proven script as inspiration: "${fit.sales_script}"` : 'an industry-relevant opener'}
+- End with ONE soft CTA (15-min call or "send me your last utility bill")
+- Under 130 words
+
+ORIGINAL EMAIL:
+"""${email_text}"""
+
+Return ONLY a JSON object: {"rewrite": "...", "what_changed": "..."}`;
+
+      const claude = require('node:https');
+      const body = JSON.stringify({
+        model: 'claude-haiku-4-5-20251001', max_tokens: 800,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      const aiText = await new Promise((resolve, reject) => {
+        const req = claude.request({
+          hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+          headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+        }, (r) => { let data = ''; r.on('data', c => data += c); r.on('end', () => resolve(data)); });
+        req.on('error', reject); req.write(body); req.end();
+      });
+      const parsed = JSON.parse(aiText);
+      const raw = parsed.content?.[0]?.text || '';
+      let payload;
+      try { payload = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim()); }
+      catch { payload = { rewrite: raw.slice(0, 1500), what_changed: 'AI returned non-JSON; raw text included.' }; }
+
+      // Soft lead capture
+      if (sender_email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender_email)) {
+        await pool.query(`
+          INSERT INTO outreach_audit_log (user_id, channel, recipient, consent_basis, metadata)
+          VALUES ('marketing', 'roast_pitch', $1, 'opt_in', $2)
+        `, [sender_email.toLowerCase(), JSON.stringify({ company: sender_company || null, target_naics, target_state })])
+          .catch(() => {});
+      }
+      res.json({
+        ok: true,
+        original: email_text,
+        rewrite: payload.rewrite,
+        what_changed: payload.what_changed,
+        fit,
+        rewrite_engine: 'claude',
+      });
+    } catch (e) {
+      console.error('[store/roast-pitch]', e.message);
+      res.status(500).json({ error: 'Roaster unavailable right now' });
+    }
+  });
+
+  // ── STATE PREVIEW — per-state landing-page data ──────────────────────
+  // GET /solar/store/state-stats/:state — public stats for the state landing
+  // pages (count, top NAICS, average fit score). Lightweight cache header.
+  router.get('/store/state-stats/:state', async (req, res) => {
+    const state = (req.params.state || '').toUpperCase();
+    if (!/^[A-Z]{2}$/.test(state)) return res.status(400).json({ error: 'Invalid state' });
+    try {
+      // These match the territory-pack file layout
+      const path = require('path');
+      const fs = require('fs');
+      const dir = path.join(__dirname, '..', 'sales-assets', 'territory-packs');
+      if (!fs.existsSync(dir)) return res.json({ state, count: 0, top_sectors: [], sample: [] });
+      const files = fs.readdirSync(dir).filter(f => f.startsWith(`helioscout-${state}-`));
+      if (!files.length) return res.json({ state, count: 0, top_sectors: [], sample: [] });
+      const file = files[0];
+      const m = file.match(/-(\d+)leads\.csv$/);
+      const count = m ? parseInt(m[1], 10) : 0;
+
+      // Parse the first ~30 rows to extract top sectors + sample
+      const csv = fs.readFileSync(path.join(dir, file), 'utf-8');
+      const lines = csv.split('\n').slice(1, 200).filter(Boolean);
+      const sectorCounts = new Map();
+      let totalScore = 0; let scoreCount = 0;
+      const sample = [];
+      for (const line of lines) {
+        const cols = line.match(/("[^"]*"|[^,]+)/g)?.map(c => c.replace(/^"|"$/g, '')) || [];
+        const [company, city, st, _src, _id, _naics, sector, fit] = cols;
+        if (sector) sectorCounts.set(sector, (sectorCounts.get(sector) || 0) + 1);
+        const fitNum = parseFloat(fit);
+        if (!isNaN(fitNum)) { totalScore += fitNum; scoreCount++; }
+        if (sample.length < 5 && fitNum >= 80) {
+          sample.push({ company, city, sector, fit: fitNum });
+        }
+      }
+      const topSectors = Array.from(sectorCounts.entries())
+        .sort((a, b) => b[1] - a[1]).slice(0, 5)
+        .map(([sector, n]) => ({ sector, n }));
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.json({
+        state,
+        count,
+        avg_fit_score: scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0,
+        top_sectors: topSectors,
+        sample,
+        pack_url: `/buy-solar-leads/${state.toLowerCase()}`,
+      });
+    } catch (e) {
+      console.error('[store/state-stats]', e.message);
+      res.status(500).json({ error: 'Stats unavailable' });
+    }
+  });
+
   // ── SLA DASHBOARD ────────────────────────────────────────────────────
   // Median time-to-first-touch — gamification for speed-to-lead.
   router.get('/sla', authMiddleware, subMiddleware, async (req, res) => {
@@ -1357,6 +1680,21 @@ function startAuctionWorker(pool, deps) {
 
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Fallback "roast" when no AI key is configured. Replaces common cold-email
+// crimes (generic openers, vague CTAs) with concrete language drawn from the
+// matched NAICS profile.
+function deterministicRewrite(originalText, fit) {
+  const opener = fit?.sales_script
+    || (fit?.pitchHook ? `Quick note for ${fit.kwhDriver || 'commercial'} buyers — ${fit.pitchHook}` : null)
+    || 'Quick note about your facility — I have a specific dollar number worth 30 seconds.';
+  const taxLine = fit?.tax_appetite === 'tax_exempt'
+    ? "Since you're tax-exempt, I'd structure this as a PPA (you buy kWh below grid rate, third party owns the panels) — no capex from you."
+    : "Most commercial buyers in your sector are running this as a direct purchase to capture the full 30% ITC + MACRS stack.";
+  const close = "If 15 minutes makes sense this week to walk through actual numbers for your property, send me your last electric bill and I'll come back with a P50/P90 ROI distribution.";
+  return [opener, '', taxLine, '', close, '', '— Sender'].join('\n')
+    + (fit?.pitchHook ? `\n\n(Note: this was auto-rewritten using HelioScout's intelligence layer for ${fit?.code ? 'NAICS ' + fit.code : 'your industry'}. The real magic happens when you paste your prospect list — we score every lead 0-100. Try it at helioscout.io.)` : '');
 }
 
 // Stand-alone HTML page for not-found / sanitized error responses. Keeps the

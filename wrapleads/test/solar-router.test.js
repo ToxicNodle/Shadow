@@ -200,5 +200,48 @@ test('SSE stream endpoint rejects malformed tokens with 404', async () => {
   assert.equal(r.status, 404);
 });
 
+// ── Public store / funnel endpoints ──────────────────────────────────────
+test('public ROI calculator validates building_sqft', async () => {
+  const tooSmall = await post('/solar/store/calculate', { building_sqft: 100, state: 'TX' });
+  assert.equal(tooSmall.status, 400);
+
+  const ok = await post('/solar/store/calculate', { building_sqft: 150000, state: 'TX', naics_code: '493120', roof_type: 'membrane' });
+  assert.equal(ok.status, 200);
+  assert.ok(ok.json.economics.system_kw > 0, 'should compute a system size');
+  assert.ok(ok.json.incentive_stack, 'should return an incentive stack');
+  assert.ok(ok.json.simulation, 'should run a monte carlo simulation');
+  assert.ok(ok.json.rate_per_kwh > 0, 'should resolve a utility rate');
+});
+
+test('public calculator is reachable without auth', async () => {
+  // No Authorization header — must still work (it is top-of-funnel)
+  const r = await post('/solar/store/calculate', { building_sqft: 80000, state: 'CA' });
+  assert.equal(r.status, 200);
+});
+
+test('roast-pitch rejects too-short input, accepts valid', async () => {
+  const tooShort = await post('/solar/store/roast-pitch', { email_text: 'hi' });
+  assert.equal(tooShort.status, 400);
+
+  const ok = await post('/solar/store/roast-pitch', {
+    email_text: 'Hi, we install solar panels for businesses. Great prices. Interested in learning more about savings?',
+    target_naics: '493120', target_state: 'TX',
+  });
+  assert.equal(ok.status, 200);
+  assert.ok(ok.json.rewrite && ok.json.rewrite.length > 30, 'should return a rewrite');
+});
+
+test('store/checkout rejects bad pack + missing stripe', async () => {
+  // The test harness builds the router without a stripe instance, so checkout
+  // should 400 with the "not configured" message.
+  const r = await post('/solar/store/checkout', { pack: 'state', state: 'TX' });
+  assert.equal(r.status, 400);
+});
+
+test('store/checkout validates pack name', async () => {
+  const r = await post('/solar/store/checkout', { pack: 'bogus' });
+  assert.equal(r.status, 400);
+});
+
 // Pure-math + intelligence tests live in solar-smoke.test.js — this file
 // covers route-level + integration concerns only.
