@@ -143,8 +143,8 @@ export default function SettingsModal() {
 
   function f(field: keyof Settings) {
     return {
-      value: local[field],
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+      value: local[field] as string,
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
         setLocal((s) => ({ ...s, [field]: e.target.value })),
     };
   }
@@ -317,6 +317,43 @@ export default function SettingsModal() {
         <div className="field-group">
           <label className="field-label">Monthly Revenue Goal ($)</label>
           <input className="input" type="number" min={0} {...f('monthlyRevenueGoal')} placeholder="10000" />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Speed-to-Lead Auto-Responder</div>
+        <p className="settings-help">When a prospect submits your public quote request form, WrapOS instantly sends them a confirmation email — so no lead goes unanswered. Enabled by default when Resend is configured.</p>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoReplyEnabled !== false}
+              onChange={e => setLocal(s => ({ ...s, autoReplyEnabled: e.target.checked }))}
+            />
+            Auto-reply to inbound quote requests
+          </label>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Expected Response Time</label>
+          <select className="select" {...f('autoReplyResponseTime')}>
+            <option value="">1 business day (default)</option>
+            <option value="a few hours">A few hours</option>
+            <option value="24 hours">24 hours</option>
+            <option value="1 business day">1 business day</option>
+            <option value="2 business days">2 business days</option>
+          </select>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Custom Auto-Reply Message (optional)</label>
+          <textarea
+            className="input"
+            {...f('autoReplyMessage')}
+            placeholder="Thanks for reaching out! We'll review your fleet wrap request and get back to you shortly."
+            rows={3}
+            style={{ resize: 'vertical', minHeight: 72 }}
+          />
+          <p className="settings-help" style={{ marginTop: 4 }}>Leave blank to use the default AI-personalized message.</p>
         </div>
       </div>
 

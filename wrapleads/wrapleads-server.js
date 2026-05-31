@@ -14759,6 +14759,10 @@ app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
     const { name, company, email, phone, vehicle_type, fleet_size, message } = req.body;
     if (!company?.trim()) return res.status(400).json({ error: 'Company is required' });
 
+    const s = user.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+    const fleetInt = parseInt(fleet_size) || 0;
+
     // Create lead
     const leadRes = await pool.query(`
       INSERT INTO leads (user_id, company, contact_name, email, phone, fleet_size, category, status, source, notes)
@@ -14772,10 +14776,108 @@ app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
     await pool.query(`INSERT INTO quote_requests (user_id,name,company,email,phone,vehicle_type,fleet_size,message,lead_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [String(user.id), name||'', company.trim(), email||'', phone||'', vehicle_type||'', fleet_size||'', message||'', leadId]);
 
+    // Speed-to-lead auto-responder — immediately confirm receipt to prospect
+    const autoReplyEnabled = s.autoReplyEnabled !== false; // default on
+    const resendKey = process.env.RESEND_API_KEY;
+    if (autoReplyEnabled && email && resendKey) {
+      // Build talking points for shop owner via AI (non-blocking)
+      let talkingPoints = '';
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
+      if (anthropicKey) {
+        try {
+          const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 300,
+              messages: [{
+                role: 'user',
+                content: `A prospect just submitted a quote request. Generate 3 short, specific talking points for the shop owner to use when they call back.
+
+Company: ${company.trim()}
+Contact: ${name || 'unknown'}
+Vehicle type: ${vehicle_type || 'not specified'}
+Fleet size: ${fleet_size || 'not specified'}
+Message: ${message || 'none'}
+
+Return ONLY a bulleted list (3 bullets, max 15 words each). No intro, no sign-off.`,
+              }],
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (aiRes.ok) {
+            const aiData = await aiRes.json();
+            talkingPoints = aiData.content?.[0]?.text?.trim() || '';
+          }
+        } catch { /* non-critical */ }
+      }
+
+      // Save talking points as a lead activity note
+      if (talkingPoints) {
+        await pool.query(
+          `INSERT INTO lead_activities (user_id, lead_id, type, subject, body, created_at)
+           VALUES ($1, $2, 'note', 'AI Talking Points (Inbound Lead)', $3, NOW())`,
+          [String(user.id), leadId, `Call-back talking points:\n\n${talkingPoints}`]
+        );
+      }
+
+      // Auto-reply email to prospect
+      const firstName = name ? name.split(' ')[0] : null;
+      const greeting = firstName ? `Hi ${firstName},` : 'Hi there,';
+      const responseTime = s.autoReplyResponseTime || '24 hours';
+      const portfolioUrl = s.portfolioUrl ? `\n\nWhile you wait, browse our recent work: ${s.portfolioUrl}` : '';
+      const customMessage = s.autoReplyMessage || '';
+
+      const emailHtml = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f8f8f8;font-family:system-ui,-apple-system,sans-serif">
+<div style="max-width:540px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07)">
+  <div style="background:linear-gradient(135deg,#f4551c,#ff7b4a);padding:28px 32px">
+    <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;letter-spacing:-0.5px">${shopName}</h1>
+    <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:13px">Vehicle Wraps &amp; Graphics</p>
+  </div>
+  <div style="padding:32px">
+    <p style="margin:0 0 16px;font-size:15px;color:#111;line-height:1.5">${greeting}</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#333;line-height:1.6">
+      ${customMessage || `Thanks for reaching out! We've received your quote request for <strong>${company.trim()}</strong>${vehicle_type ? ` (${vehicle_type}${fleetInt > 0 ? `, ${fleetInt} vehicle${fleetInt !== 1 ? 's' : ''}` : ''})` : ''} and we're excited to learn more about your project.`}
+    </p>
+    <p style="margin:0 0 24px;font-size:15px;color:#333;line-height:1.6">
+      A member of our team will follow up within <strong>${responseTime}</strong>.${portfolioUrl ? '' : ' In the meantime, feel free to reach us at ' + (s.senderPhone || s.senderEmail || 'the contact info on our site') + '.'}
+    </p>
+    ${portfolioUrl ? `<p style="margin:0 0 24px;font-size:14px;color:#555">${portfolioUrl}</p>` : ''}
+    <div style="background:#f9f9f9;border-radius:8px;padding:16px 20px;margin-bottom:24px">
+      <p style="margin:0;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Your Request Summary</p>
+      <p style="margin:6px 0 0;font-size:14px;color:#333"><strong>Company:</strong> ${company.trim()}</p>
+      ${vehicle_type ? `<p style="margin:4px 0 0;font-size:14px;color:#333"><strong>Vehicle type:</strong> ${vehicle_type}</p>` : ''}
+      ${fleetInt > 0 ? `<p style="margin:4px 0 0;font-size:14px;color:#333"><strong>Fleet size:</strong> ${fleetInt} vehicle${fleetInt !== 1 ? 's' : ''}</p>` : ''}
+      ${message ? `<p style="margin:4px 0 0;font-size:14px;color:#555"><em>"${message.slice(0, 120)}${message.length > 120 ? '…' : ''}"</em></p>` : ''}
+    </div>
+    <p style="margin:0;font-size:13px;color:#999;line-height:1.5">
+      — The ${shopName} Team${s.senderPhone ? '<br>' + s.senderPhone : ''}${s.senderEmail ? '<br>' + s.senderEmail : ''}
+    </p>
+  </div>
+</div>
+</body></html>`;
+
+      // Send non-blocking
+      const { Resend } = require('resend');
+      const resend = new Resend(resendKey);
+      const fromDomain = s.senderEmail?.split('@')[1];
+      const fromAddr = fromDomain ? `${shopName} <noreply@${fromDomain}>` : `${shopName} <onboarding@resend.dev>`;
+      resend.emails.send({
+        from: fromAddr,
+        to: [email],
+        subject: `Got your quote request — ${shopName} will follow up within ${responseTime}`,
+        html: emailHtml,
+      }).catch(() => { /* non-critical */ });
+    }
+
+    // Notify shop owner — include talking points if generated
     await createNotification(String(user.id), {
       type: 'new_lead',
-      title: `📥 New inbound quote request — ${company.trim()}`,
-      body: `${name ? name + ' · ' : ''}${email || phone || 'No contact info'}${vehicle_type ? ' · ' + vehicle_type : ''}`,
+      title: `📥 New inbound quote request — ${company.trim()}${fleetInt >= 10 ? ' 🔥' : ''}`,
+      body: `${name ? name + ' · ' : ''}${email || phone || 'No contact info'}${vehicle_type ? ' · ' + vehicle_type : ''}${fleetInt > 0 ? ` · ${fleetInt} vehicles` : ''}`,
       metadata: { lead_id: leadId },
     });
 

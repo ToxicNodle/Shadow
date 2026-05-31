@@ -169,6 +169,9 @@ export interface Settings {
   avgDealValue: string;
   depositPaymentLink: string;
   hunterApiKey: string;
+  autoReplyEnabled: boolean;
+  autoReplyResponseTime: string;
+  autoReplyMessage: string;
 }
 
 export interface CarrierSearchParams {
@@ -299,6 +302,9 @@ export const DEFAULT_SETTINGS: Settings = {
   avgDealValue: '3500',
   depositPaymentLink: '',
   hunterApiKey: '',
+  autoReplyEnabled: true,
+  autoReplyResponseTime: '',
+  autoReplyMessage: '',
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────

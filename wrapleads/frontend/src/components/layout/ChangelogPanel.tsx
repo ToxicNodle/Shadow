@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'May 2026',
     tag: 'new',
+    title: '⚡ Speed-to-Lead Auto-Responder — Instant Reply to Every Inbound Quote Request',
+    body: 'Every prospect who submits your public quote request form now gets an instant confirmation email — within seconds, before any competitor can respond. WrapOS sends a personalized HTML email with their request summary, your expected response time, and your portfolio link. If AI is configured, Claude generates 3 call-back talking points from the prospect\'s message and saves them as a note on the lead — so when you do call, you sound like you\'ve already done your homework. Enabled by default. Configure in Settings → Speed-to-Lead: toggle on/off, set expected response time, add a custom message. The shop owner notification now flags large fleets (10+ vehicles) with 🔥 for immediate prioritization.',
+  },
+  {
+    date: 'May 2026',
+    tag: 'new',
     title: '🗺️ National Lead Coverage — 18-State SOS + Automated Google Places Sweep',
     body: 'WrapOS\'s lead database now supports Secretary of State registry data from 18 US states — up from 6 Midwest states. New additions: Texas, California, Florida, Georgia, North Carolina, Pennsylvania, Washington, Colorado, Arizona, New York, Virginia, and Missouri. Each state\'s SOS bulk CSV format is supported with header aliasing (different portals use different column names). Use `npm run ingest:sos <state> <file>` to import any state\'s CSV. A new Google Places National Sweep script (`npm run ingest:sweep`) automatically sweeps 30 major metros across all US regions (south/west/east/midwest) with 10 fleet business categories — trucking, HVAC, plumbing, construction, landscaping, food trucks, and more. Run it by region or all at once. The new "Lead Database Coverage" card in Analytics shows total records by source and state, a color-coded US heatmap, source breakdown bars, and recent ingest run history.',
   },
