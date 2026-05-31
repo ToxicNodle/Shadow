@@ -15852,6 +15852,258 @@ Return ONLY a bulleted list (3 bullets, max 15 words each). No intro, no sign-of
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Fleet Maintenance Dashboard — shareable wrap history + care guide for fleet clients ──
+
+// POST /portal-links/:leadId/fleet-access — return (or create) a portal link and fleet URL
+app.post('/portal-links/:leadId/fleet-access', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.leadId);
+    const baseUrl = process.env.APP_BASE_URL || process.env.APP_URL || 'https://wrapos.app';
+
+    // Reuse the existing portal_links token for this lead
+    let link = (await pool.query(
+      'SELECT token FROM portal_links WHERE lead_id=$1 AND user_id=$2',
+      [leadId, uid]
+    )).rows[0];
+    if (!link) {
+      const token = require('crypto').randomBytes(16).toString('hex');
+      const r = await pool.query(
+        `INSERT INTO portal_links (user_id, lead_id, token, label) VALUES ($1,$2,$3,'Fleet Dashboard') RETURNING token`,
+        [uid, leadId, token]
+      );
+      link = r.rows[0];
+    }
+    res.json({ ok: true, url: `${baseUrl}/fleet/${link.token}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /fleet/:token — public fleet maintenance dashboard (no auth)
+app.get('/fleet/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const linkR = await pool.query(
+      `SELECT pl.user_id, pl.lead_id, l.company, l.city, l.state, l.phone, l.contact_name
+       FROM portal_links pl JOIN leads l ON l.id=pl.lead_id
+       WHERE pl.token=$1`, [token]
+    );
+    if (!linkR.rows[0]) return res.status(404).send('<h1>Dashboard not found</h1>');
+    const link = linkR.rows[0];
+
+    const [userR, jobsR] = await Promise.all([
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [link.user_id]),
+      pool.query(`
+        SELECT j.id, j.company, j.vehicle_type, j.vehicle_count, j.wrap_category,
+               j.material, j.install_date, j.life_years, j.notes,
+               EXTRACT(EPOCH FROM (NOW() - j.install_date::timestamptz)) / 86400 AS days_installed,
+               (SELECT url FROM job_photos WHERE job_id=j.id AND photo_type='after' ORDER BY created_at DESC LIMIT 1) AS after_photo_url
+        FROM installed_jobs j
+        WHERE j.user_id=$1 AND j.lead_id=$2
+        ORDER BY j.install_date DESC
+      `, [link.user_id, link.lead_id]),
+    ]);
+    const s = userR.rows[0]?.settings_json || {};
+    const jobs = jobsR.rows;
+    const he = (str) => String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    const shopName = he(s.companyName || 'Your Wrap Shop');
+    const shopPhone = he(s.phone || '');
+    const shopEmail = he(s.senderEmail || '');
+    const shopColor = '#f4551c';
+    const company = he(link.company || 'Your Fleet');
+    const portfolioUrl = s.shopToken ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${s.shopToken}` : null;
+
+    function wrapAge(days) {
+      if (days < 30) return `${Math.round(days)}d`;
+      if (days < 365) return `${Math.round(days / 30)}mo`;
+      return `${(days / 365).toFixed(1)}yr`;
+    }
+
+    function agePercent(daysInstalled, lifeYears) {
+      return Math.min(100, Math.round((daysInstalled / (lifeYears * 365)) * 100));
+    }
+
+    function ageColor(pct) {
+      if (pct < 50) return '#10b981';
+      if (pct < 80) return '#f59e0b';
+      return '#ef4444';
+    }
+
+    const categoryLabel = {
+      fleet: 'Fleet Wrap', dinoc: 'DI-NOC Film', colorchange: 'Color Change', design: 'Custom Design',
+      construction: 'Fleet Wrap', racing: 'Race Livery', gc_referral: 'Commercial', reatec: 'Rea-Tec Film',
+      wallgraphics: 'Wall Graphics',
+    };
+
+    const jobCards = jobs.map((j) => {
+      const pct = agePercent(j.days_installed, j.life_years);
+      const color = ageColor(pct);
+      const dueDate = new Date(new Date(j.install_date).getTime() + j.life_years * 365 * 86400000);
+      const isDue = pct >= 80;
+      return `
+        <div class="job-card${isDue ? ' due' : ''}">
+          ${j.after_photo_url ? `<img class="job-photo" src="${he(j.after_photo_url)}" alt="Wrap photo" loading="lazy">` : `<div class="job-photo-placeholder"><span>📷</span></div>`}
+          <div class="job-body">
+            <div class="job-header">
+              <span class="job-label">${he(categoryLabel[j.wrap_category] || j.wrap_category)}</span>
+              ${isDue ? '<span class="due-badge">Re-order Soon</span>' : ''}
+            </div>
+            <div class="job-title">${he(j.vehicle_count)} ${he(j.vehicle_type)}${j.vehicle_count !== 1 ? 's' : ''}</div>
+            <div class="job-meta">${he(j.material || 'Standard vinyl')} · Installed ${new Date(j.install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })}</div>
+            <div class="age-row">
+              <div class="age-bar-bg"><div class="age-bar" style="width:${pct}%;background:${color}"></div></div>
+              <span class="age-pct" style="color:${color}">${wrapAge(j.days_installed)} / ${j.life_years}yr (${pct}%)</span>
+            </div>
+            <div class="job-footer">Expected re-order: ${dueDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const noJobsMsg = jobs.length === 0
+      ? `<div class="empty-msg">No wrap records on file yet. Contact ${shopName} to log your fleet history.</div>`
+      : '';
+
+    const totalVehicles = jobs.reduce((s, j) => s + j.vehicle_count, 0);
+    const oldestPct = jobs.length ? Math.max(...jobs.map((j) => agePercent(j.days_installed, j.life_years))) : 0;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet Wrap Dashboard — ${company}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e2e8f0;min-height:100vh}
+  .header{background:linear-gradient(135deg,#111118,#1a1a24);border-bottom:1px solid rgba(244,85,28,0.2);padding:20px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  .shop-brand{display:flex;align-items:center;gap:12px}
+  .shop-dot{width:36px;height:36px;border-radius:8px;background:${shopColor};display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;color:#fff;flex-shrink:0}
+  .shop-name{font-size:14px;font-weight:800;color:#f1f5f9}
+  .shop-sub{font-size:11px;color:#64748b;margin-top:1px}
+  .header-contact a{font-size:12px;color:${shopColor};text-decoration:none;font-weight:600}
+  .hero{background:#111118;padding:28px 24px;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .hero-company{font-size:26px;font-weight:900;color:#f1f5f9;letter-spacing:-0.5px;margin-bottom:4px}
+  .hero-sub{font-size:13px;color:#64748b}
+  .stats-row{display:flex;gap:16px;margin-top:16px;flex-wrap:wrap}
+  .stat{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:12px 16px;min-width:100px}
+  .stat-num{font-size:24px;font-weight:900;color:#f1f5f9;letter-spacing:-1px}
+  .stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-top:2px}
+  .section{padding:24px}
+  .section-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:14px}
+  .job-card{background:#111118;border:1px solid rgba(255,255,255,0.07);border-radius:12px;overflow:hidden;margin-bottom:12px;display:flex;gap:0;flex-direction:column}
+  .job-card.due{border-color:rgba(239,68,68,0.35)}
+  .job-photo{width:100%;height:160px;object-fit:cover;display:block}
+  .job-photo-placeholder{width:100%;height:100px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-size:24px}
+  .job-body{padding:14px}
+  .job-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .job-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;background:rgba(244,85,28,.12);color:${shopColor};padding:2px 7px;border-radius:4px}
+  .due-badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;background:rgba(239,68,68,.12);color:#ef4444;padding:2px 7px;border-radius:4px;margin-left:auto}
+  .job-title{font-size:15px;font-weight:800;color:#f1f5f9;margin-bottom:3px}
+  .job-meta{font-size:11px;color:#64748b;margin-bottom:10px}
+  .age-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .age-bar-bg{flex:1;height:5px;background:rgba(255,255,255,0.07);border-radius:3px;overflow:hidden}
+  .age-bar{height:100%;border-radius:3px;transition:width .3s}
+  .age-pct{font-size:11px;font-weight:700;flex-shrink:0}
+  .job-footer{font-size:11px;color:#475569}
+  .care-card{background:#111118;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:16px;margin-bottom:12px}
+  .care-title{font-size:13px;font-weight:700;color:#f1f5f9;margin-bottom:8px}
+  .care-list{list-style:none;display:flex;flex-direction:column;gap:6px}
+  .care-list li{font-size:12px;color:#94a3b8;line-height:1.5;padding-left:20px;position:relative}
+  .care-list li::before{content:'✓';position:absolute;left:0;color:#10b981;font-weight:700}
+  .cta{background:linear-gradient(135deg,rgba(244,85,28,.12),rgba(244,85,28,.06));border:1px solid rgba(244,85,28,.25);border-radius:14px;padding:24px;text-align:center;margin:16px}
+  .cta-title{font-size:18px;font-weight:900;color:#f1f5f9;margin-bottom:6px}
+  .cta-sub{font-size:13px;color:#64748b;margin-bottom:16px}
+  .cta-btn{display:inline-block;background:${shopColor};color:#fff;font-size:14px;font-weight:800;padding:12px 28px;border-radius:9px;text-decoration:none;transition:opacity .15s}
+  .cta-btn:hover{opacity:.88}
+  .empty-msg{font-size:13px;color:#64748b;padding:24px;text-align:center}
+  @media(min-width:600px){.job-card{flex-direction:row}.job-photo{width:160px;height:auto}.job-photo-placeholder{width:120px;height:auto}}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="shop-brand">
+      <div class="shop-dot">${shopName[0].toUpperCase()}</div>
+      <div>
+        <div class="shop-name">${shopName}</div>
+        <div class="shop-sub">Fleet Wrap Services</div>
+      </div>
+    </div>
+    <div class="header-contact">
+      ${shopPhone ? `<a href="tel:${shopPhone}">${shopPhone}</a>` : ''}
+      ${shopEmail && shopPhone ? ' · ' : ''}
+      ${shopEmail ? `<a href="mailto:${shopEmail}">${shopEmail}</a>` : ''}
+    </div>
+  </div>
+
+  <div class="hero">
+    <div class="hero-company">${company} Fleet</div>
+    <div class="hero-sub">Wrap history, maintenance guide, and re-order schedule</div>
+    ${jobs.length > 0 ? `<div class="stats-row">
+      <div class="stat"><div class="stat-num">${jobs.length}</div><div class="stat-label">Wrap Jobs</div></div>
+      <div class="stat"><div class="stat-num">${totalVehicles}</div><div class="stat-label">Vehicles Wrapped</div></div>
+      ${oldestPct >= 80 ? `<div class="stat"><div class="stat-num" style="color:#ef4444">⚠ Re-order</div><div class="stat-label">Action Needed</div></div>` : `<div class="stat"><div class="stat-num" style="color:#10b981">${100 - oldestPct}%</div><div class="stat-label">Life Remaining</div></div>`}
+    </div>` : ''}
+  </div>
+
+  <div class="section">
+    <div class="section-title">Installed Wraps</div>
+    ${jobCards}
+    ${noJobsMsg}
+  </div>
+
+  <div class="section">
+    <div class="section-title">Wrap Care Guide</div>
+    <div class="care-card">
+      <div class="care-title">Daily & Weekly Care</div>
+      <ul class="care-list">
+        <li>Hand-wash with mild soap and a soft cloth — never use abrasive pads</li>
+        <li>Rinse thoroughly; avoid high-pressure sprayers within 12" of wrap edges</li>
+        <li>Remove bird droppings and fuel spills promptly to prevent staining</li>
+        <li>Air-dry or blot dry with a soft microfiber towel</li>
+      </ul>
+    </div>
+    <div class="care-card">
+      <div class="care-title">Long-Term Maintenance</div>
+      <ul class="care-list">
+        <li>Park in a garage or shaded area when possible — UV is the #1 wrap degrader</li>
+        <li>Apply a vinyl-safe wax or spray sealant every 3–6 months</li>
+        <li>Inspect edge seams every 6 months; contact us immediately if lifting occurs</li>
+        <li>Avoid automated car washes with rotating brushes — touchless OK</li>
+      </ul>
+    </div>
+    <div class="care-card">
+      <div class="care-title">When to Re-Order</div>
+      <ul class="care-list">
+        <li>Fading, chalking, or color shift visible from 10 feet away</li>
+        <li>Edge lifting that can't be re-adhered with wrap-safe heat gun</li>
+        <li>Graphic or branding update across the fleet</li>
+        <li>Wrap reaches 80% of its planned life — proactive replacement saves money</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="cta">
+    <div class="cta-title">Ready for a refresh?</div>
+    <div class="cta-sub">Contact ${shopName} for a free re-wrap estimate and fleet pricing.</div>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      ${shopPhone ? `<a class="cta-btn" href="tel:${shopPhone}">📞 Call Us</a>` : ''}
+      ${shopEmail ? `<a class="cta-btn" style="background:rgba(244,85,28,.15);color:${shopColor}" href="mailto:${shopEmail}?subject=Fleet%20Re-wrap%20Quote%20Request">📧 Email Us</a>` : ''}
+      ${portfolioUrl ? `<a class="cta-btn" style="background:rgba(255,255,255,0.07);color:#e2e8f0" href="${portfolioUrl}" target="_blank">View Portfolio</a>` : ''}
+    </div>
+  </div>
+
+  <div style="padding:16px 24px;text-align:center;font-size:11px;color:#334155">
+    Powered by <strong style="color:#f4551c">WrapOS</strong> · Fleet dashboard for ${company}
+  </div>
+</body>
+</html>`;
+    res.send(html);
+  } catch (e) {
+    console.error('[fleet-dash]', e.message);
+    res.status(500).send('<h1>Error loading fleet dashboard</h1>');
+  }
+});
+
 // ── Public Portfolio Page ─────────────────────────────────────────────────────
 
 app.get('/portfolio/:shopToken', async (req, res) => {

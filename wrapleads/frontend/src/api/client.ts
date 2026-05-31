@@ -704,6 +704,8 @@ export const api = {
   deletePortalLink: (id: number) =>
     authFetch<{ ok: boolean }>(`/portal-links/${id}`, { method: 'DELETE' }),
   getPortalUrl: (token: string) => `${window.location.origin}/portal/${token}`,
+  generateFleetDashboard: (leadId: number) =>
+    authFetch<{ ok: boolean; url: string }>(`/portal-links/${leadId}/fleet-access`, { method: 'POST' }),
 
   // AI Calling — campaigns
   getCampaigns: () =>

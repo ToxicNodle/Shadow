@@ -58,6 +58,7 @@ export default defineConfig({
       '/review':            API,
       '/subcontractors':    API,
       '/twilio':            API,
+      '/fleet':             API,
     },
   },
 });

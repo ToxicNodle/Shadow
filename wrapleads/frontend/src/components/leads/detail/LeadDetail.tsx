@@ -409,6 +409,26 @@ function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
   const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
+  const [fleetUrl, setFleetUrl] = useState<string | null>(null);
+  const [fleetLoading, setFleetLoading] = useState(false);
+  const [fleetCopied, setFleetCopied] = useState(false);
+
+  async function generateFleetDash() {
+    setFleetLoading(true);
+    try {
+      const r = await api.generateFleetDashboard(leadServerId);
+      setFleetUrl(r.url);
+    } finally {
+      setFleetLoading(false);
+    }
+  }
+
+  function copyFleetUrl() {
+    if (!fleetUrl) return;
+    navigator.clipboard.writeText(fleetUrl);
+    setFleetCopied(true);
+    setTimeout(() => setFleetCopied(false), 2000);
+  }
 
   const { data } = useQuery({
     queryKey: ['portal-link', leadServerId],
@@ -483,6 +503,29 @@ function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
                 </div>
               </>
             )}
+
+            {/* Fleet Maintenance Dashboard */}
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4 }}>🚛 Fleet Wrap Dashboard</div>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.5 }}>
+                Share a permanent care guide + wrap history page for this fleet client.
+              </p>
+              {!fleetUrl ? (
+                <button className="btn" style={{ width: '100%', fontSize: 11 }}
+                  disabled={fleetLoading} onClick={generateFleetDash}>
+                  {fleetLoading ? 'Generating…' : 'Generate Fleet Dashboard'}
+                </button>
+              ) : (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-primary" style={{ flex: 1, fontSize: 11 }} onClick={copyFleetUrl}>
+                    {fleetCopied ? '✓ Copied!' : 'Copy Fleet URL'}
+                  </button>
+                  <button className="btn" style={{ fontSize: 11 }} onClick={() => window.open(fleetUrl, '_blank')}>
+                    Preview
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}
