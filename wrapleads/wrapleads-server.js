@@ -16267,6 +16267,27 @@ app.get('/mission/news-signals', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /mission/sms-inbox — recent inbound SMS messages from prospects
+app.get('/mission/sms-inbox', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT a.id, a.lead_id, a.body, a.created_at,
+             l.company, l.phone, l.contact_name, l.sms_opted_out
+      FROM lead_activities a
+      JOIN leads l ON l.id = a.lead_id
+      WHERE a.user_id = $1
+        AND a.type = 'email_reply'
+        AND a.metadata->>'channel' = 'sms'
+      ORDER BY a.created_at DESC
+      LIMIT 20
+    `, [uid]);
+    res.json({ ok: true, messages: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Mission Live Signals ───────────────────────────────────────────────────────
 app.get('/mission/signals', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);

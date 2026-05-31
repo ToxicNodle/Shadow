@@ -912,6 +912,12 @@ export const api = {
     authFetch<{ ok: boolean; sid?: string }>(`/leads/${leadId}/sms`, { method: 'POST', body: JSON.stringify({ message }) }),
 
   // SMS campaign sequences
+  getSmsInbox: () =>
+    authFetch<{ ok: boolean; messages: Array<{
+      id: number; lead_id: number; body: string; created_at: string;
+      company: string; phone: string | null; contact_name: string | null; sms_opted_out: boolean;
+    }> }>('/mission/sms-inbox'),
+
   getSmsSequence: (leadId: number) =>
     authFetch<{ ok: boolean; sequence: import('./types').SmsSequence | null }>(`/leads/${leadId}/sms-sequence`),
   startSmsSequence: (leadId: number) =>

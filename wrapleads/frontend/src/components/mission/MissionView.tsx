@@ -21,6 +21,7 @@ import ReferralEngineCard from './ReferralEngineCard';
 import DailyBriefingCard from './DailyBriefingCard';
 import ObjectionCounterCard from './ObjectionCounterCard';
 import SignalLeadsCard from './SignalLeadsCard';
+import SmsInboxCard from './SmsInboxCard';
 import DarkProposalsCard from './DarkProposalsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
@@ -2063,6 +2064,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── SMS Inbox — inbound replies from prospects ── */}
+      <SmsInboxCard />
 
       {/* ── Market Signals — press release auto-leads ── */}
       <SignalLeadsCard />
