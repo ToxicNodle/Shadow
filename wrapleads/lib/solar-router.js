@@ -1275,6 +1275,35 @@ function buildSolarRouter(deps) {
     fs.createReadStream(csvPath).pipe(res);
   });
 
+  // ── UNIFIED ALL-LEADS BUNDLE (public, top-of-funnel power move) ──────
+  // The full 20,206-lead bundle in CSV, JSONL, or ZIP. Free, no auth, no
+  // email gate — a "here's literally everything" trust signal that funnels
+  // visitors to the curated state packs (which carry the enrichment).
+  // Run `npm run bundle:all-leads` to regenerate the artifacts.
+  const ALL_LEADS_FORMATS = {
+    csv:   { file: 'helioscout-all-leads.csv',   mime: 'text/csv' },
+    jsonl: { file: 'helioscout-all-leads.jsonl', mime: 'application/x-ndjson' },
+    zip:   { file: 'helioscout-all-leads.zip',   mime: 'application/zip' },
+  };
+  for (const [ext, meta] of Object.entries(ALL_LEADS_FORMATS)) {
+    router.get(`/store/all-leads.${ext}`, (req, res) => {
+      const path = require('path');
+      const fs = require('fs');
+      const filePath = path.join(__dirname, '..', 'sales-assets', 'all-leads', meta.file);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({
+          error: 'Bundle not yet generated',
+          hint: 'Run `npm run bundle:all-leads` to build the artifact.',
+        });
+      }
+      res.setHeader('Content-Type', meta.mime);
+      res.setHeader('Content-Disposition', `attachment; filename="${meta.file}"`);
+      // Cache-friendly: bundle changes infrequently and is large.
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      fs.createReadStream(filePath).pipe(res);
+    });
+  }
+
   // ── STRIPE CHECKOUT FOR LEAD PACKS (auto-fulfillment) ────────────────
   // POST /solar/store/checkout — one-time Stripe Checkout for a lead pack.
   // On payment success the /stripe/webhook reads the metadata and emails the

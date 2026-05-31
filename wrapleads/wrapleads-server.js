@@ -861,6 +861,10 @@ const apiLimiter = rateLimit({
     if (p === '/solar/store/roast-pitch')      return true;
     if (p === '/solar/store/checkout')         return true;
     if (p.startsWith('/solar/store/state-stats/')) return true;
+    // Unified all-leads bundle — large + freely shareable, viral-friendly.
+    if (p === '/solar/store/all-leads.csv'    ) return true;
+    if (p === '/solar/store/all-leads.jsonl'  ) return true;
+    if (p === '/solar/store/all-leads.zip'    ) return true;
     if (p === '/health' || p === '/test') return true;
     return false;
   },
