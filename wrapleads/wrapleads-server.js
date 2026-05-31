@@ -5091,7 +5091,7 @@ app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
     if (!twilioResp.ok) throw new Error(twilioData.message || 'Twilio error');
 
     await logActivity(pool, {
-      leadId, userId: uid, type: 'called',
+      leadId, userId: uid, type: 'sms_sent',
       subject: 'SMS sent',
       body: message,
       metadata: { twilio_sid: twilioData.sid, to: lead.phone },
@@ -5163,7 +5163,7 @@ app.post('/twilio/incoming-sms', express.urlencoded({ extended: false }), async 
       } else {
         // Log inbound message as activity
         await logActivity(pool, {
-          leadId: lead.id, userId: uid, type: 'email_reply',
+          leadId: lead.id, userId: uid, type: 'sms_received',
           subject: `SMS reply from ${lead.company}`,
           body: body,
           metadata: { from, to, channel: 'sms' },
