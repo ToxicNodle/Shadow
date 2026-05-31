@@ -23,6 +23,7 @@ import ObjectionCounterCard from './ObjectionCounterCard';
 import SignalLeadsCard from './SignalLeadsCard';
 import SmsInboxCard from './SmsInboxCard';
 import DarkProposalsCard from './DarkProposalsCard';
+import FleetGrowthCard from './FleetGrowthCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -2070,6 +2071,9 @@ export default function MissionView() {
 
       {/* ── Market Signals — press release auto-leads ── */}
       <SignalLeadsCard />
+
+      {/* ── Fleet Growth Alerts — FMCSA fleet size change detection ── */}
+      <FleetGrowthCard />
 
       {/* ── Daily Briefing — AI morning snapshot ── */}
       <DailyBriefingCard />

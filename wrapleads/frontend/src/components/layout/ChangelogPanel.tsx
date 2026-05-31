@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🚛 Fleet Growth Alerts — Know When a Prospect\'s Fleet Expands',
+    body: 'WrapOS now monitors FMCSA fleet data weekly and alerts you when a prospect\'s fleet size grows by 15% or more. A fleet growing from 40 trucks to 50 is the clearest signal in the industry that they\'re expanding — and new vehicles need wrapping. The "Fleet Growth Alerts" card on Mission shows every prospect whose fleet grew in the last 30 days, with the exact unit count change and a one-click shortcut to the lead. Each growth event is logged to the lead\'s activity timeline with context: "Fleet grew from 40 → 50 units (+25%). Warm re-pitch signal." Requires FMCSA_SAFER_API_KEY — get a free key at mobile.fmcsa.dot.gov/developer. The monitor checks up to 100 FMCSA-sourced leads per week to stay within free-tier limits.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
+    title: '📧 My Email Templates — Save & Reuse Your Best Outreach Emails',
+    body: 'You can now save any AI-generated or hand-crafted email as a reusable template. In the Email tab, generate or write an email, then click "+ Save as Template" — give it a name and an optional tag (Fleet Intro, Objection, Follow-up, etc.) and it\'s saved to your personal library. Your saved templates appear at the top of the Templates tab (highlighted in blue to distinguish them from built-in system templates) and track how many times you\'ve used each one. Delete old templates directly from the list. Perfect for capturing high-performing subject lines and copy that consistently gets replies — no more rewriting from scratch.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔔 Mobile Push Notifications — Real-Time Alerts on Your Phone',
     body: 'WrapOS can now push real-time notifications to your phone or desktop even when the app is closed. New inbound quote requests, proposal approvals, email replies from leads, and hot prospect alerts fire as native OS notifications — no polling, no checking the app. Enable in Settings → Mobile Push Notifications. Requires VAPID keys configured on the server (generate instantly with `npx web-push generate-vapid-keys`). Works on iOS (Safari), Android (Chrome), and desktop. The push service worker (/sw.js) handles delivery and clicking a notification navigates directly to the relevant view.',
   },

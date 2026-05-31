@@ -309,6 +309,11 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_contacted_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add first_contacted_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_fleet_size_snapshot INT`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_fleet_checked_at   TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_fleet_grew_at      TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add fmcsa_fleet_monitor columns:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -6958,6 +6963,127 @@ function startFmcsaSaferWorker() {
   setTimeout(run, 5 * 60 * 1000); // first run 5 min after boot
   setInterval(run, INTERVAL_MS);
 }
+
+// Fleet Growth Monitor — re-checks FMCSA SAFER for fleet leads to detect fleet size changes.
+// Runs every Sunday at 3AM. Detects ≥15% fleet growth → logs activity + fires notification.
+// Stores snapshot so we don't alert twice for the same growth event.
+function startFleetMonitorWorker() {
+  const saferKey = process.env.FMCSA_SAFER_API_KEY;
+  if (!saferKey) {
+    console.log('· Fleet Monitor: not configured (set FMCSA_SAFER_API_KEY to enable fleet growth alerts)');
+    return;
+  }
+  console.log('· Fleet Monitor worker started (weekly, detects fleet growth ≥15% for FMCSA leads)');
+
+  async function run() {
+    try {
+      // Leads with a known DOT number, not won/lost, not checked in 6+ days
+      const { rows: targets } = await pool.query(`
+        SELECT l.id AS lead_id, l.user_id, l.company, l.fleet_size,
+               l.fmcsa_fleet_size_snapshot, l.status, l.category,
+               c.source_id AS dot_number
+        FROM leads l
+        JOIN companies c ON c.id = l.source_company_id AND c.source = 'fmcsa'
+        WHERE l.status NOT IN ('won', 'lost')
+          AND (l.fmcsa_fleet_checked_at IS NULL OR l.fmcsa_fleet_checked_at < NOW() - INTERVAL '6 days')
+        LIMIT 100
+      `);
+
+      if (!targets.length) return;
+
+      for (const t of targets) {
+        try {
+          const url = `https://mobile.fmcsa.dot.gov/qc/services/carriers/${t.dot_number}?webKey=${saferKey}`;
+          const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          await pool.query(`UPDATE leads SET fmcsa_fleet_checked_at=NOW() WHERE id=$1`, [t.lead_id]);
+          if (!resp.ok) continue;
+          const json = await resp.json();
+          const carrier = json?.content?.carrier || json?.carrier;
+          if (!carrier) continue;
+
+          const newFleetSize = parseInt(carrier.totalPowerUnits, 10) || null;
+          if (!newFleetSize) continue;
+
+          const baseline = t.fmcsa_fleet_size_snapshot || t.fleet_size;
+          const growthPct = baseline ? ((newFleetSize - baseline) / baseline) * 100 : 0;
+
+          // Update snapshot + lead fleet_size if changed
+          await pool.query(
+            `UPDATE leads SET fmcsa_fleet_size_snapshot=$1, fleet_size=$2, fmcsa_fleet_checked_at=NOW()
+             WHERE id=$3`,
+            [newFleetSize, newFleetSize, t.lead_id]
+          );
+          // Also update the companies record
+          await pool.query(
+            `UPDATE companies SET fleet_size=$1, updated_at=NOW() WHERE source='fmcsa' AND source_id=$2`,
+            [newFleetSize, t.dot_number]
+          ).catch(() => {});
+
+          if (growthPct >= 15 && baseline) {
+            const addedUnits = newFleetSize - baseline;
+            // Stamp the lead so we don't re-alert on same growth event
+            await pool.query(
+              `UPDATE leads SET fmcsa_fleet_grew_at=NOW() WHERE id=$1`,
+              [t.lead_id]
+            );
+            await logActivity(pool, {
+              leadId: t.lead_id,
+              userId: t.user_id,
+              type: 'note',
+              subject: `🚛 Fleet Growth Alert — +${addedUnits} units (+${Math.round(growthPct)}%)`,
+              body: `FMCSA SAFER data shows ${t.company}'s fleet grew from ${baseline} to ${newFleetSize} power units (+${Math.round(growthPct)}%). This is a warm re-pitch signal — they likely have new vehicles that need wrapping.`,
+              metadata: { event: 'fleet_growth', baseline, newFleetSize, growthPct: Math.round(growthPct) },
+            });
+            await createNotification(t.user_id, {
+              type: 'hot_prospect',
+              title: `Fleet growth alert: ${t.company}`,
+              body: `Fleet grew from ${baseline} → ${newFleetSize} units (+${Math.round(growthPct)}%). Time to re-pitch.`,
+              metadata: { leadId: t.lead_id, company: t.company, baseline, newFleetSize },
+            });
+            console.log(`[fleet-monitor] Fleet growth detected: ${t.company} ${baseline}→${newFleetSize} (+${Math.round(growthPct)}%)`);
+          }
+
+          await new Promise(r => setTimeout(r, 500)); // 500ms between requests
+        } catch (e) {
+          await pool.query(`UPDATE leads SET fmcsa_fleet_checked_at=NOW() WHERE id=$1`, [t.lead_id]).catch(() => {});
+          console.warn(`[fleet-monitor] lead ${t.lead_id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[fleet-monitor worker] error:', e.message);
+    }
+  }
+
+  // Schedule for Sunday 3AM; retry weekly
+  (function scheduleNext() {
+    const now = new Date();
+    const next = new Date(now);
+    const daysUntilSun = (7 - now.getDay()) % 7 || 7;
+    next.setDate(now.getDate() + daysUntilSun);
+    next.setHours(3, 0, 0, 0);
+    const ms = next - now;
+    setTimeout(async () => { await run(); scheduleNext(); }, ms);
+  })();
+}
+
+// GET /leads/fleet-growth-signals — leads with recent fleet growth (last 30 days)
+app.get('/leads/fleet-growth-signals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT l.id, l.company, l.category, l.status, l.fleet_size,
+              l.fmcsa_fleet_size_snapshot, l.fmcsa_fleet_grew_at, l.contact_name, l.state
+       FROM leads l
+       WHERE l.user_id=$1
+         AND l.fmcsa_fleet_grew_at > NOW() - INTERVAL '30 days'
+         AND l.status NOT IN ('won', 'lost')
+       ORDER BY l.fmcsa_fleet_grew_at DESC
+       LIMIT 20`,
+      [uid]
+    );
+    res.json({ ok: true, signals: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 function startDigestWorker() {
   const check = () => {
@@ -22037,6 +22163,7 @@ app.listen(PORT, async () => {
     startOmniSequenceWorker();
     startEmailEnrichmentWorker();
     startFmcsaSaferWorker();
+    startFleetMonitorWorker();
     startDigestWorker();
     startColdNurtureWorker();
     startReOrderWorker();
