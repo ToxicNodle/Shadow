@@ -305,6 +305,9 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_enriched_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add fmcsa_enriched_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_contacted_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add first_contacted_at column:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -2449,6 +2452,7 @@ function leadRow(row) {
     lost_competitor: row.lost_competitor || null,
     lost_at: row.lost_at ? row.lost_at.toISOString() : null,
     smsOptedOut: row.sms_opted_out || false,
+    firstContactedAt: row.first_contacted_at ? row.first_contacted_at.toISOString() : null,
   };
 }
 
@@ -2461,6 +2465,18 @@ async function logActivity(pool, { leadId, userId, type, subject = null, body = 
       `INSERT INTO lead_activities (lead_id, user_id, type, subject, body, metadata)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [leadId, userId, type, subject, body, JSON.stringify(metadata)]
+    );
+  } catch { /* non-critical */ }
+}
+
+// Record the first time this lead was contacted (email, SMS, or phone call).
+// No-ops if already set — safe to call on every outbound action.
+async function markFirstContact(leadId, userId) {
+  try {
+    await pool.query(
+      `UPDATE leads SET first_contacted_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND first_contacted_at IS NULL`,
+      [leadId, userId]
     );
   } catch { /* non-critical */ }
 }
@@ -2961,6 +2977,7 @@ ${unsubFooter.html}
 
     await logActivity(pool, { leadId: id, userId: uid, type: 'email_sent',
       subject, body, metadata: { to: toEmail, toName, resend_id: data.id, track_token: trackToken } });
+    await markFirstContact(id, uid);
     await pool.query(
       `UPDATE leads SET last_contacted = CURRENT_DATE,
         followup_due_at = CURRENT_DATE + INTERVAL '3 days',
@@ -5099,6 +5116,7 @@ app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
       body: message,
       metadata: { twilio_sid: twilioData.sid, to: lead.phone },
     });
+    await markFirstContact(leadId, uid);
     await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [leadId, uid]);
 
     res.json({ ok: true, sid: twilioData.sid });
@@ -7871,6 +7889,7 @@ app.post('/calls/initiate', authMiddleware, async (req, res) => {
       subject: `AI call initiated to ${lead.company}`,
       metadata: { vapi_call_id: call.id, phone: lead.phone, status: 'initiated', research_hook: researchHook },
     });
+    await markFirstContact(lead.id, userId);
 
     res.json({ ok: true, call_id: call.id, status: call.status });
   } catch (e) {
@@ -19543,6 +19562,70 @@ app.get('/analytics/cash-flow', authMiddleware, async (req, res) => {
     });
   } catch (e) {
     console.error('[cash-flow]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/speed-to-lead — measures how quickly leads are contacted after entering CRM
+app.get('/analytics/speed-to-lead', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL)::INT AS contacted_count,
+        COUNT(*) FILTER (WHERE first_contacted_at IS NULL AND status NOT IN ('new'))::INT AS missing_count,
+        ROUND(AVG(
+          EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0
+        ) FILTER (WHERE first_contacted_at IS NOT NULL), 1)::FLOAT AS avg_hours,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0
+        ) FILTER (WHERE first_contacted_at IS NOT NULL), 1)::FLOAT AS median_hours,
+        COUNT(*) FILTER (
+          WHERE first_contacted_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 60.0 <= 5
+        )::INT AS within_5min,
+        COUNT(*) FILTER (
+          WHERE first_contacted_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0 <= 1
+        )::INT AS within_1hour,
+        COUNT(*) FILTER (
+          WHERE first_contacted_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0 <= 24
+        )::INT AS within_24hours
+      FROM leads
+      WHERE user_id = $1
+    `, [uid]);
+
+    const stat = rows[0] || {};
+
+    // Uncontacted leads waiting > 1 hour
+    const { rows: waiting } = await pool.query(`
+      SELECT id, company, category, created_at,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0, 1) AS hours_waiting
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'new'
+        AND first_contacted_at IS NULL
+        AND created_at < NOW() - INTERVAL '1 hour'
+      ORDER BY created_at ASC
+      LIMIT 10
+    `, [uid]);
+
+    res.json({
+      ok: true,
+      avgHours: stat.avg_hours ?? null,
+      medianHours: stat.median_hours ?? null,
+      contactedCount: stat.contacted_count ?? 0,
+      within5min: stat.within_5min ?? 0,
+      within1hour: stat.within_1hour ?? 0,
+      within24hours: stat.within_24hours ?? 0,
+      waitingLeads: waiting.map((r) => ({
+        id: r.id, company: r.company, category: r.category,
+        createdAt: r.created_at, hoursWaiting: parseFloat(r.hours_waiting),
+      })),
+    });
+  } catch (e) {
+    console.error('[speed-to-lead]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

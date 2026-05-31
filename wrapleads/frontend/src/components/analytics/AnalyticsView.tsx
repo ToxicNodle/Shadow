@@ -2387,6 +2387,94 @@ function CohortAnalysisCard() {
   );
 }
 
+// ── Speed to Lead ─────────────────────────────────────────────────────────────
+function SpeedToLeadCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['speed-to-lead'],
+    queryFn: () => api.getSpeedToLead(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card">
+      <div className="an-card-title">Speed to Lead</div>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+    </div>
+  );
+
+  const avgH = data?.avgHours ?? null;
+  const medH = data?.medianHours ?? null;
+  const contacted = data?.contactedCount ?? 0;
+  const within5 = data?.within5min ?? 0;
+  const within1h = data?.within1hour ?? 0;
+  const waiting = data?.waitingLeads ?? [];
+
+  function fmtHours(h: number | null) {
+    if (h === null) return '—';
+    if (h < 1) return `${Math.round(h * 60)}m`;
+    return `${h.toFixed(1)}h`;
+  }
+
+  const scoreColor = avgH === null ? 'var(--text-faint)' : avgH < 1 ? '#00d97e' : avgH < 4 ? '#f59e0b' : '#ef4444';
+
+  return (
+    <div className="an-card">
+      <div className="an-card-title">
+        Speed to Lead
+        <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-faint)', marginLeft: 8 }}>
+          industry benchmark: &lt;5 min = 400% more likely to close
+        </span>
+      </div>
+
+      {contacted === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          No first-contact data yet. Speed tracking starts automatically when you send your first email or SMS to a new lead.
+        </p>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 14 }}>
+            {[
+              { label: 'Avg response', value: fmtHours(avgH), color: scoreColor },
+              { label: 'Median', value: fmtHours(medH), color: 'var(--text)' },
+              { label: 'Under 5 min', value: within5, color: within5 > 0 ? '#00d97e' : 'var(--text-faint)' },
+              { label: 'Under 1 hour', value: within1h, color: 'var(--text)' },
+              { label: 'Leads contacted', value: contacted, color: 'var(--text)' },
+              { label: 'Benchmark', value: '< 5 min', color: 'var(--text-faint)' },
+            ].map((s) => (
+              <div key={s.label} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-faint)', marginBottom: 4 }}>{s.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {waiting.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#ef4444', marginBottom: 8 }}>
+                ⚠ Waiting for first contact ({waiting.length} lead{waiting.length !== 1 ? 's' : ''})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {waiting.map((l) => (
+                  <div key={l.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '6px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.06)',
+                    border: '1px solid rgba(239,68,68,0.2)', fontSize: 12,
+                  }}>
+                    <span style={{ color: 'var(--text)', fontWeight: 500 }}>{l.company}</span>
+                    <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 700 }}>
+                      {l.hoursWaiting < 1 ? `${Math.round(l.hoursWaiting * 60)}m waiting` : `${l.hoursWaiting.toFixed(1)}h waiting`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Cash Flow Dashboard ───────────────────────────────────────────────────────
 function CashFlowCard() {
   const { data, isLoading, refetch } = useQuery({
@@ -3516,6 +3604,9 @@ export default function AnalyticsView() {
 
         {/* ── Cash Flow / Receivables ── */}
         <CashFlowCard />
+
+        {/* ── Speed to Lead ── */}
+        <SpeedToLeadCard />
 
         {/* ── Client Satisfaction ── */}
         <SatisfactionCard />

@@ -1107,6 +1107,19 @@ export const api = {
       totalUntapped: number;
     }>('/analytics/market-opportunity'),
 
+  // Speed to Lead
+  getSpeedToLead: () =>
+    authFetch<{
+      ok: boolean;
+      avgHours: number | null;
+      medianHours: number | null;
+      contactedCount: number;
+      within5min: number;
+      within1hour: number;
+      within24hours: number;
+      waitingLeads: Array<{ id: number; company: string; category: string; createdAt: string; hoursWaiting: number }>;
+    }>('/analytics/speed-to-lead'),
+
   // Revenue Attribution
   getRevenueAttribution: () => authFetch<{
     bySource: Array<{ source: string; won_count: number; estimated_revenue: number; avg_close_days: number | null; sharePct: number }>;

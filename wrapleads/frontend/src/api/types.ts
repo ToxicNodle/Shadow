@@ -31,6 +31,7 @@ export interface Lead {
   smsOptedOut?: boolean;
   dotNumber?: string | null;
   fmcsaEnrichedAt?: string | null;
+  firstContactedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
