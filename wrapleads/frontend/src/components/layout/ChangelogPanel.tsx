@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '⏳ Auto Quote Expiry Reminder — Recover Deals While They\'re Still Warm',
+    body: 'WrapOS now automatically emails your client a branded reminder 3 days before their quote expires — without you doing anything. The email includes the quote number, service title, total, and exact expiry date in a clean, professional design with your shop name. After sending, the activity is logged to the lead\'s timeline as a sent email. The feature is on by default when Resend is configured; toggle it off in Settings → Inbound Quote Form → "Auto-send expiry reminder to client." Previously, expiring quotes created an internal notification but nothing reached the prospect — this closes that gap and recovers deals that would otherwise go cold because the client forgot.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
+    title: '🔌 Website Quote Widget — Embed "Get a Quote" on Your Website in One Line',
+    body: 'WrapOS now generates a one-line JavaScript embed snippet you can paste on any website. Go to Settings → Inbound Quote Form → "Website Widget — Embed on Any Page" and copy the script tag. Paste it before </body> on your shop website, WordPress site, Squarespace page, or anywhere else. A floating "Get a Quote" button appears in the bottom-right corner. Clicking it opens your WrapOS quote form in a popup overlay — no redirects, no new tabs. When the prospect submits, the overlay closes and a lead appears in WrapOS instantly. Works on any device. The widget inherits your brand accent color if configured. No monthly fee, no third-party widget service — it\'s part of WrapOS.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📊 1099-NEC Subcontractor Summary — Tax Season Without the Panic',
     body: 'WrapOS now has a full 1099-NEC preparation dashboard in the Analytics view. The "1099 Subcontractor Tax Summary" card shows every subcontractor you paid in a given year — with total confirmed payments, job count, and a clear "1099 Required" badge for anyone who received ≥$600 (the IRS threshold for 1099-NEC issuance). A warning banner fires the moment any sub crosses $600 without a Tax ID on file, so you can collect it before year-end instead of scrambling in January. Each sub row also shows outstanding (logged but unpaid) amounts separately from confirmed payments. In Settings → Subcontractors, each sub now has fields for Tax ID (EIN or SSN), Business Type (individual/sole proprietor vs. business entity), email, and address — all required for filing. The year selector lets you audit any prior year. Combine this with the payment tracking feature: every "Mark Paid" click logs to the confirmed payment total, so by December 31 your 1099 prep is already done.',
   },

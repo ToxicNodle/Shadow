@@ -748,6 +748,12 @@ async function migrateDb() {
     console.warn('[migrate] Could not create shop_quotes table:', e.message);
   }
 
+  try {
+    await pool.query(`ALTER TABLE shop_quotes ADD COLUMN IF NOT EXISTS expiry_email_sent BOOLEAN DEFAULT FALSE`);
+  } catch (e) {
+    console.warn('[migrate] Could not add expiry_email_sent column:', e.message);
+  }
+
   // User-defined quote line item templates
   try {
     await pool.query(`
@@ -17495,6 +17501,64 @@ app.get('/me/quote-link', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /embed.js?token=SHOP_TOKEN — self-contained quote widget script for embedding on any website.
+// Public route, no auth. Creates a floating "Get a Quote" button + iframe overlay.
+app.get('/embed.js', async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  if (!token) {
+    return res.status(400).type('application/javascript').send('// Missing ?token parameter — get yours from WrapOS Settings.');
+  }
+  // Validate token exists
+  const user = await findUserByShopToken(token);
+  if (!user) {
+    return res.status(404).type('application/javascript').send('// Invalid token.');
+  }
+  const s = user.settings_json || {};
+  const shopName = (s.companyName || 'Get a Quote').replace(/'/g, "\\'");
+  const accentColor = s.brandColor || '#f4551c';
+
+  res.type('application/javascript');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(`(function(){
+  if(window.__wraposEmbedInit)return;window.__wraposEmbedInit=true;
+  var token='${token}';
+  var base=document.currentScript.src.replace(/\\/embed\\.js.*/,'');
+  var accent='${accentColor}';
+
+  var btn=document.createElement('button');
+  btn.textContent='✦ Get a Quote';
+  btn.setAttribute('data-wrapos','btn');
+  btn.style.cssText='all:initial;position:fixed;bottom:24px;right:24px;z-index:2147483647;background:'+accent+';color:#fff;border:none;border-radius:50px;padding:14px 22px;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,.25);font-family:system-ui,-apple-system,sans-serif;letter-spacing:-.01em;transition:transform .15s ease,box-shadow .15s ease;display:block;line-height:1;';
+  btn.onmouseenter=function(){btn.style.transform='translateY(-2px)';btn.style.boxShadow='0 8px 30px rgba(0,0,0,.35)';};
+  btn.onmouseleave=function(){btn.style.transform='';btn.style.boxShadow='0 4px 20px rgba(0,0,0,.25)';};
+  document.body.appendChild(btn);
+
+  var overlay=document.createElement('div');
+  overlay.style.cssText='display:none;position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);align-items:center;justify-content:center;';
+  var modal=document.createElement('div');
+  modal.style.cssText='position:relative;width:min(520px,95vw);height:min(700px,90vh);background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.45);';
+  var iframe=document.createElement('iframe');
+  iframe.src=base+'/quote-request/'+token+'?embed=1';
+  iframe.style.cssText='width:100%;height:100%;border:none;display:block;';
+  iframe.allow='camera;microphone';
+  var closeBtn=document.createElement('button');
+  closeBtn.innerHTML='&times;';
+  closeBtn.style.cssText='all:initial;position:absolute;top:12px;right:12px;z-index:1;background:rgba(0,0,0,.4);color:#fff;border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;font-family:sans-serif;';
+  modal.appendChild(iframe);
+  modal.appendChild(closeBtn);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  function openWidget(){overlay.style.display='flex';}
+  function closeWidget(){overlay.style.display='none';}
+  btn.addEventListener('click',openWidget);
+  closeBtn.addEventListener('click',closeWidget);
+  overlay.addEventListener('click',function(e){if(e.target===overlay)closeWidget();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&overlay.style.display!=='none')closeWidget();});
+  window.addEventListener('message',function(e){if(e.data&&e.data.type==='wrapos_quote_submitted')closeWidget();});
+})();`);
+});
+
 app.get('/quote-request/:shopToken', async (req, res) => {
   try {
     const { shopToken } = req.params;
@@ -17582,6 +17646,8 @@ document.getElementById('qr-form').addEventListener('submit', async (e) => {
     if (!j.ok) throw new Error(j.error || 'Something went wrong');
     document.getElementById('form-view').style.display = 'none';
     document.getElementById('success-view').style.display = 'block';
+    // Notify parent window (embed widget) to close
+    if (window.parent !== window) window.parent.postMessage({ type: 'wrapos_quote_submitted' }, '*');
   } catch(ex) {
     err.textContent = ex.message; err.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Send My Request →';
@@ -19115,11 +19181,15 @@ function startBidExpiryWorker() {
 async function processQuoteExpiry() {
   try {
     const { rows: users } = await pool.query(
-      `SELECT DISTINCT user_id FROM shop_quotes WHERE status='sent' AND sent_at IS NOT NULL`
+      `SELECT DISTINCT q.user_id, u.settings_json
+         FROM shop_quotes q JOIN users u ON u.id::text = q.user_id
+        WHERE q.status='sent' AND q.sent_at IS NOT NULL`
     );
-    for (const { user_id } of users) {
+    for (const { user_id, settings_json } of users) {
+      const s = settings_json || {};
       const { rows: expiring } = await pool.query(
         `SELECT q.id, q.quote_number, q.title, q.total, q.sent_at, q.valid_days, q.lead_id,
+                q.expiry_email_sent,
                 l.company, l.contact_name, l.email
            FROM shop_quotes q
            LEFT JOIN leads l ON l.id = q.lead_id AND l.user_id = q.user_id
@@ -19135,13 +19205,94 @@ async function processQuoteExpiry() {
            AND metadata->>'quote_id' = $2 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
           [user_id, String(quote.id)]
         );
-        if (already.rows.length) continue;
-        await createNotification(user_id, {
-          type: 'quote_expiring',
-          title: `⏳ Quote expires ${daysLeft === 0 ? 'today' : `in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`} — ${quote.title}`,
-          body: `${quote.company || 'Unknown client'} · ${quote.quote_number} · $${(quote.total || 0).toLocaleString()} — follow up before they ask for a reprice.`,
-          metadata: { quote_id: quote.id, lead_id: quote.lead_id, days_left: daysLeft, company: quote.company },
-        });
+        if (!already.rows.length) {
+          await createNotification(user_id, {
+            type: 'quote_expiring',
+            title: `⏳ Quote expires ${daysLeft === 0 ? 'today' : `in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`} — ${quote.title}`,
+            body: `${quote.company || 'Unknown client'} · ${quote.quote_number} · $${(quote.total || 0).toLocaleString()} — follow up before they ask for a reprice.`,
+            metadata: { quote_id: quote.id, lead_id: quote.lead_id, days_left: daysLeft, company: quote.company },
+          });
+        }
+
+        // Auto-email the client 3 days before expiry (once per quote, opt-out via settings)
+        if (
+          daysLeft >= 1 && daysLeft <= 3 &&
+          !quote.expiry_email_sent &&
+          quote.email &&
+          s.autoQuoteExpiryEmail !== false &&
+          resend
+        ) {
+          const shopName = s.companyName || 'our shop';
+          const shopPhone = s.phone || '';
+          const expiryDate = new Date(expiryMs).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+          const clientName = quote.contact_name || 'there';
+          const total = `$${(quote.total || 0).toLocaleString()}`;
+
+          try {
+            await resend.emails.send({
+              from: s.resendFrom || process.env.RESEND_FROM || `noreply@wrapleads.io`,
+              to: [quote.email],
+              subject: `Your wrap quote expires ${daysLeft === 1 ? 'tomorrow' : `in ${daysLeft} days`} — ${quote.quote_number}`,
+              html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="max-width:540px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.08);">
+  <div style="background:#f4551c;padding:28px 32px;">
+    <div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:-.02em;">${shopName}</div>
+    <div style="color:rgba(255,255,255,.8);font-size:13px;margin-top:4px;">Vehicle Wrap Specialists</div>
+  </div>
+  <div style="padding:32px;">
+    <p style="margin:0 0 16px;font-size:16px;color:#111;font-weight:600;">Hi ${clientName},</p>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6;">
+      Just a quick reminder that your quote <strong>${quote.quote_number}</strong> for
+      <strong>${quote.title}</strong> totaling <strong>${total}</strong> expires on
+      <strong>${expiryDate}</strong>${daysLeft === 1 ? ' — that’s tomorrow' : ''}.
+    </p>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6;">
+      To lock in this pricing, simply reply to this email or give us a call. After the expiry date,
+      material costs and scheduling may require a revised quote.
+    </p>
+    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:16px;margin-bottom:24px;">
+      <div style="font-size:12px;color:#9a3412;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Quote Summary</div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;color:#374151;margin-bottom:4px;">
+        <span>Quote #</span><strong>${quote.quote_number}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;color:#374151;margin-bottom:4px;">
+        <span>Service</span><strong>${quote.title}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:15px;color:#111;font-weight:700;margin-top:8px;padding-top:8px;border-top:1px solid #fed7aa;">
+        <span>Total</span><span>${total}</span>
+      </div>
+    </div>
+    <p style="margin:0 0 8px;font-size:14px;color:#6b7280;">Questions? Reply to this email${shopPhone ? ` or call us at <strong>${shopPhone}</strong>` : ''}.</p>
+    <p style="margin:0;font-size:14px;color:#6b7280;">We look forward to working with you.</p>
+    <p style="margin:24px 0 0;font-size:14px;color:#374151;font-weight:600;">— ${shopName}</p>
+  </div>
+  <div style="background:#f9fafb;padding:16px 32px;font-size:11px;color:#9ca3af;">
+    This is an automated reminder from your quote management system.
+  </div>
+</div>
+</body></html>`,
+            });
+
+            await pool.query(
+              `UPDATE shop_quotes SET expiry_email_sent=TRUE WHERE id=$1`,
+              [quote.id]
+            );
+
+            if (quote.lead_id) {
+              await logActivity(pool, {
+                leadId: quote.lead_id, userId: user_id, type: 'email_sent',
+                subject: `Auto: Quote expiry reminder — ${quote.quote_number}`,
+                body: `Automated reminder sent to ${quote.email}: quote expires ${daysLeft === 1 ? 'tomorrow' : `in ${daysLeft} days`} (${quote.quote_number}).`,
+                metadata: { auto: true, daysLeft, quoteId: quote.id },
+              });
+            }
+
+            console.log(`[quote-expiry] Expiry reminder sent → ${quote.email} (${quote.quote_number}, ${daysLeft}d left)`);
+          } catch (emailErr) {
+            console.error('[quote-expiry] Email send failed:', emailErr.message);
+          }
+        }
       }
     }
   } catch (e) {

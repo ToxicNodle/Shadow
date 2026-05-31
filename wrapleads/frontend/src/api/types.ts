@@ -176,6 +176,7 @@ export interface Settings {
   autoReplyEnabled: boolean;
   autoReplyResponseTime: string;
   autoReplyMessage: string;
+  autoQuoteExpiryEmail: boolean;
 }
 
 export interface CarrierSearchParams {
@@ -309,6 +310,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReplyEnabled: true,
   autoReplyResponseTime: '',
   autoReplyMessage: '',
+  autoQuoteExpiryEmail: true,
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────

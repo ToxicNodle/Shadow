@@ -21,6 +21,7 @@ export default function SettingsModal() {
   const [portalLoading, setPortalLoading] = useState(false);
   const [quoteLink, setQuoteLink] = useState<string | null>(null);
   const [quoteLinkCopied, setQuoteLinkCopied] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
   const [portfolioLink, setPortfolioLink] = useState<string | null>(null);
   const [portfolioLinkCopied, setPortfolioLinkCopied] = useState(false);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
@@ -485,6 +486,20 @@ export default function SettingsModal() {
           </label>
         </div>
         <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoQuoteExpiryEmail !== false}
+              onChange={e => setLocal(s => ({ ...s, autoQuoteExpiryEmail: e.target.checked }))}
+            />
+            Auto-send expiry reminder to client (3 days before a sent quote expires)
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            WrapOS emails the client a branded reminder when their quote is about to expire — recovers deals without manual follow-up.
+          </p>
+        </div>
+        <div className="field-group">
           <label className="field-label">Expected Response Time</label>
           <select className="select" {...f('autoReplyResponseTime')}>
             <option value="">1 business day (default)</option>
@@ -623,6 +638,34 @@ export default function SettingsModal() {
             Get My Quote Link
           </button>
         )}
+
+        {quoteLink && (() => {
+          const shopToken = quoteLink.split('/quote-request/')[1] ?? '';
+          const embedCode = `<script src="${window.location.origin}/embed.js?token=${shopToken}" defer><\/script>`;
+          return (
+            <div style={{ marginTop: 16, padding: '14px 16px', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 8 }}>
+                Website Widget — Embed on Any Page
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+                Paste this one line before <code style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 3, padding: '1px 4px' }}>&lt;/body&gt;</code> on your website.
+                It adds a floating "Get a Quote" button that opens your form in a popup — no redirects, no extra pages.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <code style={{ flex: 1, fontSize: 10, background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', wordBreak: 'break-all', color: 'var(--text-dim)', display: 'block', whiteSpace: 'pre-wrap' }}>
+                  {embedCode}
+                </code>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}
+                  onClick={() => { navigator.clipboard.writeText(embedCode); setEmbedCopied(true); setTimeout(() => setEmbedCopied(false), 2500); }}
+                >
+                  {embedCopied ? '✓ Copied!' : 'Copy Code'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="settings-section">
