@@ -15,5 +15,5 @@ I'll send you 50 free — no card, no demo. If they work, full state pack is $1,
 
 Reply "YES {{state}}" and I'll send within the hour.
 
-— Jake
+— Barry Benson
 helioscout.io

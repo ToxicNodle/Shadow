@@ -13,5 +13,5 @@ HelioScout is different:
 
 {{state}} pack: {{state_count}} leads, $1,497 one-time. Or reply YES for 50 free.
 
-— Jake @ HelioScout
+— Barry Benson @ HelioScout
 helioscout.io

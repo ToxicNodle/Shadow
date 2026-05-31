@@ -60,5 +60,5 @@ If you don't get at least one qualified conversation from this pack within 30 da
 
 If this pack lands, the National Pack (all 20,206 facilities) is \$4,997 — pre-purchase discount of \$500 in the first 14 days. Just reply.
 
-— Jake
+— Barry Benson
 HelioScout · Commercial Solar Intelligence

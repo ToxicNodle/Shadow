@@ -10,4 +10,4 @@ Each row: company + city + NAICS fit score + system-size estimate + 25-yr NPV + 
 
 If the quality lands, the full {{state}} pack ($1,497) is one Stripe link away. Reply YES.
 
-— Jake
+— Barry Benson

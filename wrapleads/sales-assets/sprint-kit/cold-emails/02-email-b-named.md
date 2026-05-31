@@ -12,4 +12,4 @@ Two things:
 
 Reply for the free sample. No demo call, no email gate, just the CSV in your inbox.
 
-— Jake @ HelioScout
+— Barry Benson @ HelioScout
