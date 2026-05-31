@@ -502,6 +502,20 @@ export default function SettingsModal() {
           </p>
         </div>
         <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoCrossSell !== false}
+              onChange={e => setLocal(s => ({ ...s, autoCrossSell: e.target.checked }))}
+            />
+            Auto-send 90-day cross-sell email after job installation
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            90 days after a wrap job, WrapOS emails the client suggesting a complementary service (e.g., fleet client → DI-NOC, color change → PPF, racing → trailer wrap). Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
           <label className="field-label">Expected Response Time</label>
           <select className="select" {...f('autoReplyResponseTime')}>
             <option value="">1 business day (default)</option>

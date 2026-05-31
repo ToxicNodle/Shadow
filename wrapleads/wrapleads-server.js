@@ -922,6 +922,7 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_install_date DATE`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_crew_count INT DEFAULT 2`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS cross_sell_email_sent BOOLEAN DEFAULT FALSE`);
   } catch (e) {
     console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
   }
@@ -12870,6 +12871,108 @@ function startAnniversaryWorker() {
   console.log('· Anniversary worker: running (daily check at 11:00 AM)');
 }
 
+// ── Post-Job Cross-Sell Worker ────────────────────────────────────────────────
+// 90 days after a job is installed, emails the client suggesting a complementary
+// service they haven't purchased yet. Runs daily at 9:30 AM.
+// Cost: $0 (Resend + zero tokens — email is template-driven, not AI).
+// Respects: Resend configured, lead has email, settings.autoCrossSell !== false.
+const CROSS_SELL_MAP = {
+  fleet:       { service: 'DI-NOC architectural film', pitch: 'Many fleet clients add DI-NOC to their office reception areas and showrooms after seeing how their vehicles transformed. It replaces painting or panel replacement — and the results are striking. Would you be interested in a quote for your headquarters or facility?' },
+  colorchange: { service: 'paint protection film (PPF)', pitch: 'Your color change looks fantastic — the next step most clients take is a clear paint protection film layer to shield the finish from chips, scratches, and UV. We apply it over the wrap or on painted panels. Would you like us to put together a PPF estimate?' },
+  construction:{ service: 'reflective safety markings & equipment decals', pitch: "Construction companies often add DOT-compliant reflective tape, equipment identification decals, and safety labels to their fleets after wrapping. It improves compliance and visibility on job sites. Let me know if you'd like a quick estimate." },
+  dinoc:       { service: 'architectural wall graphics & custom wallpaper', pitch: 'We also install large-format wall graphics, custom wallpaper, and branded wall murals — perfect for reception areas, conference rooms, and workspaces. Clients often pair DI-NOC surfaces with these graphics. Interested in a concept?' },
+  wallgraphics:{ service: 'vehicle wraps for your service fleet', pitch: "Wall graphics clients often overlook the fact that their service vehicles are already on the road every day — every mile is a missed branding opportunity. We can match your office graphics to your fleet. Want a fleet estimate?" },
+  reatec:      { service: 'DI-NOC surface film for interior fixtures', pitch: 'We also install DI-NOC on furniture, fixtures, and architectural elements. It pairs beautifully with Rea Tec surfaces and eliminates expensive replacements. Would you like to see what DI-NOC could do in the same space?' },
+  racing:      { service: 'race trailer wrap & hauler graphics', pitch: "Your car looks incredible — the next piece most race teams complete is the hauler. A branded trailer wrap turns your transport into a rolling billboard at every event. Want us to put together a hauler wrap concept?" },
+  gc_referral: { service: 'fleet wraps for your own vehicles', pitch: 'On top of the work we do for your clients, have you considered branding your own service vehicles? We offer contractor fleet wraps that make your company look as sharp on the road as the work you deliver.' },
+};
+
+async function processCrossSells() {
+  try {
+    if (!resend) return;
+    const { rows: jobs } = await pool.query(`
+      SELECT j.id, j.user_id, j.company, j.wrap_category, j.install_date,
+             j.vehicle_count, j.vehicle_type, j.cross_sell_email_sent,
+             l.email, l.contact_name, l.id AS lead_id,
+             u.settings_json
+        FROM installed_jobs j
+        LEFT JOIN leads l ON l.id = j.lead_id
+        JOIN users u ON u.id::text = j.user_id
+       WHERE j.install_date BETWEEN NOW() - INTERVAL '93 days' AND NOW() - INTERVAL '88 days'
+         AND j.cross_sell_email_sent = FALSE
+         AND l.email IS NOT NULL AND l.email <> ''
+    `);
+
+    for (const job of jobs) {
+      const s = job.settings_json || {};
+      if (s.autoCrossSell === false) continue;
+
+      const shopName = s.companyName || 'our shop';
+      const senderName = s.senderName || shopName;
+      const shopPhone = s.phone || s.senderPhone || '';
+      const template = CROSS_SELL_MAP[job.wrap_category] || CROSS_SELL_MAP.fleet;
+      const clientName = job.contact_name || 'there';
+
+      try {
+        await resend.emails.send({
+          from: s.resendFrom || process.env.RESEND_FROM || 'noreply@wrapleads.io',
+          to: [job.email],
+          subject: `Quick question about your recent wrap — ${job.company}`,
+          html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="max-width:520px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.08);">
+  <div style="background:#1a1a2e;padding:24px 32px;">
+    <div style="color:#f4551c;font-size:22px;font-weight:800;letter-spacing:-.02em;">${shopName}</div>
+  </div>
+  <div style="padding:28px 32px;">
+    <p style="margin:0 0 16px;font-size:16px;color:#111;font-weight:600;">Hi ${clientName},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">
+      It's been about 90 days since we completed your ${job.vehicle_count > 1 ? `${job.vehicle_count}-vehicle` : ''} wrap — hope you're getting great results out on the road!
+    </p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">
+      ${template.pitch}
+    </p>
+    <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+      Reply to this email or${shopPhone ? ` call us at ${shopPhone}` : ' reach out'} — no pressure, just happy to talk through options.
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;font-weight:600;">— ${senderName}<br><span style="font-weight:400;color:#6b7280;">${shopName}</span></p>
+  </div>
+</div>
+</body></html>`,
+        });
+
+        await pool.query(`UPDATE installed_jobs SET cross_sell_email_sent=TRUE WHERE id=$1`, [job.id]);
+
+        if (job.lead_id) {
+          await logActivity(pool, {
+            leadId: job.lead_id, userId: job.user_id, type: 'email_sent',
+            subject: `Auto: 90-day cross-sell — ${template.service}`,
+            body: `Automated cross-sell email sent to ${job.email} suggesting ${template.service}.`,
+            metadata: { auto: true, jobId: job.id, service: template.service },
+          });
+        }
+
+        console.log(`[cross-sell] Sent to ${job.email} (${job.company}) — suggesting ${template.service}`);
+      } catch (emailErr) {
+        console.error('[cross-sell] Email failed:', emailErr.message);
+      }
+    }
+  } catch (e) {
+    console.error('[cross-sell worker]', e.message);
+  }
+}
+
+function startCrossSellWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 9 && now.getMinutes() === 30) {
+      processCrossSells();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Cross-sell worker: running (daily 9:30 AM, 90-day post-install outreach)');
+}
+
 // ── Wrap Maintenance Check Worker ────────────────────────────────────────────
 // At the 2-year mark, sends a care/cleaning guide + soft refresh offer.
 // Fires daily at 10 AM. Sends once per job (blocked by activity log check).
@@ -23794,6 +23897,7 @@ app.listen(PORT, async () => {
     startQuoteExpiryWorker();
     startStalledDealWorker();
     startAnniversaryWorker();
+    startCrossSellWorker();
     startMaintenanceWorker();
     startRescueWorker();
     startWeatherWorker();

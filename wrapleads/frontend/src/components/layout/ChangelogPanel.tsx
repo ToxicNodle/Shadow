@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔄 90-Day Cross-Sell Email — Turn Every Completed Job into a Second Sale',
+    body: '90 days after a job is installed, WrapOS automatically emails the client suggesting a complementary service they haven\'t bought yet. The pitch is category-aware: fleet wrap clients get a DI-NOC pitch ("many fleet clients add this to their headquarters..."), color change clients get PPF, DI-NOC clients get wall graphics, racing clients get a trailer wrap offer, construction clients get safety markings, and so on. The email is warm, short, and personal — not a generic blast. You can toggle it off per-shop in Settings → "Auto-send 90-day cross-sell email." When it fires, WrapOS logs the email to the lead\'s activity timeline. Built around the insight that the easiest second sale is to someone who already trusts you — and 90 days is when the excitement of the new wrap has settled and they\'re thinking about what else needs branding.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📍 Nearby Carriers — Untouched Fleets in the Same City as Your Lead',
     body: 'Every lead detail now has a "Nearby Carriers in [City, State]" section. Expand it and WrapOS queries the FMCSA database for carriers in the same city you haven\'t contacted yet — sorted by fleet size, with wrap score and phone number. Click "+ Add" to add any of them to your CRM as a new lead. Use case: you\'re working ABCs Trucking in Cincinnati — expand Nearby Carriers and find 6 other fleets you could contact in the same trip. Optimizes call routing by city. Only shows carriers with 5+ vehicles not already in your leads. Pairs naturally with the Call Session modal for batching calls by geography.',
   },
