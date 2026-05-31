@@ -55,6 +55,8 @@ export default function CallSessionModal({ leads, onClose }: Props) {
   const [showObjIdx, setShowObjIdx] = useState<number | null>(null);
   const [sessionLog, setSessionLog] = useState<{ company: string; outcome: string }[]>([]);
   const [done, setDone] = useState(false);
+  const [followupLead, setFollowupLead] = useState<CallReadyLead | null>(null);
+  const [followupSending, setFollowupSending] = useState<string | null>(null);
   const { leads: crmLeads } = useLeads();
   const showToast = useAppStore((s) => s.showToast);
   const qc = useQueryClient();
@@ -84,6 +86,14 @@ export default function CallSessionModal({ leads, onClose }: Props) {
       .finally(() => setScriptLoading(false));
   }, [idx, current?.id]);
 
+  function advanceAfterOutcome(_lead: CallReadyLead) {
+    if (idx + 1 >= leads.length) {
+      setDone(true);
+    } else {
+      setIdx((i) => i + 1);
+    }
+  }
+
   async function logOutcome(outcome: Outcome) {
     if (!current) return;
     const conf = OUTCOMES.find((o) => o.value === outcome)!;
@@ -98,11 +108,69 @@ export default function CallSessionModal({ leads, onClose }: Props) {
     setSessionLog((prev) => [...prev, { company: current.company, outcome: conf.label }]);
     showToast(`${current.company}: ${conf.label}`);
 
-    if (idx + 1 >= leads.length) {
-      setDone(true);
+    // Show post-call follow-up for hot outcomes before advancing
+    if (outcome === 'interested' || outcome === 'callback') {
+      setFollowupLead(current);
     } else {
-      setIdx((i) => i + 1);
+      advanceAfterOutcome(current);
     }
+  }
+
+  async function sendFollowupSms(lead: CallReadyLead) {
+    if (!lead.phone) { showToast('No phone number on file', 'error'); return; }
+    setFollowupSending('sms');
+    try {
+      const crmL = crmLeads.find((l) => l.serverId === lead.id);
+      const settings = await api.getSettings();
+      const portfolio = (settings as any)?.shopToken
+        ? `https://wrapos.app/portfolio/${(settings as any).shopToken}`
+        : '';
+      const firstName = (crmL?.contactName || '').split(' ')[0] || 'there';
+      const msg = `Hi ${firstName}! Great talking with you. Here's our portfolio for ${lead.company}: ${portfolio || '[portfolio link]'} — let me know if you have questions!`;
+      await api.sendSms(lead.id, msg);
+      showToast('Portfolio SMS sent!');
+    } catch (e: any) {
+      showToast(e.message || 'SMS failed', 'error');
+    } finally {
+      setFollowupSending(null);
+      setFollowupLead(null);
+      advanceAfterOutcome(lead);
+    }
+  }
+
+  async function sendFollowupEmail(lead: CallReadyLead) {
+    const crmL = crmLeads.find((l) => l.serverId === lead.id);
+    const toEmail = crmL?.email ?? lead.email;
+    if (!toEmail) { showToast('No email on file', 'error'); return; }
+    setFollowupSending('email');
+    try {
+      const firstName = (crmL?.contactName || '').split(' ')[0] || 'there';
+      const settings = await api.getSettings();
+      const portfolio = (settings as any)?.shopToken
+        ? `https://wrapos.app/portfolio/${(settings as any).shopToken}`
+        : '';
+      const senderName = (settings as any)?.senderName || 'your rep';
+      const shopName = (settings as any)?.companyName || 'us';
+      await api.sendEmail(lead.id, {
+        subject: `Great talking with you, ${firstName}!`,
+        body: `Hi ${firstName},\n\nReally enjoyed our conversation today about ${lead.company}. As promised, here's our portfolio for your review:${portfolio ? `\n\n${portfolio}` : ''}\n\nI'll follow up in a couple of days, but feel free to reach out anytime.\n\n${senderName}\n${shopName}`,
+        toEmail,
+        toName: crmL?.contactName || undefined,
+      });
+      showToast('Follow-up email sent!');
+    } catch (e: any) {
+      showToast(e.message || 'Email failed', 'error');
+    } finally {
+      setFollowupSending(null);
+      setFollowupLead(null);
+      advanceAfterOutcome(lead);
+    }
+  }
+
+  function skipFollowup() {
+    const lead = followupLead;
+    setFollowupLead(null);
+    if (lead) advanceAfterOutcome(lead);
   }
 
   function skipLead() {
@@ -143,8 +211,83 @@ export default function CallSessionModal({ leads, onClose }: Props) {
     );
   }
 
-  if (!current) {
+  if (!current && !followupLead) {
     return null;
+  }
+
+  // Post-call follow-up panel for hot outcomes
+  if (followupLead) {
+    const hasPhone = !!followupLead.phone;
+    const hasCrmEmail = !!(crmLeads.find((l) => l.serverId === followupLead.id)?.email ?? followupLead.email);
+    return (
+      <div className="modal-overlay" style={{ alignItems: 'flex-start', paddingTop: 32 }} onClick={skipFollowup}>
+        <div className="modal-box" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ background: 'rgba(34,197,94,.15)', borderRadius: 8, padding: '4px 10px' }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '.1em' }}>
+                  Strike while hot 🔥
+                </span>
+              </div>
+            </div>
+            <button className="modal-close" onClick={skipFollowup}>✕</button>
+          </div>
+          <div style={{ padding: '16px 24px 24px' }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>
+              {followupLead.company}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20 }}>
+              They're interested — follow up now while the conversation is fresh.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {hasPhone && (
+                <button
+                  className="btn"
+                  disabled={!!followupSending}
+                  onClick={() => sendFollowupSms(followupLead)}
+                  style={{
+                    justifyContent: 'flex-start', fontSize: 13, padding: '12px 16px',
+                    background: 'rgba(0,217,126,0.08)', borderColor: 'rgba(0,217,126,0.3)',
+                    color: '#00d97e',
+                  }}
+                >
+                  {followupSending === 'sms' ? '…Sending' : '📱 Send Portfolio SMS'}
+                  <span style={{ fontSize: 10, marginLeft: 'auto', color: 'var(--text-faint)' }}>with portfolio link</span>
+                </button>
+              )}
+              {hasCrmEmail && (
+                <button
+                  className="btn"
+                  disabled={!!followupSending}
+                  onClick={() => sendFollowupEmail(followupLead)}
+                  style={{
+                    justifyContent: 'flex-start', fontSize: 13, padding: '12px 16px',
+                    background: 'rgba(77,138,245,0.08)', borderColor: 'rgba(77,138,245,0.3)',
+                    color: '#4d8af5',
+                  }}
+                >
+                  {followupSending === 'email' ? '…Sending' : '📧 Send Follow-up Email'}
+                  <span style={{ fontSize: 10, marginLeft: 'auto', color: 'var(--text-faint)' }}>portfolio + thanks</span>
+                </button>
+              )}
+              {!hasPhone && !hasCrmEmail && (
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '8px 0' }}>
+                  No phone or email on file — add contact info to the lead to send follow-ups.
+                </div>
+              )}
+              <button
+                className="btn"
+                disabled={!!followupSending}
+                onClick={skipFollowup}
+                style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}
+              >
+                Skip → Next Lead
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
