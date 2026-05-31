@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
@@ -348,6 +348,47 @@ export default function EmailTab({ lead }: Props) {
   const [copiedTpl, setCopiedTpl] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
 
+  // User-saved templates
+  const { data: userTplData, refetch: refetchUserTpls } = useQuery({
+    queryKey: ['email-templates'],
+    queryFn: () => api.getEmailTemplates(),
+    staleTime: 60_000,
+  });
+  const userTemplates = userTplData?.templates ?? [];
+  const [savingTpl, setSavingTpl] = useState(false);
+  const [saveTplName, setSaveTplName] = useState('');
+  const [saveTplTag, setSaveTplTag] = useState('Custom');
+  const [showSaveForm, setShowSaveForm] = useState(false);
+  const saveTplNameRef = useRef<HTMLInputElement>(null);
+  const deleteTplMut = useMutation({
+    mutationFn: (id: number) => api.deleteEmailTemplate(id),
+    onSuccess: () => { refetchUserTpls(); showToast('Template deleted'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  async function saveAsTemplate() {
+    if (!result || !saveTplName.trim()) return;
+    setSavingTpl(true);
+    try {
+      await api.createEmailTemplate({ label: saveTplName.trim(), tag: saveTplTag.trim() || 'Custom', subject: result.subject, body: result.body });
+      refetchUserTpls();
+      showToast('Template saved!');
+      setSaveTplName('');
+      setSaveTplTag('Custom');
+      setShowSaveForm(false);
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setSavingTpl(false);
+    }
+  }
+
+  function loadUserTemplate(tpl: { id: number; subject: string; body: string }) {
+    setResult({ subject: tpl.subject, body: tpl.body });
+    setTabMode('single');
+    api.recordEmailTemplateUse(tpl.id).catch(() => {});
+  }
+
   function fillTemplate(tpl: EmailTemplate) {
     const location = settings.city && settings.state
       ? `${settings.city}, ${settings.state}`
@@ -532,24 +573,65 @@ export default function EmailTab({ lead }: Props) {
       </div>
 
       {tabMode === 'templates' && (
-        <div className="tpl-grid">
-          {BUILT_IN_TEMPLATES.map((tpl, i) => (
-            <div key={i} className="tpl-card">
-              <div className="tpl-card-header">
-                <span className="tpl-tag">{tpl.tag}</span>
-                <span className="tpl-name">{tpl.label}</span>
+        <div>
+          {/* My saved templates */}
+          {userTemplates.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-faint)', marginBottom: 8 }}>
+                My Templates ({userTemplates.length})
               </div>
-              <div className="tpl-preview">{fillTemplate(tpl).body.split('\n').slice(0, 3).join(' ').slice(0, 120)}…</div>
-              <div className="tpl-actions">
-                <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => loadTemplate(tpl)}>
-                  Use Template
-                </button>
-                <button className="btn" style={{ fontSize: 11 }} onClick={() => copyTemplate(tpl, i)}>
-                  {copiedTpl === i ? '✓ Copied' : 'Copy'}
-                </button>
+              <div className="tpl-grid">
+                {userTemplates.map((tpl) => (
+                  <div key={tpl.id} className="tpl-card" style={{ borderColor: 'rgba(77,138,245,0.3)', position: 'relative' }}>
+                    <div className="tpl-card-header">
+                      <span className="tpl-tag" style={{ background: 'rgba(77,138,245,0.15)', color: '#4d8af5', borderColor: 'rgba(77,138,245,0.3)' }}>{tpl.tag}</span>
+                      <span className="tpl-name">{tpl.label}</span>
+                      {tpl.use_count > 0 && (
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>Used {tpl.use_count}×</span>
+                      )}
+                    </div>
+                    <div className="tpl-preview">{tpl.body.split('\n').slice(0, 3).join(' ').slice(0, 120)}…</div>
+                    <div className="tpl-actions">
+                      <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => loadUserTemplate(tpl)}>
+                        Use Template
+                      </button>
+                      <button
+                        className="btn"
+                        style={{ fontSize: 11, color: 'var(--red)', borderColor: 'rgba(248,113,113,0.3)' }}
+                        onClick={() => deleteTplMut.mutate(tpl.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
+          )}
+
+          {/* Built-in templates */}
+          <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Built-in Templates
+          </div>
+          <div className="tpl-grid">
+            {BUILT_IN_TEMPLATES.map((tpl, i) => (
+              <div key={i} className="tpl-card">
+                <div className="tpl-card-header">
+                  <span className="tpl-tag">{tpl.tag}</span>
+                  <span className="tpl-name">{tpl.label}</span>
+                </div>
+                <div className="tpl-preview">{fillTemplate(tpl).body.split('\n').slice(0, 3).join(' ').slice(0, 120)}…</div>
+                <div className="tpl-actions">
+                  <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => loadTemplate(tpl)}>
+                    Use Template
+                  </button>
+                  <button className="btn" style={{ fontSize: 11 }} onClick={() => copyTemplate(tpl, i)}>
+                    {copiedTpl === i ? '✓ Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -709,7 +791,54 @@ export default function EmailTab({ lead }: Props) {
                 </button>
               </>
             )}
+            <button
+              className="btn"
+              style={{ fontSize: 11, color: '#4d8af5', borderColor: 'rgba(77,138,245,0.3)', marginLeft: 'auto' }}
+              onClick={() => { setShowSaveForm((v) => !v); setTimeout(() => saveTplNameRef.current?.focus(), 50); }}
+              title="Save this email as a reusable template"
+            >
+              {showSaveForm ? '✕ Cancel' : '+ Save as Template'}
+            </button>
           </div>
+
+          {/* Save-as-template inline form */}
+          {showSaveForm && (
+            <div style={{ marginTop: 10, padding: '12px 14px', background: 'rgba(77,138,245,0.06)', border: '1px solid rgba(77,138,245,0.2)', borderRadius: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#4d8af5', marginBottom: 10 }}>
+                Save as Template
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <input
+                  ref={saveTplNameRef}
+                  value={saveTplName}
+                  onChange={(e) => setSaveTplName(e.target.value)}
+                  placeholder="Template name (e.g. 'My Fleet Intro')"
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                    background: 'var(--bg-input)', color: 'var(--text)', fontSize: 12,
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveAsTemplate(); }}
+                />
+                <input
+                  value={saveTplTag}
+                  onChange={(e) => setSaveTplTag(e.target.value)}
+                  placeholder="Tag"
+                  style={{
+                    width: 80, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                    background: 'var(--bg-input)', color: 'var(--text)', fontSize: 12,
+                  }}
+                />
+              </div>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 12, width: '100%' }}
+                onClick={saveAsTemplate}
+                disabled={savingTpl || !saveTplName.trim()}
+              >
+                {savingTpl ? 'Saving…' : 'Save Template'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

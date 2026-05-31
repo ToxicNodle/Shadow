@@ -1984,4 +1984,16 @@ export const api = {
     authFetch<{ ok: boolean }>('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
   unsubscribePush: (endpoint: string) =>
     authFetch<{ ok: boolean }>('/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
+
+  // ── User Email Templates ──
+  getEmailTemplates: () =>
+    authFetch<{ ok: boolean; templates: Array<{ id: number; label: string; tag: string; subject: string; body: string; use_count: number; created_at: string; updated_at: string }> }>('/email-templates'),
+  createEmailTemplate: (data: { label: string; tag?: string; subject: string; body: string }) =>
+    authFetch<{ ok: boolean; template: { id: number; label: string; tag: string; subject: string; body: string; use_count: number; created_at: string; updated_at: string } }>('/email-templates', { method: 'POST', body: JSON.stringify(data) }),
+  updateEmailTemplate: (id: number, data: { label?: string; tag?: string; subject?: string; body?: string }) =>
+    authFetch<{ ok: boolean; template: { id: number; label: string; tag: string; subject: string; body: string; use_count: number; created_at: string; updated_at: string } }>(`/email-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteEmailTemplate: (id: number) =>
+    authFetch<{ ok: boolean }>(`/email-templates/${id}`, { method: 'DELETE' }),
+  recordEmailTemplateUse: (id: number) =>
+    authFetch<{ ok: boolean }>(`/email-templates/${id}/use`, { method: 'POST' }),
 };

@@ -759,6 +759,26 @@ async function migrateDb() {
     console.warn('[migrate] Could not create quote_templates table:', e.message);
   }
 
+  // User-saved email outreach templates
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_templates (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        label      TEXT NOT NULL,
+        tag        TEXT NOT NULL DEFAULT 'Custom',
+        subject    TEXT NOT NULL,
+        body       TEXT NOT NULL,
+        use_count  INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_tpl_user ON email_templates(user_id, created_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create email_templates table:', e.message);
+  }
+
   // Case studies — auto-generated from completed jobs
   try {
     await pool.query(`
@@ -15528,6 +15548,82 @@ app.delete('/quotes/templates/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   try {
     await pool.query('DELETE FROM quote_templates WHERE id=$1 AND user_id=$2', [parseInt(req.params.id), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── User Email Outreach Templates ─────────────────────────────────────────────
+app.get('/email-templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, label, tag, subject, body, use_count, created_at, updated_at
+       FROM email_templates WHERE user_id=$1 ORDER BY updated_at DESC`,
+      [uid]
+    );
+    res.json({ ok: true, templates: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/email-templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { label, tag, subject, body } = req.body || {};
+  if (!label?.trim() || !subject?.trim() || !body?.trim()) {
+    return res.status(400).json({ error: 'label, subject, and body are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO email_templates (user_id, label, tag, subject, body)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, label, tag, subject, body, use_count, created_at, updated_at`,
+      [uid, label.trim(), (tag || 'Custom').trim(), subject.trim(), body.trim()]
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/email-templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  const { label, tag, subject, body } = req.body || {};
+  try {
+    const sets = [];
+    const vals = [id, uid];
+    if (label?.trim()) { sets.push(`label=$${vals.push(label.trim())}`); }
+    if (tag?.trim())   { sets.push(`tag=$${vals.push(tag.trim())}`); }
+    if (subject?.trim()) { sets.push(`subject=$${vals.push(subject.trim())}`); }
+    if (body?.trim())  { sets.push(`body=$${vals.push(body.trim())}`); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    sets.push(`updated_at=NOW()`);
+    const { rows } = await pool.query(
+      `UPDATE email_templates SET ${sets.join(',')} WHERE id=$1 AND user_id=$2
+       RETURNING id, label, tag, subject, body, use_count, created_at, updated_at`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/email-templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query(
+      'DELETE FROM email_templates WHERE id=$1 AND user_id=$2',
+      [parseInt(req.params.id, 10), uid]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Increment use_count when a saved template is loaded into the composer
+app.post('/email-templates/:id/use', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query(
+      'UPDATE email_templates SET use_count=use_count+1, updated_at=NOW() WHERE id=$1 AND user_id=$2',
+      [parseInt(req.params.id, 10), uid]
+    );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

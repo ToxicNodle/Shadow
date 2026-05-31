@@ -60,6 +60,7 @@ export default defineConfig({
       '/twilio':            API,
       '/fleet':             API,
       '/push':              API,
+      '/email-templates':  API,
     },
   },
 });
