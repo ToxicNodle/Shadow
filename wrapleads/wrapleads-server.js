@@ -401,6 +401,42 @@ async function migrateDb() {
     console.warn('[migrate] Could not create sms_sequence tables:', e.message);
   }
 
+  // Omni sequences — multi-channel (email + SMS) interleaved drip campaigns
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS omni_sequences (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        lead_id    BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        status     TEXT NOT NULL DEFAULT 'active',
+        category   TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_omniseq_lead ON omni_sequences(lead_id, user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_omniseq_status ON omni_sequences(status)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS omni_sequence_steps (
+        id            BIGSERIAL PRIMARY KEY,
+        sequence_id   BIGINT NOT NULL REFERENCES omni_sequences(id) ON DELETE CASCADE,
+        step_num      INT NOT NULL,
+        day_offset    INT NOT NULL,
+        channel       TEXT NOT NULL DEFAULT 'email',
+        subject       TEXT,
+        message       TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        scheduled_for TIMESTAMPTZ NOT NULL,
+        sent_at       TIMESTAMPTZ,
+        ext_id        TEXT,
+        error         TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_omniseq_steps_pending ON omni_sequence_steps(scheduled_for) WHERE status = 'pending'`);
+  } catch (e) {
+    console.warn('[migrate] Could not create omni_sequence tables:', e.message);
+  }
+
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS bids (
@@ -5183,6 +5219,86 @@ SMS_TEMPLATES.design = SMS_TEMPLATES.colorchange;
 SMS_TEMPLATES.reatec = SMS_TEMPLATES.dinoc;
 SMS_TEMPLATES.wallgraphics = SMS_TEMPLATES.gc_referral;
 
+// Multi-channel omni sequences — interleaved email + SMS, 4 steps over ~14 days
+// Variables: {first} {company} {shop} {sender} {portfolio}
+const OMNI_TEMPLATES = {
+  fleet: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Fleet branding for {company}',
+      message: `Hi {first},\n\n{sender} here from {shop}. I came across {company}'s fleet and wanted to reach out — we specialize in vehicle graphics for fleets your size.\n\nFleet wraps generate 30,000–70,000 impressions per truck per day at a fraction of billboard cost. Most clients see ROI within 6 months.\n\nPortfolio: {portfolio}\n\nWould a 10-minute call this week be worth your time?\n\n{sender}\n{shop}` },
+    { dayOffset: 3,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Did you see my email about fleet wraps for {company}? Even 5–10 trucks wrapped adds 300K impressions/week. Worth a quick call?" },
+    { dayOffset: 8,  channel: 'email',
+      subject: 'How fleet wraps outperform billboards — case study',
+      message: `Hi {first},\n\nOne more email on fleet branding — one of our clients with 22 trucks saved 40% vs. billboard spend while getting 2× the local impressions.\n\nI'd love to put a custom estimate together for {company}'s fleet at no charge.\n\nPortfolio: {portfolio}\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last note from {shop}: {sender} here. Fleet wrap estimate for {company} still on the table — reply STOP to opt out, or drop me a time to connect." },
+  ],
+  construction: [
+    { dayOffset: 0,  channel: 'email',
+      subject: "Your trucks are already covering the market — let's brand them",
+      message: `Hi {first},\n\n{sender} with {shop} here. {company}'s trucks are already logging miles across job sites and neighborhoods every day. Wrapping them turns every mile into a billboard impression.\n\nConstruction fleets get exceptional visibility — highways, neighborhoods, job sites.\n\nPortfolio: {portfolio}\n\nWould you be open to a quick call?\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent an email about fleet wraps for {company}'s construction trucks. Happy to put a free estimate together?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'Free fleet estimate for {company}',
+      message: `Hi {first},\n\nFollowing up on fleet graphics for {company}. We've worked with construction companies to turn service trucks into moving billboards. Happy to put a free no-obligation estimate together.\n\nPortfolio: {portfolio}\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "{first}, final note from {shop}: fleet wrap estimate for {company} still available. Reply STOP to opt out, or let's connect." },
+  ],
+  dinoc: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'DI-NOC architectural film for commercial refreshes',
+      message: `Hi {first},\n\n{sender} from {shop}. We install DI-NOC architectural film on surfaces that can't be painted or replaced — walls, columns, elevator cabs, retail fixtures.\n\nFaster than paint, lasts 7+ years, no closure time needed. Popular with GCs and commercial property managers.\n\nPortfolio: {portfolio}\n\nAny upcoming renovation projects at {company}?\n\n{sender}\n{shop}` },
+    { dayOffset: 5,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent details on DI-NOC film for {company}. Great for quick commercial refreshes. Happy to send a sample kit?" },
+    { dayOffset: 10, channel: 'email',
+      subject: 'Sample kit for {company} — 800+ patterns, no commitment',
+      message: `Hi {first},\n\nHappy to send a DI-NOC sample kit to {company} — no cost, no commitment. 800+ patterns (wood, metal, stone, solid colors). Quick install with minimal disruption.\n\nPortfolio: {portfolio}\n\nShould I drop a kit in the mail?\n\n{sender}\n{shop}` },
+    { dayOffset: 16, channel: 'sms',
+      message: "Last from {shop}: {sender} here. Reply STOP to opt out. Otherwise — sample kit for {company}? Could save your next project 30% vs. replacement." },
+  ],
+  colorchange: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Custom wraps + PPF for {company}',
+      message: `Hi {first},\n\n{sender} from {shop}. We do premium color-change wraps, PPF, and custom finishes. I thought {company} would be a great fit.\n\nPortfolio: {portfolio}\n\nInterested in a quote?\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first}! {sender} from {shop}. Sent an email about custom wraps / PPF for {company}. We have slots open this month — want a quote?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'Project slots open — {company}',
+      message: `Hi {first},\n\nFollowing up on custom wraps for {company}. We have project slots open this month and would love to fill one with a great job.\n\nHappy to do a free consultation. Portfolio: {portfolio}\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last from {shop}: custom wrap / PPF quote for {company} still open. Reply STOP to opt out, or drop your availability!" },
+  ],
+  racing: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Livery design + race wrap installs — {company}',
+      message: `Hi {first},\n\n{sender} from {shop}. We love what {company} is doing on track. We handle full livery from concept through install, and we work with teams of all sizes.\n\nPortfolio: {portfolio}\n\nWould love to chat about next season's wrap.\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent an email about livery design for {company}. We do race wraps concept-to-install. Happy to share motorsport examples?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'Motorsport portfolio + next season availability',
+      message: `Hi {first},\n\nFollowing up on livery for {company}. Our motorsport portfolio covers weekend warriors to regional series teams. Any timeline works.\n\nPortfolio: {portfolio}\n\nWhat's your production window for next season?\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last ping from {shop}: livery design for {company}'s next season still on the table — reply STOP to opt out or let's set up a call." },
+  ],
+  gc_referral: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Vendor partnership — wraps, signage, architectural film',
+      message: `Hi {first},\n\n{sender} from {shop}. We partner with GCs on architectural film, commercial fleet wraps, and site signage. We offer referral rates and handle the full install.\n\nPortfolio: {portfolio}\n\nWould {company} have upcoming projects where we might be useful?\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent details on GC vendor partnerships. We do wraps, signage, DI-NOC — worth keeping us in your vendor list?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'GC referral rates + quick turnarounds — {company}',
+      message: `Hi {first},\n\nFollowing up on our vendor partnership opportunity. We offer GC referral commissions and clean installs.\n\nPortfolio: {portfolio}\n\nHappy to jump on a quick call to explain the referral structure.\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last note from {shop}: {sender} here. Wrap/signage vendor partnership for {company} — reply STOP to opt out, or let's connect for 10 min." },
+  ],
+};
+OMNI_TEMPLATES.design      = OMNI_TEMPLATES.colorchange;
+OMNI_TEMPLATES.reatec      = OMNI_TEMPLATES.dinoc;
+OMNI_TEMPLATES.wallgraphics = OMNI_TEMPLATES.gc_referral;
+
 // POST /leads/:id/sms-sequence — start a 3-touch SMS campaign
 app.post('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
   try {
@@ -5349,6 +5465,186 @@ app.get('/leads/:id/sms-templates', authMiddleware, async (req, res) => {
     }));
 
     res.json({ ok: true, category: lead.category, templates: filled });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Omni (multi-channel) sequences ───────────────────────────────────────────
+
+function fillOmniTemplate(msg, { first, company, shop, sender, portfolio }) {
+  return msg
+    .replace(/{first}/g, first || 'there')
+    .replace(/{company}/g, company || 'your company')
+    .replace(/{shop}/g, shop || 'us')
+    .replace(/{sender}/g, sender || 'your rep')
+    .replace(/{portfolio}/g, portfolio || '');
+}
+
+// GET /leads/:id/omni-templates — preview the 4-step campaign
+app.get('/leads/:id/omni-templates', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT company, contact_name, category, email, phone FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const s = settR.rows[0]?.settings_json || {};
+    const vars = {
+      first: (lead.contact_name || '').split(' ')[0] || '',
+      company: lead.company || '',
+      shop: s.companyName || '{shop}',
+      sender: s.senderName || '{sender}',
+      portfolio: s.shopToken
+        ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${s.shopToken}`
+        : (s.portfolioUrl || ''),
+    };
+    const tpls = OMNI_TEMPLATES[lead.category] || OMNI_TEMPLATES.fleet;
+    const steps = tpls.map((t, i) => ({
+      stepNum: i + 1,
+      dayOffset: t.dayOffset,
+      channel: t.channel,
+      subject: t.subject ? fillOmniTemplate(t.subject, vars) : null,
+      message: fillOmniTemplate(t.message, vars),
+    }));
+    res.json({ ok: true, category: lead.category, hasEmail: !!lead.email, hasPhone: !!lead.phone, steps });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/omni-sequence — launch 4-step email+SMS campaign
+app.post('/leads/:id/omni-sequence', authMiddleware, requireShopFlow, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT company, contact_name, category, email, phone, sms_opted_out FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead.email && !lead.phone) {
+      return res.status(400).json({ error: 'Lead needs at least an email or phone number to start a campaign' });
+    }
+
+    // Cancel any existing active omni sequence for this lead
+    const existing = await pool.query(
+      `SELECT id FROM omni_sequences WHERE lead_id=$1 AND user_id=$2 AND status='active'`,
+      [leadId, uid]
+    );
+    for (const row of existing.rows) {
+      await pool.query(`UPDATE omni_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`, [row.id]);
+    }
+    await pool.query(`UPDATE omni_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active'`, [leadId, uid]);
+
+    const seqR = await pool.query(
+      `INSERT INTO omni_sequences (user_id, lead_id, status, category) VALUES ($1,$2,'active',$3) RETURNING id`,
+      [uid, leadId, lead.category]
+    );
+    const seqId = seqR.rows[0].id;
+
+    const vars = {
+      first: (lead.contact_name || '').split(' ')[0] || '',
+      company: lead.company || '',
+      shop: s.companyName || 'us',
+      sender: s.senderName || 'your rep',
+      portfolio: s.shopToken
+        ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${s.shopToken}`
+        : (s.portfolioUrl || ''),
+    };
+    const tpls = OMNI_TEMPLATES[lead.category] || OMNI_TEMPLATES.fleet;
+    const now = new Date();
+    const steps = [];
+
+    for (let i = 0; i < tpls.length; i++) {
+      const t = tpls[i];
+      // Skip SMS steps if no phone; skip email steps if no email
+      if (t.channel === 'sms' && !lead.phone) continue;
+      if (t.channel === 'email' && !lead.email) continue;
+
+      let scheduledFor;
+      if (t.dayOffset === 0) {
+        scheduledFor = new Date(now.getTime() + 5 * 60 * 1000);
+      } else {
+        scheduledFor = new Date(now.getTime() + t.dayOffset * 24 * 60 * 60 * 1000);
+        scheduledFor.setUTCHours(17, 0, 0, 0); // ~noon US Central
+      }
+
+      const r = await pool.query(
+        `INSERT INTO omni_sequence_steps (sequence_id, step_num, day_offset, channel, subject, message, status, scheduled_for)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7) RETURNING id`,
+        [seqId, i + 1, t.dayOffset, t.channel,
+         t.subject ? fillOmniTemplate(t.subject, vars) : null,
+         fillOmniTemplate(t.message, vars), scheduledFor]
+      );
+      steps.push({
+        id: r.rows[0].id, stepNum: i + 1, dayOffset: t.dayOffset,
+        channel: t.channel, status: 'pending', scheduledFor,
+        subject: t.subject ? fillOmniTemplate(t.subject, vars) : null,
+        message: fillOmniTemplate(t.message, vars),
+      });
+    }
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'Omni campaign started',
+      body: `4-step email+SMS campaign launched — ${steps.length} steps scheduled.`,
+    });
+    await pool.query(`UPDATE leads SET updated_at=NOW() WHERE id=$1 AND user_id=$2`, [leadId, uid]);
+    res.json({ ok: true, sequenceId: seqId, steps });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/omni-sequence — get active/latest campaign status
+app.get('/leads/:id/omni-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const seqR = await pool.query(
+      `SELECT id, status, category, created_at FROM omni_sequences
+       WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+    if (!seqR.rows[0]) return res.json({ ok: true, sequence: null });
+    const seq = seqR.rows[0];
+    const stepsR = await pool.query(
+      `SELECT id, step_num, day_offset, channel, subject, message, status, scheduled_for, sent_at, error
+       FROM omni_sequence_steps WHERE sequence_id=$1 ORDER BY step_num`,
+      [seq.id]
+    );
+    res.json({
+      ok: true,
+      sequence: {
+        id: seq.id, status: seq.status, category: seq.category, createdAt: seq.created_at,
+        steps: stepsR.rows.map(r => ({
+          id: r.id, stepNum: r.step_num, dayOffset: r.day_offset, channel: r.channel,
+          subject: r.subject, message: r.message, status: r.status,
+          scheduledFor: r.scheduled_for, sentAt: r.sent_at, error: r.error,
+        })),
+      },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /leads/:id/omni-sequence — cancel active campaign
+app.delete('/leads/:id/omni-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const seqR = await pool.query(
+      `SELECT id FROM omni_sequences WHERE lead_id=$1 AND user_id=$2 AND status='active'`,
+      [leadId, uid]
+    );
+    if (!seqR.rows[0]) return res.status(404).json({ error: 'No active campaign found' });
+    const seqId = seqR.rows[0].id;
+    await pool.query(`UPDATE omni_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`, [seqId]);
+    await pool.query(`UPDATE omni_sequences SET status='cancelled' WHERE id=$1`, [seqId]);
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note', subject: 'Omni campaign cancelled',
+      body: 'Multi-channel campaign cancelled manually.',
+    });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -6053,6 +6349,162 @@ function startSmsSequenceWorker() {
   }
 
   setTimeout(run, 2 * 60 * 1000);
+  setInterval(run, INTERVAL_MS);
+}
+
+// Omni sequence worker — processes due steps, routes to email or SMS
+function startOmniSequenceWorker() {
+  const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  console.log('· Omni campaign worker started (email+SMS, checks every 5m)');
+
+  async function run() {
+    try {
+      const { rows: steps } = await pool.query(`
+        SELECT s.id AS step_id, s.sequence_id, s.channel, s.subject, s.message,
+               seq.user_id, seq.lead_id,
+               l.email, l.phone, l.contact_name, l.company, l.sms_opted_out
+        FROM omni_sequence_steps s
+        JOIN omni_sequences seq ON seq.id = s.sequence_id
+        JOIN leads l ON l.id = seq.lead_id
+        WHERE s.status = 'pending'
+          AND s.scheduled_for <= NOW()
+          AND seq.status = 'active'
+        ORDER BY s.scheduled_for ASC
+        LIMIT 20
+        FOR UPDATE OF s SKIP LOCKED
+      `);
+
+      for (const step of steps) {
+        try {
+          if (step.channel === 'email') {
+            const resendKey = process.env.RESEND_API_KEY;
+            if (!resendKey) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='failed', error='RESEND_API_KEY not configured' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            if (!step.email) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='No email address' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            if (await isUnsubscribed(step.user_id, step.email)) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='Unsubscribed' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+
+            const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [step.user_id]);
+            const s = userR.rows[0]?.settings_json || {};
+            const fromName = s.senderName || 'WrapLeads';
+            const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+            const baseUrl = process.env.APP_BASE_URL || process.env.APP_URL || 'https://wrapos.app';
+
+            const trackToken = require('crypto').randomBytes(16).toString('hex');
+            await pool.query(
+              `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
+              [trackToken, step.user_id, step.lead_id, step.subject || '(no subject)']
+            ).catch(() => {});
+            const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
+
+            const unsubToken = await getOrCreateUnsubToken(step.user_id, step.email, step.lead_id).catch(() => null);
+            const unsubUrl = unsubToken ? `${baseUrl}/unsubscribe/${unsubToken}` : null;
+            const unsubFooter = buildUnsubFooter(unsubUrl || `${baseUrl}/unsubscribe/invalid`, fromName);
+
+            const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.7;color:#111;max-width:600px">${step.message.replace(/\n/g, '<br>')}${unsubFooter.html}</div><img src="${pixelUrl}" width="1" height="1" style="display:none" alt="">`;
+            const text = step.message + unsubFooter.text;
+
+            const resp = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: `${fromName} <${fromEmail}>`,
+                to: step.contact_name ? `${step.contact_name} <${step.email}>` : step.email,
+                subject: step.subject || `Following up — ${step.company}`,
+                html, text,
+                headers: unsubUrl ? {
+                  'List-Unsubscribe': `<${unsubUrl}>, <mailto:${fromEmail}?subject=unsubscribe>`,
+                  'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+                } : {},
+              }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.message || 'Resend error');
+
+            await pool.query(
+              `UPDATE omni_sequence_steps SET status='sent', sent_at=NOW(), ext_id=$1 WHERE id=$2`,
+              [data.id, step.step_id]
+            );
+            await logActivity(pool, {
+              leadId: step.lead_id, userId: step.user_id, type: 'email_sent',
+              subject: step.subject || `Following up — ${step.company}`, body: step.message,
+              metadata: { to: step.email, resend_id: data.id, omni: true, track_token: trackToken },
+            });
+            console.log(`[omni] Email sent to ${step.email} (lead ${step.lead_id})`);
+
+          } else if (step.channel === 'sms') {
+            if (step.sms_opted_out) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='Opted out' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            if (!step.phone) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='No phone' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [step.user_id]);
+            const s = userR.rows[0]?.settings_json || {};
+            if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='failed', error='Twilio not configured' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+            const body = new URLSearchParams({ From: s.twilioFromNumber, To: step.phone, Body: step.message });
+            const resp = await fetch(twilioUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body,
+            });
+            const data = await resp.json();
+            if (!resp.ok || data.status === 'failed') throw new Error(data.message || 'Twilio error');
+
+            await pool.query(
+              `UPDATE omni_sequence_steps SET status='sent', sent_at=NOW(), ext_id=$1 WHERE id=$2`,
+              [data.sid, step.step_id]
+            );
+            await logActivity(pool, {
+              leadId: step.lead_id, userId: step.user_id, type: 'sms_sent',
+              subject: 'Omni campaign SMS sent', body: step.message,
+              metadata: { to: step.phone, twilio_sid: data.sid, omni: true },
+            });
+            console.log(`[omni] SMS sent to ${step.phone} (lead ${step.lead_id})`);
+          }
+
+          // Check if all steps are done
+          const pending = await pool.query(
+            `SELECT COUNT(*) AS n FROM omni_sequence_steps WHERE sequence_id=$1 AND status='pending'`,
+            [step.sequence_id]
+          );
+          if (parseInt(pending.rows[0].n, 10) === 0) {
+            await pool.query(`UPDATE omni_sequences SET status='completed' WHERE id=$1`, [step.sequence_id]);
+            await pool.query(
+              `UPDATE leads SET last_contacted=CURRENT_DATE, followup_due_at=CURRENT_DATE,
+               status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
+               updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+              [step.lead_id, step.user_id]
+            );
+            console.log(`[omni] Campaign COMPLETE for lead ${step.lead_id}`);
+          }
+        } catch (e) {
+          await pool.query(`UPDATE omni_sequence_steps SET status='failed', error=$1 WHERE id=$2`, [e.message, step.step_id]);
+          console.warn(`[omni] Step ${step.step_id} failed:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[omni worker] error:', e.message);
+    }
+  }
+
+  setTimeout(run, 3 * 60 * 1000); // first run after 3 min
   setInterval(run, INTERVAL_MS);
 }
 
@@ -20683,6 +21135,7 @@ app.listen(PORT, async () => {
   if (db.ok) {
     startDripWorker();
     startSmsSequenceWorker();
+    startOmniSequenceWorker();
     startEmailEnrichmentWorker();
     startDigestWorker();
     startColdNurtureWorker();

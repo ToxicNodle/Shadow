@@ -598,3 +598,32 @@ export interface ShopQuote {
   created_at: string;
   updated_at: string;
 }
+
+export interface OmniSequenceStep {
+  id: number;
+  stepNum: number;
+  dayOffset: number;
+  channel: 'email' | 'sms';
+  subject: string | null;
+  message: string;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  scheduledFor: string;
+  sentAt: string | null;
+  error: string | null;
+}
+
+export interface OmniSequence {
+  id: number;
+  status: 'active' | 'completed' | 'cancelled';
+  category: string | null;
+  createdAt: string;
+  steps: OmniSequenceStep[];
+}
+
+export interface OmniTemplateStep {
+  stepNum: number;
+  dayOffset: number;
+  channel: 'email' | 'sms';
+  subject: string | null;
+  message: string;
+}

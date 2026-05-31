@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔀 Omni Campaigns — Email + SMS Combined in One 4-Step Drip',
+    body: 'The Email tab now has a "4-Step Omni Campaign" panel — the most powerful outreach feature in WrapOS. Launch one campaign and WrapOS automatically sends: Day 0 email (intro + portfolio), Day 3 SMS (quick check-in), Day 8 email (case study), Day 14 SMS (final touch). Email and SMS interleaved into one coordinated sequence — if the lead has no phone, SMS steps are skipped automatically; if no email, email steps are skipped. All messages are category-aware and variable-filled. The campaign worker runs every 5 minutes. Requires Twilio (for SMS steps) and Resend (for email steps). Gated at ShopFlow tier and above.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📱 SMS Campaign Sequences — 3-Touch Text Campaigns on Autopilot',
     body: 'Every lead now has an SMS tab in the lead detail panel. Launch a 3-touch SMS campaign with one click — WrapOS sends category-aware, personalized texts on days 1, 4, and 10 automatically via Twilio. Templates are written specifically for each wrap category: fleet wraps emphasize impressions and brand visibility, construction fleets get a job-site angle, racing teams get a livery pitch. All variables (name, company, shop name, portfolio link) are auto-filled from the lead and your settings. The background worker runs every 5 minutes so messages go out on schedule even while you\'re on a job. Each sent text is logged in the activity timeline. The SMS tab also shows a "Quick Text" composer for one-off messages. Requires Twilio credentials in Settings.',
   },

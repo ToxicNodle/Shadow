@@ -927,6 +927,16 @@ export const api = {
   getSmsTemplates: (leadId: number) =>
     authFetch<{ ok: boolean; category: string; templates: Array<{ stepNum: number; dayOffset: number; message: string }> }>(`/leads/${leadId}/sms-templates`),
 
+  // Omni (multi-channel) sequences
+  getOmniTemplates: (leadId: number) =>
+    authFetch<{ ok: boolean; category: string; hasEmail: boolean; hasPhone: boolean; steps: import('./types').OmniTemplateStep[] }>(`/leads/${leadId}/omni-templates`),
+  startOmniSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequenceId: number; steps: import('./types').OmniSequenceStep[] }>(`/leads/${leadId}/omni-sequence`, { method: 'POST' }),
+  getOmniSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequence: import('./types').OmniSequence | null }>(`/leads/${leadId}/omni-sequence`),
+  cancelOmniSequence: (leadId: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/omni-sequence`, { method: 'DELETE' }),
+
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
   getBidSummary: () => authFetch<BidSummary>('/bids/summary'),

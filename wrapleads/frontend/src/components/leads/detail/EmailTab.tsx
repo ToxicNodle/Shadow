@@ -4,6 +4,7 @@ import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 import SmartFollowupButton from './SmartFollowupButton';
+import OmniCampaignPanel from './OmniCampaignPanel';
 
 // ── Per-lead Send Timing Chip ─────────────────────────────────────────────────
 function SendTimingChip({ leadId }: { leadId: number }) {
@@ -485,6 +486,9 @@ export default function EmailTab({ lead }: Props) {
     <div>
       {/* CAN-SPAM: warn if contact has unsubscribed */}
       {lead.serverId && <UnsubscribedWarning leadId={lead.serverId} />}
+
+      {/* 4-Step Omni Campaign (email + SMS) */}
+      {lead.serverId && <OmniCampaignPanel lead={lead} />}
 
       {/* Smart Follow-up AI composer */}
       {lead.serverId && (
