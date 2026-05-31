@@ -363,6 +363,39 @@ async function migrateDb() {
 
   try {
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS sms_sequences (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        lead_id    BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        status     TEXT NOT NULL DEFAULT 'active',
+        category   TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_smsseq_lead ON sms_sequences(lead_id, user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_smsseq_status ON sms_sequences(status)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sms_sequence_steps (
+        id            BIGSERIAL PRIMARY KEY,
+        sequence_id   BIGINT NOT NULL REFERENCES sms_sequences(id) ON DELETE CASCADE,
+        step_num      INT NOT NULL,
+        day_offset    INT NOT NULL,
+        message       TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        scheduled_for TIMESTAMPTZ NOT NULL,
+        sent_at       TIMESTAMPTZ,
+        twilio_sid    TEXT,
+        error         TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_smsseq_steps_pending ON sms_sequence_steps(scheduled_for) WHERE status = 'pending'`);
+  } catch (e) {
+    console.warn('[migrate] Could not create sms_sequence tables:', e.message);
+  }
+
+  try {
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS bids (
         id              BIGSERIAL PRIMARY KEY,
         user_id         TEXT NOT NULL,
@@ -5025,6 +5058,212 @@ app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── SMS Campaign sequences ────────────────────────────────────────────────────
+// Category-aware 3-touch templates. Variables: {first} {company} {shop} {sender} {portfolio}
+const SMS_TEMPLATES = {
+  fleet: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop} here. I noticed {company}'s fleet and wanted to reach out about branding your trucks. Is fleet graphics on your radar? {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop} again. Fleet wraps generate 30K-70K impressions/day per truck at a fraction of billboard cost. Worth a 5-min call?" },
+    { dayOffset: 10, msg: "Last one from {sender} at {shop}: if the timing isn't right, reply STOP. Otherwise I'd love to put a free estimate together for {company}." },
+  ],
+  construction: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop}. Saw {company}'s trucks out on a job — your fleet could be doing double-duty as moving billboards. Interested in a wrap estimate? {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop} here. Construction fleets are ideal for wraps — constant visibility across job sites. Quick call to explore?" },
+    { dayOffset: 10, msg: "{first}, last follow-up from {shop}. Reply STOP to opt out, or let me know when to connect about {company}'s fleet." },
+  ],
+  dinoc: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop}. We install DI-NOC architectural film on surfaces that can't be painted or replaced. Any commercial reno projects at {company} coming up? {portfolio}" },
+    { dayOffset: 5,  msg: "Hey {first} — {shop}. DI-NOC is popular with GCs for quick commercial refreshes. Happy to send a sample kit?" },
+    { dayOffset: 12, msg: "Final note from {shop}: reply STOP to opt out. Otherwise, let me know a good time to chat about {company}." },
+  ],
+  colorchange: [
+    { dayOffset: 0,  msg: "Hey {first}! {sender} from {shop}. We do premium color-change wraps, PPF, and custom finishes. Thought we'd be a great fit for {company}. {portfolio}" },
+    { dayOffset: 5,  msg: "Hey {first} — {shop} here. We have project slots open this month. Interested in a quote for {company}?" },
+    { dayOffset: 12, msg: "Last from {shop}: reply STOP anytime, or drop a good time to connect!" },
+  ],
+  racing: [
+    { dayOffset: 0,  msg: "Hey {first}! {sender} with {shop}. We love what {company} is doing on track — would love to talk livery design and race wrap installs for next season. {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop}. We handle full livery from concept to install. Happy to share motorsport portfolio examples?" },
+    { dayOffset: 9,  msg: "Last ping from {shop}. Reply STOP to opt out, or let's talk {company}'s next season livery." },
+  ],
+  gc_referral: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop}. We partner with GCs on architectural film, signage, and fleet wraps. Would {company} have upcoming projects that might fit? {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop} again. We offer GC referral rates and handle the full install. Worth keeping us in your vendor network?" },
+    { dayOffset: 10, msg: "Last note from {shop}: reply STOP anytime. Otherwise, happy to connect for 10 min about {company}." },
+  ],
+};
+SMS_TEMPLATES.design = SMS_TEMPLATES.colorchange;
+SMS_TEMPLATES.reatec = SMS_TEMPLATES.dinoc;
+SMS_TEMPLATES.wallgraphics = SMS_TEMPLATES.gc_referral;
+
+// POST /leads/:id/sms-sequence — start a 3-touch SMS campaign
+app.post('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT phone, company, contact_name, category FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    if (!lead.phone) return res.status(400).json({ error: 'No phone number on this lead — add one first' });
+    if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+      return res.status(400).json({ error: 'Twilio not configured — add credentials in Settings → SMS' });
+    }
+
+    // Cancel any existing active sequence for this lead
+    await pool.query(
+      `UPDATE sms_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active'`,
+      [leadId, uid]
+    );
+    await pool.query(
+      `UPDATE sms_sequence_steps SET status='skipped'
+       WHERE sequence_id IN (SELECT id FROM sms_sequences WHERE lead_id=$1 AND user_id=$2) AND status='pending'`,
+      [leadId, uid]
+    );
+
+    const seqR = await pool.query(
+      `INSERT INTO sms_sequences (user_id, lead_id, status, category) VALUES ($1,$2,'active',$3) RETURNING id`,
+      [uid, leadId, lead.category]
+    );
+    const seqId = seqR.rows[0].id;
+
+    const templates = SMS_TEMPLATES[lead.category] || SMS_TEMPLATES.fleet;
+    const first = (lead.contact_name || '').split(' ')[0] || '';
+    const shopToken = s.shopToken || '';
+    const portfolioUrl = shopToken ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${shopToken}` : (s.portfolioUrl || '');
+
+    function fillTemplate(msg) {
+      return msg
+        .replace(/{first}/g, first || 'there')
+        .replace(/{company}/g, lead.company || 'your company')
+        .replace(/{shop}/g, s.companyName || 'us')
+        .replace(/{sender}/g, s.senderName || 'your rep')
+        .replace(/{portfolio}/g, portfolioUrl);
+    }
+
+    const now = new Date();
+    const steps = [];
+    for (let i = 0; i < templates.length; i++) {
+      const t = templates[i];
+      let scheduledFor;
+      if (t.dayOffset === 0) {
+        // First message in 5 minutes
+        scheduledFor = new Date(now.getTime() + 5 * 60 * 1000);
+      } else {
+        scheduledFor = new Date(now.getTime() + t.dayOffset * 24 * 60 * 60 * 1000);
+        // Send at 10 AM local time — approximate by anchoring to noon UTC
+        scheduledFor.setUTCHours(17, 0, 0, 0);
+      }
+
+      const r = await pool.query(
+        `INSERT INTO sms_sequence_steps (sequence_id, step_num, day_offset, message, status, scheduled_for)
+         VALUES ($1,$2,$3,$4,'pending',$5) RETURNING id`,
+        [seqId, i + 1, t.dayOffset, fillTemplate(t.msg), scheduledFor]
+      );
+      steps.push({
+        id: r.rows[0].id, stepNum: i + 1, dayOffset: t.dayOffset,
+        message: fillTemplate(t.msg), scheduledFor, status: 'pending',
+      });
+    }
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'SMS campaign started',
+      body: `3-touch SMS sequence launched — ${templates.length} messages over ${templates[templates.length - 1].dayOffset} days.`,
+    });
+    await pool.query(`UPDATE leads SET updated_at=NOW() WHERE id=$1 AND user_id=$2`, [leadId, uid]);
+
+    res.json({ ok: true, sequenceId: seqId, steps });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/sms-sequence — get most recent sequence status
+app.get('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const seqR = await pool.query(
+      `SELECT id, status, category, created_at FROM sms_sequences
+       WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+    if (!seqR.rows.length) return res.json({ ok: true, sequence: null });
+
+    const seq = seqR.rows[0];
+    const stepsR = await pool.query(
+      `SELECT id, step_num, day_offset, message, status, scheduled_for, sent_at, error
+       FROM sms_sequence_steps WHERE sequence_id=$1 ORDER BY step_num`,
+      [seq.id]
+    );
+
+    res.json({ ok: true, sequence: { ...seq, steps: stepsR.rows } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /leads/:id/sms-sequence — cancel active sequence
+app.delete('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const seqR = await pool.query(
+      `UPDATE sms_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active' RETURNING id`,
+      [leadId, uid]
+    );
+    if (seqR.rows.length) {
+      await pool.query(
+        `UPDATE sms_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`,
+        [seqR.rows[0].id]
+      );
+    }
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'SMS campaign cancelled',
+      body: 'The active SMS sequence was cancelled.',
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/sms-templates — preview templates for a lead's category
+app.get('/leads/:id/sms-templates', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT company, contact_name, category FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const templates = SMS_TEMPLATES[lead.category] || SMS_TEMPLATES.fleet;
+    const first = (lead.contact_name || '').split(' ')[0] || '';
+    const shopToken = s.shopToken || '';
+    const portfolioUrl = shopToken ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${shopToken}` : (s.portfolioUrl || '');
+
+    const filled = templates.map((t, i) => ({
+      stepNum: i + 1,
+      dayOffset: t.dayOffset,
+      message: t.msg
+        .replace(/{first}/g, first || 'there')
+        .replace(/{company}/g, lead.company || 'your company')
+        .replace(/{shop}/g, s.companyName || 'us')
+        .replace(/{sender}/g, s.senderName || 'your rep')
+        .replace(/{portfolio}/g, portfolioUrl),
+    }));
+
+    res.json({ ok: true, category: lead.category, templates: filled });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================================
 // Today's Mission — AI-prioritized daily action list
 // ============================================================================
@@ -5643,6 +5882,85 @@ async function sendDailyDigests() {
   } catch (e) {
     console.error('[digest worker]', e.message);
   }
+}
+
+function startSmsSequenceWorker() {
+  const INTERVAL_MS = 5 * 60 * 1000;
+  console.log('· SMS Sequence worker started (5-min poll)');
+
+  async function run() {
+    try {
+      const { rows: due } = await pool.query(`
+        SELECT s.id AS step_id, s.sequence_id, s.message, s.step_num,
+               seq.user_id, seq.lead_id,
+               l.phone, l.company,
+               u.settings_json
+        FROM sms_sequence_steps s
+        JOIN sms_sequences seq ON seq.id = s.sequence_id
+        JOIN leads l ON l.id = seq.lead_id
+        JOIN users u ON u.id::TEXT = seq.user_id
+        WHERE s.status = 'pending'
+          AND s.scheduled_for <= NOW()
+          AND seq.status = 'active'
+        ORDER BY s.scheduled_for ASC
+        LIMIT 20
+      `);
+
+      for (const step of due) {
+        const settings = step.settings_json || {};
+        if (!settings.twilioAccountSid || !settings.twilioAuthToken || !settings.twilioFromNumber) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='failed', error='Twilio not configured' WHERE id=$1`, [step.step_id]);
+          continue;
+        }
+        if (!step.phone) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='failed', error='No phone number' WHERE id=$1`, [step.step_id]);
+          continue;
+        }
+
+        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${settings.twilioAccountSid}/Messages.json`;
+        const auth = 'Basic ' + Buffer.from(`${settings.twilioAccountSid}:${settings.twilioAuthToken}`).toString('base64');
+
+        try {
+          const twilioResp = await fetch(twilioUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: auth },
+            body: new URLSearchParams({ To: step.phone, From: settings.twilioFromNumber, Body: step.message }).toString(),
+          });
+          const data = await twilioResp.json();
+          if (twilioResp.ok) {
+            await pool.query(
+              `UPDATE sms_sequence_steps SET status='sent', sent_at=NOW(), twilio_sid=$1 WHERE id=$2`,
+              [data.sid, step.step_id]
+            );
+            await logActivity(pool, {
+              leadId: step.lead_id, userId: step.user_id, type: 'called',
+              subject: `SMS sequence — step ${step.step_num}`,
+              body: step.message,
+              metadata: { twilio_sid: data.sid, sequence_step: step.step_num },
+            });
+            await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1`, [step.lead_id]);
+
+            const { rows: remaining } = await pool.query(
+              `SELECT COUNT(*) AS n FROM sms_sequence_steps WHERE sequence_id=$1 AND status='pending'`,
+              [step.sequence_id]
+            );
+            if (remaining[0].n === '0') {
+              await pool.query(`UPDATE sms_sequences SET status='completed' WHERE id=$1`, [step.sequence_id]);
+            }
+          } else {
+            await pool.query(`UPDATE sms_sequence_steps SET status='failed', error=$1 WHERE id=$2`, [data.message || 'Twilio error', step.step_id]);
+          }
+        } catch (e) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='failed', error=$1 WHERE id=$2`, [e.message, step.step_id]);
+        }
+      }
+    } catch (e) {
+      console.warn('[smsSequence] worker error:', e.message);
+    }
+  }
+
+  setTimeout(run, 2 * 60 * 1000);
+  setInterval(run, INTERVAL_MS);
 }
 
 function startDigestWorker() {
@@ -20146,6 +20464,7 @@ app.listen(PORT, async () => {
     : `· Postgres NOT connected: ${db.error}\n  Run: docker compose up -d`);
   if (db.ok) {
     startDripWorker();
+    startSmsSequenceWorker();
     startDigestWorker();
     startColdNurtureWorker();
     startReOrderWorker();

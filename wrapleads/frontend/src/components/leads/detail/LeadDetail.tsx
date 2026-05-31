@@ -15,6 +15,7 @@ import QuotesTab from './QuotesTab';
 import AIWhisper from './AIWhisper';
 import CompetitiveIntelTab from './CompetitiveIntelTab';
 import ProjectTab from './ProjectTab';
+import SmsTab from './SmsTab';
 
 // ── Deal Metrics Strip ────────────────────────────────────────────────────────
 // Conservative avg revenue per lead category (mirrors REV_EST in other files)
@@ -402,7 +403,7 @@ function ScoreBreakdownModal({ lead, onClose }: { lead: Lead; onClose: () => voi
   );
 }
 
-type Tab = 'timeline' | 'email' | 'quotes' | 'notes' | 'design' | 'intel' | 'project';
+type Tab = 'timeline' | 'email' | 'quotes' | 'notes' | 'design' | 'intel' | 'project' | 'sms';
 
 function PortalShareBtn({ leadServerId }: { leadServerId: number }) {
   const qc = useQueryClient();
@@ -623,6 +624,7 @@ export default function LeadDetail() {
             {([
               { id: 'timeline', label: 'Timeline' },
               { id: 'email',    label: 'Email' },
+              { id: 'sms',      label: '📱 SMS' },
               { id: 'quotes',   label: 'Quotes' },
               { id: 'notes',    label: 'Notes' },
               { id: 'design',   label: 'Design' },
@@ -641,6 +643,7 @@ export default function LeadDetail() {
           <div className="ld-right-content" key={lead.id}>
             {activeTab === 'timeline' && <ActivityTab lead={lead} />}
             {activeTab === 'email'    && <EmailTab lead={lead} />}
+            {activeTab === 'sms'      && <SmsTab lead={lead} />}
             {activeTab === 'quotes'   && <QuotesTab lead={lead} />}
             {activeTab === 'notes'    && <NotesTab lead={lead} />}
             {activeTab === 'design'   && <DesignStudioTab lead={lead} />}

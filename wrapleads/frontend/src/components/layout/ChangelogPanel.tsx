@@ -7,6 +7,12 @@ const CHANGELOG: Array<{
   body: string;
 }> = [
   {
+    date: 'Jun 2026',
+    tag: 'new',
+    title: '📱 SMS Campaign Sequences — 3-Touch Text Campaigns on Autopilot',
+    body: 'Every lead now has an SMS tab in the lead detail panel. Launch a 3-touch SMS campaign with one click — WrapOS sends category-aware, personalized texts on days 1, 4, and 10 automatically via Twilio. Templates are written specifically for each wrap category: fleet wraps emphasize impressions and brand visibility, construction fleets get a job-site angle, racing teams get a livery pitch. All variables (name, company, shop name, portfolio link) are auto-filled from the lead and your settings. The background worker runs every 5 minutes so messages go out on schedule even while you\'re on a job. Each sent text is logged in the activity timeline. The SMS tab also shows a "Quick Text" composer for one-off messages. Requires Twilio credentials in Settings.',
+  },
+  {
     date: 'May 2026',
     tag: 'new',
     title: '⚡ Speed-to-Lead Auto-Responder — Instant Reply to Every Inbound Quote Request',

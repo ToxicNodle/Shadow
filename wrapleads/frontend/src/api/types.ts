@@ -559,6 +559,25 @@ export interface QuoteLineItem {
 
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'invoiced';
 
+export interface SmsSequenceStep {
+  id: number;
+  step_num: number;
+  day_offset: number;
+  message: string;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  scheduled_for: string;
+  sent_at: string | null;
+  error: string | null;
+}
+
+export interface SmsSequence {
+  id: number;
+  status: 'active' | 'completed' | 'cancelled';
+  category: string | null;
+  created_at: string;
+  steps: SmsSequenceStep[];
+}
+
 export interface ShopQuote {
   id: number;
   lead_id: number;

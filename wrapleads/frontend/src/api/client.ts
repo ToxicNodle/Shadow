@@ -911,6 +911,16 @@ export const api = {
   sendSms: (leadId: number, message: string) =>
     authFetch<{ ok: boolean; sid?: string }>(`/leads/${leadId}/sms`, { method: 'POST', body: JSON.stringify({ message }) }),
 
+  // SMS campaign sequences
+  getSmsSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequence: import('./types').SmsSequence | null }>(`/leads/${leadId}/sms-sequence`),
+  startSmsSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequenceId: number; steps: import('./types').SmsSequenceStep[] }>(`/leads/${leadId}/sms-sequence`, { method: 'POST' }),
+  cancelSmsSequence: (leadId: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/sms-sequence`, { method: 'DELETE' }),
+  getSmsTemplates: (leadId: number) =>
+    authFetch<{ ok: boolean; category: string; templates: Array<{ stepNum: number; dayOffset: number; message: string }> }>(`/leads/${leadId}/sms-templates`),
+
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
   getBidSummary: () => authFetch<BidSummary>('/bids/summary'),
