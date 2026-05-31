@@ -1,0 +1,40 @@
+{
+  "name": "WrapOS — The Operating System for Wrap Shops",
+  "short_name": "WrapOS",
+  "description": "Find leads, send AI outreach, quote jobs, and track installs — built for vehicle wrap and graphics shops.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0e1018",
+  "theme_color": "#f4551c",
+  "orientation": "portrait-primary",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "My Leads",
+      "short_name": "Leads",
+      "url": "/?mode=leads",
+      "description": "View and manage your CRM leads"
+    },
+    {
+      "name": "Mission Dashboard",
+      "short_name": "Mission",
+      "url": "/?mode=mission",
+      "description": "Today's priorities and action items"
+    },
+    {
+      "name": "Discover Prospects",
+      "short_name": "Discover",
+      "url": "/?mode=discover",
+      "description": "Search 600K+ fleet carriers"
+    }
+  ]
+}

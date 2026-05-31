@@ -4,6 +4,12 @@ import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { CATEGORIES, STATUSES } from '../../api/types';
+import PipelineDoctorCard from './PipelineDoctorCard';
+import TerritoryIntelCard from './TerritoryIntelCard';
+import OutreachCalendarCard from './OutreachCalendarCard';
+import PricingIntelCard from './PricingIntelCard';
+import WinPatternsCard from './WinPatternsCard';
+import LeadCoverageCard from './LeadCoverageCard';
 
 function fmtRev(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -22,6 +28,88 @@ const CAT_COLORS: Record<string, string> = {
   construction: '#f97316', colorchange: '#ec4899', racing: '#ef4444',
   reatec: '#06b6d4', design: '#84cc16', wallgraphics: '#a78bfa', other: '#6b7280',
 };
+
+// ── Monthly Revenue Trend ─────────────────────────────────────────────────────
+function RevenueMonthlyCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['revenue-monthly'],
+    queryFn: () => api.getMonthlyRevenue(),
+    staleTime: 10 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="an-card-title">Revenue Trend</div>
+      <div style={{ color: 'var(--text-faint)', fontSize: 12, padding: '16px 0' }}>Loading…</div>
+    </div>
+  );
+
+  const months = data?.months ?? [];
+  const hasData = months.some((m) => m.revenue > 0);
+  if (!hasData) return null;
+
+  const maxRevenue = Math.max(...months.map((m) => m.revenue), 1);
+  const fmt = (n: number) => n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${n}`;
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Revenue Trend — Last 18 Months</div>
+        <div style={{ display: 'flex', gap: 16 }}>
+          {data?.avgMonthly ? (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{fmt(data.avgMonthly)}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>avg/mo</div>
+            </div>
+          ) : null}
+          {data?.bestMonth ? (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: '#22c55e' }}>{data.bestMonth}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>best month</div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 120, overflowX: 'auto', paddingBottom: 8 }}>
+        {months.map((m) => {
+          const pct = maxRevenue > 0 ? (m.revenue / maxRevenue) : 0;
+          const barH = Math.max(pct * 96, m.revenue > 0 ? 4 : 2);
+          const isCurrentMonth = m.month === new Date().toISOString().slice(0, 7);
+          return (
+            <div key={m.month} style={{ flex: '1 0 0', minWidth: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              {m.revenue > 0 && (
+                <div style={{ fontSize: 9, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmt(m.revenue)}</div>
+              )}
+              <div
+                style={{
+                  width: '100%', height: barH,
+                  background: isCurrentMonth ? '#f4551c' : m.revenue > 0 ? '#4d8af5' : '#ffffff10',
+                  borderRadius: '3px 3px 0 0',
+                  transition: 'height .3s ease',
+                  position: 'relative',
+                }}
+                title={`${m.label}: ${fmt(m.revenue)} (${m.jobCount} job${m.jobCount !== 1 ? 's' : ''})`}
+              />
+              <div style={{ fontSize: 9, color: isCurrentMonth ? '#f4551c' : 'var(--text-faint)', fontWeight: isCurrentMonth ? 700 : 400, whiteSpace: 'nowrap', textAlign: 'center', lineHeight: 1.1 }}>{m.label}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-faint)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: '#4d8af5', display: 'inline-block' }} />
+          Completed months
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-faint)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: '#f4551c', display: 'inline-block' }} />
+          Current month
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function RevenueAttributionCard() {
   const { data, isLoading } = useQuery({
@@ -145,7 +233,7 @@ function ActivityHeatmap({ data }: { data: { day: string; count: number }[] }) {
   startDay.setDate(startDay.getDate() - startDay.getDay()); // back to Sunday
 
   const weeks: Date[][] = [];
-  let cur = new Date(startDay);
+  const cur = new Date(startDay);
   while (cur <= today) {
     const week: Date[] = [];
     for (let d = 0; d < 7; d++) {
@@ -546,6 +634,145 @@ const TONE_COLOR: Record<string, string> = {
   professional: '#6366f1', casual: '#10b981', direct: '#f97316', local: '#f59e0b', unknown: '#94a3b8',
 };
 
+function EmailTimingCard() {
+  const { setCurrentLeadId, setMode } = useAppStore((s) => ({
+    setCurrentLeadId: s.setCurrentLeadId,
+    setMode: s.setMode,
+  }));
+  const { data, isLoading } = useQuery({
+    queryKey: ['email-timing'],
+    queryFn: () => api.getEmailTiming(),
+    staleTime: 15 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+    </div>
+  );
+
+  const d = data;
+  if (!d?.ok || d.totalOpens < 5) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+      <div className="an-card-title">Email Send-Time Intelligence</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+        Send at least 5 tracked emails to unlock open-time patterns. Once you do, WrapOS will tell you exactly when your prospects read their emails.
+      </p>
+    </div>
+  );
+
+  const maxHour = Math.max(...d.byHour.map(h => h.opens), 1);
+  const maxDow  = Math.max(...d.byDow.map(h => h.opens), 1);
+
+  const hourLabel = (h: number) => h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`;
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Email Send-Time Intelligence</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            When your prospects actually open emails — last 90 days, {d.totalOpens} opens tracked
+          </div>
+        </div>
+        {d.bestDow && d.bestHours.length > 0 && (
+          <div style={{
+            background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)',
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#10b981',
+          }}>
+            Best window: {d.bestDow.label} {d.bestHours[0]?.label}–{d.bestHours[1]?.label}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20, marginBottom: d.activeReaders.length > 0 ? 16 : 0 }}>
+        {/* Hour-of-day bars */}
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Hour of day (EST)
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 48 }}>
+            {d.byHour.map(h => {
+              const pct = (h.opens / maxHour) * 100;
+              const isBest = d.bestHours.some(b => b.hour === h.hour);
+              return (
+                <div key={h.hour} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}
+                  title={`${hourLabel(h.hour)}: ${h.opens} open${h.opens !== 1 ? 's' : ''}`}>
+                  <div style={{
+                    width: '100%', height: Math.max(2, Math.round(pct * 0.44)),
+                    background: isBest ? '#10b981' : h.opens > 0 ? '#10b98130' : 'var(--border)',
+                    borderRadius: '2px 2px 0 0',
+                  }} />
+                  {(h.hour % 4 === 0) && (
+                    <span style={{ fontSize: 8, color: 'var(--text-faint)', marginTop: 2 }}>{hourLabel(h.hour)}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Day-of-week bars */}
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Day of week
+          </div>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 48 }}>
+            {d.byDow.map(day => {
+              const pct = (day.opens / maxDow) * 100;
+              const isBest = d.bestDow?.dow === day.dow;
+              return (
+                <div key={day.dow} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}
+                  title={`${day.label}: ${day.opens} opens`}>
+                  <div style={{
+                    width: '100%', height: Math.max(2, Math.round(pct * 0.44)),
+                    background: isBest ? '#10b981' : day.opens > 0 ? '#10b98130' : 'var(--border)',
+                    borderRadius: '2px 2px 0 0',
+                  }} />
+                  <span style={{ fontSize: 9, color: isBest ? '#10b981' : 'var(--text-faint)', fontWeight: isBest ? 700 : 400 }}>
+                    {day.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Active readers */}
+      {d.activeReaders.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Recent openers — reach out now while you're top of mind
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {d.activeReaders.slice(0, 6).map(r => {
+              const when = r.hoursAgo < 24
+                ? `${Math.round(r.hoursAgo)}h ago`
+                : `${Math.round(r.hoursAgo / 24)}d ago`;
+              return (
+                <div
+                  key={r.leadId}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 7,
+                    background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)',
+                    borderRadius: 7, padding: '5px 10px', cursor: 'pointer',
+                  }}
+                  onClick={() => { setCurrentLeadId(String(r.leadId)); setMode('leads'); }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', flexShrink: 0, display: 'inline-block' }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{r.company}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{when}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SequencePerformanceCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['sequence-performance'],
@@ -671,6 +898,123 @@ function PipelineNarrativeCard() {
       )}
       {narrative && (
         <div className="pipeline-narrative">{narrative}</div>
+      )}
+    </div>
+  );
+}
+
+// ── 3-Month Revenue Forecast Card ────────────────────────────────────────────
+function RevenueForecastCard() {
+  const { setCurrentLeadId, setMode } = useAppStore((s) => ({
+    setCurrentLeadId: s.setCurrentLeadId,
+    setMode: s.setMode,
+  }));
+  const { data, isLoading } = useQuery({
+    queryKey: ['revenue-forecast'],
+    queryFn: () => api.getRevenueForecast(),
+    staleTime: 10 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 100, borderRadius: 8 }} />
+    </div>
+  );
+
+  const d = data;
+  if (!d?.ok) return null;
+
+  const fmtK = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n.toLocaleString()}`;
+  const maxHigh = Math.max(...d.projections.map(p => p.high), 1);
+
+  const STATUS_COLOR: Record<string, string> = {
+    proposal: '#22c55e', meeting: '#4d8af5', replied: '#f59e0b', contacted: 'var(--text-faint)',
+  };
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>3-Month Revenue Projection</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Pipeline × {d.hasHistory ? 'your historical' : 'industry'} win rates — confidence range by stage
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Pipeline total</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--text)', letterSpacing: '-0.5px' }}>
+            {fmtK(d.pipelineTotal)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+        {d.projections.map((proj) => {
+          const barPct = maxHigh > 0 ? (proj.high / maxHigh) * 100 : 0;
+          const expectedPct = maxHigh > 0 ? (proj.expected / maxHigh) * 100 : 0;
+          const goalPct = d.monthlyGoal > 0 ? Math.min(100, (proj.expected / d.monthlyGoal) * 100) : 0;
+          const atGoal = d.monthlyGoal > 0 && proj.expected >= d.monthlyGoal;
+
+          return (
+            <div key={proj.month} style={{
+              background: 'var(--bg-elev)', border: `1px solid ${proj.month === 0 ? 'var(--accent)' : 'var(--border)'}`,
+              borderRadius: 10, padding: '12px 14px',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: proj.month === 0 ? 'var(--accent)' : 'var(--text-faint)', marginBottom: 10 }}>
+                {proj.label} {proj.month === 0 && '(now)'}
+              </div>
+
+              {/* Stacked bar: low → expected → high */}
+              <div style={{ position: 'relative', height: 36, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', marginBottom: 10 }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${barPct}%`, background: 'rgba(77,138,245,0.2)', borderRadius: 4 }} />
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${expectedPct}%`, background: '#4d8af5', borderRadius: 4 }} />
+                {d.monthlyGoal > 0 && (
+                  <div style={{
+                    position: 'absolute', top: 0, bottom: 0, left: `${Math.min(99, d.monthlyGoal / maxHigh * 100)}%`,
+                    width: 1.5, background: atGoal ? '#22c55e' : '#ef4444',
+                  }} />
+                )}
+              </div>
+
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#4d8af5', letterSpacing: '-0.5px', marginBottom: 2 }}>
+                {fmtK(proj.expected)}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                {fmtK(proj.low)} – {fmtK(proj.high)} range
+              </div>
+              {d.monthlyGoal > 0 && (
+                <div style={{ fontSize: 10, color: atGoal ? '#22c55e' : '#ef4444', marginTop: 4, fontWeight: 600 }}>
+                  {atGoal ? `↑ ${fmtK(proj.expected - d.monthlyGoal)} over goal` : `${Math.round(goalPct)}% of ${fmtK(d.monthlyGoal)} goal`}
+                </div>
+              )}
+
+              {/* Top leads for this month */}
+              {proj.leads.length > 0 && (
+                <div style={{ marginTop: 10, borderTop: '1px solid var(--border-subtle)', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {proj.leads.slice(0, 3).map(l => (
+                    <div
+                      key={l.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                      onClick={() => { setCurrentLeadId(String(l.id)); setMode('leads'); }}
+                    >
+                      <div style={{ width: 4, height: 4, borderRadius: '50%', background: STATUS_COLOR[l.status] ?? 'var(--text-faint)', flexShrink: 0 }} />
+                      <span style={{ fontSize: 10, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {l.company}
+                      </span>
+                      <span style={{ fontSize: 9, color: 'var(--text-faint)', flexShrink: 0 }}>{l.winRate}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {!d.hasHistory && (
+        <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0, fontStyle: 'italic' }}>
+          Using industry-average win rates. Close more deals to unlock personalized projections based on your actual history.
+        </p>
       )}
     </div>
   );
@@ -1385,6 +1729,1108 @@ function MarketPenetrationCard() {
   );
 }
 
+// ── Material Margin Dashboard ─────────────────────────────────────────────────
+function MarginDashboardCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['margin-analytics'],
+    queryFn: () => api.getMarginAnalytics(),
+    staleTime: 10 * 60_000,
+  });
+
+  const CAT_LABELS: Record<string, string> = {
+    fleet: 'Fleet', design: 'Design', construction: 'Construction',
+    dinoc: 'DI-NOC', reatec: 'Reatec', colorchange: 'Color Change',
+    wallgraphics: 'Wall Graphics', gc_referral: 'GC Referral', racing: 'Racing',
+  };
+
+  function fmtDollar(n: number): string {
+    if (!n && n !== 0) return '—';
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+    return `$${Math.round(n)}`;
+  }
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Material Margin</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      </div>
+    );
+  }
+
+  if (!data?.hasData) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Material Margin Dashboard</div>
+        <div style={{ padding: '20px 0', textAlign: 'center' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 6 }}>No margin data yet</div>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+            Add Revenue and Material Cost to your completed jobs to see gross margin by category.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const { byCategory, totals, bestMarginJobs, worstMarginJobs } = data;
+  const maxProfit = Math.max(...byCategory.map((c) => c.total_gross_profit), 1);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="an-card-title">Material Margin Dashboard</div>
+
+      {/* Summary stats row */}
+      {totals && (
+        <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+          {[
+            { label: 'Total Revenue', value: fmtDollar(totals.total_revenue), color: '#4d8af5' },
+            { label: 'Total Material', value: fmtDollar(totals.total_material), color: 'var(--text-muted)' },
+            { label: 'Gross Profit', value: fmtDollar(totals.total_gross_profit), color: '#22c55e' },
+            { label: 'Avg Margin', value: totals.avg_margin_pct != null ? `${totals.avg_margin_pct}%` : '—', color: (totals.avg_margin_pct ?? 0) >= 40 ? '#22c55e' : '#f59e0b' },
+            ...(totals.avg_revenue_per_hour ? [{ label: '$/Hour', value: `$${Math.round(totals.avg_revenue_per_hour)}`, color: 'var(--accent)' }] : []),
+          ].map((s) => (
+            <div key={s.label} style={{ flex: 1, minWidth: 100 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: '-1px', color: s.color, fontFamily: 'var(--mono)' }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* By category bars */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+        {byCategory.map((c) => {
+          const margin = c.avg_margin_pct ?? 0;
+          const barColor = margin >= 50 ? '#22c55e' : margin >= 35 ? '#f59e0b' : '#f4551c';
+          return (
+            <div key={c.wrap_category}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ color: 'var(--text)', fontWeight: 600 }}>{CAT_LABELS[c.wrap_category] ?? c.wrap_category}</span>
+                  <span style={{ fontSize: 9, color: 'var(--text-faint)' }}>{c.job_count} job{c.job_count !== 1 ? 's' : ''}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 12, fontFamily: 'var(--mono)', fontSize: 11 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>{fmtDollar(c.avg_revenue_per_vehicle)}/vehicle</span>
+                  <span style={{ color: barColor, fontWeight: 700 }}>{margin > 0 ? `${margin}%` : '—'}</span>
+                  <span style={{ color: '#22c55e' }}>{fmtDollar(c.total_gross_profit)}</span>
+                </div>
+              </div>
+              <div style={{ height: 5, background: 'var(--border)', borderRadius: 99 }}>
+                <div style={{ height: '100%', width: `${(c.total_gross_profit / maxProfit) * 100}%`, background: barColor, borderRadius: 99, transition: 'width 0.4s' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Best / worst margin jobs */}
+      {(bestMarginJobs.length > 0 || worstMarginJobs.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          {bestMarginJobs.length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#22c55e', marginBottom: 8 }}>Highest Margin Jobs</div>
+              {bestMarginJobs.map((j, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 5 }}>
+                  <span style={{ color: 'var(--text)', fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.company}</span>
+                  <span style={{ color: '#22c55e', fontWeight: 700, fontFamily: 'var(--mono)', flexShrink: 0, marginLeft: 8 }}>{j.margin_pct}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {worstMarginJobs.length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#f4551c', marginBottom: 8 }}>Lowest Margin Jobs</div>
+              {worstMarginJobs.map((j, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 5 }}>
+                  <span style={{ color: 'var(--text)', fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.company}</span>
+                  <span style={{ color: '#f4551c', fontWeight: 700, fontFamily: 'var(--mono)', flexShrink: 0, marginLeft: 8 }}>{j.margin_pct}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-faint)' }}>
+        Gross margin = (Revenue − Material Cost) / Revenue · Add labor hours to unlock $/hour metric
+      </div>
+    </div>
+  );
+}
+
+// ── Referral Intelligence ─────────────────────────────────────────────────────
+function ReferralIntelligenceCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['referral-analytics'],
+    queryFn: () => api.getReferralAnalytics(),
+    staleTime: 10 * 60_000,
+  });
+
+  if (isLoading) return null;
+  if (!data?.hasData) return null;
+
+  const { referrers, recent, referralCloseRate, organicCloseRate, totalReferredRevenue, totalPipelineValue } = data;
+
+  return (
+    <div className="an-card">
+      <div className="an-card-title">Referral Intelligence</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
+        {referrers.length} active referral source{referrers.length !== 1 ? 's' : ''}
+      </div>
+
+      {/* Close rate comparison */}
+      {referralCloseRate !== null && organicCloseRate !== null && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          {[
+            { label: 'Referral close rate', value: `${referralCloseRate}%`, color: referralCloseRate > organicCloseRate ? '#10b981' : 'var(--text)' },
+            { label: 'Organic close rate', value: `${organicCloseRate}%`, color: 'var(--text-muted)' },
+            { label: 'Referred revenue won', value: totalReferredRevenue >= 1000 ? `$${Math.round(totalReferredRevenue / 1000)}K` : `$${totalReferredRevenue}`, color: '#10b981' },
+            { label: 'Active pipeline', value: totalPipelineValue >= 1000 ? `$${Math.round(totalPipelineValue / 1000)}K` : `$${totalPipelineValue}`, color: 'var(--accent)' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ flex: 1, textAlign: 'center', padding: '8px 6px', background: 'var(--surface)', borderRadius: 6, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 3 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Referrer leaderboard */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {referrers.map((r, i) => {
+          const barPct = referrers[0].referrals > 0 ? (r.referrals / referrers[0].referrals) * 100 : 0;
+          return (
+            <div key={r.referred_by} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', width: 18, textAlign: 'right', flexShrink: 0 }}>#{i + 1}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{r.referred_by}</span>
+                  <span style={{ fontSize: 10, color: '#10b981', fontWeight: 700, flexShrink: 0 }}>{r.closeRate}% close</span>
+                  {r.won_revenue > 0 && (
+                    <span style={{ fontSize: 10, color: '#10b981', flexShrink: 0 }}>
+                      {r.won_revenue >= 1000 ? `$${Math.round(r.won_revenue / 1000)}K won` : `$${r.won_revenue} won`}
+                    </span>
+                  )}
+                </div>
+                <div style={{ height: 4, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ height: '100%', width: `${barPct}%`, background: '#10b981', borderRadius: 99, transition: 'width 0.4s ease' }} />
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {r.referrals} total · {r.won} won · {r.active} active
+                  {r.pipeline_value > 0 && ` · $${r.pipeline_value >= 1000 ? `${Math.round(r.pipeline_value / 1000)}K` : r.pipeline_value} pipeline`}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Recent referrals */}
+      {recent.length > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 6 }}>
+            Recent Referrals
+          </div>
+          {recent.slice(0, 4).map((r) => (
+            <div key={r.company + r.created_at} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company}</span>
+              <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>via {r.referred_by}</span>
+              <span style={{
+                fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 700,
+                background: r.status === 'won' ? '#10b98120' : r.status === 'lost' ? '#ef444420' : '#6366f120',
+                color: r.status === 'won' ? '#10b981' : r.status === 'lost' ? '#ef4444' : '#818cf8',
+              }}>
+                {r.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-faint)' }}>
+        Set a lead's "Referred By" field in the Info tab to track referral sources.
+      </div>
+    </div>
+  );
+}
+
+// ── Loss Intelligence Card ────────────────────────────────────────────────────
+const LOSS_REASON_LABELS: Record<string, string> = {
+  price: 'Price too high', competitor: 'Went with competitor', timing: 'Bad timing',
+  not_ready: 'Not ready yet', no_budget: 'No budget', no_response: 'Went dark',
+  wrong_fit: 'Wrong fit', other: 'Other', unknown: 'Unknown',
+};
+
+const CAT_LABELS: Record<string, string> = {
+  fleet: 'Fleet Wraps', dinoc: 'DI-NOC', gc_referral: 'GC Referral', construction: 'Construction',
+  colorchange: 'Color Change', racing: 'Racing', reatec: 'Rea Tec', design: 'Interior Design',
+  wallgraphics: 'Wall Graphics',
+};
+
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function SeasonalIntelligenceCard() {
+  const { setMode, setCurrentLeadId } = useAppStore((s) => ({
+    setMode: s.setMode,
+    setCurrentLeadId: s.setCurrentLeadId,
+  }));
+  const { data, isLoading } = useQuery({
+    queryKey: ['seasonal-intel'],
+    queryFn: () => api.getSeasonalIntelligence(),
+    staleTime: 30 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+      </div>
+    );
+  }
+
+  const d = data;
+  if (!d?.ok) return null;
+
+  const maxWins = Math.max(...(d.series.map((s) => s.wins)), 1);
+
+  const STATUS_COLOR: Record<string, string> = {
+    proposal: '#22c55e', meeting: '#4d8af5', replied: '#f59e0b', contacted: 'var(--text-faint)',
+  };
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Seasonal Win Intelligence</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Historical win patterns by month — spot your best-selling season and prioritize accordingly
+          </div>
+        </div>
+        {d.topSeasonCategory && d.seasonWins > 0 && (
+          <div style={{
+            background: 'rgba(77,138,245,0.12)', border: '1px solid rgba(77,138,245,0.3)',
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#4d8af5',
+          }}>
+            📅 {d.currentMonthName} sweet spot: {CAT_LABELS[d.topSeasonCategory] ?? d.topSeasonCategory}
+            {d.seasonWins > 0 && <span style={{ fontWeight: 400, marginLeft: 6 }}>({d.seasonWins} historical wins)</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Month sparkline */}
+      <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 56, marginBottom: 16 }}>
+        {d.series.map((s) => {
+          const isCurrent = s.month === d.currentMonth;
+          const height = Math.max(4, Math.round((s.wins / maxWins) * 48));
+          return (
+            <div key={s.month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+              <div style={{
+                width: '100%', height, borderRadius: '3px 3px 0 0',
+                background: isCurrent ? '#4d8af5' : s.wins > 0 ? '#4d8af528' : 'var(--border)',
+                border: isCurrent ? '1px solid #4d8af5' : 'none',
+                transition: 'height 0.3s ease',
+              }} />
+              <span style={{
+                fontSize: 9, fontWeight: isCurrent ? 800 : 400,
+                color: isCurrent ? '#4d8af5' : 'var(--text-faint)',
+              }}>
+                {MONTH_ABBR[s.month - 1]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Hot pipeline leads for this season */}
+      {d.hotPipelineLeads.length > 0 && d.topSeasonCategory && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            {CAT_LABELS[d.topSeasonCategory] ?? d.topSeasonCategory} leads to push this month ({d.hotPipelineLeads.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {d.hotPipelineLeads.map((lead) => {
+              const statusColor = STATUS_COLOR[lead.status] ?? 'var(--text-faint)';
+              return (
+                <div
+                  key={lead.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '7px 10px', borderRadius: 7,
+                    background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => {
+                    setCurrentLeadId(String(lead.id));
+                    setMode('leads');
+                  }}
+                >
+                  <div style={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    background: statusColor, flexShrink: 0,
+                  }} />
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {lead.company}
+                  </span>
+                  {lead.fleet_size && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>
+                      {lead.fleet_size} units
+                    </span>
+                  )}
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, textTransform: 'uppercase', padding: '2px 7px', borderRadius: 4,
+                    background: `${statusColor}18`, color: statusColor, flexShrink: 0,
+                  }}>
+                    {lead.status}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!d.topSeasonCategory && (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+          Close your first deal to unlock seasonal patterns. As you log wins, WrapOS learns which months are hottest for each service category.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function LossAnalysisCard() {
+  const showToast = useAppStore((s) => s.showToast);
+  const { data, isLoading } = useQuery({
+    queryKey: ['loss-analysis'],
+    queryFn: () => api.getLossAnalysis(),
+    staleTime: 5 * 60_000,
+  });
+  const [winBackLeadId, setWinBackLeadId] = useState<number | null>(null);
+  const [winBackEmail, setWinBackEmail] = useState<{ subject: string; body: string } | null>(null);
+  const [winBackLoading, setWinBackLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function generateWinBack(leadId: number) {
+    setWinBackLeadId(leadId);
+    setWinBackEmail(null);
+    setWinBackLoading(true);
+    try {
+      const r = await api.generateWinBackEmail(leadId);
+      setWinBackEmail({ subject: r.subject, body: r.body });
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setWinBackLoading(false);
+    }
+  }
+
+  function copyEmail(text: string) {
+    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  }
+
+  if (isLoading) return null;
+  if (!data || data.totalLost === 0) return null;
+
+  const maxReasonCount = Math.max(...(data.byReason?.map((r) => r.count) ?? [1]), 1);
+
+  return (
+    <div className="an-card" style={{ borderColor: 'rgba(239,68,68,.25)' }}>
+      <div className="an-card-header" style={{ marginBottom: 16 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          Loss Intelligence
+        </span>
+        <span style={{
+          fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+          background: 'rgba(239,68,68,.12)', color: '#ef4444',
+        }}>
+          {data.totalLost} total losses
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        {/* Why we lose */}
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 10 }}>
+            Why We Lose
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {(data.byReason ?? []).slice(0, 6).map((r) => (
+              <div key={r.reason}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text)' }}>{LOSS_REASON_LABELS[r.reason] ?? r.reason}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#ef4444' }}>{r.count}</span>
+                </div>
+                <div style={{ height: 3, background: 'var(--border)', borderRadius: 99 }}>
+                  <div style={{ width: `${(r.count / maxReasonCount) * 100}%`, height: '100%', background: '#ef4444', borderRadius: 99 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Competitors eating our lunch */}
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 10 }}>
+            Competitors We Lose To
+          </div>
+          {(data.byCompetitor ?? []).length === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+              No competitor data yet — fill in the "competitor" field when marking deals lost.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(data.byCompetitor ?? []).slice(0, 5).map((c) => (
+                <div key={c.competitor} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {c.competitor}
+                  </div>
+                  <div style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 99,
+                    background: 'rgba(239,68,68,.1)', color: '#ef4444',
+                  }}>
+                    {c.losses} {c.losses === 1 ? 'loss' : 'losses'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recoverable leads win-back panel */}
+      {(data.recoverableLeads ?? []).length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', marginBottom: 10 }}>
+            Win-Back Opportunities — Price/Timing/Not Ready
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {data.recoverableLeads.slice(0, 4).map((lead) => (
+              <div key={lead.id}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{lead.company}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 8 }}>
+                      {LOSS_REASON_LABELS[lead.lost_reason] ?? lead.lost_reason}
+                      {' · '}
+                      {new Date(lead.lost_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </span>
+                  </div>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 11, padding: '3px 10px', color: '#4d8af5', borderColor: 'rgba(77,138,245,.3)', flexShrink: 0 }}
+                    onClick={() => generateWinBack(lead.id)}
+                    disabled={winBackLoading && winBackLeadId === lead.id}
+                  >
+                    {winBackLoading && winBackLeadId === lead.id ? '…' : '✉ Win Back'}
+                  </button>
+                </div>
+                {winBackLeadId === lead.id && winBackEmail && (
+                  <div style={{ marginTop: 8, background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#4d8af5', marginBottom: 4 }}>
+                      Subject: {winBackEmail.subject}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6, marginBottom: 8, whiteSpace: 'pre-wrap' }}>
+                      {winBackEmail.body}
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      style={{ fontSize: 11, padding: '4px 12px' }}
+                      onClick={() => copyEmail(`Subject: ${winBackEmail.subject}\n\n${winBackEmail.body}`)}
+                    >
+                      {copied ? '✓ Copied!' : 'Copy Email'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Lead Cohort Analysis ──────────────────────────────────────────────────────
+function CohortAnalysisCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['cohort-analysis'],
+    queryFn: () => api.getCohortAnalysis(),
+    staleTime: 10 * 60_000,
+  });
+
+  const cohorts = data?.cohorts ?? [];
+  const trend = data?.trend ?? 'stable';
+  const recentRate = data?.recentRate ?? null;
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Lead Cohort Analysis</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+          <span className="spinner" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!cohorts.length) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Lead Cohort Analysis</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Import leads over multiple months to see cohort win rate trends.
+        </p>
+      </div>
+    );
+  }
+
+  const maxTotal = Math.max(...cohorts.map((c) => c.total), 1);
+  const TREND_COLOR = { improving: '#22c55e', declining: '#ef4444', stable: '#f59e0b' }[trend];
+  const TREND_LABEL = { improving: '↑ Improving', declining: '↓ Declining', stable: '→ Stable' }[trend];
+
+  function fmtMonth(m: string) {
+    const [year, month] = m.split('-');
+    const d = new Date(+year, +month - 1);
+    return d.toLocaleString('en-US', { month: 'short', year: '2-digit' });
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Lead Cohort Analysis</div>
+        <span style={{
+          fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 99,
+          background: TREND_COLOR + '1a', color: TREND_COLOR, letterSpacing: '.04em',
+        }}>
+          {TREND_LABEL}
+        </span>
+        {recentRate !== null && (
+          <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto' }}>
+            Last 3 months: <strong style={{ color: 'var(--text)' }}>{Math.round(recentRate)}%</strong> win rate
+          </span>
+        )}
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
+        Leads grouped by month added — compare which intake cohorts close at the highest rate within 90 days.
+      </p>
+
+      <div style={{ overflowX: 'auto' }}>
+        <div style={{ display: 'flex', gap: 8, minWidth: cohorts.length * 72 }}>
+          {cohorts.map((c) => {
+            const barPct = (c.total / maxTotal) * 100;
+            const winColor = c.winRate >= 20 ? '#22c55e' : c.winRate >= 10 ? '#f59e0b' : '#6366f1';
+            return (
+              <div key={c.month} style={{ flex: 1, minWidth: 64, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {/* Bar */}
+                <div style={{ height: 80, display: 'flex', alignItems: 'flex-end', gap: 2 }}>
+                  <div style={{ flex: 1, position: 'relative' }} title={`${c.total} leads added`}>
+                    <div style={{
+                      height: `${barPct}%`, minHeight: 4,
+                      background: 'var(--border)', borderRadius: '3px 3px 0 0',
+                      position: 'relative', overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        position: 'absolute', bottom: 0, left: 0, right: 0,
+                        height: `${c.winRate}%`,
+                        background: winColor,
+                        transition: 'height 0.3s ease',
+                      }} />
+                    </div>
+                  </div>
+                </div>
+                {/* Labels */}
+                <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-faint)', textAlign: 'center', letterSpacing: '.05em' }}>
+                  {fmtMonth(c.month)}
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: winColor, letterSpacing: '-0.5px' }}>
+                    {c.winRate}%
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)' }}>{c.total} leads</div>
+                </div>
+                {c.won > 0 && (
+                  <div style={{ fontSize: 9, color: '#22c55e', textAlign: 'center' }}>
+                    {c.won}W
+                    {c.avgCloseDays !== null && (
+                      <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{c.avgCloseDays}d</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, marginTop: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+          <div style={{ width: 10, height: 10, background: '#22c55e', borderRadius: 2 }} />
+          Win rate ≥ 20%
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+          <div style={{ width: 10, height: 10, background: '#f59e0b', borderRadius: 2 }} />
+          Win rate 10–20%
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-faint)' }}>
+          <div style={{ width: 10, height: 10, background: '#6366f1', borderRadius: 2 }} />
+          Win rate &lt; 10%
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto' }}>
+          Bar height = leads added · color fill = win rate · W = wins, d = avg close days
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Cash Flow Dashboard ───────────────────────────────────────────────────────
+function CashFlowCard() {
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['cash-flow'],
+    queryFn: () => api.getCashFlow(),
+    staleTime: 5 * 60_000,
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ jobId, status }: { jobId: number; status: string }) =>
+      api.updateJobPayment(jobId, { payment_status: status }),
+    onSuccess: () => refetch(),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Cash Flow</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+          <span className="spinner" />
+        </div>
+      </div>
+    );
+  }
+
+  const outstanding = data?.totalOutstanding ?? 0;
+  const collected = data?.collectedMtd ?? 0;
+  const allJobs = [...(data?.late ?? []), ...(data?.mid ?? []), ...(data?.current ?? [])];
+
+  if (!outstanding && !collected) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Cash Flow</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          Log jobs with revenue and track payments to see your receivables dashboard.
+        </p>
+      </div>
+    );
+  }
+
+  function agingColor(days: number) {
+    if (days >= 30) return '#ef4444';
+    if (days >= 15) return '#f59e0b';
+    return '#22c55e';
+  }
+
+  function statusLabel(s: string) {
+    return { unpaid: 'Unpaid', deposit_paid: 'Deposit', invoice_sent: 'Invoice Sent', overdue: 'Overdue', paid: 'Paid' }[s] ?? s;
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div className="an-card-title" style={{ margin: 0 }}>Cash Flow</div>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>outstanding receivables</span>
+      </div>
+
+      {/* Hero metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
+        {[
+          { label: 'Outstanding', value: `$${outstanding.toLocaleString()}`, color: outstanding > 0 ? '#ef4444' : '#22c55e' },
+          { label: 'Collected MTD', value: `$${collected.toLocaleString()}`, color: '#22c55e' },
+          { label: 'Late (30+ days)', value: `$${(data?.late ?? []).reduce((s, j) => s + j.balance, 0).toLocaleString()}`, color: (data?.late?.length ?? 0) > 0 ? '#ef4444' : 'var(--text-muted)' },
+        ].map((m) => (
+          <div key={m.label} style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '12px 14px' }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 4 }}>{m.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: '-1px', color: m.color }}>{m.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Aging table */}
+      {allJobs.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr>
+                {['Company', 'Category', 'Install', 'Age', 'Revenue', 'Balance', 'Status', ''].map((h) => (
+                  <th key={h} style={{ textAlign: h === '' || h === 'Revenue' || h === 'Balance' ? 'right' : 'left', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allJobs.map((j) => (
+                <tr key={j.id} style={{ borderBottom: '1px solid var(--border-soft)' }}>
+                  <td style={{ padding: '8px 0', fontWeight: 600 }}>{j.company}</td>
+                  <td style={{ padding: '8px 8px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{j.category}</td>
+                  <td style={{ padding: '8px 0', color: 'var(--text-muted)' }}>{j.installDate ? new Date(j.installDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
+                  <td style={{ padding: '8px 8px', fontWeight: 700, color: agingColor(j.daysSinceInstall) }}>{j.daysSinceInstall}d</td>
+                  <td style={{ padding: '8px 0', textAlign: 'right' }}>${j.revenue.toLocaleString()}</td>
+                  <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: agingColor(j.daysSinceInstall) }}>${j.balance.toLocaleString()}</td>
+                  <td style={{ padding: '8px 0' }}>
+                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elev-2)', color: 'var(--text-muted)' }}>
+                      {statusLabel(j.paymentStatus)}
+                    </span>
+                  </td>
+                  <td style={{ padding: '8px 0', textAlign: 'right' }}>
+                    {j.paymentStatus !== 'paid' && (
+                      <button
+                        className="btn"
+                        style={{ fontSize: 10, padding: '2px 8px' }}
+                        disabled={updateMut.isPending}
+                        onClick={() => updateMut.mutate({ jobId: j.id, status: 'paid' })}
+                      >
+                        Mark Paid
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-faint)' }}>
+        Green = 0–14 days · Amber = 15–29 days · Red = 30+ days · Update payment status in Jobs view.
+      </div>
+    </div>
+  );
+}
+
+// ── Client Satisfaction Card ──────────────────────────────────────────────────
+function SatisfactionCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['satisfaction'],
+    queryFn: () => api.getSatisfaction(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Client Satisfaction</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      </div>
+    );
+  }
+
+  const totals = data?.totals;
+  if (!totals || totals.ratedCount === 0) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Client Satisfaction</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          No satisfaction ratings yet. Send review requests from the Jobs view (⭐ Reviews tab) — clients rate 1-5 stars privately first, then happy clients get routed to Google.
+        </p>
+      </div>
+    );
+  }
+
+  const recent = data?.recent ?? [];
+  const ratingColor = (r: number | null) => {
+    if (!r) return 'var(--text-faint)';
+    if (r >= 4.5) return '#22c55e';
+    if (r >= 3.5) return '#4d8af5';
+    if (r >= 2.5) return '#f59e0b';
+    return '#ef4444';
+  };
+
+  function starsDisplay(rating: number) {
+    return Array.from({ length: 5 }, (_, i) => (
+      <span key={i} style={{ color: i < rating ? '#f59e0b' : '#e5e7eb', fontSize: 14 }}>★</span>
+    ));
+  }
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Client Satisfaction</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Internal ratings from review requests — high scores route clients to Google automatically
+          </div>
+        </div>
+        {totals.avgRating !== null && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 36, fontWeight: 900, letterSpacing: '-1px', color: ratingColor(totals.avgRating), fontFamily: 'var(--mono)' }}>
+              {totals.avgRating.toFixed(1)}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>avg rating</div>
+          </div>
+        )}
+      </div>
+
+      {/* Stats strip */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Reviews Sent', value: String(totals.sentCount), color: 'var(--text)' },
+          { label: 'Rated', value: String(totals.ratedCount), color: 'var(--text)' },
+          { label: 'Response Rate', value: `${totals.responseRate}%`, color: totals.responseRate >= 50 ? '#22c55e' : '#f59e0b' },
+          { label: '5-Star', value: String(totals.fiveStarCount), color: '#f59e0b' },
+          { label: 'Positive (4-5★)', value: String(totals.positiveCount), color: '#22c55e' },
+          { label: 'Needs Attention', value: String(totals.negativeCount), color: totals.negativeCount > 0 ? '#ef4444' : 'var(--text-faint)' },
+        ].map((s) => (
+          <div key={s.label} style={{ flex: 1, minWidth: 80 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.5px', color: s.color, fontFamily: 'var(--mono)' }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Rating distribution */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+        {[5, 4, 3, 2, 1].map((star) => {
+          const count = recent.filter(r => r.starRating === star).length;
+          const pct = totals.ratedCount > 0 ? (count / totals.ratedCount) * 100 : 0;
+          const c = star >= 4 ? '#22c55e' : star === 3 ? '#f59e0b' : '#ef4444';
+          return (
+            <div key={star} style={{ flex: 1, textAlign: 'center' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: c, marginBottom: 4 }}>{star}★</div>
+              <div style={{ height: 40, borderRadius: 4, background: 'var(--border)', display: 'flex', alignItems: 'flex-end', overflow: 'hidden' }}>
+                <div style={{ width: '100%', height: `${Math.max(4, pct)}%`, background: c, borderRadius: '4px 4px 0 0', transition: 'height 0.4s ease' }} />
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 3 }}>{count}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Recent feedback */}
+      {recent.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 10 }}>Recent Reviews</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {recent.slice(0, 6).map((r) => (
+              <div key={r.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 12px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border)' }}>
+                <div style={{ flexShrink: 0, textAlign: 'center', minWidth: 40 }}>
+                  <div style={{ display: 'flex' }}>{starsDisplay(r.starRating)}</div>
+                  <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 2 }}>
+                    {r.feedbackAt ? new Date(r.feedbackAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+                  </div>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: r.feedbackText ? 4 : 0 }}>
+                    {r.company ?? 'Client'}
+                    {r.category && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text-faint)', textTransform: 'capitalize' }}>{r.category}</span>}
+                  </div>
+                  {r.feedbackText && (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, fontStyle: 'italic' }}>
+                      &ldquo;{r.feedbackText}&rdquo;
+                    </div>
+                  )}
+                  {!r.feedbackText && (
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>No written feedback</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-faint)' }}>
+        Send review requests from Jobs → ⭐ Reviews tab. Clients who rate 4-5 stars are shown a Google review button. 1-3 star feedback stays private for you to address.
+      </div>
+    </div>
+  );
+}
+
+// ── Job Profitability P&L Table ───────────────────────────────────────────────
+const SORT_OPTIONS = [
+  { value: 'profit', label: 'Net Profit' },
+  { value: 'margin', label: 'Margin %' },
+  { value: 'revenue', label: 'Revenue' },
+  { value: 'install_date', label: 'Recent' },
+] as const;
+
+function JobProfitabilityCard() {
+  type SortKey = 'profit' | 'margin' | 'revenue' | 'install_date';
+  const [sort, setSort] = useState<SortKey>('profit');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-profitability', sort],
+    queryFn: () => api.getJobProfitability({ sort, limit: 25 }),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Job Profitability</div>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      </div>
+    );
+  }
+
+  const jobs = data?.jobs ?? [];
+  const totals = data?.totals;
+
+  if (!totals || totals.jobCount === 0) {
+    return (
+      <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+        <div className="an-card-title">Job Profitability</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          Add Revenue and Material Cost to completed jobs to see your true per-job P&L, including subcontractor labor.
+        </p>
+      </div>
+    );
+  }
+
+  function fmtD(n: number) {
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+    return `$${Math.round(n)}`;
+  }
+
+  function marginColor(pct: number | null) {
+    if (pct === null) return 'var(--text-faint)';
+    if (pct >= 50) return '#22c55e';
+    if (pct >= 35) return '#4d8af5';
+    if (pct >= 20) return '#f59e0b';
+    return '#ef4444';
+  }
+
+  const maxRevenue = Math.max(...jobs.map((j) => j.revenue), 1);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Job Profitability</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            True margin after materials + subcontractor labor — top {totals.jobCount} jobs
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {SORT_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              onClick={() => setSort(o.value)}
+              style={{
+                fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
+                background: sort === o.value ? 'var(--accent-subtle)' : 'var(--bg-elev)',
+                border: sort === o.value ? '1px solid var(--accent-glow)' : '1px solid var(--border)',
+                color: sort === o.value ? 'var(--accent)' : 'var(--text-muted)',
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Totals strip */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Total Revenue', value: fmtD(totals.totalRevenue), color: '#4d8af5' },
+          { label: 'Total Material', value: fmtD(totals.totalMaterial), color: 'var(--text-muted)' },
+          { label: 'Sub Labor', value: fmtD(totals.totalSubLabor), color: '#f59e0b' },
+          { label: 'Net Profit', value: fmtD(totals.totalProfit), color: totals.totalProfit >= 0 ? '#22c55e' : '#ef4444' },
+          { label: 'Avg Margin', value: totals.avgMargin !== null ? `${totals.avgMargin}%` : '—', color: marginColor(totals.avgMargin) },
+        ].map((s) => (
+          <div key={s.label} style={{ flex: 1, minWidth: 90 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 2 }}>{s.label}</div>
+            <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-1px', color: s.color, fontFamily: 'var(--mono)' }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr>
+              {['Company', 'Category', 'Install', 'Revenue', 'Material', 'Sub Labor', 'Net Profit', 'Margin', ''].map((h) => (
+                <th key={h} style={{
+                  textAlign: ['Revenue', 'Material', 'Sub Labor', 'Net Profit', 'Margin'].includes(h) ? 'right' : h === '' ? 'center' : 'left',
+                  fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em',
+                  color: 'var(--text-faint)', paddingBottom: 8, borderBottom: '1px solid var(--border)',
+                  paddingRight: h === 'Company' ? 12 : 0,
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((j) => {
+              const barW = maxRevenue > 0 ? Math.round((j.revenue / maxRevenue) * 100) : 0;
+              const mc = marginColor(j.marginPct);
+              const isNegative = j.netProfit < 0;
+              return (
+                <tr key={j.id} style={{ borderBottom: '1px solid var(--border-soft)' }}>
+                  {/* Company + mini revenue bar */}
+                  <td style={{ padding: '9px 12px 9px 0', minWidth: 140 }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--text)', marginBottom: 3 }}>{j.company}</div>
+                    <div style={{ height: 3, borderRadius: 99, background: 'var(--border)', overflow: 'hidden', width: 80 }}>
+                      <div style={{ height: '100%', width: `${barW}%`, borderRadius: 99, background: isNegative ? '#ef4444' : 'var(--accent)' }} />
+                    </div>
+                  </td>
+                  <td style={{ padding: '9px 8px', color: 'var(--text-muted)', textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
+                    {j.category ?? '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {j.installDate ? new Date(j.installDate).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }) : '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', fontWeight: 600 }}>{fmtD(j.revenue)}</td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>
+                    {j.materialCost > 0 ? fmtD(j.materialCost) : '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', color: j.subLabor > 0 ? '#f59e0b' : 'var(--text-faint)' }}>
+                    {j.subLabor > 0 ? fmtD(j.subLabor) : '—'}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'var(--mono)', fontWeight: 700, color: isNegative ? '#ef4444' : '#22c55e' }}>
+                    {isNegative ? '-' : ''}{fmtD(Math.abs(j.netProfit))}
+                  </td>
+                  <td style={{ padding: '9px 8px', textAlign: 'right' }}>
+                    {j.marginPct !== null ? (
+                      <span style={{
+                        fontSize: 11, fontWeight: 800, padding: '2px 7px', borderRadius: 5,
+                        background: `${mc}18`, color: mc,
+                        fontFamily: 'var(--mono)',
+                      }}>
+                        {j.marginPct}%
+                      </span>
+                    ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                  </td>
+                  {/* Payment status pill */}
+                  <td style={{ padding: '9px 0 9px 8px', textAlign: 'center' }}>
+                    {j.paymentStatus && j.paymentStatus !== 'paid' && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                        background: j.paymentStatus === 'overdue' ? '#ef444418' : 'var(--bg-elev-2)',
+                        color: j.paymentStatus === 'overdue' ? '#ef4444' : 'var(--text-faint)',
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
+                      }}>
+                        {j.paymentStatus === 'unpaid' ? 'unpaid' : j.paymentStatus === 'overdue' ? 'overdue' : j.paymentStatus === 'deposit_paid' ? 'dep.' : 'inv.'}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-soft)', fontSize: 10, color: 'var(--text-faint)' }}>
+        Green ≥50% · Blue ≥35% · Amber ≥20% · Red &lt;20% · Sub Labor from the Subcontractors tab in each job.
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsView() {
   const setMode = useAppStore((s) => s.setMode);
   const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
@@ -1440,7 +2886,7 @@ export default function AnalyticsView() {
     );
   }
 
-  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, referrals, atRisk, activityCalendar } = data;
+  const { summary, byStatus, wonTrend, byCategory, activity30d, winLossFactors, competitors, topLeads, jobs, topCustomers, emailPerf, quoteRevenue, velocity, byState, atRisk, activityCalendar } = data;
   const maxRevTrend = Math.max(...wonTrend.map((t) => t.revenue), 1);
   const maxCat = Math.max(...byCategory.map((c) => c.total), 1);
   const maxFactor = Math.max(...winLossFactors.map((f) => f.count), 1);
@@ -2011,36 +3457,23 @@ export default function AnalyticsView() {
           />
         )}
 
-        {/* ── Referral Sources ── */}
-        {referrals && referrals.length > 0 && (
-          <div className="an-card">
-            <div className="an-card-title">Referral Sources</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>Who sends you business</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {referrals.map((r, i) => (
-                <div key={r.referred_by} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', width: 16, flexShrink: 0 }}>#{i + 1}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.referred_by}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {r.referrals} lead{r.referrals !== 1 ? 's' : ''}
-                      {r.won > 0 && <span style={{ color: '#10b981', marginLeft: 6 }}>· {r.won} won</span>}
-                      {r.active > 0 && <span style={{ color: 'var(--accent)', marginLeft: 6 }}>· {r.active} active</span>}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                    {Array.from({ length: r.referrals }).map((_, j) => (
-                      <div key={j} style={{ width: 8, height: 8, borderRadius: '50%', background: j < r.won ? '#10b981' : j < r.won + r.active ? '#6366f1' : 'var(--border)' }} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-faint)' }}>
-              Add referral sources by editing a lead's "Referred By" field in the Info tab.
-            </div>
-          </div>
-        )}
+        {/* ── Outreach Calendar ── */}
+        <OutreachCalendarCard />
+
+        {/* ── Seasonal Win Intelligence ── */}
+        <SeasonalIntelligenceCard />
+
+        {/* ── Win Pattern Library ── */}
+        <WinPatternsCard />
+
+        {/* ── Pricing Intelligence — win rates by price tier ── */}
+        <PricingIntelCard />
+
+        {/* ── Loss Intelligence ── */}
+        <LossAnalysisCard />
+
+        {/* ── Referral Intelligence ── */}
+        <ReferralIntelligenceCard />
 
         {/* ── Activity Heatmap ── */}
         {activityCalendar && <ActivityHeatmap data={activityCalendar} />}
@@ -2054,23 +3487,56 @@ export default function AnalyticsView() {
         {/* ── Sequence Performance Intelligence ── */}
         <SequencePerformanceCard />
 
+        {/* ── Email Send-Time Intelligence ── */}
+        <EmailTimingCard />
+
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />
 
         {/* ── Win Pattern Analysis ── */}
+        {/* ── 3-Month Revenue Projection ── */}
+        <RevenueForecastCard />
+
         <WinPatternCard />
+
+        {/* ── Pipeline Doctor ── */}
+        <PipelineDoctorCard />
 
         {/* ── Pipeline Health Score ── */}
         <PipelineHealthCard />
 
+        {/* ── Revenue Trend — monthly bar chart ── */}
+        <RevenueMonthlyCard />
+
         {/* ── Revenue Attribution ── */}
         <RevenueAttributionCard />
+
+        {/* ── Material Margin Dashboard ── */}
+        <MarginDashboardCard />
+
+        {/* ── Cash Flow / Receivables ── */}
+        <CashFlowCard />
+
+        {/* ── Client Satisfaction ── */}
+        <SatisfactionCard />
+
+        {/* ── Job Profitability P&L ── */}
+        <JobProfitabilityCard />
+
+        {/* ── Lead Database Coverage ── */}
+        <LeadCoverageCard />
+
+        {/* ── Lead Cohort Analysis ── */}
+        <CohortAnalysisCard />
 
         {/* ── Ideal Customer Profile ── */}
         <ICPCard />
 
         {/* ── Market Penetration Analysis ── */}
         <MarketPenetrationCard />
+
+        {/* ── Territory Intel ── */}
+        <TerritoryIntelCard />
 
         {/* ── Customer Lifetime Value ── */}
         {topCustomers && topCustomers.length > 0 && (

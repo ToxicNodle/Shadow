@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 import type { LeadCategory, LeadStatus, Settings, Carrier, CarrierSearchParams } from '../api/types';
 import { DEFAULT_SETTINGS } from '../api/types';
 
-export type AppMode = 'leads' | 'discover' | 'pipeline' | 'bids' | 'mission' | 'jobs' | 'content' | 'analytics';
+export type AppMode = 'leads' | 'discover' | 'pipeline' | 'bids' | 'mission' | 'jobs' | 'content' | 'analytics' | 'gov';
 
 export interface ActiveFilter {
   category: LeadCategory | 'all';
@@ -98,12 +98,16 @@ interface AppStore {
   blueprintOpen: boolean;
   bulkOutreachOpen: boolean;
   csvImportOpen: boolean;
+  shopvoxImportOpen: boolean;
   proposalOpen: boolean;
   proposalLeadId: string | null;
   visionOpen: boolean;
   arOpen: boolean;
   pitchOpen: boolean;
   cardScanOpen: boolean;
+  urlImportOpen: boolean;
+  truckScanOpen: boolean;
+  quickQuoteOpen: boolean;
   notifOpen: boolean;
   changelogOpen: boolean;
   setAddLeadOpen: (open: boolean) => void;
@@ -113,11 +117,17 @@ interface AppStore {
   setBlueprintOpen: (open: boolean) => void;
   setBulkOutreachOpen: (open: boolean) => void;
   setCsvImportOpen: (open: boolean) => void;
+  setShopVoxImportOpen: (open: boolean) => void;
   setProposalOpen: (open: boolean, leadId?: string) => void;
   setVisionOpen: (open: boolean) => void;
   setArOpen: (open: boolean) => void;
   setPitchOpen: (open: boolean) => void;
   setCardScanOpen: (open: boolean) => void;
+  setUrlImportOpen: (open: boolean) => void;
+  setTruckScanOpen: (open: boolean) => void;
+  setQuickQuoteOpen: (open: boolean) => void;
+  aiCoachOpen: boolean;
+  setAiCoachOpen: (open: boolean) => void;
   setNotifOpen: (open: boolean) => void;
   setChangelogOpen: (open: boolean) => void;
 
@@ -250,12 +260,16 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       blueprintOpen: false,
       bulkOutreachOpen: false,
       csvImportOpen: false,
+      shopvoxImportOpen: false,
       proposalOpen: false,
       proposalLeadId: null,
       visionOpen: false,
       arOpen: false,
       pitchOpen: false,
       cardScanOpen: false,
+      urlImportOpen: false,
+      truckScanOpen: false,
+      quickQuoteOpen: false,
       notifOpen: false,
       changelogOpen: false,
       setAddLeadOpen: (open) => set({ addLeadOpen: open }),
@@ -265,11 +279,17 @@ export const useAppStore = createWithEqualityFn<AppStore>()(
       setBlueprintOpen: (open) => set({ blueprintOpen: open }),
       setBulkOutreachOpen: (open) => set({ bulkOutreachOpen: open }),
       setCsvImportOpen: (open) => set({ csvImportOpen: open }),
+      setShopVoxImportOpen: (open) => set({ shopvoxImportOpen: open }),
       setProposalOpen: (open, leadId) => set({ proposalOpen: open, proposalLeadId: leadId ?? null }),
       setVisionOpen: (open) => set({ visionOpen: open }),
       setArOpen: (open) => set({ arOpen: open }),
       setPitchOpen: (open) => set({ pitchOpen: open }),
       setCardScanOpen: (open) => set({ cardScanOpen: open }),
+      setUrlImportOpen: (open) => set({ urlImportOpen: open }),
+      setTruckScanOpen: (open) => set({ truckScanOpen: open }),
+      setQuickQuoteOpen: (open) => set({ quickQuoteOpen: open }),
+      aiCoachOpen: false,
+      setAiCoachOpen: (open) => set({ aiCoachOpen: open }),
       setNotifOpen: (open) => set({ notifOpen: open }),
       setChangelogOpen: (open) => set({ changelogOpen: open }),
 

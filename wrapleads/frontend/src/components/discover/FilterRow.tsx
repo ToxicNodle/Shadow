@@ -1,8 +1,37 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useCarrierSearch } from '../../hooks/useCarriers';
 import { useSavedSearches } from '../../hooks/useSavedSearches';
 import { useAppStore } from '../../store/useAppStore';
+import { api } from '../../api/client';
 import type { CarrierSearchParams, SavedSearch } from '../../api/types';
+
+// State adjacency map — used for "Near My Shop" preset
+const STATE_NEIGHBORS: Record<string, string[]> = {
+  AL:['FL','GA','MS','TN'],  AK:[], AZ:['CA','CO','NM','NV','UT'],
+  AR:['LA','MO','MS','OK','TN','TX'], CA:['AZ','NV','OR'],
+  CO:['AZ','KS','NE','NM','OK','UT','WY'], CT:['MA','NY','RI'],
+  DE:['MD','NJ','PA'], FL:['AL','GA'], GA:['AL','FL','NC','SC','TN'],
+  HI:[], ID:['MT','NV','OR','UT','WA','WY'], IL:['IN','IA','KY','MO','WI'],
+  IN:['IL','KY','MI','OH'], IA:['IL','MN','MO','NE','SD','WI'],
+  KS:['CO','MO','NE','OK'], KY:['IL','IN','MO','OH','TN','VA','WV'],
+  LA:['AR','MS','TX'], ME:['NH'], MD:['DE','PA','VA','WV'],
+  MA:['CT','NH','NY','RI','VT'], MI:['IN','OH','WI'],
+  MN:['IA','ND','SD','WI'], MS:['AL','AR','LA','TN'],
+  MO:['AR','IL','IA','KS','KY','NE','OK','TN'], MT:['ID','ND','SD','WY'],
+  NE:['CO','IA','KS','MO','SD','WY'], NV:['AZ','CA','ID','OR','UT'],
+  NH:['MA','ME','VT'], NJ:['DE','NY','PA'], NM:['AZ','CO','OK','TX'],
+  NY:['CT','MA','NJ','PA','VT'], NC:['GA','SC','TN','VA'],
+  ND:['MN','MT','SD'], OH:['IN','KY','MI','PA','WV'],
+  OK:['AR','CO','KS','MO','NM','TX'], OR:['CA','ID','NV','WA'],
+  PA:['DE','MD','NJ','NY','OH','WV'], RI:['CT','MA'],
+  SC:['GA','NC'], SD:['IA','MN','MT','ND','NE','WY'],
+  TN:['AL','AR','GA','KY','MS','MO','NC','VA'], TX:['AR','LA','NM','OK'],
+  UT:['AZ','CO','ID','NV','NM','WY'], VT:['MA','NH','NY'],
+  VA:['KY','MD','NC','TN','WV'], WA:['ID','OR'],
+  WV:['KY','MD','OH','PA','VA'], WI:['IL','IA','MI','MN'],
+  WY:['CO','ID','MT','NE','SD','UT'],
+};
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -26,15 +55,35 @@ const INDUSTRY_OPTIONS = [
   { value: 'general',            label: 'General Business (SOS)' },
 ];
 
+const SOURCE_OPTIONS = [
+  { value: 'fmcsa',        label: '🚛 FMCSA Carriers', badge: null },
+  { value: 'sos',          label: '📋 State SOS (Registered Businesses)', badge: null },
+  { value: 'google_places', label: '📍 Google Places', badge: null },
+  { value: 'news_signal',  label: '📡 News Signal (Live Events)', badge: 'Signal' },
+  { value: 'sam_gov',      label: '🏛️ SAM.gov (Federal Contractors)', badge: 'GOV' },
+  { value: 'ingest_aia',   label: '🏗️ AIA / Architects Directory', badge: null },
+];
+
 export default function FilterRow() {
   const searchMutation = useCarrierSearch();
   const { createSearch } = useSavedSearches();
+  const { data: settingsData } = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api.getSettings(),
+    staleTime: 5 * 60_000,
+  });
   const { setCarrierOffset } = useAppStore((s) => ({
     setCarrierOffset: s.setCarrierOffset,
   }));
 
+  const shopState = settingsData?.settings?.state || '';
+  const nearMyShopStates: string[] = shopState
+    ? [shopState, ...(STATE_NEIGHBORS[shopState] ?? [])].slice(0, 5)
+    : [];
+
   const [states, setStates] = useState<string[]>([]);
   const [industries, setIndustries] = useState<string[]>([]);
+  const [sources, setSources] = useState<string[]>([]);
   const [minFleet, setMinFleet] = useState('');
   const [maxFleet, setMaxFleet] = useState('');
   const [query, setQuery] = useState('');
@@ -47,6 +96,7 @@ export default function FilterRow() {
     return {
       states:       states.length ? states : null,
       industries:   industries.length ? industries : null,
+      sources:      sources.length ? sources : null,
       minFleet:     minFleet ? Number(minFleet) : null,
       maxFleet:     maxFleet ? Number(maxFleet) : null,
       query:        query || undefined,
@@ -87,6 +137,10 @@ export default function FilterRow() {
     setIndustries((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
   }
 
+  function toggleSource(v: string) {
+    setSources((prev) => prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]);
+  }
+
   const PRESETS = [
     { label: 'Sweet Spot', minFleet: '25', maxFleet: '500', states: [], industries: [], query: '' },
     { label: 'Small Fleets', minFleet: '5', maxFleet: '25', states: [], industries: [], query: '' },
@@ -119,9 +173,39 @@ export default function FilterRow() {
     });
   }
 
+  function applyNearMyShop() {
+    if (!nearMyShopStates.length) return;
+    setStates(nearMyShopStates);
+    setMinFleet('25');
+    setMaxFleet('500');
+    setQuery('');
+    setSort('wrap_score');
+    setOnlyWithPhone(false);
+    setCarrierOffset(0);
+    searchMutation.mutate({
+      states: nearMyShopStates,
+      minFleet: 25,
+      maxFleet: 500,
+      sort: 'wrap_score',
+      limit: 25,
+      offset: 0,
+    });
+  }
+
   return (
     <div>
       <div className="discover-presets">
+        {nearMyShopStates.length > 0 && (
+          <button
+            className="discover-preset-btn"
+            onClick={applyNearMyShop}
+            disabled={searchMutation.isPending}
+            style={{ borderColor: 'var(--accent)', color: 'var(--accent)', background: 'var(--accent-dim, rgba(244,85,28,0.08))' }}
+            title={`Search ${nearMyShopStates.join(', ')} — your state + neighbors`}
+          >
+            📍 Near My Shop
+          </button>
+        )}
         {PRESETS.map((p) => (
           <button
             key={p.label}
@@ -157,6 +241,19 @@ export default function FilterRow() {
           >
             <option value="">Add industry…</option>
             {INDUSTRY_OPTIONS.filter((o) => !industries.includes(o.value)).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Source</label>
+          <select
+            className="select"
+            value=""
+            onChange={(e) => { if (e.target.value) toggleSource(e.target.value); }}
+          >
+            <option value="">Filter by source…</option>
+            {SOURCE_OPTIONS.filter((o) => !sources.includes(o.value)).map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
@@ -231,7 +328,7 @@ export default function FilterRow() {
         </div>
       </div>
 
-      {(states.length > 0 || industries.length > 0) && (
+      {(states.length > 0 || industries.length > 0 || sources.length > 0) && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {states.map((s) => (
             <span key={s} className="saved-chip">
@@ -245,6 +342,15 @@ export default function FilterRow() {
               <button className="chip-del" onClick={() => toggleIndustry(v)}>×</button>
             </span>
           ))}
+          {sources.map((v) => {
+            const opt = SOURCE_OPTIONS.find((o) => o.value === v);
+            return (
+              <span key={v} className="saved-chip" style={{ background: 'rgba(77,138,245,0.12)', borderColor: 'rgba(77,138,245,0.3)', color: '#4d8af5' }}>
+                {opt?.label ?? v}
+                <button className="chip-del" onClick={() => toggleSource(v)}>×</button>
+              </span>
+            );
+          })}
         </div>
       )}
 

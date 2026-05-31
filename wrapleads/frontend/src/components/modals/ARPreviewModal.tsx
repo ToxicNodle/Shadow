@@ -109,9 +109,8 @@ function createDemoVehicle(): Promise<File> {
     [330, 420, 510].forEach((x) => {
       ctx.fillStyle = 'rgba(160,195,220,0.7)';
       ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(x, H * 0.27, 72, 58, 4) : (() => {
-        ctx.rect(x, H * 0.27, 72, 58);
-      })();
+      if (ctx.roundRect) ctx.roundRect(x, H * 0.27, 72, 58, 4);
+      else ctx.rect(x, H * 0.27, 72, 58);
       ctx.fill(); ctx.strokeStyle = '#9ab4c8'; ctx.lineWidth = 1; ctx.stroke();
     });
 

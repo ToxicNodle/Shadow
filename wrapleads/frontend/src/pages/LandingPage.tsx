@@ -162,6 +162,13 @@ export default function LandingPage() {
             <span>✓ 500+ leads seeded on day one</span>
             <span>✓ Cancel anytime</span>
           </div>
+
+          <div className="landing-quick-links" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 28, fontSize: 13 }}>
+            <a href="/demo" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(99,102,241,0.1)', borderRadius: 6 }}>📞 Watch a live AI call</a>
+            <a href="/calculator" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(99,102,241,0.1)', borderRadius: 6 }}>💰 Stack cost calculator</a>
+            <a href="/migrate/shopvox" style={{ color: '#f87171', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(239,68,68,0.1)', borderRadius: 6 }}>↗ Migrate from ShopVOX</a>
+            <a href="/wrap-my-fleet" style={{ color: '#00d97e', textDecoration: 'none', fontWeight: 600, padding: '6px 12px', background: 'rgba(0,217,126,0.1)', borderRadius: 6 }}>🚐 Fleet owners: free wrap concepts</a>
+          </div>
         </div>
 
         <div className="landing-hero-art" aria-hidden="true">
@@ -187,6 +194,30 @@ export default function LandingPage() {
               <h3>{f.title}</h3>
               <p>{f.body}</p>
             </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="verticals" className="landing-section" style={{ paddingTop: 0 }}>
+        <h2 className="landing-h2">Built for your vertical</h2>
+        <p className="landing-section-sub">Every wrap shop is different. Click through to see how WrapOS handles yours.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginTop: 32, maxWidth: 1000, margin: '32px auto 0' }}>
+          {[
+            { slug: 'fleet',        title: 'Fleet Wrap Shops',     icon: '🚚', desc: '600K FMCSA carriers, wrap-scored' },
+            { slug: 'racing',       title: 'Racing / Motorsports', icon: '🏁', desc: 'IndyCar, IMSA, NHRA team liveries' },
+            { slug: 'dinoc',        title: 'DI-NOC / Architectural', icon: '🏢', desc: 'Surface renovation without demo' },
+            { slug: 'construction', title: 'Construction GCs',     icon: '🚧', desc: 'New business + expansion signals' },
+            { slug: 'government',   title: 'Government Contracts', icon: '🏛️', desc: '$400M/yr SAM.gov vehicle graphics' },
+          ].map((v) => (
+            <a key={v.slug} href={`/for/${v.slug}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+              <div style={{ background: 'var(--bg-card, #18181b)', border: '1px solid var(--border, #27272a)', borderRadius: 12, padding: 20, textAlign: 'center', transition: 'all 0.15s', cursor: 'pointer' }}
+                   onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                   onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border, #27272a)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
+                <div style={{ fontSize: 28, marginBottom: 10 }}>{v.icon}</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text, #fff)', marginBottom: 4 }}>{v.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim, #71717a)', lineHeight: 1.4 }}>{v.desc}</div>
+              </div>
+            </a>
           ))}
         </div>
       </section>

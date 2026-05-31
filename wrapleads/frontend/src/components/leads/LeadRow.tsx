@@ -136,6 +136,15 @@ export default function LeadRow({ lead, selected, checked }: Props) {
             {lead.contactName || <span style={{ color: 'var(--text-faint)' }}>No contact</span>}
             {lead.contactTitle ? ` · ${lead.contactTitle}` : ''}
           </div>
+          {lead.pitchAngle && (
+            <div style={{
+              fontSize: 10, color: 'var(--text-faint)', marginTop: 2,
+              fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              maxWidth: 260,
+            }}>
+              {lead.pitchAngle.length > 80 ? lead.pitchAngle.slice(0, 80) + '…' : lead.pitchAngle}
+            </div>
+          )}
           {lead.tags && lead.tags.length > 0 && (
             <div className="lead-tag-row">
               {lead.tags.slice(0, 3).map((t) => {

@@ -28,6 +28,16 @@ function StaleTag({ years }: { years?: number }) {
   return <span className="carrier-stale" style={{ color }}>{label}</span>;
 }
 
+function AuthorityAge({ years }: { years?: number | null }) {
+  if (years == null) return <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>—</span>;
+  const color = years >= 10 ? '#22c55e' : years >= 5 ? '#f59e0b' : 'var(--text-faint)';
+  return (
+    <span title={`MC authority registered ~${years} years ago`} style={{ fontSize: 10, color }}>
+      {years}yr
+    </span>
+  );
+}
+
 // Reverse-engineer wrap score into human-readable factors
 function scoreFactors(carrier: Carrier): { label: string; pts: number; max: number }[] {
   const fleet = carrier.fleet_size ?? 0;
@@ -91,13 +101,36 @@ export default function CarrierRow({ carrier, checked }: Props) {
           onClick={(e) => e.stopPropagation()}
         />
         <div className="carrier-cell-name">
-          <div className="carrier-name">{carrier.name}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="carrier-name">{carrier.name}</div>
+            {carrier.source === 'news_signal' && (
+              <span title="Signal lead — sourced from a live news event" style={{
+                fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em',
+                padding: '1px 5px', borderRadius: 3,
+                background: 'rgba(77,138,245,0.15)', color: '#4d8af5', flexShrink: 0,
+              }}>
+                📡 Signal
+              </span>
+            )}
+            {carrier.source === 'sam_gov' && (
+              <span title="Federal contractor from SAM.gov" style={{
+                fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em',
+                padding: '1px 5px', borderRadius: 3,
+                background: 'rgba(16,185,129,0.12)', color: '#10b981', flexShrink: 0,
+              }}>
+                GOV
+              </span>
+            )}
+          </div>
           {carrier.dba_name && <div className="carrier-dba">DBA: {carrier.dba_name}</div>}
           {carrier.dot_number && <div className="carrier-dot">DOT #{carrier.dot_number}</div>}
         </div>
         <div className="carrier-fleet">
           <strong>{carrier.fleet_size ?? '—'}</strong>
           {carrier.fleet_size && <small> units</small>}
+        </div>
+        <div className="carrier-authority" title="Years on FMCSA registry — longer = more established">
+          <AuthorityAge years={carrier.authority_age_years} />
         </div>
         <div className="carrier-score-cell">
           <ScoreMeter score={carrier.wrap_score} />
@@ -163,6 +196,32 @@ export default function CarrierRow({ carrier, checked }: Props) {
 
           {/* Pitch angle + actions */}
           <div>
+            {carrier.source === 'news_signal' && carrier.notes && (() => {
+              const lines = carrier.notes.split('\n').filter(Boolean);
+              const headline = lines[0]?.replace(/^📰\s*/, '') || '';
+              const link = lines[1] || '';
+              return (
+                <div style={{
+                  background: 'rgba(77,138,245,0.08)', border: '1px solid rgba(77,138,245,0.2)',
+                  borderRadius: 7, padding: '8px 10px', marginBottom: 10,
+                }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#4d8af5', marginBottom: 4 }}>
+                    📡 Signal Event
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5, marginBottom: link ? 4 : 0 }}>
+                    {headline}
+                  </div>
+                  {link && (
+                    <a href={link} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 10, color: '#4d8af5', textDecoration: 'none' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      Read article →
+                    </a>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 8 }}>
               Suggested Pitch
             </div>

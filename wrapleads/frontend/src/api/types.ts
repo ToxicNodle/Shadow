@@ -25,11 +25,14 @@ export interface Lead {
   sourceCompanyId?: number;
   referred_by?: string | null;
   tags?: string[];
+  lost_reason?: string | null;
+  lost_competitor?: string | null;
+  lost_at?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply';
+export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply' | 'design_approved' | 'call_logged' | 'news_intel' | 'call_initiated' | 'call_completed';
 
 export interface LeadActivity {
   id: string;
@@ -97,8 +100,10 @@ export interface Carrier {
   email?: string;
   website?: string;
   source: string;
+  notes?: string | null;
   wrap_score: number;
   years_since_report?: number;
+  authority_age_years?: number | null;
   already_imported?: boolean;
 }
 
@@ -162,6 +167,8 @@ export interface Settings {
   crewSize: string;
   workingDaysMonth: string;
   avgDealValue: string;
+  depositPaymentLink: string;
+  hunterApiKey: string;
 }
 
 export interface CarrierSearchParams {
@@ -290,6 +297,8 @@ export const DEFAULT_SETTINGS: Settings = {
   crewSize: '2',
   workingDaysMonth: '20',
   avgDealValue: '3500',
+  depositPaymentLink: '',
+  hunterApiKey: '',
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
@@ -337,9 +346,48 @@ export interface InstalledJob {
   install_date: string;
   life_years: number;
   notes?: string | null;
+  material_cost?: number | null;
+  job_revenue?: number | null;
+  labor_hours?: number | null;
   created_at: string;
   updated_at: string;
   days_until_expiry?: number;
+  payment_status?: 'unpaid' | 'deposit_paid' | 'invoice_sent' | 'paid' | 'overdue';
+  deposit_paid_at?: string | null;
+  invoice_sent_at?: string | null;
+  paid_at?: string | null;
+  amount_paid?: number | null;
+  scheduled_install_date?: string | null;
+  scheduled_crew_count?: number | null;
+}
+
+// ── Subcontractor ─────────────────────────────────────────────────────────────
+
+export interface Subcontractor {
+  id: number;
+  user_id: string;
+  name: string;
+  contact?: string | null;
+  specialty?: string | null;
+  labor_rate?: number | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  job_count?: number;
+  total_paid?: number;
+}
+
+export interface SubcontractorAssignment {
+  id: number;
+  job_id: number;
+  sub_id: number;
+  sub_name: string;
+  specialty?: string | null;
+  rate?: number | null;
+  hours: number;
+  labor_cost: number;
+  notes?: string | null;
+  created_at: string;
 }
 
 // ── Computer Vision Quote ─────────────────────────────────────────────────────
@@ -449,7 +497,7 @@ export interface JobPhoto {
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 
-export type NotificationType = 'aging_wrap' | 'call_completed' | 'email_reply' | 'sequence_complete' | 'bid_due_soon';
+export type NotificationType = 'aging_wrap' | 'call_completed' | 'email_reply' | 'sequence_complete' | 'bid_due_soon' | 'quote_expiring' | 'deal_stalled' | 'hot_prospect' | 'new_lead' | 'design_approved' | 'maintenance_due' | 'anniversary' | 'referral_opportunity';
 
 export interface AppNotification {
   id: number;

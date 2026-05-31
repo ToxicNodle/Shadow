@@ -6,7 +6,22 @@ import { useLeads } from '../../hooks/useLeads';
 import ROICalculatorModal from '../modals/ROICalculatorModal';
 import HotProposalsCard from './HotProposalsCard';
 import PerfectTimingCard from './PerfectTimingCard';
+import WinThisWeekCard from './WinThisWeekCard';
 import StreakBadge from './StreakBadge';
+import InboundRequestsCard from './InboundRequestsCard';
+import CallSessionModal from './CallSessionModal';
+import TodayScoreCard from './TodayScoreCard';
+import ProposalHeatCard from './ProposalHeatCard';
+import RescueQueueCard from './RescueQueueCard';
+import IntentSignalsCard from './IntentSignalsCard';
+import TaskQueueCard from './TaskQueueCard';
+import SpeedDialCard from './SpeedDialCard';
+import StalePipelineCard from './StalePipelineCard';
+import ReferralEngineCard from './ReferralEngineCard';
+import DailyBriefingCard from './DailyBriefingCard';
+import ObjectionCounterCard from './ObjectionCounterCard';
+import SignalLeadsCard from './SignalLeadsCard';
+import DarkProposalsCard from './DarkProposalsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -134,7 +149,7 @@ function BulkActivatePanel({ leads, onDone }: BulkPanelProps) {
 
   const toggle = (id: number) => setSelected((s) => {
     const n = new Set(s);
-    n.has(id) ? n.delete(id) : n.add(id);
+    if (n.has(id)) n.delete(id); else n.add(id);
     return n;
   });
 
@@ -223,7 +238,7 @@ function EnrichPanel({ leads, apolloKey, onDone }: EnrichPanelProps) {
   });
 
   const toggle = (id: number) => setSelected((s) => {
-    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
   });
 
   if (result) {
@@ -1273,6 +1288,230 @@ function agePctColor(pct: number) {
   return '#10b981';
 }
 
+// ── Top Prospects by Heat Score ──────────────────────────────────────────────
+function TopProspectsCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const setMode = useAppStore((s) => s.setMode);
+  const { data, isLoading } = useQuery({
+    queryKey: ['top-prospects'],
+    queryFn: () => api.getTopProspects(),
+    staleTime: 3 * 60_000,
+  });
+
+  const prospects = data?.prospects ?? [];
+  if (!isLoading && prospects.length === 0) return null;
+
+  function open(id: number) {
+    setMode('leads');
+    setCurrentLeadId(String(id));
+    onLeadClick(id);
+  }
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #f97316' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2" style={{ marginRight: 5 }}>
+            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#f97316" stroke="none"/>
+          </svg>
+          Top Prospects
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>by engagement heat score</span>
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: '12px 0', color: 'var(--text-faint)', fontSize: 12 }}>Loading…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {prospects.map((p) => (
+            <div
+              key={p.id}
+              onClick={() => open(p.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: `${p.color}09`, border: `1px solid ${p.color}22`, borderRadius: 8, cursor: 'pointer', transition: 'background .15s' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = `${p.color}18`)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = `${p.color}09`)}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 44, padding: '2px 4px', background: `${p.color}18`, borderRadius: 6 }}>
+                <span style={{ fontSize: 16, fontWeight: 900, color: p.color, lineHeight: 1 }}>{p.score}</span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: p.color, textTransform: 'uppercase', letterSpacing: '.05em', opacity: 0.9 }}>{p.label}</span>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {p.contactName && <span>{p.contactName} · </span>}
+                  <span style={{ textTransform: 'capitalize' }}>{p.status.replace('_', ' ')}</span>
+                  {p.fleetSize && <span> · {p.fleetSize} units</span>}
+                </div>
+              </div>
+              {p.phone && (
+                <a href={`tel:${p.phone}`} onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: '#4d8af5', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                  Call →
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Expiring Quotes ───────────────────────────────────────────────────────────
+function ExpiringQuotesCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const setMode = useAppStore((s) => s.setMode);
+  const { data, isLoading } = useQuery({
+    queryKey: ['expiring-quotes'],
+    queryFn: () => api.getExpiringQuotes(),
+    staleTime: 5 * 60_000,
+  });
+
+  const quotes = data?.quotes ?? [];
+  if (!isLoading && quotes.length === 0) return null;
+
+  function open(leadId: number) {
+    setMode('leads');
+    setCurrentLeadId(String(leadId));
+    onLeadClick(leadId);
+  }
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #f59e0b' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" style={{ marginRight: 5 }}>
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Expiring Quotes
+        </span>
+        <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>⚠ Act before they lapse</span>
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: '12px 0', color: 'var(--text-faint)', fontSize: 12 }}>Checking…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {quotes.map((q) => {
+            const urgency = q.daysLeft <= 2 ? '#ef4444' : q.daysLeft <= 4 ? '#f97316' : '#f59e0b';
+            return (
+              <div
+                key={q.id}
+                onClick={() => open(q.leadId)}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: `${urgency}08`, border: `1px solid ${urgency}25`, borderRadius: 8, cursor: 'pointer', transition: 'background .15s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = `${urgency}16`)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = `${urgency}08`)}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 40, padding: '3px 5px', background: `${urgency}18`, borderRadius: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: urgency, lineHeight: 1 }}>{q.daysLeft}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, color: urgency, textTransform: 'uppercase', letterSpacing: '.05em' }}>days</span>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.company}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    #{q.quoteNumber} · {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(q.total)}
+                  </div>
+                </div>
+                {q.email && (
+                  <a
+                    href={`mailto:${q.email}?subject=Following up on quote %23${q.quoteNumber}&body=Hi ${q.contactName || 'there'}%2C%0A%0AWanted to follow up on the quote we sent — it expires in ${q.daysLeft} day${q.daysLeft !== 1 ? 's' : ''}. Let me know if you have any questions.%0A%0ABest`}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ fontSize: 11, color: '#4d8af5', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                  >
+                    Email →
+                  </a>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Overdue Invoices Alert ────────────────────────────────────────────────────
+function OverdueInvoicesCard() {
+  const showToast = useAppStore((s) => s.showToast);
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['overdue-invoices'],
+    queryFn: () => api.getOverdueInvoices(),
+    staleTime: 5 * 60_000,
+  });
+
+  const jobs = data?.jobs ?? [];
+  if (!isLoading && jobs.length === 0) return null;
+
+  const totalBalance = jobs.reduce((s, j) => s + j.balance, 0);
+  const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+
+  async function markPaid(jobId: number, company: string) {
+    try {
+      await api.updateJobPayment(jobId, { payment_status: 'paid' });
+      showToast(`${company} marked as paid`);
+      refetch();
+    } catch {
+      showToast('Could not update payment status', 'error');
+    }
+  }
+
+  async function markInvoiceSent(jobId: number) {
+    try {
+      await api.updateJobPayment(jobId, { payment_status: 'invoice_sent' });
+      refetch();
+    } catch { /* ignore */ }
+  }
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #ef4444' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" style={{ marginRight: 5 }}>
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>
+          </svg>
+          Unpaid Invoices
+        </span>
+        {totalBalance > 0 && (
+          <span style={{ fontSize: 13, fontWeight: 800, color: '#ef4444', marginLeft: 'auto' }}>{fmt(totalBalance)} outstanding</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div style={{ padding: '12px 0', color: 'var(--text-faint)', fontSize: 12 }}>Checking…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {jobs.map((j) => (
+            <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#ef444408', border: '1px solid #ef444422', borderRadius: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.company}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {j.vehicleCount} {j.vehicleType} · {fmt(j.revenue)}
+                  {j.daysOverdue !== null && <span style={{ color: '#ef4444', marginLeft: 4 }}> · {j.daysOverdue}d ago</span>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {j.paymentStatus !== 'invoice_sent' && (
+                  <button
+                    onClick={() => markInvoiceSent(j.id)}
+                    style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                  >
+                    Invoice Sent
+                  </button>
+                )}
+                <button
+                  onClick={() => markPaid(j.id, j.company)}
+                  style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  Mark Paid ✓
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RetentionRadarCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ['retention-radar'],
@@ -1690,6 +1929,7 @@ export default function MissionView() {
   const [showProspector, setShowProspector] = useState(false);
   const [showCampaigns, setShowCampaigns] = useState(false);
   const [showROI, setShowROI] = useState(false);
+  const [showCallSession, setShowCallSession] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mission'],
@@ -1824,11 +2064,59 @@ export default function MissionView() {
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
 
+      {/* ── Market Signals — press release auto-leads ── */}
+      <SignalLeadsCard />
+
+      {/* ── Daily Briefing — AI morning snapshot ── */}
+      <DailyBriefingCard />
+
+      {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
+      <InboundRequestsCard />
+
+      {/* ── Top Prospects — highest heat score leads ── */}
+      <TopProspectsCard onLeadClick={goToLead} />
+
+      {/* ── Expiring Quotes — quotes about to lapse ── */}
+      <ExpiringQuotesCard onLeadClick={goToLead} />
+
+      {/* ── Speed Dial — top 5 leads to contact right now ── */}
+      <SpeedDialCard />
+
+      {/* ── Stale Pipeline — deals going cold with no activity ── */}
+      <StalePipelineCard />
+
+      {/* ── Referral Engine — AI referral ask for top won clients ── */}
+      <ReferralEngineCard />
+
+      {/* ── Objection Counter — AI responses to pricing/negative replies ── */}
+      <ObjectionCounterCard />
+
+      {/* ── Daily Task Queue — AI-generated + manual task list ── */}
+      <TaskQueueCard />
+
+      {/* ── Today's Score — gamified daily activity tracker ── */}
+      <TodayScoreCard />
+
+      {/* ── Win This Week — top 5 predicted closers this week ── */}
+      <WinThisWeekCard />
+
+      {/* ── Intent Signals — unified buying intent score ── */}
+      <IntentSignalsCard />
+
       {/* ── Perfect Timing — email opens in the last 2 hours ── */}
       <PerfectTimingCard />
 
-      {/* ── Proposal Heat — surfaces prospects actively viewing your work ── */}
+      {/* ── Proposals Gone Dark — sent 3+ days ago, no response ── */}
+      <DarkProposalsCard />
+
+      {/* ── Proposal Heat Score — ranked by recency × view count ── */}
+      <ProposalHeatCard />
+
+      {/* ── Hot Proposals ── */}
       <HotProposalsCard />
+
+      {/* ── Lost Lead Rescue Queue ── */}
+      <RescueQueueCard />
 
       {/* ── WrapLeads ROI Impact ── */}
       <ImpactStrip />
@@ -1841,6 +2129,9 @@ export default function MissionView() {
         leads={leads}
         onFilter={(cat) => goToLeadsFiltered(undefined, cat)}
       />
+
+      {/* ── Overdue Invoices — unpaid balances from completed jobs ── */}
+      <OverdueInvoicesCard />
 
       {/* ── Retention Radar — aging wraps ready for re-engagement ── */}
       <RetentionRadarCard onLeadClick={goToLead} />
@@ -1886,6 +2177,13 @@ export default function MissionView() {
               <span className="mission-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7a2 2 0 0 1 1.72 2.03z"/></svg></span>
               <span className="mission-card-title">Ready for Your Call — Sequence Complete</span>
               <span className="mission-badge mission-badge-green">{callReady!.length}</span>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 11, marginLeft: 'auto', padding: '4px 12px' }}
+                onClick={() => setShowCallSession(true)}
+              >
+                🎯 Start Calling Session
+              </button>
             </div>
             <p className="mission-call-desc">
               These leads received your full 3-email sequence and haven't replied yet.
@@ -2286,6 +2584,13 @@ export default function MissionView() {
         <ROICalculatorModal
           onClose={() => setShowROI(false)}
           companyName={settings.companyName}
+        />
+      )}
+
+      {showCallSession && callReady && callReady.length > 0 && (
+        <CallSessionModal
+          leads={callReady}
+          onClose={() => setShowCallSession(false)}
         />
       )}
     </div>

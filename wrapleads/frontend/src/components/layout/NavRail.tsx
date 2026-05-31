@@ -96,6 +96,16 @@ const NAV: { mode: AppMode; label: string; shortLabel: string; icon: React.React
       </svg>
     ),
   },
+  {
+    mode: 'gov' as AppMode,
+    label: 'Gov Bids',
+    shortLabel: 'Gov Bids',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 21h18M5 21V8l7-5 7 5v13M9 21V12h6v9" />
+      </svg>
+    ),
+  },
 ] as const;
 
 export default function NavRail() {

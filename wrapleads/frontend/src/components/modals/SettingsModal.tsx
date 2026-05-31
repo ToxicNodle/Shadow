@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../api/client';
@@ -29,6 +30,27 @@ export default function SettingsModal() {
   const [motiveStatus, setMotiveStatus] = useState<FleetStatus>('idle');
   const [motiveCount, setMotiveCount] = useState<number | null>(null);
   const [motiveImported, setMotiveImported] = useState<{ imported: number; skipped: number } | null>(null);
+
+  // Subcontractors
+  const qc = useQueryClient();
+  const [newSubName, setNewSubName] = useState('');
+  const [newSubSpecialty, setNewSubSpecialty] = useState('');
+  const [newSubRate, setNewSubRate] = useState('');
+  const { data: subsData } = useQuery({
+    queryKey: ['subcontractors'],
+    queryFn: () => api.getSubcontractors(),
+    staleTime: 5 * 60_000,
+    enabled: settingsOpen,
+  });
+  const createSubMut = useMutation({
+    mutationFn: () => api.createSubcontractor({ name: newSubName.trim(), specialty: newSubSpecialty.trim() || undefined, labor_rate: newSubRate ? Number(newSubRate) : undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['subcontractors'] }); setNewSubName(''); setNewSubSpecialty(''); setNewSubRate(''); showToast('Subcontractor saved', 'success'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const deleteSubMut = useMutation({
+    mutationFn: (id: number) => api.deleteSubcontractor(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['subcontractors'] }),
+  });
 
   // Sync local form state whenever the modal opens — settings may have loaded from
   // the server after initial mount, so re-initialize when the user actually opens it.
@@ -449,6 +471,82 @@ export default function SettingsModal() {
             Get My Portfolio Link
           </button>
         )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+            <path d="M1 10h22" />
+            <circle cx="7" cy="15" r="1" />
+          </svg>
+          Deposit Collection
+        </div>
+        <p className="settings-help">
+          When a client approves a quote in their client portal, show a "Pay Deposit" button that links to your Stripe Payment Link (or any payment URL). Paste your Stripe Payment Link URL below.
+        </p>
+        <div className="field-group">
+          <label className="field-label">Stripe Payment Link URL</label>
+          <input className="input" {...f('depositPaymentLink')} placeholder="https://buy.stripe.com/…" />
+        </div>
+        {local.depositPaymentLink && (
+          <p className="settings-help" style={{ color: 'var(--green)', marginTop: 4 }}>
+            ✓ Deposit button will appear after quote approval in the client portal.
+          </p>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          Hunter.io Integration
+        </div>
+        <p className="settings-help">
+          Hunter.io finds professional email addresses for any company domain. When configured, WrapOS tries Hunter first (25 free searches/month) before falling back to Apollo — saving credits.
+        </p>
+        <div className="field-group">
+          <label className="field-label">Hunter API Key</label>
+          <input className="input" type="password" {...f('hunterApiKey')} placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">👷 Subcontractors</div>
+        <p className="settings-help">
+          Add subcontractors you use for installs. Assign them to jobs to track their labor cost and see your true margin.
+        </p>
+        {/* List existing */}
+        {(subsData?.subs ?? []).map((sub) => (
+          <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, background: 'var(--bg-input)', borderRadius: 6, padding: '6px 10px' }}>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{sub.name}</span>
+              {sub.specialty && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.specialty}</span>}
+              {sub.labor_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>${Number(sub.labor_rate)}/hr</span>}
+              {(sub.job_count ?? 0) > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.job_count} jobs · ${Number(sub.total_paid).toLocaleString()} paid</span>}
+            </div>
+            <button className="btn" style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }} onClick={() => deleteSubMut.mutate(sub.id)} disabled={deleteSubMut.isPending}>Remove</button>
+          </div>
+        ))}
+        {/* Add new */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="field-group" style={{ flex: 2 }}>
+            <label className="field-label">Name</label>
+            <input className="input" value={newSubName} onChange={(e) => setNewSubName(e.target.value)} placeholder="Jake's Install Crew" style={{ fontSize: 12 }} />
+          </div>
+          <div className="field-group" style={{ flex: 1 }}>
+            <label className="field-label">Specialty</label>
+            <input className="input" value={newSubSpecialty} onChange={(e) => setNewSubSpecialty(e.target.value)} placeholder="fleet wraps" style={{ fontSize: 12 }} />
+          </div>
+          <div className="field-group" style={{ width: 80 }}>
+            <label className="field-label">$/hr</label>
+            <input className="input" type="number" min={0} value={newSubRate} onChange={(e) => setNewSubRate(e.target.value)} placeholder="65" style={{ fontSize: 12 }} />
+          </div>
+          <button className="btn btn-primary" style={{ fontSize: 12, marginBottom: 1 }} disabled={!newSubName.trim() || createSubMut.isPending} onClick={() => createSubMut.mutate()}>
+            {createSubMut.isPending ? 'Adding…' : '+ Add'}
+          </button>
+        </div>
       </div>
 
       {(user?.subStatus === 'active' || user?.subStatus === 'past_due' || user?.subStatus === 'trialing') && (

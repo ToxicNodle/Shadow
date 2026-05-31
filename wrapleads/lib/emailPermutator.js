@@ -184,4 +184,26 @@ async function findEmails(fullName, domain, opts = {}) {
   return { candidates, mx };
 }
 
-module.exports = { generatePermutations, checkMx, smtpProbe, findEmails };
+// ── Simple permutation helper (no async, no MX check) ─────────────────────
+// Used by /leads/bulk-find-emails for lightweight, synchronous candidate
+// generation when the caller just wants a list without any network I/O.
+function permutate(firstName, lastName, domain) {
+  const f = String(firstName || '').toLowerCase().replace(/[^a-z]/g, '');
+  const l = String(lastName || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!f || !domain) return [];
+  const d = String(domain).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  const candidates = [
+    `${f}@${d}`,
+    `${f}.${l}@${d}`,
+    `${f[0]}${l}@${d}`,
+    `${f}${l[0] ?? ''}@${d}`,
+    `${l}.${f}@${d}`,
+    `${f}${l}@${d}`,
+    `info@${d}`,
+    `contact@${d}`,
+    `hello@${d}`,
+  ].filter((e, i, a) => e.includes('@') && a.indexOf(e) === i);
+  return candidates;
+}
+
+module.exports = { generatePermutations, checkMx, smtpProbe, findEmails, permutate };
