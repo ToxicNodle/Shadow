@@ -299,6 +299,9 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add sms_opted_out column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_searched_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add email_searched_at column:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -6050,6 +6053,110 @@ function startSmsSequenceWorker() {
   }
 
   setTimeout(run, 2 * 60 * 1000);
+  setInterval(run, INTERVAL_MS);
+}
+
+function startEmailEnrichmentWorker() {
+  const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+  const PER_USER_LIMIT = 8;           // max leads to enrich per user per run
+  console.log('· Email enrichment worker started (30-min poll, free permutation + Hunter waterfall)');
+
+  async function run() {
+    try {
+      // Find users who have leads with website but no email (cap at 20 users per run)
+      const { rows: users } = await pool.query(`
+        SELECT DISTINCT l.user_id
+        FROM leads l
+        WHERE l.email IS NULL OR l.email = ''
+          AND l.website IS NOT NULL AND l.website != ''
+          AND (l.email_searched_at IS NULL OR l.email_searched_at < NOW() - INTERVAL '7 days')
+          AND l.contact_name IS NOT NULL AND l.contact_name != ''
+        LIMIT 20
+      `);
+
+      if (!users.length) return;
+
+      const { findEmails } = require('./lib/emailPermutator');
+
+      for (const { user_id: uid } of users) {
+        try {
+          // Get user settings for Hunter.io key
+          const settR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+          const settings = settR.rows[0]?.settings_json || {};
+
+          // Pick up to PER_USER_LIMIT leads
+          const { rows: leads } = await pool.query(`
+            SELECT id, contact_name, website, company, category
+            FROM leads
+            WHERE user_id = $1
+              AND (email IS NULL OR email = '')
+              AND website IS NOT NULL AND website != ''
+              AND contact_name IS NOT NULL AND contact_name != ''
+              AND (email_searched_at IS NULL OR email_searched_at < NOW() - INTERVAL '7 days')
+            ORDER BY created_at DESC
+            LIMIT $2
+          `, [uid, PER_USER_LIMIT]);
+
+          for (const lead of leads) {
+            let foundEmail = null;
+            let source = 'permutation';
+            const domain = (lead.website || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/^www\./i, '');
+
+            if (!domain) {
+              await pool.query(`UPDATE leads SET email_searched_at=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
+              continue;
+            }
+
+            // Try Hunter.io first if configured
+            if (settings.hunterApiKey || process.env.HUNTER_API_KEY) {
+              try {
+                const hunterResult = await tryHunterEnrich(
+                  lead.contact_name.split(' ')[0],
+                  lead.contact_name.split(' ').slice(1).join(' '),
+                  domain, uid
+                );
+                if (hunterResult) { foundEmail = hunterResult.email; source = 'hunter'; }
+              } catch {}
+            }
+
+            // Fall back to email permutation
+            if (!foundEmail) {
+              try {
+                const result = await findEmails(lead.contact_name, domain, { probe: false });
+                const best = result.candidates.find((c) => c.confidence >= 0.65);
+                if (best) { foundEmail = best.email; }
+              } catch {}
+            }
+
+            if (foundEmail) {
+              await pool.query(
+                `UPDATE leads SET email=$1, email_searched_at=NOW(), updated_at=NOW()
+                 WHERE id=$2 AND user_id=$3 AND (email IS NULL OR email='')`,
+                [foundEmail, lead.id, uid]
+              );
+              await logActivity(pool, {
+                leadId: lead.id, userId: uid, type: 'email_generated',
+                subject: 'Email auto-discovered',
+                body: `${foundEmail} (${source})`,
+              });
+            } else {
+              await pool.query(`UPDATE leads SET email_searched_at=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
+            }
+
+            // Polite delay between leads
+            await new Promise((r) => setTimeout(r, 300));
+          }
+        } catch (e) {
+          console.warn(`[emailEnrich] user ${uid} error:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[emailEnrich] worker error:', e.message);
+    }
+  }
+
+  // First run after 3 minutes
+  setTimeout(run, 3 * 60 * 1000);
   setInterval(run, INTERVAL_MS);
 }
 
@@ -20576,6 +20683,7 @@ app.listen(PORT, async () => {
   if (db.ok) {
     startDripWorker();
     startSmsSequenceWorker();
+    startEmailEnrichmentWorker();
     startDigestWorker();
     startColdNurtureWorker();
     startReOrderWorker();
