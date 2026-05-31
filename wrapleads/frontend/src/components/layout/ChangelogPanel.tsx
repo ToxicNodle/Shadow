@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📅 CRM Follow-up Calendar — Subscribe Your Follow-up Dates in Google/Apple/Outlook',
+    body: 'Settings now has a "CRM Follow-up Calendar" section with a subscribe URL for your WrapOS follow-up reminders. Copy the URL and add it to Google Calendar (Other calendars → From URL), Apple Calendar (File → New Calendar Subscription), or Outlook (Add calendar → Subscribe from web). Every lead with a follow-up date appears as an all-day event with a 1-hour reminder. The calendar updates live as WrapOS sets new follow-up dates — no manual syncing. Events include the company name, contact, and current CRM status. Works alongside the bid deadline calendar that\'s already in the Bids view.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
+    title: '📬 Auto Proposal Nudge — AI Follow-up Sent When Prospects Go Dark',
+    body: 'A new background worker runs daily at 10:30 AM and finds proposals that went unanswered. If a sent proposal has zero views after 3 days, or was viewed but the prospect went silent for 7 days, WrapOS automatically sends a short, AI-written follow-up email to the lead. The email references the specific proposal title and project, reads like a genuine check-in rather than a sales push, and ends with a low-friction CTA. After sending, the proposal is stamped with a nudge timestamp so it won\'t be followed up twice. Toggle it off per-shop in Settings → "Auto-send proposal follow-up nudge." Requires a Resend API key. The nudge fires between 3–10 days after marking a proposal as Sent, giving the prospect time to respond naturally first.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔄 90-Day Cross-Sell Email — Turn Every Completed Job into a Second Sale',
     body: '90 days after a job is installed, WrapOS automatically emails the client suggesting a complementary service they haven\'t bought yet. The pitch is category-aware: fleet wrap clients get a DI-NOC pitch ("many fleet clients add this to their headquarters..."), color change clients get PPF, DI-NOC clients get wall graphics, racing clients get a trailer wrap offer, construction clients get safety markings, and so on. The email is warm, short, and personal — not a generic blast. You can toggle it off per-shop in Settings → "Auto-send 90-day cross-sell email." When it fires, WrapOS logs the email to the lead\'s activity timeline. Built around the insight that the easiest second sale is to someone who already trusts you — and 90 days is when the excitement of the new wrap has settled and they\'re thinking about what else needs branding.',
   },

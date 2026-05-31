@@ -692,6 +692,8 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS mockup_url TEXT`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS roi_section TEXT`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS nudge_sent_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
   }
@@ -4952,6 +4954,80 @@ app.get('/bids/calendar.ics', async (req, res) => {
 
   res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="wrapos-bids.ics"');
+  res.send(ical);
+});
+
+// GET /leads/followups.ics — iCal feed of all upcoming CRM follow-up dates
+// Users can subscribe this URL in Google Calendar / Outlook / Apple Calendar.
+// Uses a token-based auth so calendar apps can subscribe without Bearer headers.
+app.get('/leads/followups.ics', async (req, res) => {
+  const token = (req.query.token || req.headers.authorization?.replace('Bearer ', ''))?.trim();
+  if (!token) return res.status(401).send('Unauthorized');
+
+  let uid;
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'wraplead_secret');
+    uid = String(decoded.id);
+  } catch {
+    return res.status(401).send('Invalid token');
+  }
+
+  const { rows } = await pool.query(
+    `SELECT id, company, contact_name, status, category, followup_due_at
+     FROM leads
+     WHERE user_id = $1
+       AND followup_due_at IS NOT NULL
+       AND followup_due_at >= CURRENT_DATE - INTERVAL '3 days'
+       AND status NOT IN ('won','lost')
+     ORDER BY followup_due_at ASC
+     LIMIT 200`,
+    [uid]
+  );
+
+  const STATUS_EMOJI = { new: '🆕', cold: '❄️', contacted: '📧', replied: '💬', meeting: '📅', proposal: '📋' };
+
+  function escapeICS(str = '') {
+    return (str || '').replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  }
+
+  const now = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z';
+  const events = rows.map((r) => {
+    const dateStr = new Date(r.followup_due_at).toISOString().slice(0, 10).replace(/-/g, '');
+    const emoji = STATUS_EMOJI[r.status] || '📌';
+    const title = `${emoji} Follow up: ${r.company}${r.contact_name ? ` (${r.contact_name})` : ''}`;
+    const desc = `Status: ${r.status || 'unknown'} | Category: ${r.category || 'general'}`;
+    return [
+      'BEGIN:VEVENT',
+      `UID:wrapos-followup-${r.id}@wrapos.app`,
+      `DTSTAMP:${now}`,
+      `DTSTART;VALUE=DATE:${dateStr}`,
+      `DTEND;VALUE=DATE:${dateStr}`,
+      `SUMMARY:${escapeICS(title)}`,
+      `DESCRIPTION:${escapeICS(desc)}`,
+      'BEGIN:VALARM',
+      'TRIGGER:-PT1H',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${escapeICS('Follow up today: ' + r.company)}`,
+      'END:VALARM',
+      'END:VEVENT',
+    ].join('\r\n');
+  });
+
+  const ical = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//WrapOS//CRM Follow-ups//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:WrapOS CRM Follow-ups',
+    'X-WR-TIMEZONE:UTC',
+    ...events,
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="wrapos-followups.ics"');
   res.send(ical);
 });
 
@@ -13435,6 +13511,153 @@ function startReferralMiningWorker() {
   console.log('· Referral Mining worker: running (daily 8:15 AM, nudges 30-day post-win referral asks)');
 }
 
+// ── Proposal Nudge Worker — auto follow-up on dark proposals ─────────────────
+async function processProposalNudges() {
+  try {
+    // Proposals sent 3-10 days ago with no views, or viewed but silent for 7+ days
+    const { rows: users } = await pool.query(`
+      SELECT DISTINCT p.user_id
+      FROM proposals p
+      JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+      WHERE p.status = 'sent'
+        AND p.nudge_sent_at IS NULL
+        AND l.email IS NOT NULL AND l.email != ''
+        AND (
+          (p.view_count = 0 AND p.sent_at < NOW() - INTERVAL '3 days' AND p.sent_at > NOW() - INTERVAL '10 days')
+          OR (p.view_count > 0 AND p.last_viewed_at < NOW() - INTERVAL '7 days' AND p.sent_at < NOW() - INTERVAL '7 days' AND p.sent_at > NOW() - INTERVAL '14 days')
+        )
+    `);
+
+    for (const { user_id } of users) {
+      const settingsRow = await pool.query(`SELECT settings_json, email AS shop_email FROM users WHERE id=$1`, [user_id]);
+      const s = settingsRow.rows[0]?.settings_json || {};
+      if (s.autoProposalNudge === false) continue;
+
+      const shopEmail = s.replyToEmail || settingsRow.rows[0]?.shop_email || null;
+      const senderName = s.senderName || 'The team';
+      const shopName = s.companyName || 'our shop';
+
+      const { rows: proposals } = await pool.query(`
+        SELECT p.id, p.title, p.token, p.view_count, p.sent_at, p.last_viewed_at,
+               l.id AS lead_id, l.company, l.contact_name, l.email, l.category, l.fleet_size
+        FROM proposals p
+        JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+        WHERE p.user_id = $1
+          AND p.status = 'sent'
+          AND p.nudge_sent_at IS NULL
+          AND l.email IS NOT NULL AND l.email != ''
+          AND (
+            (p.view_count = 0 AND p.sent_at < NOW() - INTERVAL '3 days' AND p.sent_at > NOW() - INTERVAL '10 days')
+            OR (p.view_count > 0 AND p.last_viewed_at < NOW() - INTERVAL '7 days' AND p.sent_at < NOW() - INTERVAL '7 days' AND p.sent_at > NOW() - INTERVAL '14 days')
+          )
+        LIMIT 10
+      `, [user_id]);
+
+      const resend = getResend();
+      if (!resend) continue;
+
+      for (const p of proposals) {
+        try {
+          const daysSince = Math.floor((Date.now() - new Date(p.sent_at || p.created_at || Date.now()).getTime()) / 86_400_000);
+          const viewInfo = p.view_count > 0
+            ? `They’ve viewed it ${p.view_count} time${p.view_count !== 1 ? 's' : ''} but haven’t responded.`
+            : 'They haven’t opened it yet.';
+
+          let subject, body;
+          const anthropic = getAnthropic();
+          if (anthropic) {
+            try {
+              const msg = await anthropic.messages.create({
+                model: 'claude-haiku-4-5',
+                max_tokens: 350,
+                messages: [{
+                  role: 'user',
+                  content: `Write a brief, genuine 2-3 sentence follow-up email for a vehicle wrap proposal that went unanswered.
+Sender: ${senderName} at ${shopName}
+Recipient: ${p.contact_name || p.company}
+Category: ${p.category || 'vehicle wraps'}
+Proposal: "${p.title}"
+Days since sent: ${daysSince}
+${viewInfo}
+
+Subject line first, then the body. Tone: professional, not pushy. End with a low-friction CTA.
+Format:
+Subject: [subject]
+
+[body]`,
+                }],
+              });
+              const text = msg.content[0].type === 'text' ? msg.content[0].text : '';
+              const lines = text.split('\n');
+              const subjectLine = lines.find((l) => l.startsWith('Subject:'));
+              subject = subjectLine ? subjectLine.replace('Subject:', '').trim() : `Following up on your wrap proposal`;
+              const bodyStart = lines.indexOf(subjectLine ?? '') + 2;
+              body = lines.slice(bodyStart).join('\n').trim();
+            } catch (_e) {
+              subject = null;
+            }
+          }
+          if (!subject) {
+            subject = `Quick check-in on your wrap proposal`;
+            body = `Hi ${p.contact_name ? p.contact_name.split(' ')[0] : 'there'},\n\nI wanted to follow up on the wrap proposal I sent a few days ago for ${p.company}. Happy to answer any questions or adjust anything to better fit your needs.\n\nWould a quick call help move things forward?\n\nBest,\n${senderName}\n${shopName}`;
+          }
+
+          const publicUrl = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN
+            ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+            : 'https://app.wrapos.com';
+
+          const htmlBody = body
+            .split('\n')
+            .map((line) => line.trim() ? `<p style="margin:0 0 12px 0;color:#1e293b;font-size:15px;line-height:1.6">${line}</p>` : '')
+            .join('');
+
+          const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px">
+<div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0">
+<div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>
+${htmlBody}
+<div style="margin-top:28px;padding-top:20px;border-top:1px solid #f1f5f9">
+<a href="${publicUrl}/p/${p.token}" style="display:inline-block;background:#f4551c;color:#fff;padding:10px 22px;border-radius:8px;font-weight:700;font-size:14px;text-decoration:none">View Proposal</a>
+</div>
+</div></body></html>`;
+
+          const fromEmail = shopEmail ? shopEmail : 'proposals@wrapos.com';
+          await resend.emails.send({
+            from: `${shopName} <${fromEmail}>`,
+            to: p.email,
+            subject,
+            html,
+          });
+
+          await pool.query(`UPDATE proposals SET nudge_sent_at = NOW() WHERE id = $1`, [p.id]);
+
+          if (p.lead_id) {
+            await logActivity(pool, {
+              leadId: p.lead_id, userId: user_id, type: 'email_sent',
+              subject: `[Auto] Proposal nudge: ${subject}`,
+              body,
+              metadata: { proposal_id: p.id, auto: true },
+            });
+          }
+          console.log(`[proposal-nudge] sent to ${p.email} for proposal ${p.id} (${p.company})`);
+        } catch (e) {
+          console.error(`[proposal-nudge] error for proposal ${p.id}:`, e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[proposal-nudge] worker error:', e.message);
+  }
+}
+
+function startProposalNudgeWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 10 && now.getMinutes() === 30) processProposalNudges();
+  };
+  setInterval(check, 60_000);
+  console.log('· Proposal Nudge worker: running (daily 10:30 AM — auto follows up on dark sent proposals)');
+}
+
 // Referral ask email generation endpoint
 app.get('/leads/:id/referral-ask', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -15481,7 +15704,13 @@ app.patch('/proposals/:id', authMiddleware, async (req, res) => {
     if (pricing_html !== undefined){ fields.push(`pricing_html=$${idx++}`); vals.push(pricing_html); }
     if (timeline !== undefined)    { fields.push(`timeline=$${idx++}`);     vals.push(timeline); }
     if (notes !== undefined)       { fields.push(`notes=$${idx++}`);        vals.push(notes); }
-    if (status !== undefined)      { fields.push(`status=$${idx++}`);       vals.push(status); }
+    if (status !== undefined) {
+      fields.push(`status=$${idx++}`);
+      vals.push(status);
+      if (status === 'sent' && p.status !== 'sent') {
+        fields.push(`sent_at=NOW()`);
+      }
+    }
     if (mockup_url !== undefined)  { fields.push(`mockup_url=$${idx++}`);   vals.push(mockup_url); }
 
     if (!fields.length) return res.json({ ok: true, proposal: p });
@@ -24008,6 +24237,7 @@ app.listen(PORT, async () => {
     startWeatherWorker();
     startProspectIntelWorker();
     startReferralMiningWorker();
+    startProposalNudgeWorker();
     email.startTrialCron(pool);
     try {
       const { startSignalWorker } = require('./lib/signalWorker');

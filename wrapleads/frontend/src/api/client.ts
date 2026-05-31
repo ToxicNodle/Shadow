@@ -990,6 +990,11 @@ export const api = {
     return `/bids/calendar.ics?token=${encodeURIComponent(token || '')}`;
   },
 
+  getFollowupIcalUrl: () => {
+    const token = getToken();
+    return `/leads/followups.ics?token=${encodeURIComponent(token || '')}`;
+  },
+
   broadcastEmail: (leadIds: number[], subject: string, body: string, aiPersonalize?: boolean) =>
     authFetch<{ ok: boolean; sent: number; skipped: number; errors: number }>(
       '/leads/broadcast',

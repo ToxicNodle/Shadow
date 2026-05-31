@@ -24,6 +24,7 @@ export default function SettingsModal() {
   const [embedCopied, setEmbedCopied] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
   const [webhookCopied, setWebhookCopied] = useState(false);
+  const [calendarCopied, setCalendarCopied] = useState(false);
   const [portfolioLink, setPortfolioLink] = useState<string | null>(null);
   const [portfolioLinkCopied, setPortfolioLinkCopied] = useState(false);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
@@ -516,6 +517,20 @@ export default function SettingsModal() {
           </p>
         </div>
         <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoProposalNudge !== false}
+              onChange={e => setLocal(s => ({ ...s, autoProposalNudge: e.target.checked }))}
+            />
+            Auto-send proposal follow-up nudge (3 days after sending)
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When a sent proposal goes unread for 3 days (or viewed but silent for 7 days), WrapOS sends a short AI-written follow-up to the prospect automatically. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
           <label className="field-label">Expected Response Time</label>
           <select className="select" {...f('autoReplyResponseTime')}>
             <option value="">1 business day (default)</option>
@@ -720,6 +735,36 @@ export default function SettingsModal() {
             Get My Webhook URL
           </button>
         )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">CRM Follow-up Calendar</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Subscribe to your WrapOS follow-up dates in Google Calendar, Apple Calendar, or Outlook. Every CRM follow-up reminder appears as an all-day event with a 1-hour alert — no manual entry required.
+        </p>
+        {(() => {
+          const calUrl = api.getFollowupIcalUrl();
+          const fullUrl = `${window.location.origin}${calUrl}`;
+          return (
+            <div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <code style={{ flex: 1, fontSize: 10, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all', color: 'var(--text-muted)' }}>
+                  {fullUrl}
+                </code>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                  onClick={() => { navigator.clipboard.writeText(fullUrl); setCalendarCopied(true); setTimeout(() => setCalendarCopied(false), 2000); }}
+                >
+                  {calendarCopied ? '✓ Copied!' : 'Copy URL'}
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+                In Google Calendar: Other calendars → + → From URL → paste above. Updates automatically every time WrapOS sets a new follow-up date.
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="settings-section">
