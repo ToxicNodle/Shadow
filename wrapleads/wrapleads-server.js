@@ -696,6 +696,27 @@ async function migrateDb() {
     console.warn('[migrate] Could not create proposals table:', e.message);
   }
 
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS proposal_versions (
+        id          BIGSERIAL PRIMARY KEY,
+        proposal_id BIGINT NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL,
+        version_num INT  NOT NULL DEFAULT 1,
+        title       TEXT,
+        intro       TEXT,
+        services    TEXT,
+        pricing_html TEXT,
+        timeline    TEXT,
+        notes       TEXT,
+        saved_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pv_proposal ON proposal_versions(proposal_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create proposal_versions table:', e.message);
+  }
+
   // Sprint 7: quote_requests table — inbound lead capture
   try {
     await pool.query(`
@@ -15429,6 +15450,90 @@ app.get('/proposals/:id/views', authMiddleware, async (req, res) => {
       else last_viewed_ago = `${Math.floor(mins / 1440)}d ago`;
     }
     res.json({ view_count: r.view_count ?? 0, last_viewed_ago });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /proposals/:id — edit proposal content (saves a version snapshot first)
+app.patch('/proposals/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url } = req.body || {};
+  try {
+    const existing = await pool.query('SELECT * FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Proposal not found' });
+    const p = existing.rows[0];
+
+    // Save current version before overwriting
+    const versionCount = await pool.query('SELECT COUNT(*) FROM proposal_versions WHERE proposal_id=$1', [id]);
+    const nextVersion = parseInt(versionCount.rows[0].count) + 1;
+    await pool.query(`
+      INSERT INTO proposal_versions (proposal_id, user_id, version_num, title, intro, services, pricing_html, timeline, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `, [id, uid, nextVersion, p.title, p.intro, p.services, p.pricing_html, p.timeline, p.notes]);
+
+    // Apply updates
+    const fields = [];
+    const vals = [];
+    let idx = 1;
+    if (title !== undefined)       { fields.push(`title=$${idx++}`);        vals.push(title); }
+    if (intro !== undefined)       { fields.push(`intro=$${idx++}`);        vals.push(intro); }
+    if (services !== undefined)    { fields.push(`services=$${idx++}`);     vals.push(services); }
+    if (pricing_html !== undefined){ fields.push(`pricing_html=$${idx++}`); vals.push(pricing_html); }
+    if (timeline !== undefined)    { fields.push(`timeline=$${idx++}`);     vals.push(timeline); }
+    if (notes !== undefined)       { fields.push(`notes=$${idx++}`);        vals.push(notes); }
+    if (status !== undefined)      { fields.push(`status=$${idx++}`);       vals.push(status); }
+    if (mockup_url !== undefined)  { fields.push(`mockup_url=$${idx++}`);   vals.push(mockup_url); }
+
+    if (!fields.length) return res.json({ ok: true, proposal: p });
+
+    fields.push(`updated_at=NOW()`);
+    vals.push(id, uid);
+    const { rows } = await pool.query(
+      `UPDATE proposals SET ${fields.join(',')} WHERE id=$${idx++} AND user_id=$${idx} RETURNING *`,
+      vals
+    );
+
+    if (p.lead_id) {
+      await logActivity(pool, {
+        leadId: p.lead_id, userId: uid, type: 'note_added',
+        subject: `Proposal updated — v${nextVersion + 1}: ${rows[0].title}`,
+        metadata: { proposal_id: id, version: nextVersion + 1 },
+      });
+    }
+
+    res.json({ ok: true, proposal: rows[0], savedVersion: nextVersion });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /proposals/:id/versions — version history for a proposal
+app.get('/proposals/:id/versions', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  try {
+    const check = await pool.query('SELECT id FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'Not found' });
+    const { rows } = await pool.query(
+      `SELECT id, version_num, title, saved_at FROM proposal_versions WHERE proposal_id=$1 ORDER BY version_num DESC`,
+      [id]
+    );
+    res.json({ ok: true, versions: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /proposals/:proposalId/versions/:versionId — get a specific version's content
+app.get('/proposals/:id/versions/:vid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const vid = Number(req.params.vid);
+  try {
+    const check = await pool.query('SELECT id FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'Not found' });
+    const { rows } = await pool.query(
+      `SELECT * FROM proposal_versions WHERE id=$1 AND proposal_id=$2`,
+      [vid, id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Version not found' });
+    res.json({ ok: true, version: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

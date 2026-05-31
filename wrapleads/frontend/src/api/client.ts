@@ -718,6 +718,12 @@ export const api = {
     authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '', mockup_url: mockupUrl || null, roi_html: roiHtml || null }) }),
   getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
+  updateProposal: (id: number, data: { title?: string; intro?: string; services?: string; pricing_html?: string; timeline?: string; notes?: string; status?: string }) =>
+    authFetch<{ ok: boolean; proposal: Record<string, unknown>; savedVersion: number }>(`/proposals/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  getProposalVersions: (id: number) =>
+    authFetch<{ ok: boolean; versions: Array<{ id: number; version_num: number; title: string; saved_at: string }> }>(`/proposals/${id}/versions`),
+  getProposalVersion: (proposalId: number, versionId: number) =>
+    authFetch<{ ok: boolean; version: Record<string, unknown> }>(`/proposals/${proposalId}/versions/${versionId}`),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
   getMyWebhookUrl: () => authFetch<{ url: string }>('/me/webhook-url'),

@@ -1635,12 +1635,19 @@ function AICoach({ lead }: { lead: Lead }) {
 
 function ProposalSection({ lead }: { lead: Lead }) {
   const [notes, setNotes] = useState('');
-  const [proposal, setProposal] = useState<{ token: string; title: string; id: number } | null>(null);
+  const [proposal, setProposal] = useState<{ token: string; title: string; id: number; status: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
+  const qc = useQueryClient();
 
   const mut = useMutation({
     mutationFn: () => api.createProposal(lead.serverId!, notes),
-    onSuccess: (data) => setProposal({ token: data.proposal.token, title: data.proposal.title, id: data.proposal.id }),
+    onSuccess: (data) => setProposal({
+      token: data.proposal.token as string,
+      title: data.proposal.title as string,
+      id: data.proposal.id as number,
+      status: (data.proposal.status as string) ?? 'draft',
+    }),
   });
 
   const { data: viewData } = useQuery({
@@ -1648,6 +1655,21 @@ function ProposalSection({ lead }: { lead: Lead }) {
     queryFn: () => api.getProposalViewCount(proposal!.id),
     enabled: !!proposal?.id,
     refetchInterval: 30_000,
+  });
+
+  const { data: versionsData } = useQuery({
+    queryKey: ['proposal-versions', proposal?.id],
+    queryFn: () => api.getProposalVersions(proposal!.id),
+    enabled: !!proposal?.id && showVersions,
+    staleTime: 60_000,
+  });
+
+  const statusMut = useMutation({
+    mutationFn: (status: string) => api.updateProposal(proposal!.id, { status }),
+    onSuccess: (data) => {
+      setProposal((p) => p ? { ...p, status: (data.proposal.status as string) ?? p.status } : p);
+      qc.invalidateQueries({ queryKey: ['proposal-views', proposal?.id] });
+    },
   });
 
   const url = proposal ? api.getProposalUrl(proposal.token) : null;
@@ -1658,6 +1680,13 @@ function ProposalSection({ lead }: { lead: Lead }) {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
+
+  const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+    draft: { label: 'Draft', color: '#6b7280' },
+    sent: { label: 'Sent', color: '#3b82f6' },
+    approved: { label: 'Approved', color: '#10b981' },
+    declined: { label: 'Declined', color: '#ef4444' },
+  };
 
   return (
     <div className="proposal-section">
@@ -1684,9 +1713,16 @@ function ProposalSection({ lead }: { lead: Lead }) {
         </>
       ) : (
         <div className="proposal-ready">
-          <div className="proposal-ready-title">✓ Proposal ready</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <div className="proposal-ready-title" style={{ margin: 0 }}>✓ Proposal ready</div>
+            {proposal.status && STATUS_LABELS[proposal.status] && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: `${STATUS_LABELS[proposal.status].color}18`, color: STATUS_LABELS[proposal.status].color }}>
+                {STATUS_LABELS[proposal.status].label}
+              </span>
+            )}
+          </div>
           {viewData && viewData.view_count > 0 && (
-            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
+            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600, marginBottom: 4 }}>
               Viewed {viewData.view_count}× · Last seen {viewData.last_viewed_ago}
             </div>
           )}
@@ -1698,10 +1734,40 @@ function ProposalSection({ lead }: { lead: Lead }) {
             <button className="btn" style={{ fontSize: 12 }} onClick={() => window.open(url!, '_blank')}>
               Preview
             </button>
+            {proposal.status === 'draft' && (
+              <button className="btn" style={{ fontSize: 12, color: '#3b82f6', borderColor: '#3b82f620' }} onClick={() => statusMut.mutate('sent')} disabled={statusMut.isPending}>
+                Mark Sent
+              </button>
+            )}
+            {proposal.status === 'sent' && (
+              <button className="btn" style={{ fontSize: 12, color: '#10b981', borderColor: '#10b98120' }} onClick={() => statusMut.mutate('approved')} disabled={statusMut.isPending}>
+                Mark Approved
+              </button>
+            )}
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowVersions(!showVersions)}>
+              History
+            </button>
             <button className="btn" style={{ fontSize: 12 }} onClick={() => setProposal(null)}>
               New
             </button>
           </div>
+
+          {showVersions && (
+            <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Version History</div>
+              {!versionsData?.versions?.length ? (
+                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>No previous versions — history is saved automatically when you edit.</div>
+              ) : (
+                versionsData.versions.map((v) => (
+                  <div key={v.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', minWidth: 24 }}>v{v.version_num}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-dim)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.title}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{new Date(v.saved_at).toLocaleDateString()}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
