@@ -28,18 +28,29 @@ Every row is a real US commercial property — pulled from public-domain US gov 
 | **est_net_payback_yrs** | Years to payback after ITC + state incentive stack |
 | **est_25yr_npv_p50_usd** | Median 25-year NPV |
 | **sales_script** | A ready-to-use NAICS-aware opener for your first call/email |
+| **script_cfo** | Tailored opener for CFO / finance decision-makers |
+| **script_facilities** | Tailored opener for facilities / operations managers |
+| **script_sustainability** | Tailored opener for sustainability / ESG directors |
+| **provenance_url** | Direct link to the original EPA / USAspending / OSM source record |
 | **pitch_angle** | Source attribution + data-provenance note |
 
 ## Suggested workflow
 
 1. **Sort by solar_fit_score DESC** in your spreadsheet tool. Work the top 100 first.
 2. **Enrich contact info** via Apollo / Hunter / Clearbit — companies are real, contacts need finding (we deliberately don't bundle scraped contact info).
-3. **Use the per-row sales_script** as the opener — it's industry-specific and references real ROI math.
-4. **For tax-exempt entities** (schools, churches, gov't, non-profits) — pitch a PPA, not a direct purchase. The CSV flags these in the `tax_appetite` column.
+3. **Match the right script to the right persona:**
+   - Emailing a CFO/VP Finance? Use `script_cfo` — leads with ROI + tax benefits.
+   - Emailing a Facilities Director? Use `script_facilities` — leads with operational zero-disruption angle.
+   - Emailing a Sustainability Director? Use `script_sustainability` — leads with ESG/emissions reduction.
+4. **Click the provenance_url** to verify any lead yourself — links to the EPA facility record, USAspending award, or OSM building.
+5. **For tax-exempt entities** (schools, churches, gov't, non-profits) — pitch a PPA, not a direct purchase. The CSV flags these in the `tax_appetite` column.
+6. **Lead with ITC urgency** — the 30% construction-start deadline is July 4, 2026. Only 34 days left. Every pitch should mention this.
 
 ## Trust
 
-Every lead in this pack traces back to a public US gov data source. If you want a verification spot-check, email support@helioscout.io with 3 row IDs and we'll send you the source URLs.
+Every lead in this pack traces back to a public US gov data source. The `provenance_url` column links directly to the original record — EPA GHGRP facility detail, USAspending.gov award page, or OpenStreetMap building. Click any one to verify.
+
+**This pack is exclusive to you.** We sell each state territory to 1 buyer only. No shared leads, no 5 competitors calling the same prospect.
 
 ## 30-day refund
 

@@ -1,13 +1,16 @@
-Subject: ITC deadline July 2026 — {{state_count}} {{state}} prospects waiting
+Subject: 34 days — your {{state}} prospects lose 30% ITC if they don't start now
 
 {{first_name}} —
 
-Heads up on the federal ITC construction-start deadline: July 4, 2026. Every commercial solar buyer is on the clock now, and the highest-fit accounts are getting hit hardest.
+The federal ITC construction-start deadline is July 4, 2026. That's 34 days. At current permitting timelines (60-90 days), property owners who haven't started design THIS WEEK may miss the window.
 
-I run HelioScout. We've pulled 20,206 commercial properties (EPA + USAspending + OSM, all public-domain) and pre-qualified them by NAICS fit, building size, and load profile.
+We have {{state_count}} pre-qualified commercial properties in {{state}} — EPA GHGRP reporters, federal awardees, large industrial buildings. Every one scored by NAICS fit (0-100), with system sizing, incentive stacking, and 3 persona-targeted scripts (CFO / Facilities / Sustainability).
 
-{{state}} pack: ~{{state_count}} leads, scored, with Monte Carlo NPV + sales scripts. $1,497 one-time.
+New this month: every row includes a provenance URL — a direct link to the EPA or USAspending.gov source record. Anti-fraud signal that no lead vendor can fake.
 
-Or grab the free 50-lead sample first — reply YES.
+{{state}} pack: $1,497 one-time. Exclusive to 1 buyer. 30-day refund guarantee.
+
+Or reply YES for the free 50-lead sample.
 
 — Jake
+helioscout.io

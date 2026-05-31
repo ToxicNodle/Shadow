@@ -1,16 +1,19 @@
-Subject: 50 EPA-verified {{state}} solar leads — free, no demo
+Subject: 34 days until ITC deadline — {{state_count}} verified {{state}} solar leads
 
 Hi {{first_name}},
 
-We pulled 20,206 US commercial properties from EPA's Greenhouse Gas Reporting list, USAspending.gov federal awardees, and OpenStreetMap industrial buildings. Every one is a high-fit commercial solar candidate.
+The 30% ITC construction-start deadline is July 4. That's 34 days. Every property owner who hasn't started by then risks losing the full credit.
 
-{{state}} alone has {{state_count}} of them.
+We have {{state_count}} commercial properties in {{state}} — pulled from EPA's GHG Reporter, USAspending.gov, and OpenStreetMap. Each one comes with:
 
-I'll send 50 fully-enriched samples — with NAICS fit scores, system-size estimates, 25-yr NPV math, and a sales script per lead — free, no card, no demo.
+- NAICS-based solar fit score (0-100)
+- System size + 25-year NPV + payback after ITC + state incentives
+- 3 persona-specific sales scripts (CFO / Facilities / Sustainability)
+- Provenance URL linking to the original government source record
 
-If you want the full {{state}} pack after that, it's $1,497 one-time. National pack is $4,997.
+I'll send you 50 free — no card, no demo. If they work, full state pack is $1,497 one-time. Exclusive: 1 buyer per territory.
 
-Reply YES and I'll send the CSV today.
+Reply "YES {{state}}" and I'll send within the hour.
 
 — Jake
 helioscout.io
