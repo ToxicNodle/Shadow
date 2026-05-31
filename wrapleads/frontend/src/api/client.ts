@@ -1958,4 +1958,20 @@ export const api = {
       mid: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
       late: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
     }>('/analytics/cash-flow'),
+
+  // ── Outbound Webhooks ──
+  getWebhooks: () =>
+    authFetch<{
+      ok: boolean;
+      webhooks: Array<{ id: number; event_type: string; url: string; label: string | null; enabled: boolean; last_triggered_at: string | null; last_status_code: number | null; created_at: string }>;
+      events: Array<{ value: string; label: string }>;
+    }>('/webhooks'),
+  createWebhook: (data: { event_type: string; url: string; label?: string; secret?: string }) =>
+    authFetch<{ ok: boolean; webhook: { id: number; event_type: string; url: string; label: string | null; enabled: boolean; last_triggered_at: string | null; last_status_code: number | null; created_at: string } }>('/webhooks', { method: 'POST', body: JSON.stringify(data) }),
+  toggleWebhook: (id: number, enabled: boolean) =>
+    authFetch<{ ok: boolean }>(`/webhooks/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  deleteWebhook: (id: number) =>
+    authFetch<{ ok: boolean }>(`/webhooks/${id}`, { method: 'DELETE' }),
+  testWebhook: (id: number) =>
+    authFetch<{ ok: boolean; statusCode: number; error?: string }>(`/webhooks/${id}/test`, { method: 'POST' }),
 };

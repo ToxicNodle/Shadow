@@ -2183,11 +2183,16 @@ function LossAnalysisCard() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(data.byCompetitor ?? []).slice(0, 5).map((c) => (
+              {(data.byCompetitor ?? []).slice(0, 5).map((c: { competitor: string; losses: number; categories: string[]; avg_competitor_price?: number; price_data_points?: number }) => (
                 <div key={c.competitor} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.competitor}
                   </div>
+                  {c.avg_competitor_price && (
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                      avg ${c.avg_competitor_price.toLocaleString()}
+                    </div>
+                  )}
                   <div style={{
                     fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 99,
                     background: 'rgba(239,68,68,.1)', color: '#ef4444',

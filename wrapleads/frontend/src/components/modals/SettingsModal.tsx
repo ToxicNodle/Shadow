@@ -36,6 +36,43 @@ export default function SettingsModal() {
   const [newSubName, setNewSubName] = useState('');
   const [newSubSpecialty, setNewSubSpecialty] = useState('');
   const [newSubRate, setNewSubRate] = useState('');
+
+  // Webhooks
+  const [newHookEvent, setNewHookEvent] = useState('lead.won');
+  const [newHookUrl, setNewHookUrl] = useState('');
+  const [newHookLabel, setNewHookLabel] = useState('');
+  const [newHookSecret, setNewHookSecret] = useState('');
+  const [testingHook, setTestingHook] = useState<number | null>(null);
+  const [testResult, setTestResult] = useState<Record<number, { ok: boolean; code: number }>>({});
+  const { data: hooksData } = useQuery({
+    queryKey: ['user-webhooks'],
+    queryFn: () => api.getWebhooks(),
+    staleTime: 60_000,
+    enabled: settingsOpen,
+  });
+  const createHookMut = useMutation({
+    mutationFn: () => api.createWebhook({ event_type: newHookEvent, url: newHookUrl.trim(), label: newHookLabel.trim() || undefined, secret: newHookSecret.trim() || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['user-webhooks'] }); setNewHookUrl(''); setNewHookLabel(''); setNewHookSecret(''); showToast('Webhook saved'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const deleteHookMut = useMutation({
+    mutationFn: (id: number) => api.deleteWebhook(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['user-webhooks'] }),
+  });
+  async function testHook(id: number) {
+    setTestingHook(id);
+    try {
+      const r = await api.testWebhook(id);
+      setTestResult((prev) => ({ ...prev, [id]: { ok: r.ok, code: r.statusCode } }));
+      if (r.ok) showToast(`Webhook delivered — HTTP ${r.statusCode}`);
+      else showToast(`Webhook failed — HTTP ${r.statusCode}`, 'error');
+    } catch (e: any) {
+      showToast(e.message, 'error');
+    } finally {
+      setTestingHook(null);
+    }
+  }
+
   const { data: subsData } = useQuery({
     queryKey: ['subcontractors'],
     queryFn: () => api.getSubcontractors(),
@@ -583,6 +620,112 @@ export default function SettingsModal() {
           <button className="btn btn-primary" style={{ fontSize: 12, marginBottom: 1 }} disabled={!newSubName.trim() || createSubMut.isPending} onClick={() => createSubMut.mutate()}>
             {createSubMut.isPending ? 'Adding…' : '+ Add'}
           </button>
+        </div>
+      </div>
+
+      {/* ── Webhook Integrations ── */}
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+          </svg>
+          Webhooks &amp; Integrations
+        </div>
+        <p className="settings-help">
+          Fire HTTP POST events to any URL when key things happen — lead won, proposal approved, inbound lead. Connect WrapOS to Zapier, Make, Slack, or your own systems. All payloads include a <code style={{ fontSize: 10, background: 'var(--surface)', padding: '1px 4px', borderRadius: 3 }}>X-WrapOS-Signature</code> HMAC header for verification.
+        </p>
+
+        {/* Existing webhooks */}
+        {(hooksData?.webhooks ?? []).map((hook) => {
+          const eventLabel = hooksData?.events?.find(e => e.value === hook.event_type)?.label ?? hook.event_type;
+          const lastResult = testResult[hook.id];
+          return (
+            <div key={hook.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8, background: 'var(--bg-input)', borderRadius: 8, padding: '8px 10px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#4d8af5', background: 'rgba(77,138,245,0.12)', padding: '1px 6px', borderRadius: 3 }}>
+                    {eventLabel}
+                  </span>
+                  {hook.label && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{hook.label}</span>}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', wordBreak: 'break-all' }}>{hook.url}</div>
+                {hook.last_triggered_at && (
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                    Last fired: {new Date(hook.last_triggered_at).toLocaleString()}
+                    {hook.last_status_code != null && (
+                      <span style={{ marginLeft: 6, color: hook.last_status_code >= 200 && hook.last_status_code < 300 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+                        HTTP {hook.last_status_code}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {lastResult && (
+                  <div style={{ fontSize: 10, marginTop: 2, color: lastResult.ok ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+                    {lastResult.ok ? `✓ Test delivered — HTTP ${lastResult.code}` : `✗ Test failed — HTTP ${lastResult.code}`}
+                  </div>
+                )}
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 10, padding: '3px 9px', flexShrink: 0 }}
+                onClick={() => testHook(hook.id)}
+                disabled={testingHook === hook.id}
+              >
+                {testingHook === hook.id ? '…' : 'Test'}
+              </button>
+              <button
+                className="btn"
+                style={{ fontSize: 10, color: 'var(--red)', padding: '3px 8px', flexShrink: 0 }}
+                onClick={() => deleteHookMut.mutate(hook.id)}
+                disabled={deleteHookMut.isPending}
+              >
+                Remove
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Add new webhook form */}
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Add Webhook
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div className="field-group" style={{ flex: '0 0 auto', minWidth: 160 }}>
+              <label className="field-label">Event</label>
+              <select className="input" value={newHookEvent} onChange={(e) => setNewHookEvent(e.target.value)} style={{ fontSize: 12 }}>
+                {(hooksData?.events ?? [{ value: 'lead.won', label: 'Lead Won' }, { value: 'lead.lost', label: 'Lead Lost' }, { value: 'lead.advanced', label: 'Lead Stage Changed' }, { value: 'proposal.approved', label: 'Proposal Approved' }, { value: 'inbound.lead', label: 'New Inbound Lead' }]).map((ev) => (
+                  <option key={ev.value} value={ev.value}>{ev.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field-group" style={{ flex: 3, minWidth: 200 }}>
+              <label className="field-label">Destination URL (HTTPS)</label>
+              <input className="input" value={newHookUrl} onChange={(e) => setNewHookUrl(e.target.value)} placeholder="https://hooks.zapier.com/hooks/catch/..." style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: 1, minWidth: 120 }}>
+              <label className="field-label">Label (optional)</label>
+              <input className="input" value={newHookLabel} onChange={(e) => setNewHookLabel(e.target.value)} placeholder="Slack notify" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: 1, minWidth: 120 }}>
+              <label className="field-label">Secret (optional)</label>
+              <input className="input" type="password" value={newHookSecret} onChange={(e) => setNewHookSecret(e.target.value)} placeholder="used to sign payload" style={{ fontSize: 12 }} />
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12, marginBottom: 1, flexShrink: 0 }}
+              disabled={!newHookUrl.trim() || createHookMut.isPending}
+              onClick={() => createHookMut.mutate()}
+            >
+              {createHookMut.isPending ? 'Saving…' : '+ Add'}
+            </button>
+          </div>
+          {(hooksData?.webhooks ?? []).length === 0 && (
+            <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: '8px 0 0', lineHeight: 1.5 }}>
+              No webhooks yet — add one above. Example: paste your Zapier catch hook URL to auto-create a row in Google Sheets every time you win a deal.
+            </p>
+          )}
         </div>
       </div>
 

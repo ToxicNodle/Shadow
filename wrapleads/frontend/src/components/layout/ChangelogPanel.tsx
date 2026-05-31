@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔗 Webhook Integrations — Connect WrapOS to Zapier, Slack, and 5000+ Apps',
+    body: 'Settings now has a "Webhooks & Integrations" section. Configure HTTP POST webhooks that fire automatically on key events: Lead Won, Lead Lost, Lead Stage Changed, Proposal Approved by Client, and New Inbound Quote Request. Each webhook delivery includes the full lead payload plus an HMAC-SHA256 signature header (X-WrapOS-Signature) for verification. Use a Zapier catch hook to auto-create rows in Google Sheets when you win deals, post to a Slack channel when a proposal is approved, or trigger any automation in Make, n8n, or your own system. Add an optional signing secret for security. Test any webhook with a one-click test delivery before going live.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔀 Omni Campaigns — Email + SMS Combined in One 4-Step Drip',
     body: 'The Email tab now has a "4-Step Omni Campaign" panel — the most powerful outreach feature in WrapOS. Launch one campaign and WrapOS automatically sends: Day 0 email (intro + portfolio), Day 3 SMS (quick check-in), Day 8 email (case study), Day 14 SMS (final touch). Email and SMS interleaved into one coordinated sequence — if the lead has no phone, SMS steps are skipped automatically; if no email, email steps are skipped. All messages are category-aware and variable-filled. The campaign worker runs every 5 minutes. Requires Twilio (for SMS steps) and Resend (for email steps). Gated at ShopFlow tier and above.',
   },

@@ -992,6 +992,27 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create lead_contacts table:', e.message);
   }
+
+  // Outbound webhook integrations (Zapier, Make, Slack, etc.)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_webhooks (
+        id                BIGSERIAL PRIMARY KEY,
+        user_id           TEXT NOT NULL,
+        event_type        TEXT NOT NULL,
+        url               TEXT NOT NULL,
+        secret            TEXT,
+        label             TEXT,
+        enabled           BOOLEAN NOT NULL DEFAULT TRUE,
+        last_triggered_at TIMESTAMPTZ,
+        last_status_code  INT,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_webhooks_user ON user_webhooks(user_id, event_type) WHERE enabled = TRUE`);
+  } catch (e) {
+    console.warn('[migrate] Could not create user_webhooks table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -2482,6 +2503,41 @@ async function markFirstContact(leadId, userId) {
   } catch { /* non-critical */ }
 }
 
+// Fire all enabled webhooks for a user+event. Non-blocking — failures are
+// logged but never surface to the caller. HMAC-SHA256 signed for Zapier-style
+// verification: header X-WrapOS-Signature: sha256=<hex digest>
+async function fireWebhooks(userId, eventType, data) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, url, secret FROM user_webhooks WHERE user_id=$1 AND event_type=$2 AND enabled=TRUE`,
+      [String(userId), eventType]
+    );
+    if (!rows.length) return;
+    const crypto = require('crypto');
+    const payload = JSON.stringify({ event: eventType, timestamp: new Date().toISOString(), data });
+    for (const hook of rows) {
+      (async () => {
+        try {
+          const headers = { 'Content-Type': 'application/json', 'User-Agent': 'WrapOS-Webhook/1.0' };
+          if (hook.secret) {
+            headers['X-WrapOS-Signature'] = 'sha256=' + crypto.createHmac('sha256', hook.secret).update(payload).digest('hex');
+          }
+          const r = await fetch(hook.url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(8000) });
+          await pool.query(
+            `UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=$1 WHERE id=$2`,
+            [r.status, hook.id]
+          );
+        } catch (err) {
+          await pool.query(`UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=0 WHERE id=$1`, [hook.id]).catch(() => {});
+          console.warn(`[webhook] Delivery failed for hook ${hook.id}:`, err.message);
+        }
+      })();
+    }
+  } catch (err) {
+    console.warn('[webhook] fireWebhooks error:', err.message);
+  }
+}
+
 app.get('/leads', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(`SELECT * FROM leads WHERE user_id = $1 ORDER BY updated_at DESC`, [String(req.user.id)]);
@@ -2574,10 +2630,24 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
 
-    // Log status change activity
+    // Log status change activity + fire outbound webhooks
     if (d.status && d.status !== prevStatus) {
       await logActivity(pool, { leadId: id, userId: uid, type: 'status_changed',
         metadata: { from: prevStatus, to: d.status } });
+      if (d.status === 'won' || d.status === 'lost') {
+        const row = r.rows[0];
+        fireWebhooks(uid, `lead.${d.status}`, {
+          id: row.id, company: row.company, category: row.category, status: row.status,
+          contactName: row.contact_name, email: row.email, phone: row.phone,
+          city: row.city, state: row.state, fleetSize: row.fleet_size,
+        });
+      } else {
+        const row = r.rows[0];
+        fireWebhooks(uid, 'lead.advanced', {
+          id: row.id, company: row.company, category: row.category,
+          previousStatus: prevStatus, status: row.status,
+        });
+      }
     }
 
     res.json(leadRow(r.rows[0]));
@@ -13530,11 +13600,16 @@ app.post('/portal/:token/approve', async (req, res) => {
     const settings = link.settings_json || {};
     await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1 AND user_id=$2`, [link.lead_id, link.user_id]);
     await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'status_changed', subject: 'Client approved quote via portal' });
+    const leadRow2 = (await pool.query('SELECT company, category, email, phone, city, state FROM leads WHERE id=$1', [link.lead_id])).rows[0] || {};
     await createNotification(link.user_id, {
       type: 'email_reply',
-      title: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} approved their quote!`,
+      title: `${leadRow2.company || 'Client'} approved their quote!`,
       body: settings.depositPaymentLink ? 'Client approved! Payment link shown — watch for deposit.' : 'Client clicked "Approve" on the portal link. Follow up now.',
       metadata: { lead_id: link.lead_id },
+    });
+    fireWebhooks(link.user_id, 'proposal.approved', {
+      leadId: link.lead_id, company: leadRow2.company, category: leadRow2.category,
+      email: leadRow2.email, phone: leadRow2.phone, city: leadRow2.city, state: leadRow2.state,
     });
     res.json({ ok: true, depositPaymentLink: settings.depositPaymentLink || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -16043,6 +16118,12 @@ Return ONLY a bulleted list (3 bullets, max 15 words each). No intro, no sign-of
       title: `📥 New inbound quote request — ${company.trim()}${fleetInt >= 10 ? ' 🔥' : ''}`,
       body: `${name ? name + ' · ' : ''}${email || phone || 'No contact info'}${vehicle_type ? ' · ' + vehicle_type : ''}${fleetInt > 0 ? ` · ${fleetInt} vehicles` : ''}`,
       metadata: { lead_id: leadId },
+    });
+
+    // Fire outbound webhooks for inbound lead event
+    fireWebhooks(String(user.id), 'inbound.lead', {
+      leadId, company: company.trim(), contactName: name || null, email: email || null,
+      phone: phone || null, vehicleType: vehicle_type || null, fleetSize: fleetInt || null, message: message || null,
     });
 
     res.json({ ok: true, lead_id: leadId });
@@ -21617,6 +21698,105 @@ app.delete('/milestones/:milestoneId', authMiddleware, async (req, res) => {
     const milestoneId = parseInt(req.params.milestoneId, 10);
     await pool.query(`DELETE FROM project_milestones WHERE id=$1 AND user_id=$2`, [milestoneId, uid]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Outbound Webhooks — Zapier / Make / Slack integrations ───────────────────
+
+const WEBHOOK_EVENTS = [
+  { value: 'lead.won',         label: 'Lead Won' },
+  { value: 'lead.lost',        label: 'Lead Lost' },
+  { value: 'lead.advanced',    label: 'Lead Stage Changed' },
+  { value: 'proposal.approved',label: 'Proposal Approved by Client' },
+  { value: 'inbound.lead',     label: 'New Inbound Quote Request' },
+];
+
+// GET /webhooks — list user's configured webhooks
+app.get('/webhooks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      `SELECT id, event_type, url, label, enabled, last_triggered_at, last_status_code, created_at
+       FROM user_webhooks WHERE user_id=$1 ORDER BY created_at DESC`,
+      [uid]
+    );
+    res.json({ ok: true, webhooks: rows, events: WEBHOOK_EVENTS });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /webhooks — create a webhook
+app.post('/webhooks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { event_type, url, label, secret } = req.body || {};
+    if (!event_type || !url) return res.status(400).json({ error: 'event_type and url are required' });
+    if (!WEBHOOK_EVENTS.find(e => e.value === event_type)) return res.status(400).json({ error: 'Invalid event_type' });
+    if (!url.startsWith('https://')) return res.status(400).json({ error: 'URL must use HTTPS' });
+    const count = await pool.query('SELECT COUNT(*) FROM user_webhooks WHERE user_id=$1', [uid]);
+    if (parseInt(count.rows[0].count) >= 20) return res.status(400).json({ error: 'Maximum 20 webhooks per account' });
+    const { rows } = await pool.query(
+      `INSERT INTO user_webhooks (user_id, event_type, url, label, secret)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, event_type, url, label, enabled, last_triggered_at, last_status_code, created_at`,
+      [uid, event_type, url, label || null, secret || null]
+    );
+    res.json({ ok: true, webhook: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /webhooks/:id — toggle enabled
+app.patch('/webhooks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id);
+    const { enabled } = req.body || {};
+    const { rows } = await pool.query(
+      `UPDATE user_webhooks SET enabled=$1 WHERE id=$2 AND user_id=$3 RETURNING id, event_type, url, label, enabled, last_triggered_at, last_status_code, created_at`,
+      [enabled !== false, id, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, webhook: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /webhooks/:id
+app.delete('/webhooks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id);
+    await pool.query('DELETE FROM user_webhooks WHERE id=$1 AND user_id=$2', [id, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /webhooks/:id/test — fire a test payload to the configured URL
+app.post('/webhooks/:id/test', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id);
+    const { rows } = await pool.query('SELECT * FROM user_webhooks WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const hook = rows[0];
+    const crypto = require('crypto');
+    const data = {
+      id: 0, company: 'Acme Trucking (TEST)', category: 'fleet', status: hook.event_type.split('.')[1] || 'test',
+      contactName: 'John Smith', email: 'john@acme-trucking.com', phone: '317-555-0100',
+      city: 'Indianapolis', state: 'IN', fleetSize: 45,
+    };
+    const payload = JSON.stringify({ event: hook.event_type, timestamp: new Date().toISOString(), test: true, data });
+    const headers = { 'Content-Type': 'application/json', 'User-Agent': 'WrapOS-Webhook/1.0' };
+    if (hook.secret) {
+      headers['X-WrapOS-Signature'] = 'sha256=' + crypto.createHmac('sha256', hook.secret).update(payload).digest('hex');
+    }
+    let statusCode = 0;
+    try {
+      const r = await fetch(hook.url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(8000) });
+      statusCode = r.status;
+      await pool.query('UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=$1 WHERE id=$2', [statusCode, id]);
+    } catch (err) {
+      await pool.query('UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=0 WHERE id=$1', [id]);
+      return res.json({ ok: false, statusCode: 0, error: err.message });
+    }
+    res.json({ ok: statusCode >= 200 && statusCode < 300, statusCode });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
