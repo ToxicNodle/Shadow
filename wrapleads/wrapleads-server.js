@@ -1013,6 +1013,24 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create user_webhooks table:', e.message);
   }
+
+  // Web Push subscriptions — one row per browser/device per user
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        endpoint    TEXT NOT NULL UNIQUE,
+        p256dh      TEXT NOT NULL,
+        auth        TEXT NOT NULL,
+        ua          TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create push_subscriptions table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1159,12 +1177,55 @@ const fleetSubmitLimiter = rateLimit({
 // ----------------------------------------------------------------------------
 // Auth middleware
 // ----------------------------------------------------------------------------
+// Web Push — lazily initialized so missing VAPID env vars don't crash boot
+let webPush = null;
+function getWebPush() {
+  if (webPush) return webPush;
+  const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
+  const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
+  const vapidMailto  = process.env.VAPID_MAILTO || 'mailto:admin@wrapos.app';
+  if (!vapidPublic || !vapidPrivate) return null;
+  try {
+    webPush = require('web-push');
+    webPush.setVapidDetails(vapidMailto, vapidPublic, vapidPrivate);
+    return webPush;
+  } catch (e) {
+    console.warn('[web-push] Could not load module:', e.message);
+    return null;
+  }
+}
+
+async function sendPushToUser(userId, { title, body, url = '/', tag, requireInteraction = false }) {
+  const wp = getWebPush();
+  if (!wp) return;
+  try {
+    const { rows } = await pool.query('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id=$1', [String(userId)]);
+    if (!rows.length) return;
+    const payload = JSON.stringify({ title, body, url, tag, requireInteraction });
+    for (const sub of rows) {
+      wp.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload)
+        .catch(async (err) => {
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            // Subscription expired — remove it
+            await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
+          }
+        });
+    }
+  } catch (e) {
+    console.warn('[web-push] sendPushToUser error:', e.message);
+  }
+}
+
 async function createNotification(userId, { type, title, body = '', metadata = {} }) {
   try {
     await pool.query(
       `INSERT INTO notifications (user_id, type, title, body, metadata) VALUES ($1,$2,$3,$4,$5)`,
       [String(userId), type, title, body, JSON.stringify(metadata)]
     );
+    // Also fire web push for high-priority events (non-blocking)
+    if (['new_lead', 'email_reply', 'design_approved', 'hot_prospect'].includes(type)) {
+      sendPushToUser(userId, { title, body, url: '/', tag: type });
+    }
   } catch (e) {
     console.warn('[notify]', e.message);
   }
@@ -21701,6 +21762,53 @@ app.delete('/milestones/:milestoneId', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Web Push Notifications ────────────────────────────────────────────────────
+
+// GET /push/vapid-key — return public VAPID key so browser can subscribe
+app.get('/push/vapid-key', authMiddleware, (req, res) => {
+  const key = process.env.VAPID_PUBLIC_KEY;
+  if (!key) return res.json({ ok: false, publicKey: null });
+  res.json({ ok: true, publicKey: key });
+});
+
+// POST /push/subscribe — save or update a push subscription
+app.post('/push/subscribe', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { endpoint, keys } = req.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Missing subscription fields' });
+    const ua = (req.headers['user-agent'] || '').slice(0, 256);
+    await pool.query(
+      `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, ua)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id=$1, p256dh=$3, auth=$4, ua=$5`,
+      [uid, endpoint, keys.p256dh, keys.auth, ua]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /push/subscribe — unsubscribe (remove by endpoint)
+app.delete('/push/subscribe', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { endpoint } = req.body || {};
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+    await pool.query('DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2', [uid, endpoint]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /push/status — check if this user has any active push subscriptions
+app.get('/push/status', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query('SELECT COUNT(*) FROM push_subscriptions WHERE user_id=$1', [uid]);
+    const vapidConfigured = !!process.env.VAPID_PUBLIC_KEY;
+    res.json({ ok: true, subscribed: parseInt(rows[0].count) > 0, vapidConfigured });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Outbound Webhooks — Zapier / Make / Slack integrations ───────────────────
 
 const WEBHOOK_EVENTS = [
@@ -21820,6 +21928,7 @@ app.listen(PORT, async () => {
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
   console.log(process.env.HUNTER_API_KEY ? '· Hunter.io: configured (email waterfall active)' : '· Hunter.io: not configured (set HUNTER_API_KEY for free enrichment)');
   console.log(process.env.FMCSA_SAFER_API_KEY ? '· FMCSA SAFER: configured (auto-fill fleet phone numbers active)' : '· FMCSA SAFER: not configured (set FMCSA_SAFER_API_KEY for fleet phone lookup)');
+  console.log(process.env.VAPID_PUBLIC_KEY ? '· Web Push: configured (mobile notifications active)' : '· Web Push: not configured (set VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY + VAPID_MAILTO — run: npx web-push generate-vapid-keys)');
   // Run migrations first so checkDb works on a fresh database
   try { await migrateDb(); } catch (e) { console.error('migrateDb error:', e.message); }
   const db = await checkDb();

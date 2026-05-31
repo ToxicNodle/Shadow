@@ -59,6 +59,7 @@ export default defineConfig({
       '/subcontractors':    API,
       '/twilio':            API,
       '/fleet':             API,
+      '/push':              API,
     },
   },
 });

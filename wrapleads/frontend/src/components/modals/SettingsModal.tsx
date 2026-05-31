@@ -37,6 +37,52 @@ export default function SettingsModal() {
   const [newSubSpecialty, setNewSubSpecialty] = useState('');
   const [newSubRate, setNewSubRate] = useState('');
 
+  // Web Push notifications
+  const [pushLoading, setPushLoading] = useState(false);
+  const { data: pushStatus, refetch: refetchPush } = useQuery({
+    queryKey: ['push-status'],
+    queryFn: () => api.getPushStatus(),
+    staleTime: 30_000,
+    enabled: settingsOpen,
+  });
+  async function togglePush() {
+    setPushLoading(true);
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        showToast('Push notifications not supported in this browser', 'error');
+        return;
+      }
+      if (pushStatus?.subscribed) {
+        const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+        const sub = await reg?.pushManager?.getSubscription();
+        if (sub) {
+          await sub.unsubscribe();
+          await api.unsubscribePush(sub.endpoint);
+        }
+        showToast('Push notifications disabled');
+      } else {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') { showToast('Permission denied', 'error'); return; }
+        const vapidRes = await api.getPushVapidKey();
+        if (!vapidRes.publicKey) { showToast('Push not configured on server — add VAPID_PUBLIC_KEY to env', 'error'); return; }
+        const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: vapidRes.publicKey,
+        });
+        const json = sub.toJSON() as { endpoint: string; keys: { p256dh: string; auth: string } };
+        await api.subscribePush({ endpoint: json.endpoint, keys: json.keys });
+        showToast('Push notifications enabled — you\'ll be notified even when WrapOS is closed');
+      }
+    } catch (e: any) {
+      showToast(e.message, 'error');
+    } finally {
+      setPushLoading(false);
+      refetchPush();
+    }
+  }
+
   // Webhooks
   const [newHookEvent, setNewHookEvent] = useState('lead.won');
   const [newHookUrl, setNewHookUrl] = useState('');
@@ -620,6 +666,39 @@ export default function SettingsModal() {
           <button className="btn btn-primary" style={{ fontSize: 12, marginBottom: 1 }} disabled={!newSubName.trim() || createSubMut.isPending} onClick={() => createSubMut.mutate()}>
             {createSubMut.isPending ? 'Adding…' : '+ Add'}
           </button>
+        </div>
+      </div>
+
+      {/* ── Mobile Push Notifications ── */}
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          Mobile Push Notifications
+        </div>
+        <p className="settings-help">
+          Get real-time notifications on your phone or desktop — new inbound leads, proposal approvals, email replies — even when WrapOS isn't open. Requires VAPID keys configured on the server.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            className={`btn ${pushStatus?.subscribed ? '' : 'btn-primary'}`}
+            onClick={togglePush}
+            disabled={pushLoading}
+            style={{ fontSize: 12 }}
+          >
+            {pushLoading ? 'Working…' : pushStatus?.subscribed ? 'Disable Push Notifications' : 'Enable Push Notifications'}
+          </button>
+          {pushStatus?.subscribed && (
+            <span style={{ fontSize: 12, color: '#10b981', fontWeight: 700 }}>
+              ✓ Active — this device will receive push alerts
+            </span>
+          )}
+          {pushStatus && !pushStatus.vapidConfigured && (
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+              Server not configured — add VAPID keys to enable
+            </span>
+          )}
         </div>
       </div>
 

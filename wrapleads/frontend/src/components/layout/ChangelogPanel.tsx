@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔔 Mobile Push Notifications — Real-Time Alerts on Your Phone',
+    body: 'WrapOS can now push real-time notifications to your phone or desktop even when the app is closed. New inbound quote requests, proposal approvals, email replies from leads, and hot prospect alerts fire as native OS notifications — no polling, no checking the app. Enable in Settings → Mobile Push Notifications. Requires VAPID keys configured on the server (generate instantly with `npx web-push generate-vapid-keys`). Works on iOS (Safari), Android (Chrome), and desktop. The push service worker (/sw.js) handles delivery and clicking a notification navigates directly to the relevant view.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔗 Webhook Integrations — Connect WrapOS to Zapier, Slack, and 5000+ Apps',
     body: 'Settings now has a "Webhooks & Integrations" section. Configure HTTP POST webhooks that fire automatically on key events: Lead Won, Lead Lost, Lead Stage Changed, Proposal Approved by Client, and New Inbound Quote Request. Each webhook delivery includes the full lead payload plus an HMAC-SHA256 signature header (X-WrapOS-Signature) for verification. Use a Zapier catch hook to auto-create rows in Google Sheets when you win deals, post to a Slack channel when a proposal is approved, or trigger any automation in Make, n8n, or your own system. Add an optional signing secret for security. Test any webhook with a one-click test delivery before going live.',
   },

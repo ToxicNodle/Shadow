@@ -1974,4 +1974,14 @@ export const api = {
     authFetch<{ ok: boolean }>(`/webhooks/${id}`, { method: 'DELETE' }),
   testWebhook: (id: number) =>
     authFetch<{ ok: boolean; statusCode: number; error?: string }>(`/webhooks/${id}/test`, { method: 'POST' }),
+
+  // ── Web Push ──
+  getPushVapidKey: () =>
+    authFetch<{ ok: boolean; publicKey: string | null }>('/push/vapid-key'),
+  getPushStatus: () =>
+    authFetch<{ ok: boolean; subscribed: boolean; vapidConfigured: boolean }>('/push/status'),
+  subscribePush: (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+    authFetch<{ ok: boolean }>('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
+  unsubscribePush: (endpoint: string) =>
+    authFetch<{ ok: boolean }>('/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
 };
