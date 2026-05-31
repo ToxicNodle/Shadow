@@ -49,21 +49,36 @@ For each prospect we want: company name, contact email, state, # employees, comm
 
 ---
 
+## What's new in the pack (Phase A — May 2026)
+
+Every CSV row now includes:
+
+1. **Provenance URL** — direct link to the EPA, USAspending.gov, or OSM source record. Anti-fraud signal no competitor can fake.
+2. **3 persona-specific sales scripts** — `script_cfo`, `script_facilities`, `script_sustainability`. No more guessing who you're talking to.
+3. **ITC deadline urgency** — only 34 days until the July 4, 2026 construction-start deadline. Every touchpoint now carries this time pressure.
+4. **Exclusive guarantee** — 1 buyer per territory. 30-day refund if the data is stale.
+
+Use these in the emails below — the ITC deadline is the #1 urgency lever right now.
+
+---
+
 ## Step 2 — Cold email sequence (3 touches over 8 days)
 
 ### Email 1 — Day 0 (cold open)
 
-Subject: `50 commercial solar leads in {{state}} — sending if you want them`
+Subject: `34 days until ITC deadline — {{state_count}} commercial solar leads in {{state}}`
 
 > Hi {{first_name}},
 >
-> I run HelioScout. We pulled 20,206 commercial properties from EPA's Greenhouse Gas Reporter, USAspending.gov federal contractors, and OpenStreetMap industrial polygons — every one >25,000 tCO2e/yr or otherwise pre-qualified as a high-energy commercial solar candidate.
+> Quick context: the 30% ITC construction-start deadline is July 4, 2026. That's 34 days. Every property owner who hasn't started construction by then risks losing the full credit.
 >
-> {{state}} alone has {{state_count}} of them.
+> We pulled 20,206 commercial properties from EPA's GHG Reporter, USAspending.gov, and OpenStreetMap — every one pre-qualified as a high-energy solar candidate. {{state}} has {{state_count}}.
 >
-> I'll send you 50 fully-enriched samples (with NAICS fit scores, system-size estimates, 25-yr NPV math, and a sales script per lead) — free, no demo call, no card. If you want the full state pack after seeing the samples, it's $1,497 one-time.
+> Each lead comes with: NAICS fit score (0-100), system-size estimate, 25-yr NPV, net payback after ITC + state stack, three persona-specific sales scripts (CFO / Facilities / Sustainability), and a provenance URL linking to the original government source record.
 >
-> Want the sample? Reply with "YES" and your state. I'll send the CSV within an hour.
+> I'll send you 50 free — no demo, no card. If they work, the full {{state}} pack is $1,497 one-time. Exclusive: 1 buyer per territory.
+>
+> Reply "YES {{state}}" and I'll send within the hour.
 >
 > — Jake @ HelioScout
 > helioscout.io/buy-solar-leads
