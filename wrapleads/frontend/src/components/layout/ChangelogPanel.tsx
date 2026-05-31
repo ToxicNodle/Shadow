@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🗂 Installer Work Order — Print-Ready Job Sheet for Your Install Crew',
+    body: 'Every job in the Jobs view now has a "Work Order" button in the Invoice tab. Click it to open a print-ready HTML page designed to be printed and handed to your install crew before they show up to a job. The work order includes: client name and contact info, scheduled install date, vehicle type and count, crew size, material specification, job revenue and margin (internal, marked clearly), design notes and special instructions, a 9-item pre-install checklist (vehicle cleaned, temperature check, damage documentation, material confirmation, design file confirmation, etc.), and signature blocks for installer sign-off and owner QC. The work order number (WO-XXXXX) is unique per job. "Print / Save as PDF" button at the bottom uses the browser\'s native print. No email required — just hand the paper to your installer.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🏆 Quote → Job Conversion — One Click from Accepted Quote to Booked Job',
     body: 'Accepted quotes now have a "Convert to Job" button. Click it and WrapOS automatically: creates a new job in the Wrap Lifecycle view pre-filled with the client\'s company, vehicle count (extracted from line items), wrap category, and revenue from the accepted quote total — marks the lead as Won — logs the conversion to the activity timeline ("Quote accepted → Job created · Lead marked Won"). No more manually navigating to Jobs, typing the company name again, and re-entering the revenue. The job opens in the Jobs view with all fields pre-populated. You can then set the install date, assign a subcontractor, and upload before/after photos. The button only appears on quotes with "Accepted" status — gray quotes (Draft), blue (Sent), and declined ones are unaffected.',
   },

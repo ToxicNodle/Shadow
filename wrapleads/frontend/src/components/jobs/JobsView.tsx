@@ -936,6 +936,7 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
 
   const token = localStorage.getItem('wl_token') ?? '';
   const invoiceUrl = `/jobs/${job.id}/invoice?token=${encodeURIComponent(token)}`;
+  const workOrderUrl = api.getWorkOrderUrl(job.id);
 
   async function doSend() {
     if (!sendEmail.trim()) return;
@@ -965,15 +966,26 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
             {revenue > 0 ? `$${revenue.toLocaleString()} total · $${Math.max(0, balance).toLocaleString()} balance due` : 'No revenue logged'}
           </div>
         </div>
-        <a
-          href={invoiceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="btn btn-primary"
-          style={{ fontSize: 12, textDecoration: 'none' }}
-        >
-          View Invoice →
-        </a>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <a
+            href={workOrderUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn"
+            style={{ fontSize: 12, textDecoration: 'none' }}
+          >
+            🗂 Work Order
+          </a>
+          <a
+            href={invoiceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn-primary"
+            style={{ fontSize: 12, textDecoration: 'none' }}
+          >
+            View Invoice →
+          </a>
+        </div>
       </div>
 
       <div>
