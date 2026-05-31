@@ -25,6 +25,7 @@ import SmsInboxCard from './SmsInboxCard';
 import DarkProposalsCard from './DarkProposalsCard';
 import FleetGrowthCard from './FleetGrowthCard';
 import MaterialInventoryCard from './MaterialInventoryCard';
+import SubPayablesCard from './SubPayablesCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -2078,6 +2079,9 @@ export default function MissionView() {
 
       {/* ── Material Inventory — low-stock vinyl/film alerts ── */}
       <MaterialInventoryCard />
+
+      {/* ── Sub Payables — unpaid subcontractor balances ── */}
+      <SubPayablesCard />
 
       {/* ── Daily Briefing — AI morning snapshot ── */}
       <DailyBriefingCard />

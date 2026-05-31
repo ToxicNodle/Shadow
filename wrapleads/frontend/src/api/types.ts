@@ -417,6 +417,8 @@ export interface SubcontractorAssignment {
   hours: number;
   labor_cost: number;
   notes?: string | null;
+  paid_at?: string | null;
+  paid_amount?: number | null;
   created_at: string;
 }
 

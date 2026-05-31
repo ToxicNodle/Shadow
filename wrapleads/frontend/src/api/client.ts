@@ -1960,6 +1960,13 @@ export const api = {
     authFetch<{ ok: boolean; assignment: import('./types').SubcontractorAssignment }>(`/jobs/${jobId}/subcontractors`, { method: 'POST', body: JSON.stringify(data) }),
   removeSubAssignment: (assignmentId: number) =>
     authFetch<{ ok: boolean }>(`/jobs/sub-assignments/${assignmentId}`, { method: 'DELETE' }),
+  markSubAssignmentPaid: (assignmentId: number, paidAmount?: number, undo?: boolean) =>
+    authFetch<{ ok: boolean; assignment: import('./types').SubcontractorAssignment }>(
+      `/jobs/sub-assignments/${assignmentId}/mark-paid`,
+      { method: 'PATCH', body: JSON.stringify({ paid_amount: paidAmount, undo }) }
+    ),
+  getSubPayables: () =>
+    authFetch<{ ok: boolean; payables: (import('./types').SubcontractorAssignment & { job_company: string; install_date: string | null; job_revenue: number; sub_email?: string })[]; totalOwed: number }>('/subcontractors/payables'),
 
   // ── Cash Flow ──
   getCashFlow: () =>

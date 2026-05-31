@@ -902,6 +902,8 @@ async function migrateDb() {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_subs_job ON job_subcontractors(job_id)`);
+    await pool.query(`ALTER TABLE job_subcontractors ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE job_subcontractors ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2)`);
   } catch (e) {
     console.warn('[migrate] Could not create subcontractors tables:', e.message);
   }
@@ -10859,6 +10861,47 @@ app.delete('/jobs/sub-assignments/:id', authMiddleware, async (req, res) => {
     );
     if (!rowCount) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /jobs/sub-assignments/:id/mark-paid — record sub payment
+app.patch('/jobs/sub-assignments/:id/mark-paid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const assignId = parseInt(req.params.id, 10);
+  const { paid_amount, undo } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE job_subcontractors js SET
+         paid_at     = CASE WHEN $1 THEN NULL ELSE NOW() END,
+         paid_amount = CASE WHEN $1 THEN NULL ELSE $2::numeric END
+       FROM installed_jobs j
+       WHERE js.id=$3 AND js.job_id=j.id AND j.user_id=$4
+       RETURNING js.*`,
+      [!!undo, paid_amount ?? null, assignId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, assignment: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /subcontractors/payables — unpaid sub assignments across all jobs
+app.get('/subcontractors/payables', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT js.id, js.job_id, js.sub_id, js.hours, js.labor_cost,
+              js.paid_at, js.paid_amount, js.notes, js.created_at,
+              s.name AS sub_name, s.specialty, s.email AS sub_email,
+              j.company AS job_company, j.install_date, j.job_revenue
+       FROM job_subcontractors js
+       JOIN subcontractors s ON s.id = js.sub_id
+       JOIN installed_jobs j ON j.id = js.job_id
+       WHERE j.user_id = $1 AND js.paid_at IS NULL AND js.labor_cost > 0
+       ORDER BY js.created_at DESC`,
+      [uid]
+    );
+    const totalOwed = rows.reduce((s, r) => s + Number(r.labor_cost), 0);
+    res.json({ ok: true, payables: rows, totalOwed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

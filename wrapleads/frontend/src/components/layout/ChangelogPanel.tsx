@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '💸 Subcontractor Payment Tracking — Know Who You Owe and When You Paid',
+    body: 'Every subcontractor assigned to a job now has payment status tracking. In the 👷 Subs tab, each assignment shows an "Owed" amount and a green "Mark Paid" button. Click it, enter the amount paid (pre-filled with the owed amount), and confirm — the assignment is stamped with the date and amount. A green PAID badge appears and the border turns green. Undo is available if you need to reverse an entry. A new "💸 Unpaid Subcontractors" card on Mission shows all outstanding sub payments across every job — with a quick "Pay" button that marks it done from Mission without digging into the job. The total outstanding liability across all subs is shown at the top of the card. This is critical for: (1) cash flow — knowing what you owe before it piles up; (2) 1099 accuracy — a complete record of payments to each sub throughout the year; (3) job profitability — your margin isn\'t real until you\'ve accounted for what you actually paid the sub.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📲 Pickup Notification — "Your Vehicle is Ready" in One Click',
     body: 'The Invoice tab on every job now has a "Notify Client — Vehicle Ready for Pickup" section. Choose email, SMS, or both, enter the client\'s contact info, and click Send. The client receives a branded message with your shop name, address, phone, balance due (or "Paid in full"), and an optional custom note you write. Works out of the box for email via Resend; SMS via Twilio if configured. The notification is automatically logged to the job\'s notes with a timestamp and method ("Pickup notification sent via email+sms to John Smith"). No more manual texts or calls to tell clients their vehicle is done. Combined with the Completion Receipt, the handoff workflow is now: notify → client arrives → do the walkthrough → sign the receipt → hand over the keys.',
   },

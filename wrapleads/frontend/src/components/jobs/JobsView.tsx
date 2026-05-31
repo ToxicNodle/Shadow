@@ -687,6 +687,22 @@ function SubcontractorTab({ job }: { job: InstalledJob }) {
     },
   });
 
+  const [markPaidId, setMarkPaidId] = useState<number | null>(null);
+  const [markPaidAmount, setMarkPaidAmount] = useState('');
+
+  const markPaidMut = useMutation({
+    mutationFn: ({ id, amount, undo }: { id: number; amount?: number; undo?: boolean }) =>
+      api.markSubAssignmentPaid(id, amount, undo),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-subs', job.id] });
+      qc.invalidateQueries({ queryKey: ['sub-payables'] });
+      setMarkPaidId(null);
+      setMarkPaidAmount('');
+      showToast('Payment recorded', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
   const assignments = assignData?.assignments ?? [];
   const subs = subsData?.subs ?? [];
   const totalSubCost = assignments.reduce((s, a) => s + Number(a.labor_cost), 0);
@@ -725,23 +741,69 @@ function SubcontractorTab({ job }: { job: InstalledJob }) {
       ) : assignments.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {assignments.map((a) => (
-            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-elev)', borderRadius: 6, padding: '8px 12px', border: '1px solid var(--border)' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{a.sub_name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  {a.hours ? `${a.hours}h` : ''}
-                  {a.hours && a.labor_cost ? ' · ' : ''}
-                  {a.labor_cost ? `$${Number(a.labor_cost).toLocaleString()}` : ''}
-                  {a.notes ? ` · ${a.notes}` : ''}
-                  {a.specialty ? <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{a.specialty}</span> : null}
+            <div key={a.id} style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-elev)', borderRadius: 6, padding: '8px 12px', border: `1px solid ${a.paid_at ? '#10b98130' : 'var(--border)'}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {a.sub_name}
+                    {a.paid_at && (
+                      <span style={{ fontSize: 9, fontWeight: 700, background: '#10b98120', color: '#10b981', padding: '1px 6px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: '.05em' }}>PAID</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {a.hours ? `${a.hours}h` : ''}
+                    {a.hours && a.labor_cost ? ' · ' : ''}
+                    {a.labor_cost ? `$${Number(a.labor_cost).toLocaleString()} owed` : ''}
+                    {a.paid_amount ? ` · $${Number(a.paid_amount).toLocaleString()} paid` : ''}
+                    {a.notes ? ` · ${a.notes}` : ''}
+                    {a.specialty ? <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{a.specialty}</span> : null}
+                    {a.paid_at ? <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>on {new Date(a.paid_at).toLocaleDateString()}</span> : null}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {!a.paid_at ? (
+                    <button
+                      className="btn"
+                      style={{ fontSize: 10, color: '#10b981', padding: '2px 8px', background: '#10b98112', border: '1px solid #10b98130' }}
+                      onClick={() => { setMarkPaidId(a.id); setMarkPaidAmount(String(a.labor_cost || '')); }}
+                    >Mark Paid</button>
+                  ) : (
+                    <button
+                      className="btn"
+                      style={{ fontSize: 10, color: 'var(--text-faint)', padding: '2px 8px' }}
+                      onClick={() => markPaidMut.mutate({ id: a.id, undo: true })}
+                      disabled={markPaidMut.isPending}
+                    >Undo</button>
+                  )}
+                  <button
+                    className="btn"
+                    style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }}
+                    onClick={() => removeMut.mutate(a.id)}
+                    disabled={removeMut.isPending}
+                  >Remove</button>
                 </div>
               </div>
-              <button
-                className="btn"
-                style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }}
-                onClick={() => removeMut.mutate(a.id)}
-                disabled={removeMut.isPending}
-              >Remove</button>
+              {markPaidId === a.id && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', paddingTop: 4, borderTop: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Amount paid:</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={50}
+                    value={markPaidAmount}
+                    onChange={(e) => setMarkPaidAmount(e.target.value)}
+                    style={{ fontSize: 12, width: 100, padding: '3px 8px' }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: 11, padding: '3px 10px' }}
+                    disabled={markPaidMut.isPending}
+                    onClick={() => markPaidMut.mutate({ id: a.id, amount: markPaidAmount ? Number(markPaidAmount) : undefined })}
+                  >Confirm</button>
+                  <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setMarkPaidId(null)}>Cancel</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
