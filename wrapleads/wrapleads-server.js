@@ -9045,6 +9045,273 @@ app.get('/jobs/:id/case-study', authMiddleware, async (req, res) => {
   res.json({ caseStudy: rows[0] });
 });
 
+// GET /leads/:id/contract — printable HTML installation contract (browser → PDF)
+// Opens in a new tab with ?token= auth. Prefills from lead + most recent quote.
+app.get('/leads/:id/contract', invoiceAuthMiddleware, async (req, res) => {
+  try {
+    const uid   = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+
+    const { rows: lr } = await pool.query(
+      `SELECT l.*, u.email AS user_email, u.company_name AS user_company, u.settings_json
+       FROM leads l
+       JOIN users u ON u.id::text = l.user_id
+       WHERE l.id = $1 AND l.user_id = $2`,
+      [leadId, uid]
+    );
+    if (!lr.length) return res.status(404).send('<h2>Not found</h2>');
+    const lead = lr[0];
+    const s    = lead.settings_json || {};
+
+    // Shop info
+    const shopName  = s.companyName  || lead.user_company || 'Your Shop';
+    const shopEmail = s.senderEmail  || lead.user_email   || '';
+    const shopPhone = s.senderPhone  || '';
+    const shopRep   = s.senderName   || 'Shop Representative';
+    const shopCity  = s.city         || '';
+    const shopState = s.state        || '';
+    const accent    = s.accentColor  || '#f4551c';
+    const deposit   = s.depositPaymentLink || '';
+
+    // Latest quote
+    const { rows: qr } = await pool.query(
+      `SELECT title, total, notes, vehicle_type, vehicle_count, material, items
+       FROM shop_quotes WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+    const quote = qr[0] || null;
+
+    const today        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const contractNum  = `WOS-C-${String(leadId).padStart(5, '0')}`;
+
+    const VEHICLE_LABELS = {
+      cargo_van: 'Cargo Van', cargo_van_standard: 'Cargo Van', cargo_van_high_roof: 'High-Roof Cargo Van',
+      box_truck: 'Box Truck', box_truck_16: '16ft Box Truck', box_truck_24: '24ft Box Truck',
+      sprinter: 'Sprinter Van', pickup: 'Pickup Truck', pickup_truck: 'Pickup Truck',
+      semi_tractor: 'Semi Tractor', semi_trailer: 'Semi Trailer', semi_full: 'Semi Truck & Trailer',
+      semi_cab_only: 'Semi Cab', '53ft_trailer': '53ft Trailer', flatbed: 'Flatbed Truck',
+      bus: 'Bus', bus_school: 'School Bus', rv: 'RV / Motorhome', suv: 'SUV', suv_large: 'Large SUV',
+      passenger_car: 'Passenger Car', food_truck: 'Food Truck', boat: 'Boat', trailer: 'Utility Trailer', other: 'Vehicle',
+    };
+    const CAT_LABELS = {
+      fleet: 'Fleet Graphics', design: 'Custom Vehicle Design', construction: 'Construction Fleet Graphics',
+      dinoc: 'DI-NOC Architectural Film', reatec: 'Rea Tec Architectural Film', colorchange: 'Full Color Change Wrap',
+      wallgraphics: 'Wall Graphics', gc_referral: 'Commercial Graphics', racing: 'Motorsport Livery',
+    };
+
+    const vehicleType  = quote?.vehicle_type  ? (VEHICLE_LABELS[quote.vehicle_type]  || quote.vehicle_type)  : 'Vehicle';
+    const vehicleCount = quote?.vehicle_count || 1;
+    const wrapType     = CAT_LABELS[lead.category] || 'Vehicle Wrap';
+    const totalPrice   = quote?.total ? Number(quote.total).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '__________';
+    const depositAmt   = quote?.total ? (Number(quote.total) * 0.5).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '50%';
+    const material     = quote?.material || '3M 1080 or Avery Dennison SW900 cast vinyl';
+    const scopeNotes   = quote?.notes || lead.notes || '';
+
+    const items = (() => {
+      if (!quote?.items) return '';
+      try {
+        const arr = typeof quote.items === 'string' ? JSON.parse(quote.items) : quote.items;
+        if (!Array.isArray(arr) || !arr.length) return '';
+        return `<table style="width:100%;border-collapse:collapse;margin:12px 0 0;">
+          <thead><tr>
+            <th style="text-align:left;padding:7px 10px;background:#f1f5f9;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Description</th>
+            <th style="text-align:right;padding:7px 10px;background:#f1f5f9;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Amount</th>
+          </tr></thead>
+          <tbody>${arr.map(i => `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px;">${i.description || ''}</td><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:right;">${Number(i.total || i.amount || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}</td></tr>`).join('')}
+          </tbody>
+        </table>`;
+      } catch { return ''; }
+    })();
+
+    const html = `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Installation Contract — ${lead.company}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;color:#1f2937;background:#fff;padding:48px;max-width:800px;margin:0 auto;font-size:14px;line-height:1.6}
+  @media print{body{padding:0}@page{margin:24mm}}
+  h1{font-size:24px;font-weight:800;letter-spacing:-.5px}
+  h2{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;margin-bottom:8px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;padding-bottom:20px;border-bottom:3px solid ${accent}}
+  .shop-name{font-size:22px;font-weight:800;color:${accent}}
+  .meta{font-size:12px;color:#6b7280;margin-top:4px}
+  .parties{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px}
+  .party-box{background:#f9fafb;border-radius:8px;padding:16px}
+  .party-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#6b7280;margin-bottom:8px}
+  .party-name{font-size:15px;font-weight:700;margin-bottom:4px}
+  .party-detail{font-size:13px;color:#4b5563}
+  .section{margin-bottom:28px}
+  .scope-box{background:#f9fafb;border-radius:8px;padding:16px;margin-top:8px}
+  .scope-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e5e7eb}
+  .scope-row:last-child{border-bottom:none}
+  .scope-key{font-size:13px;color:#6b7280}
+  .scope-val{font-size:13px;font-weight:600}
+  .price-box{background:${accent}10;border:1px solid ${accent}40;border-radius:8px;padding:16px;margin-top:8px}
+  .price-row{display:flex;justify-content:space-between;padding:5px 0}
+  .price-total{font-size:20px;font-weight:800;color:${accent}}
+  .terms{font-size:12px;color:#374151;line-height:1.7}
+  .terms h3{font-size:12px;font-weight:700;margin-top:16px;margin-bottom:4px;color:#111827}
+  .terms ol,.terms ul{padding-left:18px;margin-top:4px}
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:20px}
+  .sig-block{padding-top:12px;border-top:1px solid #374151}
+  .sig-label{font-size:11px;color:#6b7280;margin-top:4px}
+  .sig-line{height:40px;border-bottom:1px solid #374151;margin-top:20px}
+  .badge{display:inline-block;background:${accent};color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;margin-left:8px;vertical-align:middle}
+  no-print{display:block}
+  @media print{.no-print{display:none!important}}
+</style>
+</head>
+<body>
+  <div class="no-print" style="background:#f1f5f9;border-radius:8px;padding:12px 16px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#374151">
+    <span>📄 Vehicle Wrap Installation Contract — Ready to print to PDF</span>
+    <button onclick="window.print()" style="background:${accent};color:#fff;border:none;padding:7px 16px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer">Print / Save PDF</button>
+  </div>
+
+  <div class="header">
+    <div>
+      <div class="shop-name">${shopName}</div>
+      ${shopCity || shopState ? `<div class="meta">${[shopCity, shopState].filter(Boolean).join(', ')}</div>` : ''}
+      ${shopPhone ? `<div class="meta">${shopPhone}</div>` : ''}
+      ${shopEmail ? `<div class="meta">${shopEmail}</div>` : ''}
+    </div>
+    <div style="text-align:right">
+      <h1>Installation Contract</h1>
+      <div class="meta">Contract #: ${contractNum}</div>
+      <div class="meta">Date: ${today}</div>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-label">Service Provider</div>
+      <div class="party-name">${shopName}</div>
+      <div class="party-detail">${shopRep}</div>
+      ${shopPhone ? `<div class="party-detail">${shopPhone}</div>` : ''}
+      ${shopEmail ? `<div class="party-detail">${shopEmail}</div>` : ''}
+      ${shopCity || shopState ? `<div class="party-detail">${[shopCity, shopState].filter(Boolean).join(', ')}</div>` : ''}
+    </div>
+    <div class="party-box">
+      <div class="party-label">Client</div>
+      <div class="party-name">${lead.company}</div>
+      ${lead.contact_name ? `<div class="party-detail">${lead.contact_name}</div>` : ''}
+      ${lead.phone ? `<div class="party-detail">${lead.phone}</div>` : ''}
+      ${lead.email ? `<div class="party-detail">${lead.email}</div>` : ''}
+      ${lead.city || lead.state ? `<div class="party-detail">${[lead.city, lead.state].filter(Boolean).join(', ')}</div>` : ''}
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Scope of Work</h2>
+    <div class="scope-box">
+      <div class="scope-row"><span class="scope-key">Service Type</span><span class="scope-val">${wrapType}</span></div>
+      <div class="scope-row"><span class="scope-key">Vehicle Type</span><span class="scope-val">${vehicleType}</span></div>
+      <div class="scope-row"><span class="scope-key">Vehicle Count</span><span class="scope-val">${vehicleCount} unit${vehicleCount !== 1 ? 's' : ''}</span></div>
+      <div class="scope-row"><span class="scope-key">Material</span><span class="scope-val">${material}</span></div>
+      ${scopeNotes ? `<div class="scope-row"><span class="scope-key">Notes</span><span class="scope-val" style="max-width:60%;text-align:right;">${scopeNotes}</span></div>` : ''}
+    </div>
+    ${items}
+  </div>
+
+  <div class="section">
+    <h2>Pricing &amp; Payment</h2>
+    <div class="price-box">
+      <div class="price-row"><span>Project Total</span><span class="price-total">${totalPrice}</span></div>
+      <div class="price-row" style="font-size:13px;color:#6b7280"><span>50% Deposit due to schedule</span><span>${depositAmt}</span></div>
+      <div class="price-row" style="font-size:13px;color:#6b7280"><span>Balance due upon delivery/pickup</span><span>Remaining 50%</span></div>
+      ${deposit ? `<div class="price-row" style="margin-top:8px"><span style="font-size:12px">Pay deposit online:</span><span style="font-size:12px"><a href="${deposit}">${deposit}</a></span></div>` : ''}
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Terms &amp; Conditions</h2>
+    <div class="terms">
+      <h3>1. Warranty</h3>
+      <ul>
+        <li>All materials are warranted against manufacturer defects for <strong>3 years</strong> from date of installation.</li>
+        <li>Warranty covers peeling, cracking, and bubbling under normal use conditions.</li>
+        <li>Warranty is void if the vehicle is not maintained per care instructions below.</li>
+      </ul>
+      <h3>2. Care Instructions</h3>
+      <ul>
+        <li>Wait 7 days after installation before washing.</li>
+        <li>Hand-wash or touchless car wash only — no brush washes.</li>
+        <li>Do not use petroleum-based cleaners or wax on wrapped surfaces.</li>
+        <li>Store vehicle indoors or in shade when possible to maximize film lifespan.</li>
+      </ul>
+      <h3>3. Design Approval</h3>
+      <ul>
+        <li>Client must approve all artwork/proofs in writing before production begins.</li>
+        <li>Changes after production approval may incur additional charges.</li>
+        <li>${shopName} is not responsible for errors in copy/design approved by the client.</li>
+      </ul>
+      <h3>4. Pre-Existing Conditions</h3>
+      <ul>
+        <li>Client is responsible for disclosing any rust, dents, repaints, or surface irregularities.</li>
+        <li>${shopName} is not liable for wrap adhesion issues caused by non-factory paint, bondo, or surface damage discovered after wrap application.</li>
+        <li>An inspection fee may apply if significant prep work is required upon vehicle arrival.</li>
+      </ul>
+      <h3>5. Vehicle Delivery</h3>
+      <ul>
+        <li>Client is responsible for delivering the vehicle(s) on the scheduled install date.</li>
+        <li>A rescheduling fee may apply for cancellations within 48 hours of the scheduled date.</li>
+        <li>Vehicles must be clean and emptied of personal items before drop-off.</li>
+      </ul>
+      <h3>6. Cancellation</h3>
+      <ul>
+        <li>Deposits are non-refundable once production (printing) has begun.</li>
+        <li>Cancellations before production will receive a full deposit refund minus any design fees.</li>
+      </ul>
+      <h3>7. Liability Limitation</h3>
+      <ul>
+        <li>${shopName}'s total liability is limited to the amount paid by client for this project.</li>
+        <li>Client agrees to carry adequate vehicle insurance. ${shopName} is not responsible for damage during client-arranged transport to/from our facility.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Signatures</h2>
+    <p style="font-size:13px;color:#374151;margin-bottom:16px">
+      By signing below, both parties agree to the scope of work, pricing, and terms stated in this contract.
+    </p>
+    <div class="sig-grid">
+      <div>
+        <div class="sig-block">
+          <div class="sig-line"></div>
+          <div class="sig-label">Authorized signature — ${shopName}</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Printed name &amp; title</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Date</div>
+        </div>
+      </div>
+      <div>
+        <div class="sig-block">
+          <div class="sig-line"></div>
+          <div class="sig-label">Authorized signature — ${lead.company}</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Printed name &amp; title</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Date</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:32px;padding-top:20px;border-top:1px solid #e5e7eb;font-size:11px;color:#9ca3af;text-align:center">
+    Contract generated by ${shopName} · ${today} · ${contractNum}
+  </div>
+</body></html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) {
+    console.error('[contract]', e.message);
+    res.status(500).send('<h2>Error generating contract</h2>');
+  }
+});
+
 // GET /jobs/:id/invoice — HTML invoice (browser-printable to PDF)
 // Accepts JWT as ?token= query param so the link can be opened in a new browser tab.
 function invoiceAuthMiddleware(req, res, next) {

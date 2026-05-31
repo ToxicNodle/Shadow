@@ -834,6 +834,27 @@ export default function QuotesTab({ lead }: Props) {
       <WrapPriceEstimator lead={lead} />
       <WrapROICalculator lead={lead} />
 
+      {/* Contract generator */}
+      {lead.serverId && (
+        <div style={{ marginTop: 16, padding: '14px 16px', background: 'var(--bg-input)', borderRadius: 10, border: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>Installation Contract</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Generate a printable contract pre-filled with client + quote details, standard terms, and signature blocks.
+              </div>
+            </div>
+            <button
+              className="btn"
+              style={{ fontSize: 11, flexShrink: 0, whiteSpace: 'nowrap' }}
+              onClick={() => window.open(api.getContractUrl(lead.serverId!), '_blank')}
+            >
+              📄 Generate Contract
+            </button>
+          </div>
+        </div>
+      )}
+
       {showBuilder && (
         <QuoteBuilderModal
           leadId={leadId}

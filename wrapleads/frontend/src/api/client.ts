@@ -1985,6 +1985,12 @@ export const api = {
   unsubscribePush: (endpoint: string) =>
     authFetch<{ ok: boolean }>('/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
 
+  // ── Installation Contract ──
+  getContractUrl: (leadId: number) => {
+    const token = getToken();
+    return `/leads/${leadId}/contract?token=${encodeURIComponent(token || '')}`;
+  },
+
   // ── Fleet Growth Signals ──
   getFleetGrowthSignals: () =>
     authFetch<{ ok: boolean; signals: Array<{ id: number; company: string; category: string; status: string; fleet_size: number | null; fmcsa_fleet_size_snapshot: number | null; fmcsa_fleet_grew_at: string; contact_name: string | null; state: string | null }> }>('/leads/fleet-growth-signals'),
