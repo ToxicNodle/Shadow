@@ -19,6 +19,15 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { parse } = require('csv-parse/sync');
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
 
 const DRY = process.argv.includes('--dry-run');
 const SEND = process.argv.includes('--send');
@@ -79,23 +88,18 @@ helioscout.io`;
   return { subject, body };
 }
 
-async function sendViaResend({ to, subject, body }) {
-  const r = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: 'Barry Benson <onboarding@resend.dev>',
-      reply_to: 'bjakebenson@gmail.com',
-      to: [to],
+async function sendViaGmail({ to, subject, body }) {
+  try {
+    const info = await transporter.sendMail({
+      from: `"Barry Benson" <${process.env.GMAIL_USER}>`,
+      to,
       subject,
       text: body,
-    }),
-  });
-  const data = await r.json();
-  return { ok: r.ok, status: r.status, data };
+    });
+    return { ok: true, status: 200, data: { id: info.messageId, response: info.response } };
+  } catch (err) {
+    return { ok: false, status: err.responseCode || 500, data: { error: err.message } };
+  }
 }
 
 (async () => {
@@ -142,10 +146,10 @@ async function sendViaResend({ to, subject, body }) {
     });
     process.stdout.write(`[${i+1}/${recipients.length}] ${r.company.padEnd(36)} → ${r.email_sales.padEnd(40)} `);
     try {
-      const res = await sendViaResend({ to: r.email_sales, subject: e.subject, body: e.body });
+      const res = await sendViaGmail({ to: r.email_sales, subject: e.subject, body: e.body });
       if (res.ok) {
         console.log(`✓ ${res.data.id}`);
-        log.push({ ts: new Date().toISOString(), company: r.company, state: r.state, to: r.email_sales, resend_id: res.data.id, ok: true });
+        log.push({ ts: new Date().toISOString(), company: r.company, state: r.state, to: r.email_sales, message_id: res.data.id, ok: true });
       } else {
         console.log(`✗ ${res.status} ${JSON.stringify(res.data).slice(0, 120)}`);
         log.push({ ts: new Date().toISOString(), company: r.company, state: r.state, to: r.email_sales, error: res.data, ok: false });
