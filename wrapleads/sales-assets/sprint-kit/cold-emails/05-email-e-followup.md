@@ -4,7 +4,7 @@ Subject: re: {{state}} solar lead pack
 
 Sending the free 50-lead sample (no reply needed):
 
-https://helioscout.io/solar/store/sample.csv
+https://helioscout.app/solar/store/sample.csv
 
 Each row: company + city + NAICS fit score + system-size estimate + 25-yr NPV + sales script.
 

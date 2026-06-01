@@ -21,6 +21,6 @@ Every commercial property in {STATE_NAME} pulled from public US government data 
 
 **Why $1,497?** Comparable B2B data feeds (ZoomInfo, Lead411) cost $15K+/year. Apollo's commercial-solar filters require Pro tier and don't include solar-specific qualification. Per-lead cost is well under $1/lead — vs $200–$500 industry average for shared exclusive leads.
 
-**Refund:** 30-day money-back if you don't get at least one qualified conversation from the pack. Email support@helioscout.io with your outreach log.
+**Refund:** 30-day money-back if you don't get at least one qualified conversation from the pack. Email support@helioscout.app with your outreach log.
 
 **File format:** CSV, ~{SIZE}KB, opens in Excel / Google Sheets / any CRM importer.

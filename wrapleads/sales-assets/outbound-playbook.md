@@ -81,7 +81,7 @@ Subject: `34 days until ITC deadline — {{state_count}} commercial solar leads 
 > Reply "YES {{state}}" and I'll send within the hour.
 >
 > — Barry Benson @ HelioScout
-> helioscout.io/buy-solar-leads
+> helioscout.app/buy-solar-leads
 
 **Personalization vars to swap:** `{{first_name}}` (Apollo lookup), `{{state}}` (from prospect list), `{{state_count}}` (lookup against our state-pack sizes — TX 3009, OH 992, etc.).
 

@@ -84,22 +84,27 @@ I'll send you 50 free — no card, no demo. If they work, full state pack is $1,
 Reply "YES ${state}" and I'll send the sample within the hour. Or grab the ${state} pack directly: ${payment_link}
 
 — Barry Benson
-helioscout.io`;
+helioscout.app`;
   return { subject, body };
 }
 
-async function sendViaGmail({ to, subject, body }) {
-  try {
-    const info = await transporter.sendMail({
-      from: `"Barry Benson" <${process.env.GMAIL_USER}>`,
-      to,
+async function sendViaResend({ to, subject, body }) {
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: 'Barry Benson <barry@helioscout.app>',
+      reply_to: process.env.GMAIL_USER || 'bjakebenson@gmail.com',
+      to: [to],
       subject,
       text: body,
-    });
-    return { ok: true, status: 200, data: { id: info.messageId, response: info.response } };
-  } catch (err) {
-    return { ok: false, status: err.responseCode || 500, data: { error: err.message } };
-  }
+    }),
+  });
+  const data = await r.json();
+  return { ok: r.ok, status: r.status, data: r.ok ? { id: data.id } : data };
 }
 
 (async () => {
@@ -146,7 +151,7 @@ async function sendViaGmail({ to, subject, body }) {
     });
     process.stdout.write(`[${i+1}/${recipients.length}] ${r.company.padEnd(36)} → ${r.email_sales.padEnd(40)} `);
     try {
-      const res = await sendViaGmail({ to: r.email_sales, subject: e.subject, body: e.body });
+      const res = await sendViaResend({ to: r.email_sales, subject: e.subject, body: e.body });
       if (res.ok) {
         console.log(`✓ ${res.data.id}`);
         log.push({ ts: new Date().toISOString(), company: r.company, state: r.state, to: r.email_sales, message_id: res.data.id, ok: true });

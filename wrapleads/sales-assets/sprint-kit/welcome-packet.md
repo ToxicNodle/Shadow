@@ -7,7 +7,7 @@ Hi {NAME},
 Thanks for grabbing the **{STATE} pack** ({COUNT} leads). Here's your download:
 
 📎 {STATE}-pack.csv — attached
-🔗 Backup link (in case attachment fails): https://helioscout.io/solar/store/checkout-success/{TOKEN}
+🔗 Backup link (in case attachment fails): https://helioscout.app/solar/store/checkout-success/{TOKEN}
 
 ## What's in the CSV
 

@@ -13,4 +13,4 @@ New this month: every row includes a provenance URL — a direct link to the EPA
 Or reply YES for the free 50-lead sample.
 
 — Barry Benson
-helioscout.io
+helioscout.app

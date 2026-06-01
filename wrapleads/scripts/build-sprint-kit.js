@@ -129,7 +129,7 @@ If you want the full {{state}} pack after that, it's $1,497 one-time. National p
 Reply YES and I'll send the CSV today.
 
 — Jake
-helioscout.io
+helioscout.app
 `;
 
 const EMAIL_VARIANT_B = `Subject: Built you a {{state}} commercial solar lead list
@@ -185,7 +185,7 @@ const EMAIL_VARIANT_E_FOLLOWUP = `Subject: re: {{state}} solar lead pack
 
 Sending the free 50-lead sample (no reply needed):
 
-https://helioscout.io/solar/store/sample.csv
+https://helioscout.app/solar/store/sample.csv
 
 Each row: company + city + NAICS fit score + system-size estimate + 25-yr NPV + sales script.
 
@@ -307,7 +307,7 @@ Every commercial property in {STATE_NAME} pulled from public US government data 
 
 **Why $1,497?** Comparable B2B data feeds (ZoomInfo, Lead411) cost $15K+/year. Apollo's commercial-solar filters require Pro tier and don't include solar-specific qualification. Per-lead cost is well under $1/lead — vs $200–$500 industry average for shared exclusive leads.
 
-**Refund:** 30-day money-back if you don't get at least one qualified conversation from the pack. Email support@helioscout.io with your outreach log.
+**Refund:** 30-day money-back if you don't get at least one qualified conversation from the pack. Email support@helioscout.app with your outreach log.
 
 **File format:** CSV, ~{SIZE}KB, opens in Excel / Google Sheets / any CRM importer.
 `;
@@ -321,7 +321,7 @@ Hi {NAME},
 Thanks for grabbing the **{STATE} pack** ({COUNT} leads). Here's your download:
 
 📎 {STATE}-pack.csv — attached
-🔗 Backup link (in case attachment fails): https://helioscout.io/solar/store/checkout-success/{TOKEN}
+🔗 Backup link (in case attachment fails): https://helioscout.app/solar/store/checkout-success/{TOKEN}
 
 ## What's in the CSV
 
@@ -353,7 +353,7 @@ Every row is a real US commercial property — pulled from public-domain US gov 
 
 ## Trust
 
-Every lead in this pack traces back to a public US gov data source. If you want a verification spot-check, email support@helioscout.io with 3 row IDs and we'll send you the source URLs.
+Every lead in this pack traces back to a public US gov data source. If you want a verification spot-check, email support@helioscout.app with 3 row IDs and we'll send you the source URLs.
 
 ## 30-day refund
 

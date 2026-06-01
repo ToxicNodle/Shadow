@@ -27,7 +27,7 @@ const path = require('path');
 const EPA_BASE = 'https://data.epa.gov/efservice';
 const USA_BASE = 'https://api.usaspending.gov/api/v2';
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
-const UA = 'HelioScout/1.0 (https://helioscout.io)';
+const UA = 'HelioScout/1.0 (https://helioscout.app)';
 
 const args = Object.fromEntries(
   process.argv.slice(2)

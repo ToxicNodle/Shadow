@@ -83,7 +83,7 @@ async function findOrCreateProduct(p) {
       ],
       after_completion: {
         type: 'redirect',
-        redirect: { url: 'https://helioscout.io/buy-solar-leads?paid=1' },
+        redirect: { url: 'https://helioscout.app/buy-solar-leads?paid=1' },
       },
     });
     console.log(`  + created payment link: ${link.url}`);
