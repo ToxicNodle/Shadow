@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📊 Proposal Analytics — Close Rate, Time to Approve, Most-Viewed',
+    body: 'Analytics now has a "Proposal Analytics" card. See your overall proposal close rate (approved ÷ sent), average time from proposal created to sent, average days from sent to approved, and average view counts for approved vs. declined proposals — a view-count comparison that reveals whether high-engagement proposals win more. A status distribution bar shows your proposal pipeline at a glance (draft, sent, approved, declined, expired). The bottom of the card lists your 5 most-viewed proposals so you can spot which ones generate the most interest. All stats update in real time as you mark proposals sent or approved.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
+    title: '🚫 Email Suppression Management — CAN-SPAM Compliance Dashboard',
+    body: 'Settings now has an "Email Suppression List" section. See every email address that has opted out of your outreach, when they unsubscribed, and which lead they\'re associated with. You can manually add addresses to suppress (e.g. a competitor you accidentally imported) or remove addresses when a contact re-subscribes after confirming they want back in. WrapOS has always blocked all automated emails to unsubscribed addresses — now you have full visibility into who\'s on that list. Pair this with the "Viewed X times" indicator on sent proposals: a proposal getting opened repeatedly by a suppressed email address means someone at the company is interested, even though one contact opted out.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔔 Saved Search Alerts — Get Notified When New Fleet Carriers Appear',
     body: 'In the Discover view, every saved search chip now has a bell icon. Click it to turn on alerts — when new carriers matching your search criteria are added to the database (via FMCSA ingests, SAM.gov, SOS filings, or news signals), WrapOS sends you an in-app notification and an email. The email shows how many new carriers were found and the filter summary so you know which search triggered it. Amber bell = alerts on, gray bell = off. Use this to watch specific states, fleet sizes, or industries without having to remember to re-run searches manually. Example: save "Colorado fleet 20–100 vehicles" and get alerted whenever new trucking companies in that range appear in the database.',
   },

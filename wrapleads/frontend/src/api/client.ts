@@ -1355,6 +1355,19 @@ export const api = {
       hasData: boolean;
     }>('/analytics/margin'),
 
+  // Proposal pipeline analytics
+  getProposalAnalytics: () =>
+    authFetch<{
+      ok: boolean; total: number;
+      byStatus: { draft: number; sent: number; approved: number; declined: number; expired: number };
+      closeRate: number | null;
+      avgHoursToSend: number | null;
+      avgDaysToApprove: number | null;
+      avgViewsApproved: number | null;
+      avgViewsDeclined: number | null;
+      topViewed: Array<{ id: number; title: string; status: string; viewCount: number; sentAt: string | null; company: string | null }>;
+    }>('/analytics/proposals'),
+
   // Email template performance analytics
   getEmailTemplateAnalytics: () =>
     authFetch<{
@@ -1370,6 +1383,14 @@ export const api = {
     authFetch<{ unsubscribed: boolean; email: string | null; unsubscribed_at: string | null }>(
       `/leads/${leadId}/unsubscribe-status`
     ),
+
+  // Suppression list management
+  getUnsubscribes: () =>
+    authFetch<{ unsubscribes: Array<{ id: number; email: string; unsubscribed_at: string; company: string | null; lead_id: number | null }> }>('/settings/unsubscribes'),
+  addUnsubscribe: (email: string) =>
+    authFetch<{ ok: boolean }>('/settings/unsubscribes', { method: 'POST', body: JSON.stringify({ email }) }),
+  removeUnsubscribe: (id: number) =>
+    authFetch<{ ok: boolean }>(`/settings/unsubscribes/${id}`, { method: 'DELETE' }),
 
   // Shareable ROI calculator link pre-filled with prospect data
   getOrCreateRoiLink: (leadId: number) =>

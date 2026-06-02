@@ -35,6 +35,9 @@ export default function SettingsModal() {
   const [motiveCount, setMotiveCount] = useState<number | null>(null);
   const [motiveImported, setMotiveImported] = useState<{ imported: number; skipped: number } | null>(null);
 
+  const [newUnsub, setNewUnsub] = useState('');
+  const [showUnsubs, setShowUnsubs] = useState(false);
+
   // Subcontractors
   const qc = useQueryClient();
   const [newSubName, setNewSubName] = useState('');
@@ -203,6 +206,23 @@ export default function SettingsModal() {
       setMatAdjustDelta('');
       showToast('Stock updated', 'success');
     },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const { data: unsubData, refetch: refetchUnsubs } = useQuery({
+    queryKey: ['unsubscribes'],
+    queryFn: () => api.getUnsubscribes(),
+    enabled: showUnsubs,
+    staleTime: 30_000,
+  });
+  const addUnsubMut = useMutation({
+    mutationFn: (email: string) => api.addUnsubscribe(email),
+    onSuccess: () => { refetchUnsubs(); setNewUnsub(''); showToast('Email suppressed'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const removeUnsubMut = useMutation({
+    mutationFn: (id: number) => api.removeUnsubscribe(id),
+    onSuccess: () => { refetchUnsubs(); showToast('Removed from suppression list'); },
     onError: (e: Error) => showToast(e.message, 'error'),
   });
 
@@ -1262,6 +1282,63 @@ export default function SettingsModal() {
             </p>
           )}
         </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Email Suppression List</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Contacts who have unsubscribed from your outreach. WrapOS blocks all automated emails to these addresses. You can manually add addresses or remove them if someone re-subscribes.
+        </p>
+        <button
+          className="btn"
+          style={{ fontSize: 12, marginBottom: showUnsubs ? 12 : 0 }}
+          onClick={() => setShowUnsubs((s) => !s)}
+        >
+          {showUnsubs ? 'Hide' : 'View Suppression List'}
+          {!showUnsubs && unsubData && unsubData.unsubscribes.length > 0 && (
+            <span style={{ marginLeft: 6, background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 6px', fontSize: 10 }}>
+              {unsubData.unsubscribes.length}
+            </span>
+          )}
+        </button>
+        {showUnsubs && (
+          <div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input
+                className="input"
+                style={{ flex: 1, fontSize: 12 }}
+                placeholder="Manually suppress an email address…"
+                value={newUnsub}
+                onChange={(e) => setNewUnsub(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && newUnsub.includes('@')) addUnsubMut.mutate(newUnsub.trim()); }}
+              />
+              <button
+                className="btn"
+                style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                disabled={!newUnsub.includes('@') || addUnsubMut.isPending}
+                onClick={() => addUnsubMut.mutate(newUnsub.trim())}
+              >Add</button>
+            </div>
+            {!unsubData?.unsubscribes.length ? (
+              <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>No suppressions yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 200, overflowY: 'auto' }}>
+                {unsubData.unsubscribes.map((u) => (
+                  <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 7, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+                    <span style={{ flex: 1, fontSize: 12, fontWeight: 500, color: 'var(--text)' }}>{u.email}</span>
+                    {u.company && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{u.company}</span>}
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{new Date(u.unsubscribed_at).toLocaleDateString()}</span>
+                    <button
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14, padding: '0 2px', lineHeight: 1 }}
+                      title="Remove from suppression list"
+                      onClick={() => removeUnsubMut.mutate(u.id)}
+                    >×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {(user?.subStatus === 'active' || user?.subStatus === 'past_due' || user?.subStatus === 'trialing') && (

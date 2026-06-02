@@ -873,6 +873,134 @@ function EmailTemplateStatsCard() {
   );
 }
 
+function ProposalAnalyticsCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['proposal-analytics'],
+    queryFn: () => api.getProposalAnalytics(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+    </div>
+  );
+
+  const d = data;
+  if (!d?.ok || d.total === 0) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+      <div className="an-card-title">Proposal Analytics</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+        Generate proposals for leads to start tracking close rates, time to approve, and view engagement.
+      </p>
+    </div>
+  );
+
+  const statusBar: Array<{ key: string; label: string; color: string; count: number }> = [
+    { key: 'approved', label: 'Approved', color: '#00d97e', count: d.byStatus.approved },
+    { key: 'sent',     label: 'Sent',     color: '#4d8af5', count: d.byStatus.sent },
+    { key: 'draft',    label: 'Draft',    color: '#6b7280', count: d.byStatus.draft },
+    { key: 'declined', label: 'Declined', color: '#ef4444', count: d.byStatus.declined },
+    { key: 'expired',  label: 'Expired',  color: '#9a3a0f', count: d.byStatus.expired },
+  ].filter(s => s.count > 0);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Proposal Analytics</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            {d.total} proposal{d.total !== 1 ? 's' : ''} total
+            {d.closeRate !== null ? ` · ${d.closeRate}% close rate` : ''}
+          </div>
+        </div>
+        {d.closeRate !== null && (
+          <div style={{
+            background: d.closeRate >= 50 ? 'rgba(0,217,126,0.1)' : 'rgba(77,138,245,0.1)',
+            border: `1px solid ${d.closeRate >= 50 ? 'rgba(0,217,126,0.3)' : 'rgba(77,138,245,0.3)'}`,
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700,
+            color: d.closeRate >= 50 ? '#00d97e' : '#4d8af5',
+          }}>
+            {d.closeRate}% close rate
+          </div>
+        )}
+      </div>
+
+      {/* Status distribution bar */}
+      <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 8, gap: 1 }}>
+        {statusBar.map(s => (
+          <div key={s.key} style={{ flex: s.count, background: s.color, minWidth: 2 }} title={`${s.label}: ${s.count}`} />
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+        {statusBar.map(s => (
+          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{s.count}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Key metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: d.topViewed.length > 0 ? 16 : 0 }}>
+        {d.avgHoursToSend !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--text)', letterSpacing: '-0.5px' }}>{d.avgHoursToSend}h</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg time to send</div>
+          </div>
+        )}
+        {d.avgDaysToApprove !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: '#00d97e', letterSpacing: '-0.5px' }}>{d.avgDaysToApprove}d</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg days to approve</div>
+          </div>
+        )}
+        {d.avgViewsApproved !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: '#4d8af5', letterSpacing: '-0.5px' }}>{d.avgViewsApproved}×</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg views (approved)</div>
+          </div>
+        )}
+        {d.avgViewsDeclined !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: '#ef4444', letterSpacing: '-0.5px' }}>{d.avgViewsDeclined}×</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg views (declined)</div>
+          </div>
+        )}
+      </div>
+
+      {/* Top viewed proposals */}
+      {d.topViewed.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Most-viewed proposals
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {d.topViewed.map(p => {
+              const statusColor: Record<string, string> = { approved: '#00d97e', sent: '#4d8af5', declined: '#ef4444', expired: '#9a3a0f', draft: '#6b7280' };
+              return (
+                <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 50px', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
+                    {p.company && <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{p.company}</div>}
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, background: `${statusColor[p.status] ?? '#6b7280'}22`, color: statusColor[p.status] ?? '#6b7280' }}>
+                      {p.status}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#4d8af5' }}>{p.viewCount}×</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SequencePerformanceCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['sequence-performance'],
@@ -3793,6 +3921,9 @@ export default function AnalyticsView() {
 
         {/* ── Email Template Performance ── */}
         <EmailTemplateStatsCard />
+
+        {/* ── Proposal Analytics ── */}
+        <ProposalAnalyticsCard />
 
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />

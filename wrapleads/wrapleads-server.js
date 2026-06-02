@@ -1565,6 +1565,47 @@ app.post('/unsubscribe/:token', async (req, res) => {
   } catch { res.sendStatus(500); }
 });
 
+// GET /settings/unsubscribes — list all opted-out emails for this user
+app.get('/settings/unsubscribes', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT eu.id, eu.email, eu.unsubscribed_at, l.company, l.id AS lead_id
+      FROM email_unsubscribes eu
+      LEFT JOIN leads l ON l.id = eu.lead_id AND l.user_id = $1
+      WHERE eu.user_id = $1
+      ORDER BY eu.unsubscribed_at DESC
+    `, [uid]);
+    res.json({ unsubscribes: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /settings/unsubscribes/:id — remove an email from the suppression list
+app.delete('/settings/unsubscribes/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    await pool.query(`DELETE FROM email_unsubscribes WHERE id=$1 AND user_id=$2`, [id, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /settings/unsubscribes — manually suppress an email address
+app.post('/settings/unsubscribes', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { email } = req.body || {};
+  if (!email || typeof email !== 'string') return res.status(400).json({ error: 'email required' });
+  const token = require('crypto').randomBytes(16).toString('hex');
+  try {
+    await pool.query(
+      `INSERT INTO email_unsubscribes (user_id, email, token) VALUES ($1, $2, $3) ON CONFLICT (user_id, LOWER(email)) DO NOTHING`,
+      [uid, email.trim().toLowerCase(), token]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /leads/:id/unsubscribe-status — check if a lead's email is opted out (authed)
 app.get('/leads/:id/unsubscribe-status', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -20773,6 +20814,67 @@ app.get('/analytics/email-templates', authMiddleware, async (req, res) => {
     });
   } catch (e) {
     console.error('[analytics/email-templates]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// Proposal analytics — aggregate stats across all proposals
+app.get('/analytics/proposals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows: [stats] } = await pool.query(`
+      SELECT
+        COUNT(*)                                                                AS total,
+        COUNT(*) FILTER (WHERE status = 'draft')                               AS draft,
+        COUNT(*) FILTER (WHERE status = 'sent')                                AS sent,
+        COUNT(*) FILTER (WHERE status = 'approved')                            AS approved,
+        COUNT(*) FILTER (WHERE status = 'declined')                            AS declined,
+        COUNT(*) FILTER (WHERE status = 'expired')                             AS expired,
+        ROUND(
+          COUNT(*) FILTER (WHERE status = 'approved')::numeric /
+          NULLIF(COUNT(*) FILTER (WHERE status IN ('sent','approved','declined')), 0) * 100
+        , 1)                                                                   AS close_rate,
+        ROUND(AVG(EXTRACT(EPOCH FROM (sent_at - created_at))/3600)::numeric, 1)
+            FILTER (WHERE sent_at IS NOT NULL)                                 AS avg_hours_to_send,
+        ROUND(AVG(EXTRACT(EPOCH FROM (approved_at - sent_at))/86400)::numeric, 1)
+            FILTER (WHERE approved_at IS NOT NULL AND sent_at IS NOT NULL)     AS avg_days_to_approve,
+        ROUND(AVG(view_count)::numeric, 1)
+            FILTER (WHERE status = 'approved' AND view_count > 0)             AS avg_views_approved,
+        ROUND(AVG(view_count)::numeric, 1)
+            FILTER (WHERE status IN ('declined','expired') AND view_count > 0) AS avg_views_declined
+      FROM proposals WHERE user_id = $1
+    `, [uid]);
+
+    const { rows: topViewed } = await pool.query(`
+      SELECT p.id, p.title, p.status, p.view_count, p.sent_at, l.company
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id AND l.user_id = $1
+      WHERE p.user_id = $1 AND p.view_count > 0
+      ORDER BY p.view_count DESC LIMIT 5
+    `, [uid]);
+
+    res.json({
+      ok: true,
+      total: Number(stats.total),
+      byStatus: {
+        draft: Number(stats.draft),
+        sent: Number(stats.sent),
+        approved: Number(stats.approved),
+        declined: Number(stats.declined),
+        expired: Number(stats.expired),
+      },
+      closeRate: stats.close_rate ? Number(stats.close_rate) : null,
+      avgHoursToSend: stats.avg_hours_to_send ? Number(stats.avg_hours_to_send) : null,
+      avgDaysToApprove: stats.avg_days_to_approve ? Number(stats.avg_days_to_approve) : null,
+      avgViewsApproved: stats.avg_views_approved ? Number(stats.avg_views_approved) : null,
+      avgViewsDeclined: stats.avg_views_declined ? Number(stats.avg_views_declined) : null,
+      topViewed: topViewed.map(r => ({
+        id: Number(r.id), title: r.title, status: r.status,
+        viewCount: Number(r.view_count), sentAt: r.sent_at, company: r.company,
+      })),
+    });
+  } catch (e) {
+    console.error('[analytics/proposals]', e.message);
     res.status(500).json({ ok: false });
   }
 });
