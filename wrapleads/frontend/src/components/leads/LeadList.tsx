@@ -362,7 +362,10 @@ export default function LeadList() {
         icon: '❄️',
         label: 'Going Cold',
         color: '#4d8af5',
-        test: (l) => (l.status === 'replied' || l.status === 'contacted') && days(l.lastContacted) > 14,
+        test: (l) => {
+          if (l.snoozeUntil && new Date(l.snoozeUntil) > new Date()) return false;
+          return (l.status === 'replied' || l.status === 'contacted') && days(l.lastContacted) > 14;
+        },
       },
       {
         id: 'follow-up-overdue',
@@ -370,6 +373,7 @@ export default function LeadList() {
         label: 'Overdue Follow-up',
         color: '#ef4444',
         test: (l) => {
+          if (l.snoozeUntil && new Date(l.snoozeUntil) > new Date()) return false;
           if (!l.followupDueAt) return false;
           const due = new Date(l.followupDueAt).getTime();
           return due < now && l.status !== 'won' && l.status !== 'lost';

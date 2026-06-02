@@ -32,6 +32,7 @@ export interface Lead {
   dotNumber?: string | null;
   fmcsaEnrichedAt?: string | null;
   firstContactedAt?: string | null;
+  snoozeUntil?: string | null;
   createdAt: string;
   updatedAt: string;
 }

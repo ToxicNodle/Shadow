@@ -308,6 +308,9 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_searched_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add email_searched_at column:', e.message); }
   try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS snooze_until TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add snooze_until column:', e.message); }
+  try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_enriched_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add fmcsa_enriched_at column:', e.message); }
   try {
@@ -2789,6 +2792,7 @@ function leadRow(row) {
     lost_at: row.lost_at ? row.lost_at.toISOString() : null,
     smsOptedOut: row.sms_opted_out || false,
     firstContactedAt: row.first_contacted_at ? row.first_contacted_at.toISOString() : null,
+    snoozeUntil: row.snooze_until ? row.snooze_until.toISOString().slice(0, 10) : null,
   };
 }
 
@@ -3510,6 +3514,50 @@ app.get('/track/email/:token', async (req, res) => {
       }
     } catch { /* ignore */ }
   });
+});
+
+// POST /leads/:id/snooze — snooze a lead until a given date (or clear snooze with null)
+app.post('/leads/:id/snooze', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const { until } = req.body || {};
+  try {
+    if (until === null || until === undefined || until === '') {
+      await pool.query(
+        `UPDATE leads SET snooze_until = NULL, updated_at = NOW() WHERE id=$1 AND user_id=$2`,
+        [leadId, uid]
+      );
+      res.json({ ok: true, snoozeUntil: null });
+    } else {
+      const d = new Date(until);
+      if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid date' });
+      const { rows } = await pool.query(
+        `UPDATE leads SET snooze_until = $1, updated_at = NOW() WHERE id=$2 AND user_id=$3 RETURNING snooze_until`,
+        [d.toISOString(), leadId, uid]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Lead not found' });
+      await logActivity(pool, { leadId, userId: uid, type: 'note_added',
+        body: `Snoozed until ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` });
+      res.json({ ok: true, snoozeUntil: rows[0].snooze_until.toISOString().slice(0, 10) });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /mission/snooze-wakeups — leads whose snooze expired in the last 48h
+app.get('/mission/snooze-wakeups', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company, category, status, snooze_until FROM leads
+       WHERE user_id=$1 AND snooze_until IS NOT NULL
+         AND snooze_until >= NOW() - INTERVAL '48 hours'
+         AND snooze_until < NOW()
+         AND status NOT IN ('won','lost')
+       ORDER BY snooze_until DESC LIMIT 10`,
+      [uid]
+    );
+    res.json({ leads: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Follow-up queue: leads where followup_due_at <= today
@@ -6534,11 +6582,13 @@ app.get('/mission', authMiddleware, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
 
     const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR, agingR, stuckR] = await Promise.all([
-      // Overdue follow-ups
+      // Overdue follow-ups (exclude snoozed leads)
       pool.query(`
         SELECT id, company, category, email, followup_due_at, last_contacted
         FROM leads WHERE user_id=$1 AND status IN ('contacted','replied')
-        AND followup_due_at < $2 ORDER BY followup_due_at ASC LIMIT 10
+        AND followup_due_at < $2
+        AND (snooze_until IS NULL OR snooze_until < NOW())
+        ORDER BY followup_due_at ASC LIMIT 10
       `, [uid, today]),
       // New leads with email, no sequence active
       pool.query(`

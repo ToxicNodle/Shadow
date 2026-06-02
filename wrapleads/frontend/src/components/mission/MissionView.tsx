@@ -1922,6 +1922,64 @@ function SetupChecklist() {
   );
 }
 
+// ── Snooze Wakeup Card ────────────────────────────────────────────────────────
+
+function SnoozeWakeupCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['snooze-wakeups'],
+    queryFn: () => api.getSnoozeWakeups(),
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+
+  const leads = data?.leads ?? [];
+  if (!isLoading && leads.length === 0) return null;
+
+  const CAT_LABELS: Record<string, string> = {
+    fleet: 'Fleet', dinoc: 'DI-NOC', gc_referral: 'GC Ref', construction: 'Construction',
+    colorchange: 'Color Change', racing: 'Racing', reatec: 'Reatec', design: 'Design', wallgraphics: 'Wall',
+  };
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #8b5cf6' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <span style={{ marginRight: 5 }}>💤</span>
+          Snooze Wakeup — Follow Up Now
+        </span>
+        <span style={{ fontSize: 10, color: '#8b5cf6', fontWeight: 700, background: 'rgba(139,92,246,0.12)', padding: '2px 8px', borderRadius: 99 }}>
+          {leads.length} woke up
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 10px', lineHeight: 1.4 }}>
+        These leads just came out of snooze — you asked to be reminded. Time to follow up.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {leads.map((l) => (
+          <div
+            key={l.id}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.18)', borderRadius: 8, cursor: 'pointer' }}
+            onClick={() => onLeadClick(l.id)}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.company}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {CAT_LABELS[l.category] ?? l.category} · {l.status}
+              </div>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onLeadClick(l.id); }}
+              style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', flexShrink: 0 }}
+            >
+              Open →
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main MissionView ──────────────────────────────────────────────────────────
 
 const CARD_VIS_KEY = 'wl_mission_card_visibility';
@@ -1961,6 +2019,7 @@ const MISSION_CARDS: { id: string; label: string; icon: string; group: string }[
   { id: 'hot-opens', label: 'Hot Email Opens', icon: '🔥', group: 'Activity' },
   { id: 'activity-feed', label: 'Recent Activity Feed', icon: '🔔', group: 'Activity' },
   { id: 'impact-strip', label: 'ROI Impact Strip', icon: '📈', group: 'Activity' },
+  { id: 'snooze-wakeup', label: 'Snooze Wakeups', icon: '💤', group: 'Operations' },
 ];
 
 export default function MissionView() {
@@ -2148,6 +2207,7 @@ export default function MissionView() {
       {cardVisible('quick-start') && <QuickStartCard leadCount={leads.length} />}
       {cardVisible('sms-inbox') && <SmsInboxCard />}
       {cardVisible('signal-leads') && <SignalLeadsCard />}
+      {cardVisible('snooze-wakeup') && <SnoozeWakeupCard onLeadClick={goToLead} />}
       {cardVisible('fleet-growth') && <FleetGrowthCard />}
       {cardVisible('material-inventory') && <MaterialInventoryCard />}
       {cardVisible('sub-payables') && <SubPayablesCard />}

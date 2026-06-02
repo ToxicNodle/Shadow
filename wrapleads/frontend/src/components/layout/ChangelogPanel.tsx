@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '💤 Snooze Lead — Silence a Lead Until the Right Time',
+    body: 'Every active lead now has a "Snooze Lead" section in the Info tab (below the follow-up date). When a prospect says "reach out in 6 weeks," click Snooze and pick a duration: 1 week, 2 weeks, 1 month, 6 weeks, or a custom date. The lead immediately disappears from Mission "Overdue Follow-up" cards and the "Going Cold" Smart Segment — no more noise from leads you already know about. A 💤 emoji appears on the lead row as a reminder. On the wake date, a "Snooze Wakeup" card appears on Mission showing all leads that just came out of snooze. Open any snoozed lead and click "Wake Now" to clear the snooze instantly. Snooze state also logs an activity note to the timeline. Core action cards (overdue, replied) automatically exclude snoozed leads, so your Mission view stays clean.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '⚙️ Mission Dashboard Customization — Pin or Hide Any Card',
     body: 'The Mission dashboard now has a "Customize" button in the header. Click it to open the card picker panel — all 34 cards organized into five groups (Intelligence, Pipeline, Outreach, Operations, Activity). Each card is a toggle chip: blue = visible, gray = hidden. Click any chip to toggle it instantly. Changes persist in localStorage so your layout survives refreshes and sessions. "Reset All" brings everything back. Core action cards (overdue follow-ups, replied leads, bids due, call-ready leads) always show regardless of the setting — those are the mission. Everything else is optional. Hidden cards still run their data queries in the background, so turning a card back on is instant. The customize panel closes on backdrop click and shows a count of how many cards are currently hidden.',
   },

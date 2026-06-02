@@ -2393,6 +2393,101 @@ function HeatScoreBadge({ leadId }: { leadId: number }) {
   );
 }
 
+// ── Snooze Block ─────────────────────────────────────────────────────────────
+
+function SnoozeBlock({ lead }: { lead: Lead }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const qc = useQueryClient();
+  const [snoozeUntil, setSnoozeUntil] = useState<string | null>(lead.snoozeUntil ?? null);
+  const [customDate, setCustomDate] = useState('');
+
+  const mut = useMutation({
+    mutationFn: (until: string | null) => api.snoozeLead(lead.serverId!, until),
+    onSuccess: (data) => {
+      setSnoozeUntil(data.snoozeUntil);
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['mission'] });
+      if (data.snoozeUntil) {
+        showToast(`Snoozed until ${new Date(data.snoozeUntil).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`);
+      } else {
+        showToast('Snooze cleared');
+      }
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  if (!lead.serverId || ['won', 'lost'].includes(lead.status)) return null;
+
+  function snooze(days: number) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    mut.mutate(d.toISOString().slice(0, 10));
+  }
+
+  const isSnoozed = snoozeUntil && new Date(snoozeUntil) > new Date();
+  const wakeDate = snoozeUntil ? new Date(snoozeUntil).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+
+  return (
+    <div style={{ marginBottom: 14, background: isSnoozed ? 'rgba(139,92,246,0.06)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isSnoozed ? 'rgba(139,92,246,0.25)' : 'var(--border-subtle)'}`, borderRadius: 10, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: isSnoozed ? 8 : 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 13 }}>💤</span>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: isSnoozed ? '#8b5cf6' : 'var(--text-faint)' }}>
+            {isSnoozed ? `Snoozed until ${wakeDate}` : 'Snooze Lead'}
+          </span>
+        </div>
+        {isSnoozed && (
+          <button
+            style={{ fontSize: 11, color: '#8b5cf6', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: 5, padding: '2px 8px', cursor: 'pointer' }}
+            onClick={() => mut.mutate(null)}
+            disabled={mut.isPending}
+          >
+            Wake Now
+          </button>
+        )}
+      </div>
+      {!isSnoozed && (
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+          {[{ label: '1 wk', days: 7 }, { label: '2 wks', days: 14 }, { label: '1 mo', days: 30 }, { label: '6 wks', days: 42 }].map(({ label, days }) => (
+            <button
+              key={days}
+              className="btn"
+              style={{ fontSize: 11, padding: '3px 9px' }}
+              disabled={mut.isPending}
+              onClick={() => snooze(days)}
+            >
+              {label}
+            </button>
+          ))}
+          <input
+            type="date"
+            className="input"
+            style={{ fontSize: 11, padding: '3px 7px', width: 130 }}
+            value={customDate}
+            onChange={(e) => setCustomDate(e.target.value)}
+            min={new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}
+          />
+          {customDate && (
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 11, padding: '3px 9px' }}
+              disabled={mut.isPending}
+              onClick={() => { mut.mutate(customDate); setCustomDate(''); }}
+            >
+              Set
+            </button>
+          )}
+        </div>
+      )}
+      {isSnoozed && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+          This lead is hidden from Mission "Overdue" cards and the Going Cold segment. It will resurface automatically on {wakeDate}.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function InfoTab({ lead }: Props) {
   const { updateLead } = useLeads();
   const { setProposalOpen } = useAppStore((s) => ({ setProposalOpen: s.setProposalOpen }));
@@ -2736,6 +2831,9 @@ export default function InfoTab({ lead }: Props) {
           </div>
         </div>
       </div>
+
+      {/* ── Snooze Lead ── */}
+      <SnoozeBlock lead={local} />
 
       <button
         className="btn btn-primary"

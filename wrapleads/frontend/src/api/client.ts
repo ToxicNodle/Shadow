@@ -2253,4 +2253,10 @@ export const api = {
 
   updateJobStatus: (jobId: number, status: 'scheduled' | 'in_progress' | 'complete') =>
     authFetch<{ ok: boolean; job_status: string }>(`/jobs/${jobId}/status`, { method: 'PATCH', body: JSON.stringify({ job_status: status }) }),
+
+  snoozeLead: (leadId: number, until: string | null) =>
+    authFetch<{ ok: boolean; snoozeUntil: string | null }>(`/leads/${leadId}/snooze`, { method: 'POST', body: JSON.stringify({ until }) }),
+
+  getSnoozeWakeups: () =>
+    authFetch<{ leads: { id: number; company: string; category: string; status: string; snooze_until: string }[] }>('/mission/snooze-wakeups'),
 };
