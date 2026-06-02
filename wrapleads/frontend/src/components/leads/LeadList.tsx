@@ -10,6 +10,7 @@ import { STATUSES } from '../../api/types';
 import type { LeadStatus } from '../../api/types';
 import BroadcastModal from '../modals/BroadcastModal';
 import UrlImportModal from '../modals/UrlImportModal';
+import DedupModal from '../modals/DedupModal';
 
 // ── Filter Presets Bar ────────────────────────────────────────────────────────
 const BUILTIN_PRESETS: { name: string; icon: string; filter: Partial<ActiveFilter> }[] = [
@@ -303,6 +304,7 @@ export default function LeadList() {
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [bulkTagInput, setBulkTagInput] = useState('');
   const [emailHuntRunning, setEmailHuntRunning] = useState(false);
+  const [dedupOpen, setDedupOpen] = useState(false);
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -562,6 +564,18 @@ export default function LeadList() {
         </button>
 
         <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#6366f1', borderColor: 'rgba(99,102,241,0.4)' }}
+          onClick={() => setDedupOpen(true)}
+          title="Scan for duplicate leads and merge them"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
+          </svg>
+          Dedup
+        </button>
+
+        <button
           className={`btn ${hotOnly ? 'btn-primary' : ''}`}
           style={{ fontSize: 12, padding: '4px 10px', gap: 5 }}
           onClick={() => setHotOnly((h) => !h)}
@@ -806,6 +820,7 @@ export default function LeadList() {
       )}
 
       {urlImportOpen && <UrlImportModal onClose={() => setUrlImportOpen(false)} />}
+      {dedupOpen && <DedupModal onClose={() => setDedupOpen(false)} />}
     </div>
   );
 }

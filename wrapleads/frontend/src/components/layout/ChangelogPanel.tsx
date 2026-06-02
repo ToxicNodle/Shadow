@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔀 Duplicate Lead Scanner — Find & Merge in One Click',
+    body: 'Shops that import from multiple sources (FMCSA, SOS, signal worker, manual) accumulate duplicate records over time. The new Dedup Scanner (toolbar button in My Leads, or Command Palette → "Scan for Duplicate Leads") uses fuzzy name matching to find pairs of active leads that are likely the same company. Each pair shows side-by-side cards with status, location, email, phone, fleet size, and category. Three actions: "Keep A" (delete B, move B\'s history to A), "Keep B" (reverse), or "Not a duplicate" to skip the pair. When you merge, all activities, emails, proposals, and quotes from the deleted record are moved to the surviving lead — nothing is lost. Missing fields (email, phone, fleet size) are backfilled from the other record. A merge activity note is added to the timeline for audit trail. Pairs are ranked by similarity — 90%+ matches appear first.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🚀 Quick Start Campaign — Find Your First 10 Prospects',
     body: 'New users (fewer than 5 leads) see a "Find Your First 10 Prospects" card on the Mission dashboard. Select a state, set your fleet size range (e.g. 20–200 trucks), and toggle on auto-sequences. Click "Find 10 Prospects & Launch Campaign" — WrapOS searches the FMCSA fleet database for top-scored carriers in your area, imports them to your CRM, and optionally queues a personalized email sequence for each one. Takes about 30 seconds. The completion card shows how many leads were added, how many email sequences are queued, and the estimated opportunity value (fleet size × $3,200 avg wrap price). Disappears automatically once you have 5+ leads in your account.',
   },

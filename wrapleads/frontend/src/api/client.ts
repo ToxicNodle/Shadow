@@ -2185,4 +2185,20 @@ export const api = {
       }>;
     }>(`/materials/estimate?${q}`);
   },
+
+  // ── Lead Deduplication ──
+  findDuplicateLeads: () =>
+    authFetch<{
+      pairs: Array<{
+        a: { id: number; company: string; status: string; city: string | null; state: string | null; email: string | null; phone: string | null; fleetSize: number | null; category: string };
+        b: { id: number; company: string; status: string; city: string | null; state: string | null; email: string | null; phone: string | null; fleetSize: number | null; category: string };
+        simPct: number;
+      }>;
+    }>('/leads/potential-duplicates'),
+
+  mergeLeads: (sourceId: number, targetId: number) =>
+    authFetch<{ ok: boolean; keptId: number; mergedCompany: string }>(
+      `/leads/${sourceId}/merge-into/${targetId}`,
+      { method: 'POST' }
+    ),
 };

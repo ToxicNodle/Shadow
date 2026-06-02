@@ -3579,6 +3579,102 @@ app.get('/leads/check-duplicate', authMiddleware, async (req, res) => {
   } catch { res.json({ matches: [] }); }
 });
 
+// ── Lead Deduplication Scanner ────────────────────────────────────────────────
+// Finds pairs of leads that are likely the same company via pg_trgm similarity.
+// Excludes won/lost leads. Returns up to 30 candidate pairs ranked by similarity.
+app.get('/leads/potential-duplicates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        a.id AS a_id, a.company AS a_company, a.status AS a_status,
+        a.city AS a_city, a.state AS a_state,
+        a.contact_email AS a_email, a.phone AS a_phone,
+        a.fleet_size AS a_fleet_size, a.category AS a_category,
+        b.id AS b_id, b.company AS b_company, b.status AS b_status,
+        b.city AS b_city, b.state AS b_state,
+        b.contact_email AS b_email, b.phone AS b_phone,
+        b.fleet_size AS b_fleet_size, b.category AS b_category,
+        ROUND(similarity(a.company, b.company)::numeric * 100) AS sim_pct
+      FROM leads a
+      JOIN leads b ON b.user_id = a.user_id AND b.id > a.id
+      WHERE a.user_id = $1
+        AND similarity(a.company, b.company) > 0.60
+        AND a.status NOT IN ('won','lost')
+        AND b.status NOT IN ('won','lost')
+      ORDER BY similarity(a.company, b.company) DESC
+      LIMIT 30
+    `, [uid]);
+
+    res.json({
+      pairs: rows.map((r) => ({
+        a: { id: r.a_id, company: r.a_company, status: r.a_status, city: r.a_city, state: r.a_state, email: r.a_email, phone: r.a_phone, fleetSize: r.a_fleet_size, category: r.a_category },
+        b: { id: r.b_id, company: r.b_company, status: r.b_status, city: r.b_city, state: r.b_state, email: r.b_email, phone: r.b_phone, fleetSize: r.b_fleet_size, category: r.b_category },
+        simPct: Number(r.sim_pct),
+      })),
+    });
+  } catch (e) {
+    console.error('[dedup]', e.message);
+    res.status(500).json({ error: 'Could not scan for duplicates' });
+  }
+});
+
+// POST /leads/:id/merge-into/:targetId — merge source lead into target.
+// Moves activities, emails, proposals to target; patches missing fields; deletes source.
+app.post('/leads/:id/merge-into/:targetId', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const sourceId = parseInt(req.params.id, 10);
+  const targetId = parseInt(req.params.targetId, 10);
+  if (sourceId === targetId) return res.status(400).json({ error: 'Cannot merge a lead into itself' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: both } = await client.query(
+      `SELECT id, company, contact_email, phone, fleet_size, notes FROM leads WHERE id = ANY($1) AND user_id = $2`,
+      [[sourceId, targetId], uid]
+    );
+    if (both.length !== 2) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Lead not found' }); }
+
+    const src  = both.find((l) => l.id === sourceId);
+    const tgt  = both.find((l) => l.id === targetId);
+
+    // Move child records to target
+    await client.query(`UPDATE lead_activities SET lead_id=$1 WHERE lead_id=$2 AND user_id=$3`, [targetId, sourceId, uid]);
+    await client.query(`UPDATE email_tracking  SET lead_id=$1 WHERE lead_id=$2`, [targetId, sourceId]);
+    await client.query(`UPDATE proposals       SET lead_id=$1 WHERE lead_id=$2 AND user_id=$3`, [targetId, sourceId, uid]);
+    await client.query(`UPDATE shop_quotes     SET lead_id=$1 WHERE lead_id=$2 AND user_id=$3`, [targetId, sourceId, uid]);
+
+    // Backfill empty fields on target from source
+    const patches = [];
+    if (!tgt.contact_email && src.contact_email) patches.push(`contact_email = '${src.contact_email.replace(/'/g,"''")}'`);
+    if (!tgt.phone        && src.phone)          patches.push(`phone = '${src.phone.replace(/'/g,"''")}'`);
+    if (!tgt.fleet_size   && src.fleet_size)     patches.push(`fleet_size = ${src.fleet_size}`);
+    if (patches.length) {
+      await client.query(`UPDATE leads SET ${patches.join(', ')} WHERE id=$1`, [targetId]);
+    }
+
+    // Log merge in activity timeline
+    await client.query(
+      `INSERT INTO lead_activities (user_id, lead_id, type, subject, body) VALUES ($1,$2,'note','Leads merged',$3)`,
+      [uid, targetId, `Merged duplicate record "${src.company}" (ID ${src.id}) into this lead.`]
+    );
+
+    // Delete source
+    await client.query(`DELETE FROM leads WHERE id=$1 AND user_id=$2`, [sourceId, uid]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true, keptId: targetId, mergedCompany: src.company });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[merge-leads]', e.message);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ============================================================================
 // Full Analytics Dashboard — pipeline intelligence
 // ============================================================================
