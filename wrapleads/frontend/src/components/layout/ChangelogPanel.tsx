@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📇 Contact CSV Importer — Bulk Update Email & Phone from Apollo',
+    body: 'New "Update Contacts" button in the lead list toolbar (green, between Dedup and Hot Only). Paste a CSV with three columns — Company Name, Email, Phone — and WrapOS fuzzy-matches each row to an existing lead using normalized name comparison (removes LLC, Inc, Racing, Motorsports suffixes and handles abbreviations). Only fills in missing fields: if a lead already has an email, it\'s never overwritten. Shows a live result grid: Updated (green check), No Match (red ✗), Already Complete (gray ≈). Works great for pasting Apollo exports directly — the header row is auto-skipped. Supports up to 500 rows per import. After import, all updated leads refresh automatically. The fuzzy matcher catches common variations: "Acme Trucking LLC" matches "Acme Trucking", "JFR Racing" matches "John Force Racing".',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '💤 Snooze Lead — Silence a Lead Until the Right Time',
     body: 'Every active lead now has a "Snooze Lead" section in the Info tab (below the follow-up date). When a prospect says "reach out in 6 weeks," click Snooze and pick a duration: 1 week, 2 weeks, 1 month, 6 weeks, or a custom date. The lead immediately disappears from Mission "Overdue Follow-up" cards and the "Going Cold" Smart Segment — no more noise from leads you already know about. A 💤 emoji appears on the lead row as a reminder. On the wake date, a "Snooze Wakeup" card appears on Mission showing all leads that just came out of snooze. Open any snoozed lead and click "Wake Now" to clear the snooze instantly. Snooze state also logs an activity note to the timeline. Core action cards (overdue, replied) automatically exclude snoozed leads, so your Mission view stays clean.',
   },

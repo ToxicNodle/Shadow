@@ -309,6 +309,7 @@ export default function LeadList() {
   const [bulkSmsOpen, setBulkSmsOpen] = useState(false);
   const [bulkSmsMsg, setBulkSmsMsg] = useState('Hey {first}, {sender} here from {shop}. Wanted to reach out about fleet graphics for {company}. Reply STOP to opt out.');
   const [bulkSmsSending, setBulkSmsSending] = useState(false);
+  const [importContactsOpen, setImportContactsOpen] = useState(false);
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -636,6 +637,19 @@ export default function LeadList() {
             <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
           </svg>
           Dedup
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#10b981', borderColor: 'rgba(16,185,129,0.4)' }}
+          onClick={() => setImportContactsOpen(true)}
+          title="Paste contacts from Apollo or other tools to update email/phone on existing leads"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          Update Contacts
         </button>
 
         <button
@@ -997,6 +1011,129 @@ export default function LeadList() {
           </div>
         </div>
       )}
+
+      {/* Import Contacts modal */}
+      {importContactsOpen && (
+        <div className="modal-overlay" onClick={() => setImportContactsOpen(false)}>
+          <div className="modal-container" style={{ maxWidth: 540 }} onClick={(e) => e.stopPropagation()}>
+            <ImportContactsModal onClose={() => setImportContactsOpen(false)} />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ── Import Contacts Modal ──────────────────────────────────────────────────────
+
+function ImportContactsModal({ onClose }: { onClose: () => void }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const qc = useQueryClient();
+  const [csv, setCsv] = useState('');
+  const [results, setResults] = useState<{ input: string; matched: string | null; action: string; addedEmail?: string | null; addedPhone?: string | null }[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const PLACEHOLDER = `Company Name,Email,Phone\nAcme Trucking,john@acme.com,317-555-1234\nQuick Delivery LLC,,555-9876`;
+
+  function parseContacts(raw: string) {
+    const lines = raw.trim().split('\n').filter(Boolean);
+    const contacts: { company: string; email?: string; phone?: string }[] = [];
+    for (const line of lines) {
+      const parts = line.split(',').map((p) => p.trim().replace(/^"|"$/g, ''));
+      const company = parts[0]; const email = parts[1]; const phone = parts[2];
+      if (company && company.toLowerCase() !== 'company name' && company.toLowerCase() !== 'company') {
+        contacts.push({ company, ...(email ? { email } : {}), ...(phone ? { phone } : {}) });
+      }
+    }
+    return contacts;
+  }
+
+  async function run() {
+    const contacts = parseContacts(csv);
+    if (!contacts.length) { showToast('No valid rows found. Paste CSV with Company, Email, Phone columns.', 'error'); return; }
+    setLoading(true);
+    try {
+      const data = await api.importContacts(contacts);
+      setResults(data.results);
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast(`${data.updated} contacts updated · ${data.skipped} skipped`);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Import failed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="modal-header">
+        <h2 className="modal-title">📇 Update Contacts from CSV</h2>
+        <button className="modal-close" onClick={onClose}>✕</button>
+      </div>
+      <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+          Paste a CSV with Company, Email, Phone columns. WrapOS fuzzy-matches company names and updates any missing email or phone. Existing values are never overwritten.
+        </p>
+        {!results ? (
+          <>
+            <textarea
+              className="input"
+              style={{ minHeight: 160, fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }}
+              placeholder={PLACEHOLDER}
+              value={csv}
+              onChange={(e) => setCsv(e.target.value)}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+              Tip: Export from Apollo, paste here. Header row (Company Name, Email, Phone) is optional and auto-skipped.
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ justifyContent: 'center' }}
+              onClick={run}
+              disabled={loading || !csv.trim()}
+            >
+              {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Match & Update Contacts`}
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 4 }}>
+              <div style={{ flex: 1, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: '#10b981' }}>{results.filter((r) => r.action === 'updated').length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Updated</div>
+              </div>
+              <div style={{ flex: 1, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: '#ef4444' }}>{results.filter((r) => r.action === 'unmatched').length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>No Match</div>
+              </div>
+              <div style={{ flex: 1, background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: '#94a3b8' }}>{results.filter((r) => r.action === 'already_complete').length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Already Had</div>
+              </div>
+            </div>
+            <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {results.map((r, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                  background: r.action === 'updated' ? 'rgba(16,185,129,0.06)' : r.action === 'unmatched' ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${r.action === 'updated' ? 'rgba(16,185,129,0.18)' : r.action === 'unmatched' ? 'rgba(239,68,68,0.15)' : 'var(--border-subtle)'}`,
+                  borderRadius: 6, fontSize: 11,
+                }}>
+                  <span style={{ fontSize: 13 }}>{r.action === 'updated' ? '✓' : r.action === 'unmatched' ? '✗' : '≈'}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{r.input}</span>
+                    {r.matched && r.matched !== r.input && <span style={{ color: 'var(--text-faint)' }}> → {r.matched}</span>}
+                  </div>
+                  <span style={{ color: 'var(--text-faint)', flexShrink: 0 }}>
+                    {r.action === 'updated' ? [r.addedEmail ? '📧' : '', r.addedPhone ? '📞' : ''].filter(Boolean).join(' ') : r.action === 'unmatched' ? 'no match' : 'complete'}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={onClose}>Done</button>
+          </>
+        )}
+      </div>
+    </>
   );
 }

@@ -20941,6 +20941,81 @@ app.post('/leads/broadcast/preview-ai', authMiddleware, requireShopFlow, async (
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /leads/import-contacts — fuzzy-match a list of {company, email, phone} against existing leads
+// and update matched leads with the provided contact info. Returns matched/unmatched summary.
+app.post('/leads/import-contacts', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { contacts } = req.body || {};
+  if (!Array.isArray(contacts) || !contacts.length) return res.status(400).json({ error: 'contacts[] required' });
+  if (contacts.length > 500) return res.status(400).json({ error: 'Maximum 500 contacts per import' });
+
+  function normName(n) {
+    return (n || '').toLowerCase()
+      .replace(/\b(llc|inc|corp|ltd|co|company|group|holdings|enterprises|motorsports|racing|team|motorsport)\b/g, '')
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function nameSimilarity(a, b) {
+    const na = normName(a), nb = normName(b);
+    if (!na || !nb) return 0;
+    if (na === nb) return 1;
+    if (na.includes(nb) || nb.includes(na)) return 0.85;
+    // Levenshtein distance
+    const m = na.length, n2 = nb.length;
+    if (Math.abs(m - n2) > 8) return 0;
+    const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n2 + 1 }, (_, j) => i || j));
+    for (let i = 1; i <= m; i++) for (let j = 1; j <= n2; j++) {
+      dp[i][j] = na[i-1] === nb[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    }
+    const dist = dp[m][n2];
+    return Math.max(0, 1 - dist / Math.max(m, n2));
+  }
+
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, email, phone FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost')`,
+      [uid]
+    );
+
+    const results = [];
+    let updated = 0, skipped = 0;
+
+    for (const c of contacts) {
+      const cEmail = (c.email || '').trim().toLowerCase();
+      const cPhone = (c.phone || '').replace(/[^0-9+]/g, '');
+      const cCompany = (c.company || '').trim();
+      if (!cCompany || (!cEmail && !cPhone)) { skipped++; continue; }
+
+      // Find best match
+      let best = null, bestScore = 0;
+      for (const l of leads) {
+        const score = nameSimilarity(l.company, cCompany);
+        if (score > bestScore && score >= 0.72) { bestScore = score; best = l; }
+      }
+
+      if (!best) { results.push({ input: cCompany, matched: null, action: 'unmatched' }); skipped++; continue; }
+
+      const sets = [], params = [];
+      if (cEmail && !best.email) { params.push(cEmail); sets.push(`email = $${params.length}`); }
+      if (cPhone && !best.phone) { params.push(cPhone); sets.push(`phone = $${params.length}`); }
+
+      if (!sets.length) { results.push({ input: cCompany, matched: best.company, action: 'already_complete' }); skipped++; continue; }
+
+      params.push(best.id, uid);
+      await pool.query(
+        `UPDATE leads SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length - 1} AND user_id = $${params.length}`,
+        params
+      );
+      results.push({ input: cCompany, matched: best.company, action: 'updated', addedEmail: cEmail && !best.email ? cEmail : null, addedPhone: cPhone && !best.phone ? cPhone : null });
+      updated++;
+    }
+
+    res.json({ ok: true, updated, skipped: contacts.length - updated, results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /leads/bulk-sms — send an SMS to up to 50 leads at once (Twilio)
 // Gates: requireShopFlow + Twilio configured in settings
 app.post('/leads/bulk-sms', authMiddleware, requireShopFlow, async (req, res) => {

@@ -2259,4 +2259,12 @@ export const api = {
 
   getSnoozeWakeups: () =>
     authFetch<{ leads: { id: number; company: string; category: string; status: string; snooze_until: string }[] }>('/mission/snooze-wakeups'),
+
+  importContacts: (contacts: { company: string; email?: string; phone?: string }[]) =>
+    authFetch<{
+      ok: boolean;
+      updated: number;
+      skipped: number;
+      results: { input: string; matched: string | null; action: 'updated' | 'unmatched' | 'already_complete'; addedEmail?: string | null; addedPhone?: string | null }[];
+    }>('/leads/import-contacts', { method: 'POST', body: JSON.stringify({ contacts }) }),
 };
