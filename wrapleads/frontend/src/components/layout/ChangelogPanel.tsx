@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🚀 Quick Start Campaign — Find Your First 10 Prospects',
+    body: 'New users (fewer than 5 leads) see a "Find Your First 10 Prospects" card on the Mission dashboard. Select a state, set your fleet size range (e.g. 20–200 trucks), and toggle on auto-sequences. Click "Find 10 Prospects & Launch Campaign" — WrapOS searches the FMCSA fleet database for top-scored carriers in your area, imports them to your CRM, and optionally queues a personalized email sequence for each one. Takes about 30 seconds. The completion card shows how many leads were added, how many email sequences are queued, and the estimated opportunity value (fleet size × $3,200 avg wrap price). Disappears automatically once you have 5+ leads in your account.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🏗 Create Job from Approved Proposal — One Click',
     body: 'When a client approves your proposal, a new "🏗 Create Job" button appears in the Proposal panel. Click it to instantly create a new job pre-filled with the company name, wrap category (inferred from lead category), estimated revenue (from the approved pricing tier), and a default install date 14 days out. The job appears immediately in your Jobs view — open it to fill in material details, upload photos, and assign install dates. An activity note is logged to the lead timeline referencing the source proposal. Saves the step of manually creating a job and re-entering client info after every approval.',
   },
