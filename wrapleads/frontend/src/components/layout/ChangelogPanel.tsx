@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🎯 Smart Segments — AI-Powered Lead Groupings That Update Automatically',
+    body: 'Your lead list now shows data-driven segment chips above the bulk toolbar. Five segments are computed in real time from your lead data: "High-Value Sleepers" (high-score leads untouched for 30+ days), "Near Win" (deals in Meeting/Proposal stage with recent contact), "Going Cold" (replied or contacted leads with 14+ days of silence), "Overdue Follow-up" (past-due follow-up dates), and "Missing Email" (leads with a website domain but no email address — prime candidates for Find Emails). Segments show a count badge and only appear when they contain leads. Click a segment chip to filter your entire list to just those leads. Combine with the existing status/category/tag filters, then bulk-email or activate sequences for that exact group. Smart Segments re-compute every time your lead data updates.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔗 Client Job Status Tracker — Live Progress Page for Fleet Managers',
     body: 'Every job now has a "Tracker" tab inside the job modal. Set the production stage (Scheduled → In Progress → Complete) with one click — the public client page updates instantly. Click "Create Status Page" to generate a permanent, shareable URL that requires no login. Send it to your fleet contact so they can check job progress, see uploaded photos, and find your shop\'s contact info without calling you. The page shows your shop logo, project details (company, vehicle count, category, material), a color-coded 3-stage progress tracker, the full photo gallery, and a contact bar with click-to-call and email links. Powered by WrapOS branding in the footer. The URL persists — you can use it for every communication update throughout the job.',
   },

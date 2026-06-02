@@ -298,6 +298,7 @@ export default function LeadList() {
   const qc = useQueryClient();
   const [hotOnly, setHotOnly] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [segmentFilter, setSegmentFilter] = useState<string | null>(null);
   const [seqStatus, setSeqStatus] = useState<'idle' | 'running' | 'done'>('idle');
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -333,6 +334,57 @@ export default function LeadList() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); setBulkTagOpen(false); setBulkTagInput(''); },
   });
 
+  // ── Smart Segments — computed from lead data ──────────────────────────────
+  const SMART_SEGMENTS = useMemo(() => {
+    const now = Date.now();
+    const days = (iso: string | undefined | null) => iso ? (now - new Date(iso).getTime()) / 86400000 : Infinity;
+
+    const defs: { id: string; icon: string; label: string; color: string; test: (l: (typeof leads)[number]) => boolean }[] = [
+      {
+        id: 'sleepers',
+        icon: '🎯',
+        label: 'High-Value Sleepers',
+        color: '#f59e0b',
+        test: (l) => (l.status === 'new' || l.status === 'cold') && scoreLead(l) >= 65 && days(l.lastContacted) > 30,
+      },
+      {
+        id: 'near-win',
+        icon: '🏆',
+        label: 'Near Win',
+        color: '#22c55e',
+        test: (l) => (l.status === 'meeting' || l.status === 'proposal') && days(l.lastContacted) <= 21,
+      },
+      {
+        id: 'going-cold',
+        icon: '❄️',
+        label: 'Going Cold',
+        color: '#4d8af5',
+        test: (l) => (l.status === 'replied' || l.status === 'contacted') && days(l.lastContacted) > 14,
+      },
+      {
+        id: 'follow-up-overdue',
+        icon: '⏰',
+        label: 'Overdue Follow-up',
+        color: '#ef4444',
+        test: (l) => {
+          if (!l.followupDueAt) return false;
+          const due = new Date(l.followupDueAt).getTime();
+          return due < now && l.status !== 'won' && l.status !== 'lost';
+        },
+      },
+      {
+        id: 'no-email',
+        icon: '📧',
+        label: 'Missing Email',
+        color: '#8b5cf6',
+        test: (l) => !l.email && !!l.website && l.status !== 'won' && l.status !== 'lost',
+      },
+    ];
+
+    return defs.map((d) => ({ ...d, ids: new Set(leads.filter(d.test).map((l) => l.id)) }))
+      .filter((s) => s.ids.size > 0);
+  }, [leads]);
+
   const filtered = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     const base = leads.filter((l) => {
@@ -342,6 +394,10 @@ export default function LeadList() {
       if (activeFilter.followupDue && !(l.followupDueAt && l.followupDueAt <= today)) return false;
       if (hotOnly && scoreLead(l) < 65) return false;
       if (tagFilter && !(l.tags ?? []).includes(tagFilter)) return false;
+      if (segmentFilter) {
+        const seg = SMART_SEGMENTS.find((s) => s.id === segmentFilter);
+        if (seg && !seg.ids.has(l.id)) return false;
+      }
       if (activeFilter.search) {
         const q = activeFilter.search.toLowerCase();
         const haystack = [l.company, l.contactName, l.email, l.city, l.state].join(' ').toLowerCase();
@@ -362,7 +418,7 @@ export default function LeadList() {
       }
       return 0;
     });
-  }, [leads, activeFilter, leadSort, hotOnly, tagFilter]);
+  }, [leads, activeFilter, leadSort, hotOnly, tagFilter, segmentFilter, SMART_SEGMENTS]);
 
   // Unique tags across all leads (sorted by frequency, then alpha)
   const allTags = useMemo(() => {
@@ -625,6 +681,50 @@ export default function LeadList() {
               onClick={() => setTagFilter(null)}
             >
               Clear filter
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Smart Segments — data-driven lead groupings */}
+      {SMART_SEGMENTS.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '4px 0 2px' }}>
+          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', flexShrink: 0 }}>Segments:</span>
+          {SMART_SEGMENTS.map((seg) => {
+            const active = segmentFilter === seg.id;
+            return (
+              <button
+                key={seg.id}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: 11, fontWeight: active ? 700 : 500,
+                  padding: '2px 9px', borderRadius: 12,
+                  border: `1px solid ${active ? seg.color : 'var(--border)'}`,
+                  background: active ? `${seg.color}22` : 'var(--bg-card)',
+                  color: active ? seg.color : 'var(--text-muted)',
+                  cursor: 'pointer', transition: 'all 0.12s',
+                }}
+                onClick={() => setSegmentFilter(active ? null : seg.id)}
+                title={`Show ${seg.label} leads`}
+              >
+                <span>{seg.icon}</span>
+                <span>{seg.label}</span>
+                <span style={{
+                  background: active ? seg.color : 'var(--bg-elev-2)',
+                  color: active ? '#fff' : 'var(--text-faint)',
+                  borderRadius: 8, padding: '0 5px', fontSize: 9, fontWeight: 700,
+                }}>
+                  {seg.ids.size}
+                </span>
+              </button>
+            );
+          })}
+          {segmentFilter && (
+            <button
+              style={{ fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+              onClick={() => setSegmentFilter(null)}
+            >
+              ✕ Clear
             </button>
           )}
         </div>
