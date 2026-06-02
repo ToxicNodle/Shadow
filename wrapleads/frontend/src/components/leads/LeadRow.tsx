@@ -77,7 +77,9 @@ export default function LeadRow({ lead, selected, checked }: Props) {
     }
   }
 
-  const isOverdue = lead.followupDueAt
+  const isSnoozed = lead.snoozeUntil ? new Date(lead.snoozeUntil) > new Date() : false;
+
+  const isOverdue = !isSnoozed && lead.followupDueAt
     ? new Date(lead.followupDueAt) < new Date()
     : false;
 
@@ -176,10 +178,14 @@ export default function LeadRow({ lead, selected, checked }: Props) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span className={`status-tag ${lead.status}`}>{STATUSES[lead.status]}</span>
+        {isSnoozed && (
+          <span title={`Snoozed until ${new Date(lead.snoozeUntil!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+            style={{ fontSize: 11, color: '#8b5cf6', cursor: 'default' }}>💤</span>
+        )}
         {isOverdue && (
           <span className="lead-overdue-dot" title="Follow-up overdue" />
         )}
-        {isStale && !isOverdue && (
+        {isStale && !isOverdue && !isSnoozed && (
           <span className="lead-stale-dot" title="No contact in 30+ days" />
         )}
       </div>

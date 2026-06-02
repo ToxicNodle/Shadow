@@ -308,6 +308,9 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_searched_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add email_searched_at column:', e.message); }
   try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS snooze_until TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add snooze_until column:', e.message); }
+  try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_enriched_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add fmcsa_enriched_at column:', e.message); }
   try {
@@ -703,6 +706,10 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS nudge_sent_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
+    // Tiered pricing: [{label, description, price, highlight, features:[]}]
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS pricing_options JSONB`);
+    // Stores which tier the client selected on approval
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS selected_tier TEXT`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
   }
@@ -978,6 +985,8 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_crew_count INT DEFAULT 2`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS cross_sell_email_sent BOOLEAN DEFAULT FALSE`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS care_email_sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS tracker_token TEXT UNIQUE`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS job_status TEXT DEFAULT 'scheduled'`);
   } catch (e) {
     console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
   }
@@ -1045,6 +1054,30 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_unsub_token ON email_unsubscribes(token)`);
   } catch (e) {
     console.warn('[migrate] Could not create email_unsubscribes table:', e.message);
+  }
+
+  // Appointment scheduling — on-site measurements, design consults, installs
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS appointments (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        lead_id       BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        title         TEXT NOT NULL DEFAULT 'Appointment',
+        appt_type     TEXT NOT NULL DEFAULT 'measurement',
+        scheduled_at  TIMESTAMPTZ NOT NULL,
+        duration_mins INTEGER NOT NULL DEFAULT 60,
+        location      TEXT,
+        notes         TEXT,
+        status        TEXT NOT NULL DEFAULT 'upcoming',
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_appointments_user ON appointments(user_id, scheduled_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_appointments_lead ON appointments(lead_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create appointments table:', e.message);
   }
 
   // Shareable ROI calculator links — pre-filled for a specific prospect
@@ -2759,6 +2792,7 @@ function leadRow(row) {
     lost_at: row.lost_at ? row.lost_at.toISOString() : null,
     smsOptedOut: row.sms_opted_out || false,
     firstContactedAt: row.first_contacted_at ? row.first_contacted_at.toISOString() : null,
+    snoozeUntil: row.snooze_until ? row.snooze_until.toISOString().slice(0, 10) : null,
   };
 }
 
@@ -3482,6 +3516,50 @@ app.get('/track/email/:token', async (req, res) => {
   });
 });
 
+// POST /leads/:id/snooze — snooze a lead until a given date (or clear snooze with null)
+app.post('/leads/:id/snooze', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const { until } = req.body || {};
+  try {
+    if (until === null || until === undefined || until === '') {
+      await pool.query(
+        `UPDATE leads SET snooze_until = NULL, updated_at = NOW() WHERE id=$1 AND user_id=$2`,
+        [leadId, uid]
+      );
+      res.json({ ok: true, snoozeUntil: null });
+    } else {
+      const d = new Date(until);
+      if (isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid date' });
+      const { rows } = await pool.query(
+        `UPDATE leads SET snooze_until = $1, updated_at = NOW() WHERE id=$2 AND user_id=$3 RETURNING snooze_until`,
+        [d.toISOString(), leadId, uid]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Lead not found' });
+      await logActivity(pool, { leadId, userId: uid, type: 'note_added',
+        body: `Snoozed until ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` });
+      res.json({ ok: true, snoozeUntil: rows[0].snooze_until.toISOString().slice(0, 10) });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /mission/snooze-wakeups — leads whose snooze expired in the last 48h
+app.get('/mission/snooze-wakeups', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company, category, status, snooze_until FROM leads
+       WHERE user_id=$1 AND snooze_until IS NOT NULL
+         AND snooze_until >= NOW() - INTERVAL '48 hours'
+         AND snooze_until < NOW()
+         AND status NOT IN ('won','lost')
+       ORDER BY snooze_until DESC LIMIT 10`,
+      [uid]
+    );
+    res.json({ leads: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Follow-up queue: leads where followup_due_at <= today
 app.get('/leads/followup-due', authMiddleware, async (req, res) => {
   try {
@@ -3573,6 +3651,203 @@ app.get('/leads/check-duplicate', authMiddleware, async (req, res) => {
     );
     res.json({ matches: rows });
   } catch { res.json({ matches: [] }); }
+});
+
+// ── Lead Deduplication Scanner ────────────────────────────────────────────────
+// Finds pairs of leads that are likely the same company via pg_trgm similarity.
+// Excludes won/lost leads. Returns up to 30 candidate pairs ranked by similarity.
+app.get('/leads/potential-duplicates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        a.id AS a_id, a.company AS a_company, a.status AS a_status,
+        a.city AS a_city, a.state AS a_state,
+        a.contact_email AS a_email, a.phone AS a_phone,
+        a.fleet_size AS a_fleet_size, a.category AS a_category,
+        b.id AS b_id, b.company AS b_company, b.status AS b_status,
+        b.city AS b_city, b.state AS b_state,
+        b.contact_email AS b_email, b.phone AS b_phone,
+        b.fleet_size AS b_fleet_size, b.category AS b_category,
+        ROUND(similarity(a.company, b.company)::numeric * 100) AS sim_pct
+      FROM leads a
+      JOIN leads b ON b.user_id = a.user_id AND b.id > a.id
+      WHERE a.user_id = $1
+        AND similarity(a.company, b.company) > 0.60
+        AND a.status NOT IN ('won','lost')
+        AND b.status NOT IN ('won','lost')
+      ORDER BY similarity(a.company, b.company) DESC
+      LIMIT 30
+    `, [uid]);
+
+    res.json({
+      pairs: rows.map((r) => ({
+        a: { id: r.a_id, company: r.a_company, status: r.a_status, city: r.a_city, state: r.a_state, email: r.a_email, phone: r.a_phone, fleetSize: r.a_fleet_size, category: r.a_category },
+        b: { id: r.b_id, company: r.b_company, status: r.b_status, city: r.b_city, state: r.b_state, email: r.b_email, phone: r.b_phone, fleetSize: r.b_fleet_size, category: r.b_category },
+        simPct: Number(r.sim_pct),
+      })),
+    });
+  } catch (e) {
+    console.error('[dedup]', e.message);
+    res.status(500).json({ error: 'Could not scan for duplicates' });
+  }
+});
+
+// POST /leads/:id/merge-into/:targetId — merge source lead into target.
+// Moves activities, emails, proposals to target; patches missing fields; deletes source.
+app.post('/leads/:id/merge-into/:targetId', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const sourceId = parseInt(req.params.id, 10);
+  const targetId = parseInt(req.params.targetId, 10);
+  if (sourceId === targetId) return res.status(400).json({ error: 'Cannot merge a lead into itself' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: both } = await client.query(
+      `SELECT id, company, contact_email, phone, fleet_size, notes FROM leads WHERE id = ANY($1) AND user_id = $2`,
+      [[sourceId, targetId], uid]
+    );
+    if (both.length !== 2) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Lead not found' }); }
+
+    const src  = both.find((l) => l.id === sourceId);
+    const tgt  = both.find((l) => l.id === targetId);
+
+    // Move child records to target
+    await client.query(`UPDATE lead_activities SET lead_id=$1 WHERE lead_id=$2 AND user_id=$3`, [targetId, sourceId, uid]);
+    await client.query(`UPDATE email_tracking  SET lead_id=$1 WHERE lead_id=$2`, [targetId, sourceId]);
+    await client.query(`UPDATE proposals       SET lead_id=$1 WHERE lead_id=$2 AND user_id=$3`, [targetId, sourceId, uid]);
+    await client.query(`UPDATE shop_quotes     SET lead_id=$1 WHERE lead_id=$2 AND user_id=$3`, [targetId, sourceId, uid]);
+
+    // Backfill empty fields on target from source
+    const patches = [];
+    if (!tgt.contact_email && src.contact_email) patches.push(`contact_email = '${src.contact_email.replace(/'/g,"''")}'`);
+    if (!tgt.phone        && src.phone)          patches.push(`phone = '${src.phone.replace(/'/g,"''")}'`);
+    if (!tgt.fleet_size   && src.fleet_size)     patches.push(`fleet_size = ${src.fleet_size}`);
+    if (patches.length) {
+      await client.query(`UPDATE leads SET ${patches.join(', ')} WHERE id=$1`, [targetId]);
+    }
+
+    // Log merge in activity timeline
+    await client.query(
+      `INSERT INTO lead_activities (user_id, lead_id, type, subject, body) VALUES ($1,$2,'note','Leads merged',$3)`,
+      [uid, targetId, `Merged duplicate record "${src.company}" (ID ${src.id}) into this lead.`]
+    );
+
+    // Delete source
+    await client.query(`DELETE FROM leads WHERE id=$1 AND user_id=$2`, [sourceId, uid]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true, keptId: targetId, mergedCompany: src.company });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[merge-leads]', e.message);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ============================================================================
+// Appointment Scheduling
+// ============================================================================
+
+const APPT_TYPES = ['measurement', 'consultation', 'design-review', 'install', 'follow-up', 'other'];
+
+// GET /appointments — upcoming appointments for this user
+app.get('/appointments', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { leadId, upcoming } = req.query;
+  try {
+    let where = 'WHERE a.user_id = $1';
+    const params = [uid];
+    if (leadId) { params.push(leadId); where += ` AND a.lead_id = $${params.length}`; }
+    if (upcoming === '1') where += ` AND a.scheduled_at >= NOW() - INTERVAL '1 hour'`;
+    const { rows } = await pool.query(`
+      SELECT a.*, l.company, l.contact_name, l.city AS lead_city, l.state AS lead_state
+      FROM appointments a
+      LEFT JOIN leads l ON l.id = a.lead_id
+      ${where}
+      ORDER BY a.scheduled_at ASC
+      LIMIT 100
+    `, params);
+    res.json({ appointments: rows });
+  } catch (e) { console.error('[appointments]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST /appointments — create
+app.post('/appointments', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { leadId, title, apptType, scheduledAt, durationMins, location, notes } = req.body || {};
+  if (!scheduledAt) return res.status(400).json({ error: 'scheduledAt required' });
+  const type = APPT_TYPES.includes(apptType) ? apptType : 'measurement';
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO appointments (user_id, lead_id, title, appt_type, scheduled_at, duration_mins, location, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+    `, [uid, leadId || null, title || 'Appointment', type, scheduledAt, durationMins || 60, location || null, notes || null]);
+
+    if (leadId) {
+      const compR = await pool.query('SELECT company FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+      const co = compR.rows[0]?.company || 'this lead';
+      await logActivity(pool, { leadId: parseInt(leadId, 10), userId: uid, type: 'note',
+        subject: 'Appointment scheduled',
+        body: `${rows[0].title} (${type}) on ${new Date(scheduledAt).toLocaleDateString()} at ${new Date(scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${location ? ` — ${location}` : ''}` });
+    }
+    res.json({ ok: true, appointment: rows[0] });
+  } catch (e) { console.error('[appointments/create]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /appointments/:id — update
+app.patch('/appointments/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  const { title, apptType, scheduledAt, durationMins, location, notes, status } = req.body || {};
+  try {
+    const sets = [];
+    const params = [];
+    const add = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
+    if (title       !== undefined) add('title', title);
+    if (apptType    !== undefined) add('appt_type', APPT_TYPES.includes(apptType) ? apptType : 'measurement');
+    if (scheduledAt !== undefined) add('scheduled_at', scheduledAt);
+    if (durationMins !== undefined) add('duration_mins', durationMins);
+    if (location    !== undefined) add('location', location);
+    if (notes       !== undefined) add('notes', notes);
+    if (status      !== undefined) add('status', status);
+    if (!sets.length) return res.json({ ok: true });
+    sets.push(`updated_at=NOW()`);
+    params.push(id, uid);
+    await pool.query(`UPDATE appointments SET ${sets.join(',')} WHERE id=$${params.length-1} AND user_id=$${params.length}`, params);
+    res.json({ ok: true });
+  } catch (e) { console.error('[appointments/patch]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /appointments/:id
+app.delete('/appointments/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  await pool.query('DELETE FROM appointments WHERE id=$1 AND user_id=$2', [parseInt(req.params.id,10), uid]);
+  res.json({ ok: true });
+});
+
+// GET /appointments/upcoming — next 7 days (for Mission card)
+app.get('/appointments/upcoming', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT a.*, l.company, l.contact_name, l.contact_email AS lead_email,
+             l.city AS lead_city, l.state AS lead_state, l.id AS lead_id_link
+      FROM appointments a
+      LEFT JOIN leads l ON l.id = a.lead_id
+      WHERE a.user_id = $1
+        AND a.scheduled_at >= NOW() - INTERVAL '1 hour'
+        AND a.scheduled_at <= NOW() + INTERVAL '14 days'
+        AND a.status = 'upcoming'
+      ORDER BY a.scheduled_at ASC
+      LIMIT 10
+    `, [uid]);
+    res.json({ appointments: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================================
@@ -6307,11 +6582,13 @@ app.get('/mission', authMiddleware, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
 
     const [overdueR, newR, repliedR, bidsR, seqR, wonR, callReadyR, needsEmailR, agingR, stuckR] = await Promise.all([
-      // Overdue follow-ups
+      // Overdue follow-ups (exclude snoozed leads)
       pool.query(`
         SELECT id, company, category, email, followup_due_at, last_contacted
         FROM leads WHERE user_id=$1 AND status IN ('contacted','replied')
-        AND followup_due_at < $2 ORDER BY followup_due_at ASC LIMIT 10
+        AND followup_due_at < $2
+        AND (snooze_until IS NULL OR snooze_until < NOW())
+        ORDER BY followup_due_at ASC LIMIT 10
       `, [uid, today]),
       // New leads with email, no sequence active
       pool.query(`
@@ -9010,6 +9287,23 @@ app.patch('/jobs/:id/payment', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PATCH /jobs/:id/status — update job production status (scheduled → in_progress → complete)
+app.patch('/jobs/:id/status', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { job_status } = req.body || {};
+  const VALID = ['scheduled', 'in_progress', 'complete'];
+  if (!VALID.includes(job_status)) return res.status(400).json({ error: `job_status must be one of: ${VALID.join(', ')}` });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE installed_jobs SET job_status=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3 RETURNING id, job_status`,
+      [job_status, jobId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Job not found' });
+    res.json({ ok: true, job_status: rows[0].job_status });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /mission/overdue-invoices — jobs completed 14+ days ago with no payment received
 app.get('/mission/overdue-invoices', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -9159,6 +9453,75 @@ app.get('/jobs/outstanding', authMiddleware, async (req, res) => {
 app.delete('/jobs/:id', authMiddleware, async (req, res) => {
   await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
   res.json({ ok: true });
+});
+
+// POST /proposals/:id/create-job — convert an approved proposal into a new installed job
+app.post('/proposals/:id/create-job', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const proposalId = parseInt(req.params.id, 10);
+  try {
+    const { rows: pRows } = await pool.query(
+      `SELECT p.*, l.company, l.category, l.city, l.state, l.contact_name
+       FROM proposals p
+       LEFT JOIN leads l ON l.id = p.lead_id
+       WHERE p.id=$1 AND p.user_id=$2`,
+      [proposalId, uid]
+    );
+    if (!pRows.length) return res.status(404).json({ error: 'Not found' });
+    const p = pRows[0];
+
+    // Derive revenue from pricing_options (selected tier or best tier price)
+    let revenue = null;
+    if (p.pricing_options) {
+      try {
+        const tiers = Array.isArray(p.pricing_options) ? p.pricing_options : JSON.parse(p.pricing_options);
+        if (p.selected_tier) {
+          const chosen = tiers.find(t => t.label === p.selected_tier);
+          if (chosen) revenue = Number(chosen.price) || null;
+        }
+        if (!revenue && tiers.length) {
+          // Fall back to highest-priced tier
+          revenue = Math.max(...tiers.map(t => Number(t.price) || 0)) || null;
+        }
+      } catch (_) {}
+    }
+
+    // Map lead category to vehicle/wrap category
+    const CAT_MAP = {
+      fleet: 'fleet', colorchange: 'colorchange', dinoc: 'dinoc', reatec: 'reatec',
+      construction: 'fleet', wallgraphics: 'wallgraphics', design: 'fleet',
+      gc_referral: 'fleet', racing: 'colorchange',
+    };
+    const wrapCategory = CAT_MAP[p.category] || 'fleet';
+
+    const installDate = new Date();
+    installDate.setDate(installDate.getDate() + 14); // default: 14 days from now
+
+    const { rows: jobRows } = await pool.query(
+      `INSERT INTO installed_jobs
+         (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, install_date, life_years, notes, job_revenue, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'scheduled')
+       RETURNING id`,
+      [uid, p.lead_id || null, p.company || 'Unknown',
+       'other', 1, wrapCategory,
+       installDate.toISOString().slice(0, 10),
+       5,
+       `Created from proposal: ${p.title}${p.selected_tier ? ` — "${p.selected_tier}" package` : ''}`,
+       revenue]
+    );
+    const jobId = jobRows[0].id;
+
+    await logActivity(pool, {
+      leadId: p.lead_id, userId: uid, type: 'note',
+      subject: `Job created from proposal: ${p.title}`,
+      metadata: { proposal_id: proposalId, job_id: jobId, auto: true },
+    });
+
+    res.json({ ok: true, jobId });
+  } catch (e) {
+    console.error('[proposal/create-job]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // POST /jobs/:id/create-reorder-lead — manually convert an installed job into a re-order CRM lead
@@ -12605,6 +12968,72 @@ Write in third person, present tense. No bullet points — flowing prose only.`;
   }
 });
 
+// POST /ai/video-pitch-script — 90-second personalized video pitch script (requireShopFlow)
+// Returns a structured script the rep can read aloud when recording a video message (Loom/BombBomb).
+// Video pitches have 3-5× higher response rates than text emails.
+app.post('/ai/video-pitch-script', authMiddleware, requireShopFlow, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  const { leadId } = req.body || {};
+  if (!leadId) return res.status(400).json({ error: 'leadId required' });
+
+  const uid = String(req.user.id);
+  try {
+    const [leadR, settingsR] = await Promise.all([
+      pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const s = settingsR.rows[0]?.settings_json || {};
+    const senderName = s.senderName || 'the team';
+    const shopName = s.companyName || 'our shop';
+    const shopLocation = s.shopCity ? `${s.shopCity}, ${s.shopState || ''}` : 'your area';
+
+    const catNote = {
+      fleet: `commercial fleet wraps — brand visibility on every truck, ROI vs. billboards`,
+      dinoc: `DI-NOC architectural film — surface renovation without demo`,
+      gc_referral: `commercial graphics spec through GC relationships`,
+      construction: `construction fleet and equipment wraps`,
+      colorchange: `color-change wrap — premium aesthetics, reversible`,
+      racing: `race car and motorsport livery`,
+      reatec: `Rea Tec film — realistic stone/marble/wood surfaces`,
+      wallgraphics: `wall and window graphics`,
+      design: `custom branding and design`,
+    }[lead.category] || 'vehicle graphics and wraps';
+
+    const prompt = `You are a top-performing sales coach. Generate a 90-second personalized video pitch script for ${senderName} at ${shopName} (located in ${shopLocation}) to send to ${lead.contact_name || 'the fleet manager'} at ${lead.company}.
+
+Specialty: ${catNote}
+Fleet size: ${lead.fleet_size ? `~${lead.fleet_size} vehicles` : 'unknown'}
+Location: ${lead.city ? `${lead.city}, ${lead.state}` : 'unknown'}
+Pitch angle from CRM: ${lead.pitch_angle || 'none noted'}
+Current stage: ${lead.status}
+
+Return a JSON object with these exact fields:
+{
+  "hook": "1-2 sentence opener — specific to this company, conversational, not generic. Reference something real (fleet size, location, category signal).",
+  "valueStatement": "2-3 sentences on how ${shopName} specifically helps companies like ${lead.company}. Concrete ROI or outcome.",
+  "proofPoint": "1 sentence social proof — 'We recently wrapped [generic fleet type] in [generic state]...' Keep it real-sounding but don't make up specific company names.",
+  "callToAction": "1 sentence soft CTA — '15 minutes this week? I can walk you through some concepts that might work for your fleet.'",
+  "totalTimeEstimate": "estimated read time in seconds (target 75-90)",
+  "talkingPoints": ["3-4 bullet points to keep visible while recording — quick reference"]
+}`;
+
+    const result = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    let parsed;
+    try {
+      const jsonMatch = result.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(jsonMatch?.[0] ?? result);
+    } catch {
+      return res.status(500).json({ error: 'AI response could not be parsed' });
+    }
+
+    res.json({ ok: true, script: parsed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── AI Lead Category Suggestion ───────────────────────────────────────────────
 // Fast single-call inference: given a company name, suggest the best wrap
 // category, estimated fleet size range, and a one-line pitch angle.
@@ -15198,6 +15627,57 @@ Keep advice specific to the actual numbers. No generic platitudes.`,
   }
 });
 
+// POST /ai/subject-lines — generate 3 alternative subject lines for an outbound email
+app.post('/ai/subject-lines', authMiddleware, async (req, res) => {
+  if (!anthropic) return res.status(503).json({ error: 'AI not configured' });
+  const uid = String(req.user.id);
+  const { leadId, currentBody, currentSubject } = req.body || {};
+  try {
+    let leadCtx = '';
+    if (leadId) {
+      const { rows } = await pool.query(
+        `SELECT company, contact_name, category, status, city, state, fleet_size FROM leads WHERE id=$1 AND user_id=$2`,
+        [leadId, uid]
+      );
+      if (rows.length) {
+        const l = rows[0];
+        leadCtx = `Company: ${l.company}${l.contact_name ? `, Contact: ${l.contact_name}` : ''}. Category: ${l.category || 'fleet'}. Status: ${l.status}. ${l.city ? `Location: ${l.city}, ${l.state}.` : ''} ${l.fleet_size ? `Fleet size: ${l.fleet_size} units.` : ''}`;
+      }
+    }
+    const userR = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]);
+    const s = userR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'the wrap shop';
+
+    const prompt = `You are a cold email expert for a vehicle wrap and graphics company called "${shopName}".
+${leadCtx ? `Lead context: ${leadCtx}` : ''}
+${currentSubject ? `Current subject: "${currentSubject}"` : ''}
+${currentBody ? `Email body (first 300 chars): "${currentBody.slice(0, 300)}"` : ''}
+
+Generate exactly 3 alternative email subject lines — each using a different psychological approach:
+1. Curiosity / intrigue (make them wonder)
+2. Specificity / data-driven (mention their fleet, location, or a concrete outcome)
+3. Direct / problem-aware (acknowledge a pain point or trigger)
+
+Rules: Under 50 characters. No clickbait. No ALL CAPS. No emoji. No questions that feel rhetorical.
+
+Return JSON array only: [{"subject":"...","approach":"curiosity|specific|direct","why":"one sentence why it works"}]`;
+
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const raw = msg.content[0]?.text || '[]';
+    const json = raw.match(/\[[\s\S]*\]/)?.[0] || '[]';
+    const suggestions = JSON.parse(json);
+    res.json({ ok: true, suggestions: suggestions.slice(0, 3) });
+  } catch (e) {
+    console.error('[subject-lines]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 // POST /leads/:id/create-location — create a new lead from a suggested location
 app.post('/leads/:id/create-location', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -16155,7 +16635,7 @@ app.get('/proposals/:id/views', authMiddleware, async (req, res) => {
 app.patch('/proposals/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const id = Number(req.params.id);
-  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url, expires_at } = req.body || {};
+  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url, expires_at, pricing_options } = req.body || {};
   try {
     const existing = await pool.query('SELECT * FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Proposal not found' });
@@ -16186,8 +16666,9 @@ app.patch('/proposals/:id', authMiddleware, async (req, res) => {
         fields.push(`sent_at=NOW()`);
       }
     }
-    if (mockup_url !== undefined)  { fields.push(`mockup_url=$${idx++}`);   vals.push(mockup_url); }
-    if (expires_at !== undefined)  { fields.push(`expires_at=$${idx++}`);   vals.push(expires_at || null); }
+    if (mockup_url !== undefined)       { fields.push(`mockup_url=$${idx++}`);       vals.push(mockup_url); }
+    if (expires_at !== undefined)       { fields.push(`expires_at=$${idx++}`);       vals.push(expires_at || null); }
+    if (pricing_options !== undefined)  { fields.push(`pricing_options=$${idx++}`);  vals.push(pricing_options ? JSON.stringify(pricing_options) : null); }
 
     if (!fields.length) return res.json({ ok: true, proposal: p });
 
@@ -17614,6 +18095,295 @@ app.get('/mission/stale-pipeline', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Deal Risk Scoring — multi-signal risk score per active pipeline deal ──────
+// Combines days-stale, proposal view state, overdue follow-up, and outbound
+// count without reply to produce a 0–100 risk score per deal.
+app.get('/mission/deal-risks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+
+    const { rows } = await pool.query(`
+      WITH outbound_counts AS (
+        SELECT
+          la.lead_id,
+          COUNT(*) AS outbound_since_reply
+        FROM lead_activities la
+        WHERE la.user_id = $1
+          AND la.type IN ('email_sent', 'called')
+          AND la.created_at > COALESCE(
+            (SELECT MAX(la2.created_at)
+             FROM lead_activities la2
+             WHERE la2.lead_id = la.lead_id
+               AND la2.user_id = $1
+               AND la2.type IN ('email_reply', 'sms_reply', 'meeting_set')
+            ),
+            '2000-01-01'::timestamptz
+          )
+        GROUP BY la.lead_id
+      ),
+      proposal_views AS (
+        SELECT lead_id, COALESCE(SUM(view_count), 0) AS total_views
+        FROM proposals
+        WHERE user_id = $1
+        GROUP BY lead_id
+      )
+      SELECT
+        l.id,
+        l.company,
+        l.contact_name,
+        l.category,
+        l.status,
+        l.email,
+        l.phone,
+        l.followup_due_at,
+        EXTRACT(EPOCH FROM (NOW() - COALESCE(l.last_contacted_at, l.updated_at))) / 86400.0 AS days_stale,
+        CASE WHEN l.followup_due_at IS NOT NULL
+             THEN EXTRACT(EPOCH FROM (NOW() - l.followup_due_at::timestamptz)) / 86400.0
+             ELSE 0 END AS overdue_days,
+        COALESCE(oc.outbound_since_reply, 0) AS outbound_since_reply,
+        COALESCE(pv.total_views, 0) AS proposal_views
+      FROM leads l
+      LEFT JOIN outbound_counts oc ON oc.lead_id = l.id
+      LEFT JOIN proposal_views pv ON pv.lead_id = l.id
+      WHERE l.user_id = $1
+        AND l.status IN ('contacted', 'replied', 'meeting', 'proposal')
+        AND (l.snooze_until IS NULL OR l.snooze_until < NOW())
+      ORDER BY l.updated_at DESC
+      LIMIT 60
+    `, [uid]);
+
+    const deals = rows.map((r) => {
+      const dayStale = parseFloat(r.days_stale) || 0;
+      const overdueDays = parseFloat(r.overdue_days) || 0;
+      const outbound = parseInt(r.outbound_since_reply, 10) || 0;
+      const propViews = parseInt(r.proposal_views, 10) || 0;
+      const status = r.status;
+
+      let score = 0;
+      const reasons = [];
+
+      // Stale signal (0–40 pts) — proposal stage has tighter windows
+      if (status === 'proposal') {
+        if (dayStale > 21)      { score += 40; reasons.push(`Proposal sent ${Math.round(dayStale)}d ago, no movement`); }
+        else if (dayStale > 14) { score += 28; reasons.push(`Proposal aging — ${Math.round(dayStale)}d old`); }
+        else if (dayStale > 7)  { score += 15; reasons.push(`Proposal approaching stale — ${Math.round(dayStale)}d`); }
+      } else if (status === 'meeting') {
+        if (dayStale > 14)      { score += 35; reasons.push(`Meeting stage stalled ${Math.round(dayStale)}d`); }
+        else if (dayStale > 7)  { score += 20; reasons.push(`Meeting stage — ${Math.round(dayStale)}d inactive`); }
+      } else {
+        if (dayStale > 30)      { score += 30; reasons.push(`No activity in ${Math.round(dayStale)}d`); }
+        else if (dayStale > 14) { score += 15; reasons.push(`Going cold — ${Math.round(dayStale)}d since contact`); }
+      }
+
+      // Proposal never viewed (0–30 pts)
+      if (status === 'proposal' && propViews === 0 && dayStale > 3) {
+        score += 30; reasons.push('Proposal never opened');
+      }
+
+      // Overdue follow-up (0–25 pts)
+      if (overdueDays > 7)     { score += 25; reasons.push(`Follow-up ${Math.round(overdueDays)}d overdue`); }
+      else if (overdueDays > 0) { score += 15; reasons.push(`Follow-up overdue`); }
+
+      // Outbound without reply (0–25 pts)
+      if (outbound >= 5)      { score += 25; reasons.push(`${outbound} follow-ups — no reply`); }
+      else if (outbound >= 3) { score += 15; reasons.push(`${outbound} unanswered follow-ups`); }
+      else if (outbound >= 2) { score += 8;  reasons.push(`${outbound} unanswered emails`); }
+
+      score = Math.min(score, 100);
+
+      let riskLabel, riskColor;
+      if (score >= 80)      { riskLabel = 'Critical'; riskColor = '#ef4444'; }
+      else if (score >= 60) { riskLabel = 'High';     riskColor = '#f97316'; }
+      else if (score >= 40) { riskLabel = 'Elevated'; riskColor = '#eab308'; }
+      else if (score >= 20) { riskLabel = 'Watch';    riskColor = '#60a5fa'; }
+      else                  { riskLabel = 'Healthy';  riskColor = '#22c55e'; }
+
+      return {
+        leadId: parseInt(r.id, 10),
+        company: r.company,
+        contactName: r.contact_name,
+        category: r.category,
+        status: r.status,
+        email: r.email,
+        phone: r.phone,
+        followupDueAt: r.followup_due_at,
+        daysStale: Math.round(dayStale * 10) / 10,
+        riskScore: score,
+        riskLabel,
+        riskColor,
+        topReason: reasons[0] || null,
+        reasons,
+      };
+    })
+      .filter((d) => d.riskScore >= 25)
+      .sort((a, b) => b.riskScore - a.riskScore)
+      .slice(0, 8);
+
+    res.json({ ok: true, deals });
+  } catch (e) {
+    console.error('[deal-risks]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Cold Lead Reactivation ────────────────────────────────────────────────────
+// GET /leads/reactivation-candidates — list of cold/lost leads eligible for
+// a re-engagement campaign (status=cold, last contact 45+ days ago, has email)
+app.get('/leads/reactivation-candidates', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const minDays = parseInt(req.query.minDays, 10) || 45;
+    const { rows } = await pool.query(`
+      SELECT id, company, contact_name, category, email, status,
+             COALESCE(last_contacted_at, created_at) AS last_contact,
+             EXTRACT(EPOCH FROM (NOW() - COALESCE(last_contacted_at, created_at))) / 86400.0 AS days_since_contact
+      FROM leads
+      WHERE user_id = $1
+        AND status IN ('cold', 'lost')
+        AND email IS NOT NULL AND email != ''
+        AND (snooze_until IS NULL OR snooze_until < NOW())
+        AND COALESCE(last_contacted_at, created_at) < NOW() - ($2 || ' days')::interval
+      ORDER BY days_since_contact DESC
+      LIMIT 100
+    `, [uid, minDays]);
+
+    const candidates = rows.map((r) => ({
+      id: parseInt(r.id, 10),
+      company: r.company,
+      contactName: r.contact_name,
+      category: r.category,
+      email: r.email,
+      status: r.status,
+      daysSinceContact: Math.round(parseFloat(r.days_since_contact)),
+    }));
+
+    res.json({ ok: true, candidates, total: candidates.length });
+  } catch (e) {
+    console.error('[reactivation-candidates]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/reactivation-campaign — generate + queue AI re-engagement emails
+// for cold/lost leads. Accepts { leadIds: number[], tone?: string }
+// tone: 'warm' | 'offer' | 'update' (default 'warm')
+app.post('/leads/reactivation-campaign', authMiddleware, requireShopFlow, async (req, res) => {
+  const uid = String(req.user.id);
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const { leadIds, tone = 'warm' } = req.body || {};
+
+  if (!Array.isArray(leadIds) || leadIds.length === 0)
+    return res.status(400).json({ error: 'leadIds array required' });
+  if (leadIds.length > 50)
+    return res.status(400).json({ error: 'Max 50 leads per campaign' });
+
+  try {
+    // Fetch user settings for sender name + shop info
+    const userR = await pool.query(
+      `SELECT settings_json, email FROM users WHERE id = $1`, [uid]
+    );
+    const user = userR.rows[0];
+    const settings = (user?.settings_json) || {};
+    const senderName = settings.senderName || settings.shopName || 'the team';
+    const shopName   = settings.shopName || 'our wrap shop';
+
+    // Verify all leads belong to this user and are eligible
+    const leadsR = await pool.query(`
+      SELECT id, company, contact_name, category, email, status
+      FROM leads
+      WHERE user_id = $1 AND id = ANY($2::bigint[])
+        AND status IN ('cold', 'lost')
+        AND email IS NOT NULL AND email != ''
+    `, [uid, leadIds]);
+
+    const leads = leadsR.rows;
+    if (leads.length === 0)
+      return res.status(400).json({ error: 'No eligible leads found (must be cold/lost with email)' });
+
+    const TONE_PROMPTS = {
+      warm:   'Write a warm, genuine re-engagement email. The angle is "checking back in — has your timing changed?" Keep it under 100 words. No hard pitch. Just a friendly nudge.',
+      offer:  'Write a re-engagement email with a limited seasonal offer angle (e.g., early booking discount or a new design package). Keep it under 120 words. One clear CTA.',
+      update: 'Write a re-engagement email sharing a portfolio update or recent project that is relevant to their industry. Keep it under 120 words. Make them curious about what\'s new.',
+    };
+    const toneInstruction = TONE_PROMPTS[tone] || TONE_PROMPTS.warm;
+
+    const CATEGORY_CONTEXT = {
+      fleet: 'fleet vehicle wraps (trucks, vans, trailers)',
+      dinoc: '3M DI-NOC architectural film (surfaces, interiors)',
+      construction: 'construction and contractor vehicle graphics',
+      racing: 'racing and motorsport graphics / liveries',
+      colorchange: 'full vehicle color change wraps',
+      wallgraphics: 'wall graphics and interior branding',
+      gc_referral: 'commercial signage and fleet programs',
+      design: 'custom vehicle wrap design',
+      reatec: '3M Rea-Tec reflective film',
+    };
+
+    const results = [];
+
+    // Process leads — generate + queue each one
+    for (const lead of leads) {
+      try {
+        let subject = `Checking back in — ${lead.company}`;
+        let body = '';
+
+        if (apiKey) {
+          const catCtx = CATEGORY_CONTEXT[lead.category] || 'vehicle wraps';
+          const prompt = `You are ${senderName} from ${shopName}, a vehicle wrap specialist.
+This prospect (${lead.company}) in the ${catCtx} space went cold. ${toneInstruction}
+
+Rules:
+- Address them as ${lead.contact_name ? `"${lead.contact_name.split(' ')[0]}"` : '"there"'}
+- Do NOT use the phrase "circle back", "hope this finds you well", or "just checking in"
+- Sign off as: ${senderName}
+- Return JSON: {"subject": "...", "body": "..."}`;
+
+          const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 300);
+          const m = raw.match(/\{[\s\S]*\}/);
+          if (m) {
+            const parsed = JSON.parse(m[0]);
+            subject = parsed.subject || subject;
+            body    = parsed.body   || '';
+          }
+        }
+
+        if (!body) {
+          // Fallback — no AI key or parse failed
+          const firstName = lead.contact_name ? lead.contact_name.split(' ')[0] : null;
+          body = `Hi ${firstName || 'there'},\n\nIt's been a while since we last connected about ${lead.company}'s wrap project. I wanted to reach out to see if the timing has improved — we've done some really great work recently and would love to explore what's possible for you.\n\nWould a quick 10-minute call make sense this week?\n\n${senderName}`;
+          subject = `Checking back in — ${lead.company}`;
+        }
+
+        // Queue the email via email_queue
+        await pool.query(`
+          INSERT INTO email_queue
+            (user_id, lead_id, subject, body, send_at, metadata)
+          VALUES ($1, $2, $3, $4, NOW() + (random() * interval '2 hours'), $5)
+        `, [uid, lead.id, subject, body, JSON.stringify({ source: 'reactivation', tone })]);
+
+        // Log activity
+        await pool.query(`
+          INSERT INTO lead_activities (user_id, lead_id, type, note)
+          VALUES ($1, $2, 'email_sent', $3)
+        `, [uid, lead.id, `Reactivation email queued (${tone} tone): ${subject}`]);
+
+        results.push({ leadId: parseInt(lead.id, 10), company: lead.company, status: 'queued' });
+      } catch (innerErr) {
+        console.error(`[reactivation] Lead ${lead.id}:`, innerErr.message);
+        results.push({ leadId: parseInt(lead.id, 10), company: lead.company, status: 'failed', error: innerErr.message });
+      }
+    }
+
+    const queued  = results.filter((r) => r.status === 'queued').length;
+    const failed  = results.filter((r) => r.status === 'failed').length;
+
+    res.json({ ok: true, queued, failed, results });
+  } catch (e) {
+    console.error('[reactivation-campaign]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Daily Briefing — short AI-generated morning summary for Mission ───────────
 // Auto-loads on Mission open, cached 4h. 3-sentence briefing: focus/risk/opportunity.
 // Falls back gracefully with data-only summary when AI is unavailable.
@@ -18398,17 +19168,23 @@ app.get('/proposals/:token', async (req, res) => {
     const senderEmail = s.senderEmail || '';
     const senderPhone = s.senderPhone || '';
     const portfolio = s.portfolioUrl || '';
+    const logoUrl = s.logoUrl || '';
     const approved = p.status === 'approved';
 
     const html = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${p.title}</title>
+<meta property="og:title" content="${he(p.title)}">
+<meta property="og:description" content="Vehicle wrap proposal from ${he(shopName)} — click to view and approve.">
+${logoUrl ? `<meta property="og:image" content="${he(logoUrl)}">` : ''}
+<meta property="og:type" content="website">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8f8f8;color:#111;line-height:1.6}
   .wrap{max-width:760px;margin:0 auto;background:#fff;min-height:100vh;box-shadow:0 0 40px rgba(0,0,0,.08)}
   .header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;padding:48px 48px 36px}
   .logo{font-size:22px;font-weight:900;letter-spacing:-.5px;margin-bottom:4px;color:#fff}
+  .logo-img{max-height:52px;max-width:180px;object-fit:contain;display:block;margin-bottom:12px;filter:brightness(1.05)}
   .tagline{font-size:12px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.1em;margin-bottom:32px}
   .prop-title{font-size:28px;font-weight:800;line-height:1.2;margin-bottom:8px}
   .prop-meta{font-size:13px;color:rgba(255,255,255,.6)}
@@ -18428,18 +19204,38 @@ app.get('/proposals/:token', async (req, res) => {
   .approve-btn{background:#22c55e;color:#fff;border:none;padding:14px 40px;border-radius:8px;font-size:16px;font-weight:700;cursor:pointer;letter-spacing:-.3px}
   .approve-btn:hover{background:#16a34a}
   .approved-badge{background:#dcfce7;border:2px solid #22c55e;border-radius:12px;padding:20px;text-align:center;color:#15803d;font-weight:700;font-size:16px}
+  /* Tiered pricing */
+  .tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin:8px 0 0}
+  .tier-card{border:2px solid #e5e7eb;border-radius:14px;padding:24px 20px;display:flex;flex-direction:column;position:relative;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+  .tier-card:hover{border-color:#6366f1;box-shadow:0 4px 18px rgba(99,102,241,.12)}
+  .tier-card.selected{border-color:#22c55e;box-shadow:0 4px 18px rgba(34,197,94,.18)}
+  .tier-card.highlighted{border-color:#6366f1;background:#f5f3ff}
+  .tier-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:#6366f1;color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:99px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+  .tier-label{font-size:15px;font-weight:800;color:#111;margin-bottom:4px;text-align:center}
+  .tier-price{font-size:26px;font-weight:900;color:#111;text-align:center;letter-spacing:-1px;margin-bottom:14px}
+  .tier-desc{font-size:12px;color:#555;text-align:center;margin-bottom:14px;line-height:1.5}
+  .tier-features{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;flex:1}
+  .tier-features li{font-size:12px;color:#333;display:flex;align-items:flex-start;gap:7px}
+  .tier-features li::before{content:"✓";color:#22c55e;font-weight:800;flex-shrink:0;margin-top:1px}
+  .tier-select-btn{margin-top:18px;width:100%;padding:10px;border-radius:8px;border:2px solid #6366f1;background:#fff;color:#6366f1;font-size:13px;font-weight:700;cursor:pointer;transition:background .15s,color .15s}
+  .tier-select-btn:hover,.tier-card.selected .tier-select-btn{background:#6366f1;color:#fff}
+  .tier-card.selected .tier-select-btn{background:#22c55e;border-color:#22c55e}
+  @media(max-width:600px){.tiers{grid-template-columns:1fr}}
   .mockup-section{margin-bottom:36px}
   .mockup-frame{position:relative;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,.08);background:#000}
   .mockup-frame img{width:100%;display:block}
   .mockup-tag{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:4px 8px;border-radius:4px;letter-spacing:.04em}
   .footer{background:#f8f8f8;padding:24px 48px;border-top:1px solid #eee;font-size:12px;color:#888;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
   @media(max-width:600px){.body-wrap,.header,.footer{padding:24px 20px}.prop-title{font-size:22px}}
-  @media print{body{background:#fff}.wrap{box-shadow:none}.approve-section,.approve-btn{display:none}}
+  @media print{body{background:#fff}.wrap{box-shadow:none}.approve-section,.approve-btn,.tier-select-btn,.print-btn-wrap{display:none!important}}
+  .print-btn-wrap{text-align:center;margin-top:16px;padding-bottom:24px}
+  .print-btn{background:transparent;border:1px solid #d1d5db;border-radius:7px;padding:8px 18px;font-size:12px;color:#6b7280;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .print-btn:hover{background:#f9fafb;border-color:#9ca3af;color:#374151}
 </style>
 </head><body>
 <div class="wrap">
   <div class="header">
-    <div class="logo">${he(shopName)}</div>
+    ${logoUrl ? `<img class="logo-img" src="${he(logoUrl)}" alt="${he(shopName)} logo" />` : `<div class="logo">${he(shopName)}</div>`}
     <div class="tagline">Vehicle Wraps · Fleet Graphics · Architectural Film</div>
     <div class="prop-title">${he(p.title)}</div>
     <div class="prop-meta">Prepared for ${he(p.contact_name || p.company)} · ${new Date(p.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
@@ -18467,7 +19263,22 @@ app.get('/proposals/:token', async (req, res) => {
 
     <div class="section">
       <div class="section-label">Investment</div>
-      ${sanitizeProposalHtml(p.pricing_html || '')}
+      ${(() => {
+        let tiers = null;
+        try { tiers = p.pricing_options ? (Array.isArray(p.pricing_options) ? p.pricing_options : JSON.parse(p.pricing_options)) : null; } catch(e) { tiers = null; }
+        if (tiers && tiers.length) {
+          return `<div class="tiers">${tiers.map(t => `
+            <div class="tier-card${t.highlight ? ' highlighted' : ''}" data-tier="${he(t.label)}">
+              ${t.highlight ? `<span class="tier-badge">Most Popular</span>` : ''}
+              <div class="tier-label">${he(t.label)}</div>
+              <div class="tier-price">$${Number(t.price).toLocaleString()}</div>
+              ${t.description ? `<div class="tier-desc">${he(t.description)}</div>` : ''}
+              ${t.features && t.features.length ? `<ul class="tier-features">${t.features.map(f => `<li>${he(f)}</li>`).join('')}</ul>` : ''}
+              ${approved ? '' : `<button class="tier-select-btn" onclick="selectTier(this,'${he(t.label)}')">Select this package</button>`}
+            </div>`).join('')}</div>`;
+        }
+        return sanitizeProposalHtml(p.pricing_html || '');
+      })()}
     </div>
 
     ${p.roi_section ? `
@@ -18496,15 +19307,36 @@ app.get('/proposals/:token', async (req, res) => {
     <span>${he(shopName)}${senderName ? ' · ' + he(senderName) : ''}</span>
     <span>${[senderPhone, senderEmail].filter(Boolean).map(he).join(' · ')}</span>
   </div>
+  <div class="print-btn-wrap">
+    <button class="print-btn" onclick="window.print()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      Save as PDF / Print
+    </button>
+  </div>
 </div>
 <script>
+let _selectedTier = null;
+function selectTier(btn, tierLabel) {
+  _selectedTier = tierLabel;
+  document.querySelectorAll('.tier-card').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.tier-select-btn').forEach(b => b.textContent = 'Select this package');
+  btn.closest('.tier-card').classList.add('selected');
+  btn.textContent = '✓ Selected';
+  const approveBtn = document.getElementById('approveBtn');
+  if (approveBtn) {
+    approveBtn.textContent = 'Approve — ' + tierLabel;
+    approveBtn.style.opacity = '1';
+  }
+}
 const btn = document.getElementById('approveBtn');
 if (btn) {
   btn.addEventListener('click', async () => {
     btn.disabled = true; btn.textContent = 'Approving…';
-    const resp = await fetch('/proposals/${req.params.token}/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const body = _selectedTier ? JSON.stringify({ selected_tier: _selectedTier }) : '{}';
+    const resp = await fetch('/proposals/${req.params.token}/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body });
     if (resp.ok) {
-      btn.closest('.approve-section').innerHTML = '<div class="approved-badge">✓ Approved! We will reach out shortly. Thank you!</div>';
+      const msg = _selectedTier ? '✓ ' + _selectedTier + ' package approved! We will reach out shortly. Thank you!' : '✓ Approved! We will reach out shortly. Thank you!';
+      btn.closest('.approve-section').innerHTML = '<div class="approved-badge">' + msg + '</div>';
     } else {
       btn.textContent = 'Error — try again'; btn.disabled = false;
     }
@@ -18520,15 +19352,21 @@ if (btn) {
 // PUBLIC — client approves proposal
 app.post('/proposals/:token/approve', async (req, res) => {
   try {
+    const { selected_tier } = req.body || {};
     const { rows } = await pool.query('SELECT * FROM proposals WHERE token=$1', [req.params.token]);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const p = rows[0];
-    await pool.query(`UPDATE proposals SET status='approved', approved_at=NOW(), updated_at=NOW() WHERE token=$1`, [req.params.token]);
+    await pool.query(
+      `UPDATE proposals SET status='approved', approved_at=NOW(), updated_at=NOW()
+       ${selected_tier ? `, selected_tier=$2` : ''} WHERE token=$1`,
+      selected_tier ? [req.params.token, selected_tier] : [req.params.token]
+    );
     if (p.lead_id) {
       await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [p.lead_id]);
       const compR = await pool.query('SELECT company, email, contact_name FROM leads WHERE id=$1', [p.lead_id]);
       const lead = compR.rows[0] || {};
-      await logActivity(pool, { leadId: p.lead_id, userId: p.user_id, type: 'status_changed', subject: 'Client approved proposal online' });
+      const approveSubject = selected_tier ? `Client approved proposal online — selected "${selected_tier}" package` : 'Client approved proposal online';
+      await logActivity(pool, { leadId: p.lead_id, userId: p.user_id, type: 'status_changed', subject: approveSubject });
       await createNotification(p.user_id, {
         type: 'email_reply',
         title: `🎉 ${lead.company || 'A client'} approved your proposal!`,
@@ -19287,6 +20125,177 @@ app.get('/fleet/:token', async (req, res) => {
   } catch (e) {
     console.error('[fleet-dash]', e.message);
     res.status(500).send('<h1>Error loading fleet dashboard</h1>');
+  }
+});
+
+// ── Client-Facing Job Status Tracker ─────────────────────────────────────────
+// Generates a shareable URL so fleet managers can see project progress without calling.
+
+// POST /jobs/:id/tracker-link — create or retrieve the public tracker token
+app.post('/jobs/:id/tracker-link', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows } = await pool.query('SELECT tracker_token FROM installed_jobs WHERE id=$1 AND user_id=$2', [jobId, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'Job not found' });
+
+    let token = rows[0].tracker_token;
+    if (!token) {
+      token = require('crypto').randomBytes(16).toString('hex');
+      await pool.query('UPDATE installed_jobs SET tracker_token=$1 WHERE id=$2', [token, jobId]);
+    }
+    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+    res.json({ ok: true, token, url: `${appUrl}/job-tracker/${token}` });
+  } catch (e) {
+    console.error('[tracker-link]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /job-tracker/:token — public job status page for clients
+app.get('/job-tracker/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { rows } = await pool.query(`
+      SELECT j.*, u.settings_json, u.company_name AS user_company,
+             COALESCE(json_agg(jp.*) FILTER (WHERE jp.id IS NOT NULL), '[]') AS photos
+      FROM installed_jobs j
+      JOIN users u ON u.id = j.user_id::bigint
+      LEFT JOIN job_photos jp ON jp.job_id = j.id
+      WHERE j.tracker_token = $1
+      GROUP BY j.id, u.settings_json, u.company_name
+    `, [token]);
+    if (!rows.length) return res.status(404).send('<h1>Project tracker not found or link has expired.</h1>');
+
+    const j = rows[0];
+    const s = j.settings_json || {};
+    const shopName = s.companyName || j.user_company || 'Your Wrap Shop';
+    const accentColor = s.accentColor || '#f4551c';
+    const shopPhone = s.senderPhone || s.phone || '';
+    const shopEmail = s.senderEmail || '';
+    const logoUrl = s.logoUrl || '';
+
+    const photos = (j.photos || []).filter((p) => p && p.image_data);
+    const completedDate = j.install_date ? new Date(j.install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : null;
+
+    // Determine status stage (map job_status + payment_status → display stage)
+    const js = j.job_status || 'scheduled';
+    const STAGES = [
+      { key: 'scheduled',   label: 'Project Scheduled',  desc: 'Your project is on the calendar.',              icon: '📅' },
+      { key: 'in_progress', label: 'In Production',       desc: 'Installation is underway.',                     icon: '🔧' },
+      { key: 'complete',    label: 'Complete',             desc: 'Your fleet wrap is finished!',                  icon: '✅' },
+    ];
+    const currentIdx = STAGES.findIndex((st) => st.key === js) ?? 0;
+
+    const stageHtml = STAGES.map((st, i) => {
+      const done   = i < currentIdx;
+      const active = i === currentIdx;
+      return `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;${i < STAGES.length-1 ? 'border-bottom:1px solid #2a2d3a;' : ''}">
+          <div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;
+            background:${done ? accentColor : active ? accentColor+'22' : '#1a1d27'};
+            border:2px solid ${done || active ? accentColor : '#3a3d4a'};">
+            ${done ? '✓' : st.icon}
+          </div>
+          <div>
+            <div style="font-size:13px;font-weight:${active ? '800' : '600'};color:${active ? '#f1f5f9' : done ? '#94a3b8' : '#6b7280'}">${st.label}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px">${active ? st.desc : done ? 'Completed' : ''}</div>
+          </div>
+          ${active ? `<div style="margin-left:auto;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;background:${accentColor};color:#fff;padding:2px 8px;border-radius:4px;white-space:nowrap">In Progress</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const photoHtml = photos.slice(0, 6).map((p) =>
+      `<div style="aspect-ratio:16/9;overflow:hidden;border-radius:8px;background:#1a1d27">
+        <img src="${p.image_data}" alt="${he(j.company || 'wrap')} photo" loading="lazy"
+          style="width:100%;height:100%;object-fit:cover;display:block">
+      </div>`
+    ).join('');
+
+    const VEHICLE_NAMES = { cargo_van_standard:'Cargo Van', cargo_van_high_roof:'Cargo Van (High Roof)', box_truck_16:'16ft Box Truck', box_truck_24:'24ft Box Truck', semi_cab_only:'Semi (Cab)', semi_full:'Semi (Full)', pickup_truck:'Pickup Truck', suv_large:'SUV', other:'Vehicle' };
+    const CAT_NAMES = { fleet:'Fleet Wraps', racing:'Racing', dinoc:'DI-NOC / Architectural', construction:'Construction Fleet', colorchange:'Color Change', gc_referral:'GC / Commercial', reatec:'Rea Tec', other:'Vehicle Wrap' };
+    const vehName = VEHICLE_NAMES[j.vehicle_type] || j.vehicle_type || 'Vehicle';
+    const catName = CAT_NAMES[j.wrap_category] || 'Wrap Project';
+
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${he(j.company || 'Your Project')} — ${he(shopName)}</title>
+<meta name="description" content="Track the progress of your vehicle wrap project with ${he(shopName)}.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;padding:20px;min-height:100vh}
+.container{max-width:640px;margin:0 auto}
+.card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:16px;padding:24px;margin-bottom:16px}
+.shop-header{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid #2a2d3a;margin-bottom:20px}
+.shop-name{font-size:16px;font-weight:800;color:#f1f5f9}
+.badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;padding:3px 10px;border-radius:4px}
+.project-title{font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#f1f5f9;margin-bottom:4px}
+.project-sub{font-size:13px;color:#8892a4;margin-bottom:16px}
+.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+.meta-cell{background:#0f1117;border-radius:8px;padding:10px 14px}
+.meta-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-bottom:4px}
+.meta-value{font-size:14px;font-weight:700;color:#e2e8f0}
+.photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.contact-bar{display:flex;gap:10px;flex-wrap:wrap}
+.contact-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;background:#1e2235;border:1px solid #2a2d3a;color:#e2e8f0}
+h2{font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Shop Header -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="shop-header">
+      <div>
+        ${logoUrl ? `<img src="${he(logoUrl)}" alt="${he(shopName)}" style="max-height:40px;max-width:140px;object-fit:contain;display:block;margin-bottom:6px">` : ''}
+        <div class="shop-name">${he(shopName)}</div>
+      </div>
+      <span class="badge" style="background:${accentColor}18;color:${accentColor}">Project Tracker</span>
+    </div>
+
+    <div class="project-title">${he(j.company || 'Your Project')}</div>
+    <div class="project-sub">${he(catName)}${j.vehicle_count ? ` · ${j.vehicle_count}× ${he(vehName)}` : ''}${j.material ? ` · ${he(j.material)}` : ''}</div>
+
+    <div class="meta-grid">
+      ${completedDate ? `<div class="meta-cell"><div class="meta-label">Install Date</div><div class="meta-value">${he(completedDate)}</div></div>` : ''}
+      ${j.vehicle_count ? `<div class="meta-cell"><div class="meta-label">Vehicles</div><div class="meta-value">${j.vehicle_count}</div></div>` : ''}
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card">
+    <h2>Project Status</h2>
+    ${stageHtml}
+  </div>
+
+  ${photos.length > 0 ? `
+  <div class="card">
+    <h2>Photos</h2>
+    <div class="photo-grid">${photoHtml}</div>
+  </div>` : ''}
+
+  <!-- Contact -->
+  ${shopPhone || shopEmail ? `
+  <div class="card">
+    <h2>Questions? Contact Us</h2>
+    <div class="contact-bar">
+      ${shopPhone ? `<a href="tel:${he(shopPhone)}" class="contact-btn">📞 ${he(shopPhone)}</a>` : ''}
+      ${shopEmail ? `<a href="mailto:${he(shopEmail)}" class="contact-btn">✉️ ${he(shopEmail)}</a>` : ''}
+    </div>
+  </div>` : ''}
+
+  <div style="text-align:center;font-size:11px;color:#3a3d4a;padding:16px 0">
+    Powered by WrapOS
+  </div>
+</div>
+</body>
+</html>`);
+  } catch (e) {
+    console.error('[job-tracker]', e.message);
+    res.status(500).send('<h1>Error loading project tracker.</h1>');
   }
 });
 
@@ -20219,6 +21228,143 @@ app.post('/leads/broadcast/preview-ai', authMiddleware, requireShopFlow, async (
 
     res.json({ ok: true, previews, totalLeads: leadIds.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/import-contacts — fuzzy-match a list of {company, email, phone} against existing leads
+// and update matched leads with the provided contact info. Returns matched/unmatched summary.
+app.post('/leads/import-contacts', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { contacts } = req.body || {};
+  if (!Array.isArray(contacts) || !contacts.length) return res.status(400).json({ error: 'contacts[] required' });
+  if (contacts.length > 500) return res.status(400).json({ error: 'Maximum 500 contacts per import' });
+
+  function normName(n) {
+    return (n || '').toLowerCase()
+      .replace(/\b(llc|inc|corp|ltd|co|company|group|holdings|enterprises|motorsports|racing|team|motorsport)\b/g, '')
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function nameSimilarity(a, b) {
+    const na = normName(a), nb = normName(b);
+    if (!na || !nb) return 0;
+    if (na === nb) return 1;
+    if (na.includes(nb) || nb.includes(na)) return 0.85;
+    // Levenshtein distance
+    const m = na.length, n2 = nb.length;
+    if (Math.abs(m - n2) > 8) return 0;
+    const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n2 + 1 }, (_, j) => i || j));
+    for (let i = 1; i <= m; i++) for (let j = 1; j <= n2; j++) {
+      dp[i][j] = na[i-1] === nb[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    }
+    const dist = dp[m][n2];
+    return Math.max(0, 1 - dist / Math.max(m, n2));
+  }
+
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, email, phone FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost')`,
+      [uid]
+    );
+
+    const results = [];
+    let updated = 0, skipped = 0;
+
+    for (const c of contacts) {
+      const cEmail = (c.email || '').trim().toLowerCase();
+      const cPhone = (c.phone || '').replace(/[^0-9+]/g, '');
+      const cCompany = (c.company || '').trim();
+      if (!cCompany || (!cEmail && !cPhone)) { skipped++; continue; }
+
+      // Find best match
+      let best = null, bestScore = 0;
+      for (const l of leads) {
+        const score = nameSimilarity(l.company, cCompany);
+        if (score > bestScore && score >= 0.72) { bestScore = score; best = l; }
+      }
+
+      if (!best) { results.push({ input: cCompany, matched: null, action: 'unmatched' }); skipped++; continue; }
+
+      const sets = [], params = [];
+      if (cEmail && !best.email) { params.push(cEmail); sets.push(`email = $${params.length}`); }
+      if (cPhone && !best.phone) { params.push(cPhone); sets.push(`phone = $${params.length}`); }
+
+      if (!sets.length) { results.push({ input: cCompany, matched: best.company, action: 'already_complete' }); skipped++; continue; }
+
+      params.push(best.id, uid);
+      await pool.query(
+        `UPDATE leads SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length - 1} AND user_id = $${params.length}`,
+        params
+      );
+      results.push({ input: cCompany, matched: best.company, action: 'updated', addedEmail: cEmail && !best.email ? cEmail : null, addedPhone: cPhone && !best.phone ? cPhone : null });
+      updated++;
+    }
+
+    res.json({ ok: true, updated, skipped: contacts.length - updated, results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/bulk-sms — send an SMS to up to 50 leads at once (Twilio)
+// Gates: requireShopFlow + Twilio configured in settings
+app.post('/leads/bulk-sms', authMiddleware, requireShopFlow, async (req, res) => {
+  const { leadIds, message } = req.body || {};
+  if (!Array.isArray(leadIds) || !leadIds.length) return res.status(400).json({ error: 'leadIds[] required' });
+  if (!message || message.trim().length < 5) return res.status(400).json({ error: 'message required (5+ chars)' });
+  if (leadIds.length > 50) return res.status(400).json({ error: 'Max 50 leads per bulk SMS' });
+  const uid = String(req.user.id);
+
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const s = userR.rows[0]?.settings_json || {};
+  if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+    return res.status(400).json({ error: 'Twilio not configured — add credentials in Settings' });
+  }
+
+  const { rows: leads } = await pool.query(
+    `SELECT id, company, contact_name, phone, sms_opted_out FROM leads WHERE id=ANY($1) AND user_id=$2`,
+    [leadIds, uid]
+  );
+
+  const senderName = s.senderName || 'WrapLeads';
+  const shopName = s.companyName || 'our shop';
+  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+  const authHeader = 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64');
+
+  let sent = 0, skipped = 0, errors = 0;
+  for (const lead of leads) {
+    if (!lead.phone || lead.sms_opted_out) { skipped++; continue; }
+    try {
+      // Replace simple template vars
+      const first = (lead.contact_name || '').split(' ')[0] || lead.company.split(' ')[0];
+      const body = message
+        .replace(/\{first\}/gi, first)
+        .replace(/\{company\}/gi, lead.company)
+        .replace(/\{sender\}/gi, senderName)
+        .replace(/\{shop\}/gi, shopName);
+
+      const twilioResp = await fetch(twilioUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: authHeader },
+        body: new URLSearchParams({ To: lead.phone, From: s.twilioFromNumber, Body: body }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const twilioData = await twilioResp.json();
+      if (!twilioResp.ok) { errors++; continue; }
+
+      await pool.query(
+        `INSERT INTO lead_activities (user_id, lead_id, type, subject, body, created_at)
+         VALUES ($1, $2, 'sms_sent', $3, $4, NOW())`,
+        [uid, lead.id, `Bulk SMS to ${lead.company}`, body]
+      );
+      // Update last_contacted
+      await pool.query(`UPDATE leads SET last_contacted=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
+      sent++;
+      // Tiny delay to respect Twilio rate limits (1 msg/sec per default number)
+      await new Promise(r => setTimeout(r, 200));
+    } catch (e) { errors++; console.warn('[bulk-sms] lead', lead.id, e.message); }
+  }
+
+  res.json({ ok: true, sent, skipped, errors, total: leads.length });
 });
 
 // ── Global Activity Feed ───────────────────────────────────────────────────────

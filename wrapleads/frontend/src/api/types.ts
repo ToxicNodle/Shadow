@@ -32,6 +32,7 @@ export interface Lead {
   dotNumber?: string | null;
   fmcsaEnrichedAt?: string | null;
   firstContactedAt?: string | null;
+  snoozeUntil?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -160,6 +161,7 @@ export interface Settings {
   twilioAuthToken: string;
   twilioFromNumber: string;
   portfolioUrl: string;
+  logoUrl: string;
   callHumorLevel: 'none' | 'light' | 'medium' | 'high';
   pricePerSqftLow: string;
   pricePerSqftHigh: string;
@@ -299,6 +301,7 @@ export const DEFAULT_SETTINGS: Settings = {
   twilioAuthToken: '',
   twilioFromNumber: '',
   portfolioUrl: '',
+  logoUrl: '',
   callHumorLevel: 'light',
   pricePerSqftLow: '8',
   pricePerSqftHigh: '14',
@@ -382,6 +385,8 @@ export interface InstalledJob {
   amount_paid?: number | null;
   scheduled_install_date?: string | null;
   scheduled_crew_count?: number | null;
+  job_status?: 'scheduled' | 'in_progress' | 'complete' | null;
+  tracker_token?: string | null;
 }
 
 // ── Material Inventory ────────────────────────────────────────────────────────

@@ -1458,6 +1458,134 @@ function MaterialPOPanel({ job }: { job: InstalledJob }) {
 
 // ── Invoice Panel ─────────────────────────────────────────────────────────────
 
+function TrackerPanel({ job }: { job: InstalledJob }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const qc = useQueryClient();
+  const [trackerUrl, setTrackerUrl] = useState<string | null>(job.tracker_token ? `${window.location.origin}/job-tracker/${job.tracker_token}` : null);
+  const [generating, setGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const STATUS_STAGES: Array<{ value: 'scheduled' | 'in_progress' | 'complete'; label: string; color: string }> = [
+    { value: 'scheduled', label: 'Scheduled', color: '#f59e0b' },
+    { value: 'in_progress', label: 'In Progress', color: '#4d8af5' },
+    { value: 'complete', label: 'Complete', color: '#22c55e' },
+  ];
+
+  const statusMut = useMutation({
+    mutationFn: (s: 'scheduled' | 'in_progress' | 'complete') => api.updateJobStatus(job.id, s),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  async function generate() {
+    setGenerating(true);
+    try {
+      const r = await api.createJobTrackerLink(job.id);
+      setTrackerUrl(r.url);
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Failed', 'error');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function copyUrl() {
+    if (!trackerUrl) return;
+    await navigator.clipboard.writeText(trackerUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const currentStatus = job.job_status ?? 'scheduled';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Job Status Selector */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 10 }}>
+          📊 Job Production Status
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {STATUS_STAGES.map((s) => (
+            <button
+              key={s.value}
+              className="btn"
+              style={{
+                flex: 1, fontSize: 12, fontWeight: 700, justifyContent: 'center',
+                background: currentStatus === s.value ? `${s.color}22` : undefined,
+                color: currentStatus === s.value ? s.color : 'var(--text-muted)',
+                borderColor: currentStatus === s.value ? `${s.color}60` : undefined,
+                borderWidth: currentStatus === s.value ? 2 : 1,
+              }}
+              disabled={statusMut.isPending}
+              onClick={() => statusMut.mutate(s.value)}
+            >
+              {currentStatus === s.value ? '● ' : '○ '}{s.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5 }}>
+          The client status page reflects this stage in real time.
+        </div>
+      </div>
+
+      {/* Tracker Link Generator */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 10 }}>
+          🔗 Client Status Page
+        </div>
+        {!trackerUrl ? (
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.6 }}>
+              Generate a public link your client can bookmark to see live job progress, photos, and contact info — no login required.
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12 }}
+              disabled={generating}
+              onClick={generate}
+            >
+              {generating ? 'Generating…' : '🔗 Create Status Page'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 12px',
+              border: '1px solid var(--border)',
+            }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {trackerUrl}
+              </span>
+              <button
+                className="btn"
+                style={{ fontSize: 11, flexShrink: 0, color: copied ? '#22c55e' : '#4d8af5', borderColor: copied ? '#22c55e50' : 'rgba(77,138,245,0.4)' }}
+                onClick={copyUrl}
+              >
+                {copied ? '✓ Copied' : 'Copy'}
+              </button>
+              <a
+                href={trackerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="btn"
+                style={{ fontSize: 11, flexShrink: 0, textDecoration: 'none' }}
+              >
+                Preview →
+              </a>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+              Share this link via text or email. It shows shop branding, progress stages, job photos, and your contact info.
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function InvoicePanel({ job }: { job: InstalledJob }) {
   const showToast = useAppStore((s) => s.showToast);
   const [sendEmail, setSendEmail] = useState('');
@@ -1667,7 +1795,7 @@ function JobModal({ job, onClose }: JobModalProps) {
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po' | 'vehicles' | 'expenses'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po' | 'vehicles' | 'expenses' | 'tracker'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -1742,6 +1870,7 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>📋 Material PO</button>
             <button className={`jobs-tab ${activeTab === 'vehicles' ? 'active' : ''}`} onClick={() => setActiveTab('vehicles')}>🚛 Vehicles</button>
             <button className={`jobs-tab ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => setActiveTab('expenses')}>💰 Expenses</button>
+            <button className={`jobs-tab ${activeTab === 'tracker' ? 'active' : ''}`} onClick={() => setActiveTab('tracker')}>🔗 Tracker</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1763,6 +1892,8 @@ function JobModal({ job, onClose }: JobModalProps) {
           <VehicleIntakeTab job={job as InstalledJob} />
         ) : (!isNew && activeTab === 'expenses') ? (
           <JobExpensesTab job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'tracker') ? (
+          <TrackerPanel job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">

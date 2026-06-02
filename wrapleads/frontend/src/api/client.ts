@@ -720,13 +720,15 @@ export const api = {
     authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '', mockup_url: mockupUrl || null, roi_html: roiHtml || null }) }),
   getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
-  updateProposal: (id: number, data: { title?: string; intro?: string; services?: string; pricing_html?: string; timeline?: string; notes?: string; status?: string; expires_at?: string | null }) =>
+  updateProposal: (id: number, data: { title?: string; intro?: string; services?: string; pricing_html?: string; timeline?: string; notes?: string; status?: string; expires_at?: string | null; pricing_options?: Array<{ label: string; description?: string; price: number; highlight?: boolean; features?: string[] }> | null }) =>
     authFetch<{ ok: boolean; proposal: Record<string, unknown>; savedVersion: number }>(`/proposals/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getProposalVersions: (id: number) =>
     authFetch<{ ok: boolean; versions: Array<{ id: number; version_num: number; title: string; saved_at: string }> }>(`/proposals/${id}/versions`),
   getProposalVersion: (proposalId: number, versionId: number) =>
     authFetch<{ ok: boolean; version: Record<string, unknown> }>(`/proposals/${proposalId}/versions/${versionId}`),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
+  createJobFromProposal: (proposalId: number) =>
+    authFetch<{ ok: boolean; jobId: number }>(`/proposals/${proposalId}/create-job`, { method: 'POST' }),
 
   // Proposal template library
   getProposalTemplates: () =>
@@ -1881,6 +1883,12 @@ export const api = {
       confidence: 'high' | 'medium' | 'low';
     }>(`/ai/proposal-coach?leadId=${leadId}`),
 
+  suggestSubjectLines: (args: { leadId?: number; currentBody?: string; currentSubject?: string }) =>
+    authFetch<{ ok: boolean; suggestions: Array<{ subject: string; approach: string; why: string }> }>(
+      '/ai/subject-lines',
+      { method: 'POST', body: JSON.stringify(args) }
+    ),
+
   // ── Google Review Automation ──
   requestReview: (jobId: number, opts: { clientEmail?: string; clientPhone?: string; clientName?: string; googleUrl?: string }) =>
     authFetch<{ ok: boolean; token: string; reviewUrl: string; sentVia: string[] }>(
@@ -2177,4 +2185,133 @@ export const api = {
       }>;
     }>(`/materials/estimate?${q}`);
   },
+
+  // ── Appointments ──
+  getAppointments: (params?: { leadId?: number; upcoming?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.leadId) q.set('leadId', String(params.leadId));
+    if (params?.upcoming) q.set('upcoming', '1');
+    return authFetch<{ appointments: Array<{
+      id: number; lead_id: number | null; company: string | null; contact_name: string | null;
+      title: string; appt_type: string; scheduled_at: string; duration_mins: number;
+      location: string | null; notes: string | null; status: string;
+    }> }>(`/appointments${q.toString() ? '?' + q.toString() : ''}`);
+  },
+  getUpcomingAppointments: () =>
+    authFetch<{ appointments: Array<{
+      id: number; lead_id: number | null; lead_id_link: number | null; company: string | null;
+      contact_name: string | null; title: string; appt_type: string; scheduled_at: string;
+      duration_mins: number; location: string | null; notes: string | null; status: string;
+    }> }>('/appointments/upcoming'),
+  createAppointment: (data: {
+    leadId?: number; title?: string; apptType?: string;
+    scheduledAt: string; durationMins?: number; location?: string; notes?: string;
+  }) => authFetch<{ ok: boolean; appointment: { id: number } }>('/appointments', { method: 'POST', body: JSON.stringify(data) }),
+  updateAppointment: (id: number, data: {
+    title?: string; apptType?: string; scheduledAt?: string;
+    durationMins?: number; location?: string; notes?: string; status?: string;
+  }) => authFetch<{ ok: boolean }>(`/appointments/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteAppointment: (id: number) =>
+    authFetch<{ ok: boolean }>(`/appointments/${id}`, { method: 'DELETE' }),
+
+  // ── Lead Deduplication ──
+  findDuplicateLeads: () =>
+    authFetch<{
+      pairs: Array<{
+        a: { id: number; company: string; status: string; city: string | null; state: string | null; email: string | null; phone: string | null; fleetSize: number | null; category: string };
+        b: { id: number; company: string; status: string; city: string | null; state: string | null; email: string | null; phone: string | null; fleetSize: number | null; category: string };
+        simPct: number;
+      }>;
+    }>('/leads/potential-duplicates'),
+
+  mergeLeads: (sourceId: number, targetId: number) =>
+    authFetch<{ ok: boolean; keptId: number; mergedCompany: string }>(
+      `/leads/${sourceId}/merge-into/${targetId}`,
+      { method: 'POST' }
+    ),
+
+  createJobTrackerLink: (jobId: number) =>
+    authFetch<{ ok: boolean; token: string; url: string }>(`/jobs/${jobId}/tracker-link`, { method: 'POST' }),
+
+  bulkSms: (leadIds: number[], message: string) =>
+    authFetch<{ ok: boolean; sent: number; skipped: number; errors: number; total: number }>(
+      '/leads/bulk-sms', { method: 'POST', body: JSON.stringify({ leadIds, message }) }
+    ),
+
+  generateVideoPitchScript: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      script: {
+        hook: string;
+        valueStatement: string;
+        proofPoint: string;
+        callToAction: string;
+        totalTimeEstimate: number;
+        talkingPoints: string[];
+      };
+    }>('/ai/video-pitch-script', { method: 'POST', body: JSON.stringify({ leadId }) }),
+
+  updateJobStatus: (jobId: number, status: 'scheduled' | 'in_progress' | 'complete') =>
+    authFetch<{ ok: boolean; job_status: string }>(`/jobs/${jobId}/status`, { method: 'PATCH', body: JSON.stringify({ job_status: status }) }),
+
+  snoozeLead: (leadId: number, until: string | null) =>
+    authFetch<{ ok: boolean; snoozeUntil: string | null }>(`/leads/${leadId}/snooze`, { method: 'POST', body: JSON.stringify({ until }) }),
+
+  getSnoozeWakeups: () =>
+    authFetch<{ leads: { id: number; company: string; category: string; status: string; snooze_until: string }[] }>('/mission/snooze-wakeups'),
+
+  importContacts: (contacts: { company: string; email?: string; phone?: string }[]) =>
+    authFetch<{
+      ok: boolean;
+      updated: number;
+      skipped: number;
+      results: { input: string; matched: string | null; action: 'updated' | 'unmatched' | 'already_complete'; addedEmail?: string | null; addedPhone?: string | null }[];
+    }>('/leads/import-contacts', { method: 'POST', body: JSON.stringify({ contacts }) }),
+
+  getDealRisks: () =>
+    authFetch<{
+      ok: boolean;
+      deals: {
+        leadId: number;
+        company: string;
+        contactName: string | null;
+        category: string;
+        status: string;
+        email: string | null;
+        phone: string | null;
+        followupDueAt: string | null;
+        daysStale: number;
+        riskScore: number;
+        riskLabel: string;
+        riskColor: string;
+        topReason: string | null;
+        reasons: string[];
+      }[];
+    }>('/mission/deal-risks'),
+
+  getReactivationCandidates: (minDays?: number) =>
+    authFetch<{
+      ok: boolean;
+      candidates: {
+        id: number;
+        company: string;
+        contactName: string | null;
+        category: string;
+        email: string;
+        status: string;
+        daysSinceContact: number;
+      }[];
+      total: number;
+    }>(`/leads/reactivation-candidates${minDays ? `?minDays=${minDays}` : ''}`),
+
+  launchReactivationCampaign: (leadIds: number[], tone: 'warm' | 'offer' | 'update') =>
+    authFetch<{
+      ok: boolean;
+      queued: number;
+      failed: number;
+      results: { leadId: number; company: string; status: 'queued' | 'failed'; error?: string }[];
+    }>('/leads/reactivation-campaign', {
+      method: 'POST',
+      body: JSON.stringify({ leadIds, tone }),
+    }),
 };

@@ -482,6 +482,11 @@ export default function SettingsModal() {
             <label className="field-label">Portfolio URL</label>
             <input className="input" {...f('portfolioUrl')} placeholder="https://yourshop.com/portfolio" />
           </div>
+          <div className="field-group">
+            <label className="field-label">Shop Logo URL</label>
+            <input className="input" {...f('logoUrl')} placeholder="https://yourshop.com/logo.png" />
+            <p className="settings-help" style={{ marginTop: 4 }}>Shown in the header of every proposal your clients receive. Use a PNG or SVG with a transparent background for best results.</p>
+          </div>
         </div>
       </div>
 

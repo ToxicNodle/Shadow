@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import type { LeadSort, ActiveFilter } from '../../store/useAppStore';
@@ -10,6 +10,7 @@ import { STATUSES } from '../../api/types';
 import type { LeadStatus } from '../../api/types';
 import BroadcastModal from '../modals/BroadcastModal';
 import UrlImportModal from '../modals/UrlImportModal';
+import DedupModal from '../modals/DedupModal';
 
 // ── Filter Presets Bar ────────────────────────────────────────────────────────
 const BUILTIN_PRESETS: { name: string; icon: string; filter: Partial<ActiveFilter> }[] = [
@@ -297,12 +298,19 @@ export default function LeadList() {
   const qc = useQueryClient();
   const [hotOnly, setHotOnly] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [segmentFilter, setSegmentFilter] = useState<string | null>(null);
   const [seqStatus, setSeqStatus] = useState<'idle' | 'running' | 'done'>('idle');
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [bulkTagInput, setBulkTagInput] = useState('');
   const [emailHuntRunning, setEmailHuntRunning] = useState(false);
+  const [dedupOpen, setDedupOpen] = useState(false);
+  const [bulkSmsOpen, setBulkSmsOpen] = useState(false);
+  const [bulkSmsMsg, setBulkSmsMsg] = useState('Hey {first}, {sender} here from {shop}. Wanted to reach out about fleet graphics for {company}. Reply STOP to opt out.');
+  const [bulkSmsSending, setBulkSmsSending] = useState(false);
+  const [importContactsOpen, setImportContactsOpen] = useState(false);
+  const [reactivationOpen, setReactivationOpen] = useState(false);
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -331,6 +339,61 @@ export default function LeadList() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); setBulkTagOpen(false); setBulkTagInput(''); },
   });
 
+  // ── Smart Segments — computed from lead data ──────────────────────────────
+  const SMART_SEGMENTS = useMemo(() => {
+    const now = Date.now();
+    const days = (iso: string | undefined | null) => iso ? (now - new Date(iso).getTime()) / 86400000 : Infinity;
+
+    const defs: { id: string; icon: string; label: string; color: string; test: (l: (typeof leads)[number]) => boolean }[] = [
+      {
+        id: 'sleepers',
+        icon: '🎯',
+        label: 'High-Value Sleepers',
+        color: '#f59e0b',
+        test: (l) => (l.status === 'new' || l.status === 'cold') && scoreLead(l) >= 65 && days(l.lastContacted) > 30,
+      },
+      {
+        id: 'near-win',
+        icon: '🏆',
+        label: 'Near Win',
+        color: '#22c55e',
+        test: (l) => (l.status === 'meeting' || l.status === 'proposal') && days(l.lastContacted) <= 21,
+      },
+      {
+        id: 'going-cold',
+        icon: '❄️',
+        label: 'Going Cold',
+        color: '#4d8af5',
+        test: (l) => {
+          if (l.snoozeUntil && new Date(l.snoozeUntil) > new Date()) return false;
+          return (l.status === 'replied' || l.status === 'contacted') && days(l.lastContacted) > 14;
+        },
+      },
+      {
+        id: 'follow-up-overdue',
+        icon: '⏰',
+        label: 'Overdue Follow-up',
+        color: '#ef4444',
+        test: (l) => {
+          if (l.snoozeUntil && new Date(l.snoozeUntil) > new Date()) return false;
+          if (!l.followupDueAt) return false;
+          const due = new Date(l.followupDueAt).getTime();
+          return due < now && l.status !== 'won' && l.status !== 'lost';
+        },
+      },
+      {
+        id: 'no-email',
+        icon: '📧',
+        label: 'Missing Email',
+        color: '#8b5cf6',
+        test: (l) => !l.email && !!l.website && l.status !== 'won' && l.status !== 'lost',
+      },
+    ];
+
+    return defs.map((d) => ({ ...d, ids: new Set(leads.filter(d.test).map((l) => l.id)) }))
+      .filter((s) => s.ids.size > 0);
+  }, [leads]);
+
   const filtered = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     const base = leads.filter((l) => {
@@ -340,6 +403,10 @@ export default function LeadList() {
       if (activeFilter.followupDue && !(l.followupDueAt && l.followupDueAt <= today)) return false;
       if (hotOnly && scoreLead(l) < 65) return false;
       if (tagFilter && !(l.tags ?? []).includes(tagFilter)) return false;
+      if (segmentFilter) {
+        const seg = SMART_SEGMENTS.find((s) => s.id === segmentFilter);
+        if (seg && !seg.ids.has(l.id)) return false;
+      }
       if (activeFilter.search) {
         const q = activeFilter.search.toLowerCase();
         const haystack = [l.company, l.contactName, l.email, l.city, l.state].join(' ').toLowerCase();
@@ -360,7 +427,7 @@ export default function LeadList() {
       }
       return 0;
     });
-  }, [leads, activeFilter, leadSort, hotOnly, tagFilter]);
+  }, [leads, activeFilter, leadSort, hotOnly, tagFilter, segmentFilter, SMART_SEGMENTS]);
 
   // Unique tags across all leads (sorted by frequency, then alpha)
   const allTags = useMemo(() => {
@@ -562,6 +629,44 @@ export default function LeadList() {
         </button>
 
         <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#6366f1', borderColor: 'rgba(99,102,241,0.4)' }}
+          onClick={() => setDedupOpen(true)}
+          title="Scan for duplicate leads and merge them"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
+          </svg>
+          Dedup
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#10b981', borderColor: 'rgba(16,185,129,0.4)' }}
+          onClick={() => setImportContactsOpen(true)}
+          title="Paste contacts from Apollo or other tools to update email/phone on existing leads"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          Update Contacts
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#a855f7', borderColor: 'rgba(168,85,247,0.4)' }}
+          onClick={() => setReactivationOpen(true)}
+          title="Re-engage cold and lost leads with AI-generated personalized emails"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M1 4v6h6"/><path d="M23 20v-6h-6"/>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+          </svg>
+          Reactivate
+        </button>
+
+        <button
           className={`btn ${hotOnly ? 'btn-primary' : ''}`}
           style={{ fontSize: 12, padding: '4px 10px', gap: 5 }}
           onClick={() => setHotOnly((h) => !h)}
@@ -611,6 +716,50 @@ export default function LeadList() {
               onClick={() => setTagFilter(null)}
             >
               Clear filter
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Smart Segments — data-driven lead groupings */}
+      {SMART_SEGMENTS.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '4px 0 2px' }}>
+          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--text-faint)', flexShrink: 0 }}>Segments:</span>
+          {SMART_SEGMENTS.map((seg) => {
+            const active = segmentFilter === seg.id;
+            return (
+              <button
+                key={seg.id}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: 11, fontWeight: active ? 700 : 500,
+                  padding: '2px 9px', borderRadius: 12,
+                  border: `1px solid ${active ? seg.color : 'var(--border)'}`,
+                  background: active ? `${seg.color}22` : 'var(--bg-card)',
+                  color: active ? seg.color : 'var(--text-muted)',
+                  cursor: 'pointer', transition: 'all 0.12s',
+                }}
+                onClick={() => setSegmentFilter(active ? null : seg.id)}
+                title={`Show ${seg.label} leads`}
+              >
+                <span>{seg.icon}</span>
+                <span>{seg.label}</span>
+                <span style={{
+                  background: active ? seg.color : 'var(--bg-elev-2)',
+                  color: active ? '#fff' : 'var(--text-faint)',
+                  borderRadius: 8, padding: '0 5px', fontSize: 9, fontWeight: 700,
+                }}>
+                  {seg.ids.size}
+                </span>
+              </button>
+            );
+          })}
+          {segmentFilter && (
+            <button
+              style={{ fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+              onClick={() => setSegmentFilter(null)}
+            >
+              ✕ Clear
             </button>
           )}
         </div>
@@ -739,6 +888,14 @@ export default function LeadList() {
           </button>
           <button
             className="btn"
+            style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={() => setBulkSmsOpen(true)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Bulk SMS
+          </button>
+          <button
+            className="btn"
             style={{ fontSize: 11, background: 'transparent', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
             onClick={clearLeadSelection}
           >
@@ -806,6 +963,435 @@ export default function LeadList() {
       )}
 
       {urlImportOpen && <UrlImportModal onClose={() => setUrlImportOpen(false)} />}
+      {dedupOpen && <DedupModal onClose={() => setDedupOpen(false)} />}
+
+      {/* Bulk SMS modal */}
+      {bulkSmsOpen && (
+        <div className="modal-overlay" onClick={() => setBulkSmsOpen(false)}>
+          <div className="modal-box" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">📱 Bulk SMS — {selCount} leads</h2>
+              <button className="modal-close" onClick={() => setBulkSmsOpen(false)}>✕</button>
+            </div>
+            <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Sends an SMS to all selected leads that have a phone number and haven't opted out.
+                Variables: <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{first}'}</code>{' '}
+                <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{company}'}</code>{' '}
+                <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{sender}'}</code>{' '}
+                <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{shop}'}</code>
+              </div>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', display: 'block', marginBottom: 6 }}>
+                  Message
+                </label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  style={{ fontSize: 13, resize: 'vertical', width: '100%' }}
+                  value={bulkSmsMsg}
+                  onChange={(e) => setBulkSmsMsg(e.target.value)}
+                />
+                <div style={{ fontSize: 11, color: bulkSmsMsg.length > 160 ? '#f59e0b' : 'var(--text-faint)', marginTop: 4, textAlign: 'right' }}>
+                  {bulkSmsMsg.length} chars{bulkSmsMsg.length > 160 ? ' — will split into 2 segments' : ''}
+                </div>
+              </div>
+              <div style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                ⚠ Requires Twilio configured in Settings. Respects opt-outs automatically. Include "reply STOP to opt out" per carrier compliance requirements.
+              </div>
+              <button
+                className="btn btn-primary"
+                style={{ justifyContent: 'center', fontSize: 13 }}
+                disabled={bulkSmsSending || !bulkSmsMsg.trim()}
+                onClick={async () => {
+                  const ids = leads.filter((l) => selectedLeadIds.has(l.id) && l.serverId && l.phone).map((l) => l.serverId!);
+                  if (!ids.length) { showToast('No selected leads have phone numbers', 'error'); return; }
+                  setBulkSmsSending(true);
+                  try {
+                    const r = await api.bulkSms(ids, bulkSmsMsg);
+                    showToast(`Sent ${r.sent} SMS · ${r.skipped} skipped · ${r.errors} errors`, r.sent > 0 ? 'success' : 'info');
+                    setBulkSmsOpen(false);
+                    clearLeadSelection();
+                  } catch (e: unknown) {
+                    showToast(e instanceof Error ? e.message : 'SMS failed', 'error');
+                  } finally {
+                    setBulkSmsSending(false);
+                  }
+                }}
+              >
+                {bulkSmsSending ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Send to ${leads.filter((l) => selectedLeadIds.has(l.id) && l.phone).length} leads with phone numbers`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Contacts modal */}
+      {importContactsOpen && (
+        <div className="modal-overlay" onClick={() => setImportContactsOpen(false)}>
+          <div className="modal-container" style={{ maxWidth: 540 }} onClick={(e) => e.stopPropagation()}>
+            <ImportContactsModal onClose={() => setImportContactsOpen(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* Reactivation Campaign modal */}
+      {reactivationOpen && (
+        <div className="modal-overlay" onClick={() => setReactivationOpen(false)}>
+          <div className="modal-container" style={{ maxWidth: 580 }} onClick={(e) => e.stopPropagation()}>
+            <ReactivationModal onClose={() => setReactivationOpen(false)} />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ── Import Contacts Modal ──────────────────────────────────────────────────────
+
+function ImportContactsModal({ onClose }: { onClose: () => void }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const qc = useQueryClient();
+  const [csv, setCsv] = useState('');
+  const [results, setResults] = useState<{ input: string; matched: string | null; action: string; addedEmail?: string | null; addedPhone?: string | null }[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const PLACEHOLDER = `Company Name,Email,Phone\nAcme Trucking,john@acme.com,317-555-1234\nQuick Delivery LLC,,555-9876`;
+
+  function parseContacts(raw: string) {
+    const lines = raw.trim().split('\n').filter(Boolean);
+    const contacts: { company: string; email?: string; phone?: string }[] = [];
+    for (const line of lines) {
+      const parts = line.split(',').map((p) => p.trim().replace(/^"|"$/g, ''));
+      const company = parts[0]; const email = parts[1]; const phone = parts[2];
+      if (company && company.toLowerCase() !== 'company name' && company.toLowerCase() !== 'company') {
+        contacts.push({ company, ...(email ? { email } : {}), ...(phone ? { phone } : {}) });
+      }
+    }
+    return contacts;
+  }
+
+  async function run() {
+    const contacts = parseContacts(csv);
+    if (!contacts.length) { showToast('No valid rows found. Paste CSV with Company, Email, Phone columns.', 'error'); return; }
+    setLoading(true);
+    try {
+      const data = await api.importContacts(contacts);
+      setResults(data.results);
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast(`${data.updated} contacts updated · ${data.skipped} skipped`);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Import failed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="modal-header">
+        <h2 className="modal-title">📇 Update Contacts from CSV</h2>
+        <button className="modal-close" onClick={onClose}>✕</button>
+      </div>
+      <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+          Paste a CSV with Company, Email, Phone columns. WrapOS fuzzy-matches company names and updates any missing email or phone. Existing values are never overwritten.
+        </p>
+        {!results ? (
+          <>
+            <textarea
+              className="input"
+              style={{ minHeight: 160, fontFamily: 'monospace', fontSize: 11, resize: 'vertical' }}
+              placeholder={PLACEHOLDER}
+              value={csv}
+              onChange={(e) => setCsv(e.target.value)}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+              Tip: Export from Apollo, paste here. Header row (Company Name, Email, Phone) is optional and auto-skipped.
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ justifyContent: 'center' }}
+              onClick={run}
+              disabled={loading || !csv.trim()}
+            >
+              {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Match & Update Contacts`}
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 4 }}>
+              <div style={{ flex: 1, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: '#10b981' }}>{results.filter((r) => r.action === 'updated').length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Updated</div>
+              </div>
+              <div style={{ flex: 1, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: '#ef4444' }}>{results.filter((r) => r.action === 'unmatched').length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>No Match</div>
+              </div>
+              <div style={{ flex: 1, background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: '#94a3b8' }}>{results.filter((r) => r.action === 'already_complete').length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Already Had</div>
+              </div>
+            </div>
+            <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {results.map((r, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                  background: r.action === 'updated' ? 'rgba(16,185,129,0.06)' : r.action === 'unmatched' ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${r.action === 'updated' ? 'rgba(16,185,129,0.18)' : r.action === 'unmatched' ? 'rgba(239,68,68,0.15)' : 'var(--border-subtle)'}`,
+                  borderRadius: 6, fontSize: 11,
+                }}>
+                  <span style={{ fontSize: 13 }}>{r.action === 'updated' ? '✓' : r.action === 'unmatched' ? '✗' : '≈'}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{r.input}</span>
+                    {r.matched && r.matched !== r.input && <span style={{ color: 'var(--text-faint)' }}> → {r.matched}</span>}
+                  </div>
+                  <span style={{ color: 'var(--text-faint)', flexShrink: 0 }}>
+                    {r.action === 'updated' ? [r.addedEmail ? '📧' : '', r.addedPhone ? '📞' : ''].filter(Boolean).join(' ') : r.action === 'unmatched' ? 'no match' : 'complete'}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={onClose}>Done</button>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Reactivation Campaign Modal ───────────────────────────────────────────────
+
+const CAT_LABELS_SHORT: Record<string, string> = {
+  fleet: 'Fleet', dinoc: 'DI-NOC', gc_referral: 'GC Ref', construction: 'Const.',
+  racing: 'Racing', reatec: 'Rea-Tec', colorchange: 'Color', design: 'Design', wallgraphics: 'Wall',
+};
+
+function ReactivationModal({ onClose }: { onClose: () => void }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const [tone, setTone] = useState<'warm' | 'offer' | 'update'>('warm');
+  const [minDays, setMinDays] = useState(45);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [step, setStep] = useState<'configure' | 'results'>('configure');
+  const [results, setResults] = useState<{ queued: number; failed: number } | null>(null);
+  const [launching, setLaunching] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['reactivation-candidates', minDays],
+    queryFn: () => api.getReactivationCandidates(minDays),
+    staleTime: 60_000,
+  });
+
+  const candidates = data?.candidates ?? [];
+
+  // Select all on load
+  const allIds = candidates.map((c) => c.id);
+  const isAllSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+
+  function toggleAll() {
+    if (isAllSelected) setSelected(new Set());
+    else setSelected(new Set(allIds));
+  }
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function launch() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) { showToast('Select at least one lead', 'error'); return; }
+    if (ids.length > 50) { showToast('Max 50 leads per campaign', 'error'); return; }
+    setLaunching(true);
+    try {
+      const r = await api.launchReactivationCampaign(ids, tone);
+      setResults({ queued: r.queued, failed: r.failed });
+      setStep('results');
+      showToast(`${r.queued} re-engagement email${r.queued !== 1 ? 's' : ''} queued!`, 'success');
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Launch failed', 'error');
+    } finally {
+      setLaunching(false);
+    }
+  }
+
+  const TONE_OPTIONS: { key: 'warm' | 'offer' | 'update'; label: string; desc: string }[] = [
+    { key: 'warm',   label: '👋 Warm Check-in',      desc: '"Has your timing changed? Love to reconnect."' },
+    { key: 'offer',  label: '🎁 Seasonal Offer',     desc: '"We have a limited window / new booking slot."' },
+    { key: 'update', label: '📸 Portfolio Update',   desc: '"We just finished a similar project — want to see it?"' },
+  ];
+
+  return (
+    <>
+      <div className="modal-header">
+        <h2 className="modal-title">🔄 Reactivate Cold Leads</h2>
+        <p className="modal-subtitle">
+          Send AI-personalized re-engagement emails to cold and lost leads.
+        </p>
+      </div>
+      <div className="modal-body">
+        {step === 'configure' ? (
+          <>
+            {/* Min days filter */}
+            <div className="field-group" style={{ marginBottom: 16 }}>
+              <label className="field-label">Leads inactive for at least</label>
+              <select
+                className="input"
+                value={minDays}
+                onChange={(e) => { setMinDays(Number(e.target.value)); setSelected(new Set()); }}
+              >
+                <option value={30}>30 days</option>
+                <option value={45}>45 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days</option>
+                <option value={180}>6 months</option>
+              </select>
+            </div>
+
+            {/* Tone selector */}
+            <div className="field-group" style={{ marginBottom: 16 }}>
+              <label className="field-label">Email tone</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {TONE_OPTIONS.map(({ key, label, desc }) => (
+                  <button
+                    key={key}
+                    onClick={() => setTone(key)}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 10,
+                      padding: '10px 12px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                      background: tone === key ? 'rgba(168,85,247,0.12)' : 'var(--surface-2)',
+                      border: `1px solid ${tone === key ? '#a855f7' : 'var(--border-subtle)'}`,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{label}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>{desc}</div>
+                    </div>
+                    {tone === key && (
+                      <div style={{ width: 16, height: 16, borderRadius: 99, background: '#a855f7', flexShrink: 0, marginTop: 2 }} />
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Candidates list */}
+            <div className="field-group" style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <label className="field-label" style={{ margin: 0 }}>
+                  {isLoading ? 'Loading candidates…' : `${candidates.length} eligible leads`}
+                </label>
+                {candidates.length > 0 && (
+                  <button
+                    className="btn"
+                    style={{ fontSize: 11, padding: '2px 8px' }}
+                    onClick={toggleAll}
+                  >
+                    {isAllSelected ? 'Deselect All' : `Select All (${candidates.length})`}
+                  </button>
+                )}
+              </div>
+              {isLoading ? (
+                <div className="skeleton" style={{ height: 120, borderRadius: 8 }} />
+              ) : candidates.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 13, background: 'var(--surface-2)', borderRadius: 8 }}>
+                  No cold/lost leads inactive for {minDays}+ days with email addresses.
+                </div>
+              ) : (
+                <div style={{ maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {candidates.slice(0, 50).map((c) => (
+                    <label
+                      key={c.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+                        background: selected.has(c.id) ? 'rgba(168,85,247,0.08)' : 'var(--surface-2)',
+                        border: `1px solid ${selected.has(c.id) ? 'rgba(168,85,247,0.3)' : 'var(--border-subtle)'}`,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(c.id)}
+                        onChange={() => toggleOne(c.id)}
+                        style={{ accentColor: '#a855f7', flexShrink: 0 }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.company}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                          {CAT_LABELS_SHORT[c.category] ?? c.category} · {c.status} · {c.daysSinceContact}d ago
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>
+                        {c.email.length > 22 ? c.email.slice(0, 19) + '…' : c.email}
+                      </span>
+                    </label>
+                  ))}
+                  {candidates.length > 50 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', textAlign: 'center', padding: 8 }}>
+                      Showing first 50 of {candidates.length}. Filter by days above to narrow down.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={onClose}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 2, justifyContent: 'center', background: '#a855f7', borderColor: '#a855f7' }}
+                onClick={launch}
+                disabled={launching || selected.size === 0}
+              >
+                {launching ? (
+                  <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating emails…</>
+                ) : (
+                  `🔄 Launch for ${selected.size} Lead${selected.size !== 1 ? 's' : ''}`
+                )}
+              </button>
+            </div>
+          </>
+        ) : (
+          /* Results screen */
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
+              Campaign Launched!
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24 }}>
+              <strong style={{ color: '#a855f7' }}>{results?.queued ?? 0}</strong> re-engagement email{results?.queued !== 1 ? 's' : ''} queued for delivery.
+              {results?.failed ? ` ${results.failed} failed.` : ''}
+            </div>
+            <div style={{ background: 'var(--surface-2)', borderRadius: 10, padding: '14px 20px', marginBottom: 24, textAlign: 'left' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+                What happens next
+              </div>
+              {[
+                'Emails are queued and sent within 2 hours (randomized to avoid spam filters)',
+                'Each email is AI-personalized for the lead\'s company and category',
+                'Replies trigger AI classification and update lead status automatically',
+                'Track opens and replies in the lead\'s Activity tab',
+              ].map((tip, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <span style={{ color: '#a855f7', flexShrink: 0 }}>·</span>
+                  <span>{tip}</span>
+                </div>
+              ))}
+            </div>
+            <button className="btn btn-primary" style={{ justifyContent: 'center', minWidth: 160 }} onClick={onClose}>
+              Done
+            </button>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useCountUp } from '../../hooks/useCountUp';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
@@ -26,6 +27,9 @@ import DarkProposalsCard from './DarkProposalsCard';
 import FleetGrowthCard from './FleetGrowthCard';
 import MaterialInventoryCard from './MaterialInventoryCard';
 import SubPayablesCard from './SubPayablesCard';
+import QuickStartCard from './QuickStartCard';
+import UpcomingAppointmentsCard from './UpcomingAppointmentsCard';
+import DealRiskCard from './DealRiskCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -1919,7 +1923,106 @@ function SetupChecklist() {
   );
 }
 
+// ── Snooze Wakeup Card ────────────────────────────────────────────────────────
+
+function SnoozeWakeupCard({ onLeadClick }: { onLeadClick: (id: number) => void }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['snooze-wakeups'],
+    queryFn: () => api.getSnoozeWakeups(),
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+
+  const leads = data?.leads ?? [];
+  if (!isLoading && leads.length === 0) return null;
+
+  const CAT_LABELS: Record<string, string> = {
+    fleet: 'Fleet', dinoc: 'DI-NOC', gc_referral: 'GC Ref', construction: 'Construction',
+    colorchange: 'Color Change', racing: 'Racing', reatec: 'Reatec', design: 'Design', wallgraphics: 'Wall',
+  };
+
+  return (
+    <div className="mission-card" style={{ borderLeft: '3px solid #8b5cf6' }}>
+      <div className="mission-card-header">
+        <span className="mission-card-title">
+          <span style={{ marginRight: 5 }}>💤</span>
+          Snooze Wakeup — Follow Up Now
+        </span>
+        <span style={{ fontSize: 10, color: '#8b5cf6', fontWeight: 700, background: 'rgba(139,92,246,0.12)', padding: '2px 8px', borderRadius: 99 }}>
+          {leads.length} woke up
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 10px', lineHeight: 1.4 }}>
+        These leads just came out of snooze — you asked to be reminded. Time to follow up.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {leads.map((l) => (
+          <div
+            key={l.id}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.18)', borderRadius: 8, cursor: 'pointer' }}
+            onClick={() => onLeadClick(l.id)}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.company}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {CAT_LABELS[l.category] ?? l.category} · {l.status}
+              </div>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onLeadClick(l.id); }}
+              style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', flexShrink: 0 }}
+            >
+              Open →
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main MissionView ──────────────────────────────────────────────────────────
+
+const CARD_VIS_KEY = 'wl_mission_card_visibility';
+
+const MISSION_CARDS: { id: string; label: string; icon: string; group: string }[] = [
+  { id: 'daily-briefing', label: 'Daily AI Briefing', icon: '🧠', group: 'Intelligence' },
+  { id: 'today-score', label: "Today's Score", icon: '🎯', group: 'Intelligence' },
+  { id: 'signal-leads', label: 'Market Signal Leads', icon: '📡', group: 'Intelligence' },
+  { id: 'perfect-timing', label: 'Perfect Timing', icon: '⚡', group: 'Intelligence' },
+  { id: 'intent-signals', label: 'Intent Signals', icon: '🔍', group: 'Intelligence' },
+  { id: 'fleet-growth', label: 'Fleet Growth Alerts', icon: '🚛', group: 'Intelligence' },
+  { id: 'wrap-season', label: 'Wrap Season Intel', icon: '🌡', group: 'Intelligence' },
+  { id: 'seasonal-radar', label: 'Seasonal Demand Radar', icon: '📊', group: 'Intelligence' },
+  { id: 'deal-velocity', label: 'Deal Velocity', icon: '📈', group: 'Intelligence' },
+  { id: 'live-signals', label: 'Live Signals Feed', icon: '🔔', group: 'Intelligence' },
+  { id: 'hot-proposals', label: 'Hot Proposals', icon: '🔥', group: 'Pipeline' },
+  { id: 'proposal-heat', label: 'Proposal Heat Score', icon: '🌡', group: 'Pipeline' },
+  { id: 'dark-proposals', label: 'Proposals Gone Dark', icon: '🌑', group: 'Pipeline' },
+  { id: 'expiring-quotes', label: 'Expiring Quotes', icon: '⏰', group: 'Pipeline' },
+  { id: 'top-prospects', label: 'Top Prospects', icon: '⭐', group: 'Pipeline' },
+  { id: 'win-this-week', label: 'Win This Week', icon: '🏆', group: 'Pipeline' },
+  { id: 'rescue-queue', label: 'Lost Lead Rescue', icon: '🆘', group: 'Pipeline' },
+  { id: 'hot-leads', label: 'Hot Leads Leaderboard', icon: '🥇', group: 'Pipeline' },
+  { id: 'speed-dial', label: 'Speed Dial', icon: '📞', group: 'Outreach' },
+  { id: 'objection-counter', label: 'Objection Counter', icon: '💬', group: 'Outreach' },
+  { id: 'referral-engine', label: 'Referral Engine', icon: '🤝', group: 'Outreach' },
+  { id: 'sms-inbox', label: 'SMS Inbox', icon: '📱', group: 'Outreach' },
+  { id: 'inbound-requests', label: 'Inbound Fleet Requests', icon: '📬', group: 'Outreach' },
+  { id: 'stale-pipeline', label: 'Stale Pipeline', icon: '🧊', group: 'Outreach' },
+  { id: 'deal-risk', label: 'Deal Risk Score', icon: '⚠️', group: 'Pipeline' },
+  { id: 'upcoming-appointments', label: 'Upcoming Appointments', icon: '📅', group: 'Operations' },
+  { id: 'task-queue', label: 'Daily Task Queue', icon: '✅', group: 'Operations' },
+  { id: 'overdue-invoices', label: 'Unpaid Invoices', icon: '💰', group: 'Operations' },
+  { id: 'retention-radar', label: 'Retention Radar', icon: '🔄', group: 'Operations' },
+  { id: 'material-inventory', label: 'Material Inventory', icon: '📦', group: 'Operations' },
+  { id: 'sub-payables', label: 'Sub Payables', icon: '🧾', group: 'Operations' },
+  { id: 'quick-start', label: 'Quick Start Guide', icon: '🚀', group: 'Operations' },
+  { id: 'hot-opens', label: 'Hot Email Opens', icon: '🔥', group: 'Activity' },
+  { id: 'activity-feed', label: 'Recent Activity Feed', icon: '🔔', group: 'Activity' },
+  { id: 'impact-strip', label: 'ROI Impact Strip', icon: '📈', group: 'Activity' },
+  { id: 'snooze-wakeup', label: 'Snooze Wakeups', icon: '💤', group: 'Operations' },
+];
 
 export default function MissionView() {
   const setMode = useAppStore((s) => s.setMode);
@@ -1934,6 +2037,25 @@ export default function MissionView() {
   const [showCampaigns, setShowCampaigns] = useState(false);
   const [showROI, setShowROI] = useState(false);
   const [showCallSession, setShowCallSession] = useState(false);
+  const [showCustomize, setShowCustomize] = useState(false);
+  const [cardVis, setCardVis] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(CARD_VIS_KEY) ?? '{}'); } catch { return {}; }
+  });
+
+  function cardVisible(id: string): boolean { return cardVis[id] !== false; }
+
+  function toggleCard(id: string) {
+    setCardVis((v) => {
+      const next = { ...v, [id]: v[id] !== false ? false : true };
+      localStorage.setItem(CARD_VIS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function resetCards() {
+    setCardVis({});
+    localStorage.removeItem(CARD_VIS_KEY);
+  }
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mission'],
@@ -2007,6 +2129,12 @@ export default function MissionView() {
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
+  const animWon = useCountUp(wonThisMonth ?? 0);
+  const animSeqActive = useCountUp(sequences?.active ?? 0);
+  const animPending = useCountUp(sequences?.pendingEmails ?? 0);
+  const animNewEmail = useCountUp(newWithEmail?.length ?? 0);
+  const animAging = useCountUp(agingWraps ?? 0);
+
   return (
     <div className="mission-root">
       {/* ── Header ── */}
@@ -2045,6 +2173,15 @@ export default function MissionView() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             ROI
           </button>
+          <button
+            className="btn mission-header-btn"
+            onClick={() => setShowCustomize((v) => !v)}
+            style={showCustomize ? { borderColor: 'rgba(77,138,245,0.5)', color: '#4d8af5' } : undefined}
+            title="Customize which cards are visible"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Customize
+          </button>
           <button className="btn mission-header-btn" onClick={() => refetch()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             Refresh
@@ -2068,98 +2205,46 @@ export default function MissionView() {
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
 
-      {/* ── SMS Inbox — inbound replies from prospects ── */}
-      <SmsInboxCard />
-
-      {/* ── Market Signals — press release auto-leads ── */}
-      <SignalLeadsCard />
-
-      {/* ── Fleet Growth Alerts — FMCSA fleet size change detection ── */}
-      <FleetGrowthCard />
-
-      {/* ── Material Inventory — low-stock vinyl/film alerts ── */}
-      <MaterialInventoryCard />
-
-      {/* ── Sub Payables — unpaid subcontractor balances ── */}
-      <SubPayablesCard />
-
-      {/* ── Daily Briefing — AI morning snapshot ── */}
-      <DailyBriefingCard />
-
-      {/* ── Inbound Fleet Requests — from wrap-my-fleet consumer tool ── */}
-      <InboundRequestsCard />
-
-      {/* ── Top Prospects — highest heat score leads ── */}
-      <TopProspectsCard onLeadClick={goToLead} />
-
-      {/* ── Expiring Quotes — quotes about to lapse ── */}
-      <ExpiringQuotesCard onLeadClick={goToLead} />
-
-      {/* ── Speed Dial — top 5 leads to contact right now ── */}
-      <SpeedDialCard />
-
-      {/* ── Stale Pipeline — deals going cold with no activity ── */}
-      <StalePipelineCard />
-
-      {/* ── Referral Engine — AI referral ask for top won clients ── */}
-      <ReferralEngineCard />
-
-      {/* ── Objection Counter — AI responses to pricing/negative replies ── */}
-      <ObjectionCounterCard />
-
-      {/* ── Daily Task Queue — AI-generated + manual task list ── */}
-      <TaskQueueCard />
-
-      {/* ── Today's Score — gamified daily activity tracker ── */}
-      <TodayScoreCard />
-
-      {/* ── Win This Week — top 5 predicted closers this week ── */}
-      <WinThisWeekCard />
-
-      {/* ── Intent Signals — unified buying intent score ── */}
-      <IntentSignalsCard />
-
-      {/* ── Perfect Timing — email opens in the last 2 hours ── */}
-      <PerfectTimingCard />
-
-      {/* ── Proposals Gone Dark — sent 3+ days ago, no response ── */}
-      <DarkProposalsCard />
-
-      {/* ── Proposal Heat Score — ranked by recency × view count ── */}
-      <ProposalHeatCard />
-
-      {/* ── Hot Proposals ── */}
-      <HotProposalsCard />
-
-      {/* ── Lost Lead Rescue Queue ── */}
-      <RescueQueueCard />
-
-      {/* ── WrapLeads ROI Impact ── */}
-      <ImpactStrip />
-
-      {/* ── Setup Checklist ── */}
+      {cardVisible('upcoming-appointments') && <UpcomingAppointmentsCard />}
+      {cardVisible('quick-start') && <QuickStartCard leadCount={leads.length} />}
+      {cardVisible('sms-inbox') && <SmsInboxCard />}
+      {cardVisible('signal-leads') && <SignalLeadsCard />}
+      {cardVisible('snooze-wakeup') && <SnoozeWakeupCard onLeadClick={goToLead} />}
+      {cardVisible('fleet-growth') && <FleetGrowthCard />}
+      {cardVisible('material-inventory') && <MaterialInventoryCard />}
+      {cardVisible('sub-payables') && <SubPayablesCard />}
+      {cardVisible('daily-briefing') && <DailyBriefingCard />}
+      {cardVisible('inbound-requests') && <InboundRequestsCard />}
+      {cardVisible('top-prospects') && <TopProspectsCard onLeadClick={goToLead} />}
+      {cardVisible('expiring-quotes') && <ExpiringQuotesCard onLeadClick={goToLead} />}
+      {cardVisible('speed-dial') && <SpeedDialCard />}
+      {cardVisible('stale-pipeline') && <StalePipelineCard />}
+      {cardVisible('deal-risk') && <DealRiskCard />}
+      {cardVisible('referral-engine') && <ReferralEngineCard />}
+      {cardVisible('objection-counter') && <ObjectionCounterCard />}
+      {cardVisible('task-queue') && <TaskQueueCard />}
+      {cardVisible('today-score') && <TodayScoreCard />}
+      {cardVisible('win-this-week') && <WinThisWeekCard />}
+      {cardVisible('intent-signals') && <IntentSignalsCard />}
+      {cardVisible('perfect-timing') && <PerfectTimingCard />}
+      {cardVisible('dark-proposals') && <DarkProposalsCard />}
+      {cardVisible('proposal-heat') && <ProposalHeatCard />}
+      {cardVisible('hot-proposals') && <HotProposalsCard />}
+      {cardVisible('rescue-queue') && <RescueQueueCard />}
+      {cardVisible('impact-strip') && <ImpactStrip />}
       <SetupChecklist />
-
-      {/* ── Wrap Season Intelligence ── */}
-      <WrapSeasonCard
-        leads={leads}
-        onFilter={(cat) => goToLeadsFiltered(undefined, cat)}
-      />
-
-      {/* ── Overdue Invoices — unpaid balances from completed jobs ── */}
-      <OverdueInvoicesCard />
-
-      {/* ── Retention Radar — aging wraps ready for re-engagement ── */}
-      <RetentionRadarCard onLeadClick={goToLead} />
-
-      {/* ── Hot Email Opens Leaderboard ── */}
-      <HotOpensLeaderboard onLeadClick={goToLead} />
+      {cardVisible('wrap-season') && <WrapSeasonCard leads={leads} onFilter={(cat) => goToLeadsFiltered(undefined, cat)} />}
+      {cardVisible('overdue-invoices') && <OverdueInvoicesCard />}
+      {cardVisible('retention-radar') && <RetentionRadarCard onLeadClick={goToLead} />}
+      {cardVisible('hot-opens') && <HotOpensLeaderboard onLeadClick={goToLead} />}
 
       {/* ── Hot Leads Leaderboard + Activity Feed ── */}
-      <div className="mission-grid" style={{ marginBottom: 0, paddingBottom: 0 }}>
-        <HotLeadsLeaderboard onLeadClick={goToLead} />
-        <GlobalActivityFeed onLeadClick={goToLead} />
-      </div>
+      {(cardVisible('hot-leads') || cardVisible('activity-feed')) && (
+        <div className="mission-grid" style={{ marginBottom: 0, paddingBottom: 0 }}>
+          {cardVisible('hot-leads') && <HotLeadsLeaderboard onLeadClick={goToLead} />}
+          {cardVisible('activity-feed') && <GlobalActivityFeed onLeadClick={goToLead} />}
+        </div>
+      )}
 
       {/* ── Bids Due Today / Tomorrow ── */}
       {bidsDueSoon.length > 0 && (
@@ -2509,38 +2594,38 @@ export default function MissionView() {
 
         {/* ── Stats strip ── */}
         <section className="mission-stats-row">
-          <div className="mission-stat-card" onClick={() => goToLeadsFiltered('won')} role="button">
-            <div className="mission-stat-val mission-stat-green">{wonThisMonth}</div>
+          <div className="mission-stat-card mission-stat-card--green" onClick={() => goToLeadsFiltered('won')} role="button" tabIndex={0}>
             <div className="mission-stat-label">won this month</div>
+            <div className="mission-stat-val mission-stat-green">{animWon}</div>
+          </div>
+          <div className="mission-stat-card mission-stat-card--blue">
+            <div className="mission-stat-label">active sequences</div>
+            <div className="mission-stat-val mission-stat-blue">{animSeqActive}</div>
           </div>
           <div className="mission-stat-card">
-            <div className="mission-stat-val mission-stat-blue">{sequences.active}</div>
-            <div className="mission-stat-label">active drip sequences</div>
-          </div>
-          <div className="mission-stat-card">
-            <div className="mission-stat-val">{sequences.pendingEmails}</div>
             <div className="mission-stat-label">emails queued</div>
+            <div className="mission-stat-val">{animPending}</div>
           </div>
-          <div className="mission-stat-card" onClick={() => goToLeadsFiltered('new')} role="button">
-            <div className="mission-stat-val mission-stat-purple">{newWithEmail.length}</div>
+          <div className="mission-stat-card mission-stat-card--purple" onClick={() => goToLeadsFiltered('new')} role="button" tabIndex={0}>
             <div className="mission-stat-label">new leads w/ email</div>
+            <div className="mission-stat-val mission-stat-purple">{animNewEmail}</div>
           </div>
           {(agingWraps ?? 0) > 0 && (
-            <div className="mission-stat-card" onClick={() => setMode('jobs')} role="button">
-              <div className="mission-stat-val" style={{ color: '#f59e0b' }}>{agingWraps}</div>
+            <div className="mission-stat-card mission-stat-card--amber" onClick={() => setMode('jobs')} role="button" tabIndex={0}>
               <div className="mission-stat-label">wraps aging</div>
+              <div className="mission-stat-val" style={{ color: '#f59e0b' }}>{animAging}</div>
             </div>
           )}
         </section>
 
         {/* ── Deal Velocity Tracker ── */}
-        <DealVelocityCard leads={leads} onLeadClick={goToLead} />
+        {cardVisible('deal-velocity') && <DealVelocityCard leads={leads} onLeadClick={goToLead} />}
 
         {/* ── Seasonal Demand Radar ── */}
-        <SeasonalRadar leads={leads} />
+        {cardVisible('seasonal-radar') && <SeasonalRadar leads={leads} />}
 
         {/* ── Live Signals ── */}
-        {(signalsData?.signals?.length ?? 0) > 0 && (
+        {cardVisible('live-signals') && (signalsData?.signals?.length ?? 0) > 0 && (
           <section className="mission-card">
             <div className="mission-card-header">
               <span className="mission-section-label">Live Signals</span>
@@ -2595,6 +2680,75 @@ export default function MissionView() {
         )}
 
       </div>
+
+      {/* ── Card Customization Overlay ── */}
+      {showCustomize && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', padding: '64px 16px 16px' }}
+          onClick={() => setShowCustomize(false)}
+        >
+          <div
+            style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', width: 440, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>⚙ Customize Dashboard</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {Object.values(cardVis).filter((v) => v === false).length === 0
+                    ? 'All cards visible — click any to hide it'
+                    : `${Object.values(cardVis).filter((v) => v === false).length} card${Object.values(cardVis).filter((v) => v === false).length !== 1 ? 's' : ''} hidden`}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  style={{ fontSize: 11, color: 'var(--text-muted)', background: 'none', border: '1px solid var(--border)', padding: '4px 10px', borderRadius: 6, cursor: 'pointer' }}
+                  onClick={resetCards}
+                >
+                  Reset All
+                </button>
+                <button
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, lineHeight: 1, padding: 4 }}
+                  onClick={() => setShowCustomize(false)}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            {['Intelligence', 'Pipeline', 'Outreach', 'Operations', 'Activity'].map((group) => (
+              <div key={group} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.14em', color: 'var(--text-faint)', marginBottom: 8 }}>{group}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {MISSION_CARDS.filter((c) => c.group === group).map((card) => {
+                    const visible = cardVisible(card.id);
+                    return (
+                      <button
+                        key={card.id}
+                        onClick={() => toggleCard(card.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 20,
+                          border: `1px solid ${visible ? '#4d8af5' : 'var(--border)'}`,
+                          background: visible ? 'rgba(77,138,245,0.1)' : 'rgba(255,255,255,0.03)',
+                          color: visible ? '#4d8af5' : 'var(--text-faint)',
+                          fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
+                        }}
+                        title={visible ? 'Click to hide' : 'Click to show'}
+                      >
+                        <span style={{ fontSize: 12 }}>{card.icon}</span>
+                        {card.label}
+                        <span style={{ fontSize: 10, opacity: 0.7 }}>{visible ? '✓' : '○'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+              Changes save instantly to this browser. Action cards (overdue follow-ups, replied leads, etc.) always show regardless of this setting.
+            </div>
+          </div>
+        </div>
+      )}
 
       {showROI && (
         <ROICalculatorModal
