@@ -30,6 +30,7 @@ import SubPayablesCard from './SubPayablesCard';
 import QuickStartCard from './QuickStartCard';
 import UpcomingAppointmentsCard from './UpcomingAppointmentsCard';
 import DealRiskCard from './DealRiskCard';
+import EmailBlitzModal from './EmailBlitzModal';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -2038,6 +2039,7 @@ export default function MissionView() {
   const [showROI, setShowROI] = useState(false);
   const [showCallSession, setShowCallSession] = useState(false);
   const [showCustomize, setShowCustomize] = useState(false);
+  const [showEmailBlitz, setShowEmailBlitz] = useState(false);
   const [cardVis, setCardVis] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(CARD_VIS_KEY) ?? '{}'); } catch { return {}; }
   });
@@ -2168,6 +2170,15 @@ export default function MissionView() {
           <button className="btn mission-header-btn" onClick={() => { setShowProspector((v) => !v); setShowCampaigns(false); }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             Prospector
+          </button>
+          <button
+            className="btn mission-header-btn"
+            onClick={() => setShowEmailBlitz(true)}
+            title="Email Blitz — rapidly send personalized follow-up emails to overdue leads"
+            style={{ color: '#f4551c', borderColor: 'rgba(244,85,28,0.4)' }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Blitz
           </button>
           <button className="btn mission-header-btn" onClick={() => setShowROI(true)} title="Wrap ROI Calculator">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
@@ -2762,6 +2773,10 @@ export default function MissionView() {
           leads={callReady}
           onClose={() => setShowCallSession(false)}
         />
+      )}
+
+      {showEmailBlitz && (
+        <EmailBlitzModal onClose={() => setShowEmailBlitz(false)} />
       )}
     </div>
   );

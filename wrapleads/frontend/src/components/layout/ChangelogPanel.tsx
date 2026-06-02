@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '⚡ Email Blitz Mode — Fire Personalized Follow-Ups in Minutes',
+    body: 'New "Blitz" button in the Mission Dashboard header (lightning bolt icon, orange). Opens a full-screen modal that shows overdue follow-up leads one at a time — like a card deck. For each lead, Claude Haiku auto-generates a personalized 3-sentence follow-up email tailored to their company, fleet size, location, and pipeline stage. Review and edit the subject + body inline. Hit "Send & Next" to fire the email immediately and move to the next card. Or "Skip" to pass, or "Snooze 2 wks" to silence the lead for two weeks. Progress bar at the top shows position in queue. When done, shows a summary: X sent, Y skipped, Z snoozed. The queue is intelligently prioritized: overdue follow-up dates come first, then leads by days since last contact. Each sent email is tracked (opens/clicks), logged to the activity timeline, and updates last_contacted. Requires Resend for sending. AI generation requires Anthropic API key. Blitz a queue of 15 follow-ups in under 5 minutes.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔄 Cold Lead Reactivation Campaign — One-Click AI Re-Engagement',
     body: 'New "Reactivate" button in the lead list toolbar (purple, next to Update Contacts). Opens a campaign builder where you choose how long leads have been inactive (30–180 days) and pick an email tone: Warm Check-in ("has your timing changed?"), Seasonal Offer ("we have a limited window"), or Portfolio Update ("we just finished a similar project"). Browse and cherry-pick individual cold and lost leads from the eligibility list, or select all with one click. Supports up to 50 leads per campaign. WrapOS generates an AI-personalized re-engagement email for each selected lead using Claude — tailored to their company name, category, and contact name. Emails are queued and sent within a 2-hour window (randomized timing to avoid spam filters). Requires ShopFlow tier. Replies are automatically classified by the AI reply classifier and update lead status. Track results in each lead\'s Activity tab.',
   },

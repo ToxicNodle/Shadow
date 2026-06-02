@@ -2314,4 +2314,35 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ leadIds, tone }),
     }),
+
+  generateBlitzEmail: (params: {
+    lead: { company: string; contactName: string | null; category: string; status: string; city: string | null; state: string | null; fleetSize: string | null; pitchAngle: string | null };
+    settings: object;
+  }) =>
+    authFetch<{ subject: string; body: string }>('/ai/email', {
+      method: 'POST',
+      body: JSON.stringify({ ...params, emailType: 'Follow-up', tone: 'Professional' }),
+    }),
+
+  getBlitzCandidates: () =>
+    authFetch<{
+      ok: boolean;
+      candidates: {
+        id: number;
+        company: string;
+        contactName: string | null;
+        category: string;
+        status: string;
+        email: string;
+        phone: string | null;
+        city: string | null;
+        state: string | null;
+        fleetSize: string | null;
+        pitchAngle: string | null;
+        notes: string | null;
+        followupDueAt: string | null;
+        daysSinceContact: number;
+        recentEmailCount: number;
+      }[];
+    }>('/mission/blitz-candidates'),
 };

@@ -18095,6 +18095,65 @@ app.get('/mission/stale-pipeline', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Email Blitz Mode — fast-action follow-up email queue ─────────────────────
+// Returns overdue leads eligible for a quick follow-up email, pre-sorted by
+// urgency. The frontend Email Blitz modal shows these one at a time,
+// generates a personalized email per lead, and lets users send/skip/snooze.
+app.get('/mission/blitz-candidates', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(`
+      SELECT
+        l.id, l.company, l.contact_name, l.category, l.status,
+        l.email, l.phone, l.city, l.state, l.fleet_size, l.pitch_angle, l.notes,
+        l.followup_due_at,
+        COALESCE(l.last_contacted_at, l.updated_at) AS last_activity,
+        EXTRACT(EPOCH FROM (NOW() - COALESCE(l.last_contacted_at, l.updated_at))) / 86400.0 AS days_since_contact,
+        (SELECT COUNT(*)::INT FROM lead_activities la
+         WHERE la.lead_id = l.id AND la.user_id = l.user_id
+           AND la.type = 'email_sent'
+           AND la.created_at > NOW() - INTERVAL '30 days') AS recent_emails
+      FROM leads l
+      WHERE l.user_id = $1
+        AND l.status IN ('contacted', 'replied', 'meeting', 'proposal')
+        AND l.email IS NOT NULL AND l.email != ''
+        AND (l.snooze_until IS NULL OR l.snooze_until < NOW())
+        AND (
+          l.followup_due_at < CURRENT_DATE
+          OR COALESCE(l.last_contacted_at, l.updated_at) < NOW() - INTERVAL '7 days'
+        )
+      ORDER BY
+        CASE WHEN l.followup_due_at < CURRENT_DATE THEN 0 ELSE 1 END,
+        l.followup_due_at ASC NULLS LAST,
+        days_since_contact DESC
+      LIMIT 25
+    `, [uid]);
+
+    const candidates = rows.map((r) => ({
+      id: parseInt(r.id, 10),
+      company: r.company,
+      contactName: r.contact_name,
+      category: r.category,
+      status: r.status,
+      email: r.email,
+      phone: r.phone,
+      city: r.city,
+      state: r.state,
+      fleetSize: r.fleet_size,
+      pitchAngle: r.pitch_angle,
+      notes: r.notes,
+      followupDueAt: r.followup_due_at,
+      daysSinceContact: Math.round(parseFloat(r.days_since_contact) * 10) / 10,
+      recentEmailCount: r.recent_emails || 0,
+    }));
+
+    res.json({ ok: true, candidates });
+  } catch (e) {
+    console.error('[blitz-candidates]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Deal Risk Scoring — multi-signal risk score per active pipeline deal ──────
 // Combines days-stale, proposal view state, overdue follow-up, and outbound
 // count without reply to produce a 0–100 risk score per deal.
