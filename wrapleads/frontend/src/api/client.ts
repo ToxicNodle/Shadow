@@ -1881,6 +1881,12 @@ export const api = {
       confidence: 'high' | 'medium' | 'low';
     }>(`/ai/proposal-coach?leadId=${leadId}`),
 
+  suggestSubjectLines: (args: { leadId?: number; currentBody?: string; currentSubject?: string }) =>
+    authFetch<{ ok: boolean; suggestions: Array<{ subject: string; approach: string; why: string }> }>(
+      '/ai/subject-lines',
+      { method: 'POST', body: JSON.stringify(args) }
+    ),
+
   // ── Google Review Automation ──
   requestReview: (jobId: number, opts: { clientEmail?: string; clientPhone?: string; clientName?: string; googleUrl?: string }) =>
     authFetch<{ ok: boolean; token: string; reviewUrl: string; sentVia: string[] }>(

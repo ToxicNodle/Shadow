@@ -160,6 +160,7 @@ export interface Settings {
   twilioAuthToken: string;
   twilioFromNumber: string;
   portfolioUrl: string;
+  logoUrl: string;
   callHumorLevel: 'none' | 'light' | 'medium' | 'high';
   pricePerSqftLow: string;
   pricePerSqftHigh: string;
@@ -299,6 +300,7 @@ export const DEFAULT_SETTINGS: Settings = {
   twilioAuthToken: '',
   twilioFromNumber: '',
   portfolioUrl: '',
+  logoUrl: '',
   callHumorLevel: 'light',
   pricePerSqftLow: '8',
   pricePerSqftHigh: '14',

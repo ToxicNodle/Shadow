@@ -349,6 +349,9 @@ export default function EmailTab({ lead }: Props) {
   const [copiedTpl, setCopiedTpl] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
   const [activeTemplateId, setActiveTemplateId] = useState<number | null>(null);
+  const [showSubjectSuggestions, setShowSubjectSuggestions] = useState(false);
+  const [subjectSuggestions, setSubjectSuggestions] = useState<Array<{ subject: string; approach: string; why: string }> | null>(null);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
 
   // User-saved templates
   const { data: userTplData, refetch: refetchUserTpls } = useQuery({
@@ -520,6 +523,25 @@ export default function EmailTab({ lead }: Props) {
       showToast((e as Error).message, 'error');
     } finally {
       setActivating(false);
+    }
+  }
+
+  async function fetchSubjectSuggestions() {
+    if (!result) return;
+    setLoadingSubjects(true);
+    setShowSubjectSuggestions(true);
+    try {
+      const data = await api.suggestSubjectLines({
+        leadId: lead.serverId ?? undefined,
+        currentBody: result.body,
+        currentSubject: result.subject,
+      });
+      setSubjectSuggestions(data.suggestions);
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+      setShowSubjectSuggestions(false);
+    } finally {
+      setLoadingSubjects(false);
     }
   }
 
@@ -750,11 +772,19 @@ export default function EmailTab({ lead }: Props) {
       {/* Single email result */}
       {result && (
         <div className="email-preview">
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: showSubjectSuggestions ? 4 : 8 }}>
             <div className="email-subject-row" style={{ flex: 1, margin: 0, border: 'none', padding: 0, background: 'none' }}>
               <span className="label">Sub</span>
               <span className="subject">{result.subject}</span>
             </div>
+            <button
+              className="btn"
+              style={{ fontSize: 10, flexShrink: 0, padding: '3px 8px', color: '#4d8af5', borderColor: 'rgba(77,138,245,.3)' }}
+              onClick={() => { if (showSubjectSuggestions) { setShowSubjectSuggestions(false); setSubjectSuggestions(null); } else fetchSubjectSuggestions(); }}
+              title="Get 3 alternative subject lines from AI"
+            >
+              {showSubjectSuggestions ? '✕ Close' : '✦ Try different'}
+            </button>
             <button
               className="btn"
               style={{ fontSize: 11, flexShrink: 0, padding: '4px 10px' }}
@@ -764,6 +794,46 @@ export default function EmailTab({ lead }: Props) {
               {previewMode ? '✎ Edit' : '⊞ Preview'}
             </button>
           </div>
+          {showSubjectSuggestions && (
+            <div style={{ marginBottom: 8, padding: '8px 10px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid rgba(77,138,245,.2)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#4d8af5', marginBottom: 6 }}>
+                ✦ AI Subject Line Alternatives
+              </div>
+              {loadingSubjects ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', padding: '4px 0' }}>
+                  <span className="spinner" style={{ width: 10, height: 10 }} />
+                  Generating options…
+                </div>
+              ) : subjectSuggestions ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {subjectSuggestions.map((s, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setResult((r) => r ? { ...r, subject: s.subject } : r);
+                        setShowSubjectSuggestions(false);
+                        setSubjectSuggestions(null);
+                      }}
+                      style={{
+                        display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                        background: 'var(--bg-card)', border: '1px solid var(--border)',
+                        borderRadius: 6, padding: '7px 10px', cursor: 'pointer', textAlign: 'left',
+                        transition: 'border-color .12s',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#4d8af5')}
+                      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+                    >
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>{s.subject}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                        <span style={{ color: '#4d8af5', fontWeight: 700, marginRight: 4, textTransform: 'capitalize' }}>{s.approach}</span>
+                        {s.why}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
           {previewMode ? (
             <div className="email-client-preview">
               <div className="email-client-preview-meta">

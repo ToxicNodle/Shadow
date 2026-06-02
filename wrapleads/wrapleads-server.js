@@ -15202,6 +15202,57 @@ Keep advice specific to the actual numbers. No generic platitudes.`,
   }
 });
 
+// POST /ai/subject-lines — generate 3 alternative subject lines for an outbound email
+app.post('/ai/subject-lines', authMiddleware, async (req, res) => {
+  if (!anthropic) return res.status(503).json({ error: 'AI not configured' });
+  const uid = String(req.user.id);
+  const { leadId, currentBody, currentSubject } = req.body || {};
+  try {
+    let leadCtx = '';
+    if (leadId) {
+      const { rows } = await pool.query(
+        `SELECT company, contact_name, category, status, city, state, fleet_size FROM leads WHERE id=$1 AND user_id=$2`,
+        [leadId, uid]
+      );
+      if (rows.length) {
+        const l = rows[0];
+        leadCtx = `Company: ${l.company}${l.contact_name ? `, Contact: ${l.contact_name}` : ''}. Category: ${l.category || 'fleet'}. Status: ${l.status}. ${l.city ? `Location: ${l.city}, ${l.state}.` : ''} ${l.fleet_size ? `Fleet size: ${l.fleet_size} units.` : ''}`;
+      }
+    }
+    const userR = await pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]);
+    const s = userR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'the wrap shop';
+
+    const prompt = `You are a cold email expert for a vehicle wrap and graphics company called "${shopName}".
+${leadCtx ? `Lead context: ${leadCtx}` : ''}
+${currentSubject ? `Current subject: "${currentSubject}"` : ''}
+${currentBody ? `Email body (first 300 chars): "${currentBody.slice(0, 300)}"` : ''}
+
+Generate exactly 3 alternative email subject lines — each using a different psychological approach:
+1. Curiosity / intrigue (make them wonder)
+2. Specificity / data-driven (mention their fleet, location, or a concrete outcome)
+3. Direct / problem-aware (acknowledge a pain point or trigger)
+
+Rules: Under 50 characters. No clickbait. No ALL CAPS. No emoji. No questions that feel rhetorical.
+
+Return JSON array only: [{"subject":"...","approach":"curiosity|specific|direct","why":"one sentence why it works"}]`;
+
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const raw = msg.content[0]?.text || '[]';
+    const json = raw.match(/\[[\s\S]*\]/)?.[0] || '[]';
+    const suggestions = JSON.parse(json);
+    res.json({ ok: true, suggestions: suggestions.slice(0, 3) });
+  } catch (e) {
+    console.error('[subject-lines]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 // POST /leads/:id/create-location — create a new lead from a suggested location
 app.post('/leads/:id/create-location', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -18403,6 +18454,7 @@ app.get('/proposals/:token', async (req, res) => {
     const senderEmail = s.senderEmail || '';
     const senderPhone = s.senderPhone || '';
     const portfolio = s.portfolioUrl || '';
+    const logoUrl = s.logoUrl || '';
     const approved = p.status === 'approved';
 
     const html = `<!DOCTYPE html><html lang="en"><head>
@@ -18414,6 +18466,7 @@ app.get('/proposals/:token', async (req, res) => {
   .wrap{max-width:760px;margin:0 auto;background:#fff;min-height:100vh;box-shadow:0 0 40px rgba(0,0,0,.08)}
   .header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;padding:48px 48px 36px}
   .logo{font-size:22px;font-weight:900;letter-spacing:-.5px;margin-bottom:4px;color:#fff}
+  .logo-img{max-height:52px;max-width:180px;object-fit:contain;display:block;margin-bottom:12px;filter:brightness(1.05)}
   .tagline{font-size:12px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.1em;margin-bottom:32px}
   .prop-title{font-size:28px;font-weight:800;line-height:1.2;margin-bottom:8px}
   .prop-meta{font-size:13px;color:rgba(255,255,255,.6)}
@@ -18461,7 +18514,7 @@ app.get('/proposals/:token', async (req, res) => {
 </head><body>
 <div class="wrap">
   <div class="header">
-    <div class="logo">${he(shopName)}</div>
+    ${logoUrl ? `<img class="logo-img" src="${he(logoUrl)}" alt="${he(shopName)} logo" />` : `<div class="logo">${he(shopName)}</div>`}
     <div class="tagline">Vehicle Wraps · Fleet Graphics · Architectural Film</div>
     <div class="prop-title">${he(p.title)}</div>
     <div class="prop-meta">Prepared for ${he(p.contact_name || p.company)} · ${new Date(p.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>

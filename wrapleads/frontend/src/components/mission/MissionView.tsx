@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useCountUp } from '../../hooks/useCountUp';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useAppStore } from '../../store/useAppStore';
@@ -2007,6 +2008,12 @@ export default function MissionView() {
   const totalActions = (callReady?.length ?? 0) + overdue.length + replied.length + bidsThisWeek.length;
   const hasBulkTargets = newWithEmail.length > 0;
 
+  const animWon = useCountUp(wonThisMonth ?? 0);
+  const animSeqActive = useCountUp(sequences?.active ?? 0);
+  const animPending = useCountUp(sequences?.pendingEmails ?? 0);
+  const animNewEmail = useCountUp(newWithEmail?.length ?? 0);
+  const animAging = useCountUp(agingWraps ?? 0);
+
   return (
     <div className="mission-root">
       {/* ── Header ── */}
@@ -2509,26 +2516,26 @@ export default function MissionView() {
 
         {/* ── Stats strip ── */}
         <section className="mission-stats-row">
-          <div className="mission-stat-card" onClick={() => goToLeadsFiltered('won')} role="button">
-            <div className="mission-stat-val mission-stat-green">{wonThisMonth}</div>
+          <div className="mission-stat-card mission-stat-card--green" onClick={() => goToLeadsFiltered('won')} role="button" tabIndex={0}>
             <div className="mission-stat-label">won this month</div>
+            <div className="mission-stat-val mission-stat-green">{animWon}</div>
+          </div>
+          <div className="mission-stat-card mission-stat-card--blue">
+            <div className="mission-stat-label">active sequences</div>
+            <div className="mission-stat-val mission-stat-blue">{animSeqActive}</div>
           </div>
           <div className="mission-stat-card">
-            <div className="mission-stat-val mission-stat-blue">{sequences.active}</div>
-            <div className="mission-stat-label">active drip sequences</div>
-          </div>
-          <div className="mission-stat-card">
-            <div className="mission-stat-val">{sequences.pendingEmails}</div>
             <div className="mission-stat-label">emails queued</div>
+            <div className="mission-stat-val">{animPending}</div>
           </div>
-          <div className="mission-stat-card" onClick={() => goToLeadsFiltered('new')} role="button">
-            <div className="mission-stat-val mission-stat-purple">{newWithEmail.length}</div>
+          <div className="mission-stat-card mission-stat-card--purple" onClick={() => goToLeadsFiltered('new')} role="button" tabIndex={0}>
             <div className="mission-stat-label">new leads w/ email</div>
+            <div className="mission-stat-val mission-stat-purple">{animNewEmail}</div>
           </div>
           {(agingWraps ?? 0) > 0 && (
-            <div className="mission-stat-card" onClick={() => setMode('jobs')} role="button">
-              <div className="mission-stat-val" style={{ color: '#f59e0b' }}>{agingWraps}</div>
+            <div className="mission-stat-card mission-stat-card--amber" onClick={() => setMode('jobs')} role="button" tabIndex={0}>
               <div className="mission-stat-label">wraps aging</div>
+              <div className="mission-stat-val" style={{ color: '#f59e0b' }}>{animAging}</div>
             </div>
           )}
         </section>

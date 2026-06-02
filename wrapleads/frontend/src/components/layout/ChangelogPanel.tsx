@@ -9,6 +9,24 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '✦ AI Subject Line Suggester — 3 Alternatives, One Click',
+    body: 'After generating an email, a new "✦ Try different" button appears next to the subject line. Click it and Claude instantly generates 3 alternative subject lines using different psychological angles: Curiosity (make them wonder), Specificity (mention their fleet size or location), and Direct (acknowledge their pain point). Each alternative shows a one-sentence explanation of why it works. Click any option to swap it in — or dismiss the panel and keep the original. Powered by Claude Haiku for near-instant results. Works on all generated emails — initial outreach, follow-ups, re-engagement, and templates.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
+    title: '🖼 Shop Logo in Client Proposals',
+    body: 'Add your shop logo URL in Settings → "Shop Logo URL" (accepts any public image URL — PNG, SVG, JPG). When set, your logo appears in the header of every proposal your clients receive, replacing the text-only shop name. Keeps branding consistent and makes proposals feel significantly more professional. Best results with a PNG or SVG on a transparent background. The logo scales proportionally to 52px height.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'improved',
+    title: '📊 Mission Dashboard — Animated Trading Terminal Stat Cards',
+    body: 'The four main stat cards on Mission (Won This Month, Active Sequences, Emails Queued, New Leads w/ Email) now use the same animated count-up effect as the Pipeline hero cards — numbers roll up from zero to their final value on load. Each card now has a color-coded 3px left border: green for won deals, blue for sequences, purple for new leads, amber for aging wraps. Labels moved to 9px uppercase above the number for a precision-instrument feel.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📦 Good / Better / Best Tiered Proposal Pricing',
     body: 'Proposals now support tiered pricing — the first vehicle wrap CRM to do it. In the AI Proposal panel, click "Good / Better / Best Pricing" to build up to 4 tiers (e.g. Good: spot graphics $2,500 · Better: partial wrap $4,800 · Best: full fleet wrap $7,200). Each tier has a label, price, optional short description, and bullet-point feature list. Mark one tier "Highlight" to show it with a "Most Popular" badge on the client-facing proposal page. When the client opens the link, they see the tiers side-by-side and click "Select this package" before approving — their choice is recorded and shown in the activity log ("Client approved — selected Best package"). The approval thank-you email also references their selected tier. Use this to upsell — most clients pick the middle or highlighted tier.',
   },
