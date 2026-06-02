@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HelioScout — LinkedIn Outreach Launcher</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; margin: 0; background: #0a0b0d; color: #f4f5f7; line-height: 1.55; }
+  .page { max-width: 1000px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 32px; font-weight: 800; margin: 0 0 8px; }
+  .lede { color: #cbd5e1; margin: 0 0 24px; font-size: 14px; }
+  .progress { padding: 14px 18px; background: rgba(245,158,11,0.08); border: 1px solid #f59e0b; border-radius: 10px; margin-bottom: 24px; font-size: 14px; font-weight: 600; }
+  .progress strong { color: #f59e0b; font-size: 18px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  .row { display: grid; grid-template-columns: 36px 1fr 180px 80px; gap: 14px; align-items: start; padding: 14px 16px; background: #14161a; border: 1px solid #2a2e36; border-radius: 10px; margin-bottom: 8px; }
+  .row.visited { background: rgba(34,197,94,0.06); border-color: rgba(34,197,94,0.3); }
+  .num { font-weight: 800; font-size: 16px; color: #94a3b8; text-align: center; padding-top: 4px; }
+  .meta .company { font-weight: 700; font-size: 14px; }
+  .meta .state { display: inline-block; padding: 2px 8px; background: rgba(245,158,11,0.15); color: #f59e0b; font-size: 10px; font-weight: 800; border-radius: 4px; letter-spacing: 0.05em; margin-left: 6px; }
+  .meta .count { display: inline-block; padding: 2px 8px; background: rgba(34,197,94,0.1); color: #22c55e; font-size: 10px; font-weight: 700; border-radius: 4px; margin-left: 4px; }
+  .meta .domain { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  .btn { display: inline-block; padding: 9px 14px; background: #0a66c2; color: white; border: none; border-radius: 6px; font-weight: 700; font-size: 13px; text-decoration: none; text-align: center; cursor: pointer; }
+  .btn:hover { background: #0958a8; }
+  .row.visited .btn { background: #22c55e; }
+  .copy-btn { display: block; margin-top: 8px; padding: 6px 12px; background: #f59e0b; color: #000; border: none; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; }
+  .copy-btn.copied { background: #22c55e; color: white; }
+  .status { font-size: 11px; font-weight: 700; color: #94a3b8; text-align: center; padding-top: 4px; }
+  .row.visited .status { color: #22c55e; }
+  textarea { resize: vertical; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>HelioScout — LinkedIn Outreach Launcher</h1>
+  <p class="lede">
+    50 installer prospects sorted by state inventory (TX/CA/NY etc. first). For each:
+    <strong>1)</strong> Click "Find on LinkedIn" → company page opens →
+    <strong>2)</strong> Click "People" tab → find Founder/CEO/VP Sales →
+    <strong>3)</strong> Click "Show DM template" → copy → paste into LinkedIn connect-with-note.
+    Progress saved in localStorage.
+  </p>
+
+  <div class="progress">
+    Progress: <strong id="visited-count">0</strong> / 50 visited
+  </div>
+
+  <ul>
+    <li class="row" data-idx="1">
+      <div class="num">1</div>
+      <div class="meta">
+        <div class="company">AFC Solar <span class="state">TX</span><span class="count">3,009 leads</span></div>
+        <div class="domain">afcsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-1" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw AFC Solar on the SEIA member directory. Quick question:
+
+We just pulled 3,009 EPA-verified commercial solar leads in TX (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping TX commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-1" data-idx="1">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=AFC%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 1)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-1">—</div>
+    </li>
+    <li class="row" data-idx="2">
+      <div class="num">2</div>
+      <div class="meta">
+        <div class="company">Freedom Solar Power <span class="state">TX</span><span class="count">3,009 leads</span></div>
+        <div class="domain">freedomsolarpower.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-2" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Freedom Solar Power on the SEIA member directory. Quick question:
+
+We just pulled 3,009 EPA-verified commercial solar leads in TX (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping TX commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-2" data-idx="2">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Freedom%20Solar%20Power" target="_blank" rel="noopener" onclick="markVisited(this, 2)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-2">—</div>
+    </li>
+    <li class="row" data-idx="3">
+      <div class="num">3</div>
+      <div class="meta">
+        <div class="company">Big Sun Solar <span class="state">TX</span><span class="count">3,009 leads</span></div>
+        <div class="domain">bigsunsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-3" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Big Sun Solar on the SEIA member directory. Quick question:
+
+We just pulled 3,009 EPA-verified commercial solar leads in TX (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping TX commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-3" data-idx="3">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Big%20Sun%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 3)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-3">—</div>
+    </li>
+    <li class="row" data-idx="4">
+      <div class="num">4</div>
+      <div class="meta">
+        <div class="company">IntegrateSun <span class="state">TX</span><span class="count">3,009 leads</span></div>
+        <div class="domain">integratesun.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-4" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw IntegrateSun on the SEIA member directory. Quick question:
+
+We just pulled 3,009 EPA-verified commercial solar leads in TX (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping TX commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-4" data-idx="4">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=IntegrateSun" target="_blank" rel="noopener" onclick="markVisited(this, 4)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-4">—</div>
+    </li>
+    <li class="row" data-idx="5">
+      <div class="num">5</div>
+      <div class="meta">
+        <div class="company">Sunshine Renewable Solutions <span class="state">TX</span><span class="count">3,009 leads</span></div>
+        <div class="domain">sunshinerenewable.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-5" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Sunshine Renewable Solutions on the SEIA member directory. Quick question:
+
+We just pulled 3,009 EPA-verified commercial solar leads in TX (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping TX commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-5" data-idx="5">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Sunshine%20Renewable%20Solutions" target="_blank" rel="noopener" onclick="markVisited(this, 5)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-5">—</div>
+    </li>
+    <li class="row" data-idx="6">
+      <div class="num">6</div>
+      <div class="meta">
+        <div class="company">Native Solar <span class="state">TX</span><span class="count">3,009 leads</span></div>
+        <div class="domain">nativesolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-6" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Native Solar on the SEIA member directory. Quick question:
+
+We just pulled 3,009 EPA-verified commercial solar leads in TX (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping TX commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-6" data-idx="6">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Native%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 6)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-6">—</div>
+    </li>
+    <li class="row" data-idx="7">
+      <div class="num">7</div>
+      <div class="meta">
+        <div class="company">Lighthouse Solar <span class="state">TX</span><span class="count">3,009 leads</span></div>
+        <div class="domain">lighthousesolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-7" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Lighthouse Solar on the SEIA member directory. Quick question:
+
+We just pulled 3,009 EPA-verified commercial solar leads in TX (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping TX commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-7" data-idx="7">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Lighthouse%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 7)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-7">—</div>
+    </li>
+    <li class="row" data-idx="8">
+      <div class="num">8</div>
+      <div class="meta">
+        <div class="company">A.M. Sun Solar <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">amsunsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-8" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw A.M. Sun Solar on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-8" data-idx="8">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=A.M.%20Sun%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 8)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-8">—</div>
+    </li>
+    <li class="row" data-idx="9">
+      <div class="num">9</div>
+      <div class="meta">
+        <div class="company">M Bar C Construction <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">mbarcconstruction.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-9" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw M Bar C Construction on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-9" data-idx="9">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=M%20Bar%20C%20Construction" target="_blank" rel="noopener" onclick="markVisited(this, 9)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-9">—</div>
+    </li>
+    <li class="row" data-idx="10">
+      <div class="num">10</div>
+      <div class="meta">
+        <div class="company">New Era Electric <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">newera-electric.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-10" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw New Era Electric on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-10" data-idx="10">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=New%20Era%20Electric" target="_blank" rel="noopener" onclick="markVisited(this, 10)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-10">—</div>
+    </li>
+    <li class="row" data-idx="11">
+      <div class="num">11</div>
+      <div class="meta">
+        <div class="company">Renova Energy <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">renovaenergy.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-11" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Renova Energy on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-11" data-idx="11">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Renova%20Energy" target="_blank" rel="noopener" onclick="markVisited(this, 11)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-11">—</div>
+    </li>
+    <li class="row" data-idx="12">
+      <div class="num">12</div>
+      <div class="meta">
+        <div class="company">Sandbar Solar <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">sandbarsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-12" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Sandbar Solar on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-12" data-idx="12">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Sandbar%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 12)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-12">—</div>
+    </li>
+    <li class="row" data-idx="13">
+      <div class="num">13</div>
+      <div class="meta">
+        <div class="company">Scudder Solar Energy Systems <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">scuddersolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-13" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Scudder Solar Energy Systems on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-13" data-idx="13">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Scudder%20Solar%20Energy%20Systems" target="_blank" rel="noopener" onclick="markVisited(this, 13)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-13">—</div>
+    </li>
+    <li class="row" data-idx="14">
+      <div class="num">14</div>
+      <div class="meta">
+        <div class="company">Teichert Solar <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">teichertsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-14" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Teichert Solar on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-14" data-idx="14">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Teichert%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 14)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-14">—</div>
+    </li>
+    <li class="row" data-idx="15">
+      <div class="num">15</div>
+      <div class="meta">
+        <div class="company">Sunworks <span class="state">CA</span><span class="count">1,594 leads</span></div>
+        <div class="domain">sunworksusa.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-15" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Sunworks on the SEIA member directory. Quick question:
+
+We just pulled 1,594 EPA-verified commercial solar leads in CA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping CA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-15" data-idx="15">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Sunworks" target="_blank" rel="noopener" onclick="markVisited(this, 15)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-15">—</div>
+    </li>
+    <li class="row" data-idx="16">
+      <div class="num">16</div>
+      <div class="meta">
+        <div class="company">Brooklyn SolarWorks <span class="state">NY</span><span class="count">527 leads</span></div>
+        <div class="domain">brooklynsolarworks.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-16" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Brooklyn SolarWorks on the SEIA member directory. Quick question:
+
+We just pulled 527 EPA-verified commercial solar leads in NY (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NY commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-16" data-idx="16">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Brooklyn%20SolarWorks" target="_blank" rel="noopener" onclick="markVisited(this, 16)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-16">—</div>
+    </li>
+    <li class="row" data-idx="17">
+      <div class="num">17</div>
+      <div class="meta">
+        <div class="company">Harvest Power <span class="state">NY</span><span class="count">527 leads</span></div>
+        <div class="domain">harvestpower.solar</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-17" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Harvest Power on the SEIA member directory. Quick question:
+
+We just pulled 527 EPA-verified commercial solar leads in NY (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NY commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-17" data-idx="17">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Harvest%20Power" target="_blank" rel="noopener" onclick="markVisited(this, 17)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-17">—</div>
+    </li>
+    <li class="row" data-idx="18">
+      <div class="num">18</div>
+      <div class="meta">
+        <div class="company">John Mills Electric <span class="state">NY</span><span class="count">527 leads</span></div>
+        <div class="domain">johnmillselectric.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-18" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw John Mills Electric on the SEIA member directory. Quick question:
+
+We just pulled 527 EPA-verified commercial solar leads in NY (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NY commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-18" data-idx="18">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=John%20Mills%20Electric" target="_blank" rel="noopener" onclick="markVisited(this, 18)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-18">—</div>
+    </li>
+    <li class="row" data-idx="19">
+      <div class="num">19</div>
+      <div class="meta">
+        <div class="company">Solar by CIR <span class="state">NY</span><span class="count">527 leads</span></div>
+        <div class="domain">solarbycir.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-19" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Solar by CIR on the SEIA member directory. Quick question:
+
+We just pulled 527 EPA-verified commercial solar leads in NY (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NY commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-19" data-idx="19">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Solar%20by%20CIR" target="_blank" rel="noopener" onclick="markVisited(this, 19)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-19">—</div>
+    </li>
+    <li class="row" data-idx="20">
+      <div class="num">20</div>
+      <div class="meta">
+        <div class="company">SUNation Energy <span class="state">NY</span><span class="count">527 leads</span></div>
+        <div class="domain">sunation.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-20" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw SUNation Energy on the SEIA member directory. Quick question:
+
+We just pulled 527 EPA-verified commercial solar leads in NY (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NY commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-20" data-idx="20">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=SUNation%20Energy" target="_blank" rel="noopener" onclick="markVisited(this, 20)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-20">—</div>
+    </li>
+    <li class="row" data-idx="21">
+      <div class="num">21</div>
+      <div class="meta">
+        <div class="company">Sunrise Power Solutions <span class="state">NY</span><span class="count">527 leads</span></div>
+        <div class="domain">sunrisepowersolutions.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-21" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Sunrise Power Solutions on the SEIA member directory. Quick question:
+
+We just pulled 527 EPA-verified commercial solar leads in NY (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NY commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-21" data-idx="21">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Sunrise%20Power%20Solutions" target="_blank" rel="noopener" onclick="markVisited(this, 21)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-21">—</div>
+    </li>
+    <li class="row" data-idx="22">
+      <div class="num">22</div>
+      <div class="meta">
+        <div class="company">CleanCapital <span class="state">NY</span><span class="count">527 leads</span></div>
+        <div class="domain">cleancapital.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-22" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw CleanCapital on the SEIA member directory. Quick question:
+
+We just pulled 527 EPA-verified commercial solar leads in NY (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NY commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-22" data-idx="22">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=CleanCapital" target="_blank" rel="noopener" onclick="markVisited(this, 22)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-22">—</div>
+    </li>
+    <li class="row" data-idx="23">
+      <div class="num">23</div>
+      <div class="meta">
+        <div class="company">Berkowatts Electric <span class="state">NJ</span><span class="count">450 leads</span></div>
+        <div class="domain">berkowatts.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-23" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Berkowatts Electric on the SEIA member directory. Quick question:
+
+We just pulled 450 EPA-verified commercial solar leads in NJ (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NJ commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-23" data-idx="23">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Berkowatts%20Electric" target="_blank" rel="noopener" onclick="markVisited(this, 23)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-23">—</div>
+    </li>
+    <li class="row" data-idx="24">
+      <div class="num">24</div>
+      <div class="meta">
+        <div class="company">Geoscape Solar <span class="state">NJ</span><span class="count">450 leads</span></div>
+        <div class="domain">geoscapesolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-24" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Geoscape Solar on the SEIA member directory. Quick question:
+
+We just pulled 450 EPA-verified commercial solar leads in NJ (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping NJ commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-24" data-idx="24">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Geoscape%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 24)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-24">—</div>
+    </li>
+    <li class="row" data-idx="25">
+      <div class="num">25</div>
+      <div class="meta">
+        <div class="company">Harmon Electric <span class="state">AZ</span><span class="count">475 leads</span></div>
+        <div class="domain">harmonelectric.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-25" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Harmon Electric on the SEIA member directory. Quick question:
+
+We just pulled 475 EPA-verified commercial solar leads in AZ (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping AZ commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-25" data-idx="25">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Harmon%20Electric" target="_blank" rel="noopener" onclick="markVisited(this, 25)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-25">—</div>
+    </li>
+    <li class="row" data-idx="26">
+      <div class="num">26</div>
+      <div class="meta">
+        <div class="company">Resolute Performance Contracting <span class="state">AZ</span><span class="count">475 leads</span></div>
+        <div class="domain">resolutepc.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-26" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Resolute Performance Contracting on the SEIA member directory. Quick question:
+
+We just pulled 475 EPA-verified commercial solar leads in AZ (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping AZ commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-26" data-idx="26">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Resolute%20Performance%20Contracting" target="_blank" rel="noopener" onclick="markVisited(this, 26)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-26">—</div>
+    </li>
+    <li class="row" data-idx="27">
+      <div class="num">27</div>
+      <div class="meta">
+        <div class="company">Solar States <span class="state">PA</span><span class="count">866 leads</span></div>
+        <div class="domain">solar-states.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-27" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Solar States on the SEIA member directory. Quick question:
+
+We just pulled 866 EPA-verified commercial solar leads in PA (every one NAICS-fit-scored with system size + 25-yr NPV + a sales script). Selling exclusively — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. If you&#39;re still ramping PA commercial, want to see the 50-lead sample?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-27" data-idx="27">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Solar%20States" target="_blank" rel="noopener" onclick="markVisited(this, 27)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-27">—</div>
+    </li>
+    <li class="row" data-idx="28">
+      <div class="num">28</div>
+      <div class="meta">
+        <div class="company">Pivot Energy <span class="state">CO</span></div>
+        <div class="domain">pivotenergy.net</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-28" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Pivot Energy on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-28" data-idx="28">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Pivot%20Energy" target="_blank" rel="noopener" onclick="markVisited(this, 28)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-28">—</div>
+    </li>
+    <li class="row" data-idx="29">
+      <div class="num">29</div>
+      <div class="meta">
+        <div class="company">PosiGen <span class="state">CT</span></div>
+        <div class="domain">posigen.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-29" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw PosiGen on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-29" data-idx="29">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=PosiGen" target="_blank" rel="noopener" onclick="markVisited(this, 29)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-29">—</div>
+    </li>
+    <li class="row" data-idx="30">
+      <div class="num">30</div>
+      <div class="meta">
+        <div class="company">PurePoint Energy <span class="state">CT</span></div>
+        <div class="domain">purepointenergy.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-30" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw PurePoint Energy on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-30" data-idx="30">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=PurePoint%20Energy" target="_blank" rel="noopener" onclick="markVisited(this, 30)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-30">—</div>
+    </li>
+    <li class="row" data-idx="31">
+      <div class="num">31</div>
+      <div class="meta">
+        <div class="company">RevoluSun Smart Home <span class="state">HI</span></div>
+        <div class="domain">revolusun.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-31" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw RevoluSun Smart Home on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-31" data-idx="31">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=RevoluSun%20Smart%20Home" target="_blank" rel="noopener" onclick="markVisited(this, 31)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-31">—</div>
+    </li>
+    <li class="row" data-idx="32">
+      <div class="num">32</div>
+      <div class="meta">
+        <div class="company">RevoluSun Mountain States <span class="state">ID</span></div>
+        <div class="domain">revolusun.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-32" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw RevoluSun Mountain States on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-32" data-idx="32">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=RevoluSun%20Mountain%20States" target="_blank" rel="noopener" onclick="markVisited(this, 32)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-32">—</div>
+    </li>
+    <li class="row" data-idx="33">
+      <div class="num">33</div>
+      <div class="meta">
+        <div class="company">Jefferson Electric <span class="state">IN</span></div>
+        <div class="domain">jeffersonelectric.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-33" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Jefferson Electric on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-33" data-idx="33">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Jefferson%20Electric" target="_blank" rel="noopener" onclick="markVisited(this, 33)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-33">—</div>
+    </li>
+    <li class="row" data-idx="34">
+      <div class="num">34</div>
+      <div class="meta">
+        <div class="company">Boston Solar <span class="state">MA</span></div>
+        <div class="domain">bostonsolar.us</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-34" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Boston Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-34" data-idx="34">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Boston%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 34)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-34">—</div>
+    </li>
+    <li class="row" data-idx="35">
+      <div class="num">35</div>
+      <div class="meta">
+        <div class="company">M.L. Schmitt <span class="state">MA</span></div>
+        <div class="domain">mlschmitt.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-35" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw M.L. Schmitt on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-35" data-idx="35">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=M.L.%20Schmitt" target="_blank" rel="noopener" onclick="markVisited(this, 35)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-35">—</div>
+    </li>
+    <li class="row" data-idx="36">
+      <div class="num">36</div>
+      <div class="meta">
+        <div class="company">Ameresco <span class="state">MA</span></div>
+        <div class="domain">ameresco.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-36" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Ameresco on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-36" data-idx="36">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Ameresco" target="_blank" rel="noopener" onclick="markVisited(this, 36)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-36">—</div>
+    </li>
+    <li class="row" data-idx="37">
+      <div class="num">37</div>
+      <div class="meta">
+        <div class="company">American Sentry Solar <span class="state">MD</span></div>
+        <div class="domain">americansentry.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-37" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw American Sentry Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-37" data-idx="37">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=American%20Sentry%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 37)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-37">—</div>
+    </li>
+    <li class="row" data-idx="38">
+      <div class="num">38</div>
+      <div class="meta">
+        <div class="company">Got Electric <span class="state">MD</span></div>
+        <div class="domain">gotelectric.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-38" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Got Electric on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-38" data-idx="38">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Got%20Electric" target="_blank" rel="noopener" onclick="markVisited(this, 38)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-38">—</div>
+    </li>
+    <li class="row" data-idx="39">
+      <div class="num">39</div>
+      <div class="meta">
+        <div class="company">Standard Solar <span class="state">MD</span></div>
+        <div class="domain">standardsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-39" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Standard Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-39" data-idx="39">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Standard%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 39)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-39">—</div>
+    </li>
+    <li class="row" data-idx="40">
+      <div class="num">40</div>
+      <div class="meta">
+        <div class="company">ReVision Energy <span class="state">ME</span></div>
+        <div class="domain">revisionenergy.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-40" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw ReVision Energy on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-40" data-idx="40">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=ReVision%20Energy" target="_blank" rel="noopener" onclick="markVisited(this, 40)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-40">—</div>
+    </li>
+    <li class="row" data-idx="41">
+      <div class="num">41</div>
+      <div class="meta">
+        <div class="company">All Energy Solar <span class="state">MN</span></div>
+        <div class="domain">allenergysolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-41" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw All Energy Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-41" data-idx="41">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=All%20Energy%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 41)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-41">—</div>
+    </li>
+    <li class="row" data-idx="42">
+      <div class="num">42</div>
+      <div class="meta">
+        <div class="company">Renu Energy Solutions <span class="state">NC</span></div>
+        <div class="domain">renuenergysolutions.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-42" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Renu Energy Solutions on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-42" data-idx="42">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Renu%20Energy%20Solutions" target="_blank" rel="noopener" onclick="markVisited(this, 42)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-42">—</div>
+    </li>
+    <li class="row" data-idx="43">
+      <div class="num">43</div>
+      <div class="meta">
+        <div class="company">Cypress Creek Renewables <span class="state">NC</span></div>
+        <div class="domain">cypresscreekrenewables.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-43" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Cypress Creek Renewables on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-43" data-idx="43">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Cypress%20Creek%20Renewables" target="_blank" rel="noopener" onclick="markVisited(this, 43)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-43">—</div>
+    </li>
+    <li class="row" data-idx="44">
+      <div class="num">44</div>
+      <div class="meta">
+        <div class="company">Sunrock Distributed Generation <span class="state">NC</span></div>
+        <div class="domain">sunrockdg.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-44" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Sunrock Distributed Generation on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-44" data-idx="44">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Sunrock%20Distributed%20Generation" target="_blank" rel="noopener" onclick="markVisited(this, 44)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-44">—</div>
+    </li>
+    <li class="row" data-idx="45">
+      <div class="num">45</div>
+      <div class="meta">
+        <div class="company">Positive Energy Solar <span class="state">NM</span></div>
+        <div class="domain">positiveenergysolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-45" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Positive Energy Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-45" data-idx="45">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Positive%20Energy%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 45)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-45">—</div>
+    </li>
+    <li class="row" data-idx="46">
+      <div class="num">46</div>
+      <div class="meta">
+        <div class="company">ISO Solar <span class="state">PR</span></div>
+        <div class="domain">isosolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-46" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw ISO Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-46" data-idx="46">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=ISO%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 46)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-46">—</div>
+    </li>
+    <li class="row" data-idx="47">
+      <div class="num">47</div>
+      <div class="meta">
+        <div class="company">Puget Sound Solar <span class="state">WA</span></div>
+        <div class="domain">pugetsoundsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-47" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Puget Sound Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-47" data-idx="47">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Puget%20Sound%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 47)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-47">—</div>
+    </li>
+    <li class="row" data-idx="48">
+      <div class="num">48</div>
+      <div class="meta">
+        <div class="company">Arch Solar <span class="state">WI</span></div>
+        <div class="domain">archsolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-48" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Arch Solar on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-48" data-idx="48">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Arch%20Solar" target="_blank" rel="noopener" onclick="markVisited(this, 48)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-48">—</div>
+    </li>
+    <li class="row" data-idx="49">
+      <div class="num">49</div>
+      <div class="meta">
+        <div class="company">Solar Holler <span class="state">WV</span></div>
+        <div class="domain">solarholler.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-49" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Solar Holler on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-49" data-idx="49">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Solar%20Holler" target="_blank" rel="noopener" onclick="markVisited(this, 49)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-49">—</div>
+    </li>
+    <li class="row" data-idx="50">
+      <div class="num">50</div>
+      <div class="meta">
+        <div class="company">Creative Energies <span class="state">WY</span></div>
+        <div class="domain">cesolar.com</div>
+        <details>
+          <summary style="cursor:pointer;font-size:12px;color:#94a3b8;margin-top:6px;">Show DM template</summary>
+          <textarea readonly id="dm-50" style="width:100%;height:140px;margin-top:8px;padding:10px;background:#0a0b0d;color:#f4f5f7;border:1px solid #2a2e36;border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5;">Hi — saw Creative Energies on the SEIA member directory. Quick question:
+
+We pulled 20,206 EPA-verified commercial solar leads across the US (NAICS-fit-scored with system size + 25-yr NPV + sales script per row). Exclusive — one buyer per territory.
+
+July 4 ITC deadline is 34 days out. Want to see 50 free samples in your state?
+
+— Barry @ HelioScout</textarea>
+          <button class="copy-btn" data-target="dm-50" data-idx="50">📋 Copy DM</button>
+        </details>
+      </div>
+      <a class="btn" href="https://www.linkedin.com/search/results/companies/?keywords=Creative%20Energies" target="_blank" rel="noopener" onclick="markVisited(this, 50)">🔍 Find on LinkedIn</a>
+      <div class="status" id="status-50">—</div>
+    </li></ul>
+</div>
+
+<script>
+  const visited = new Set(JSON.parse(localStorage.getItem('hs-li-visited') || '[]'));
+  function updateCount() {
+    document.getElementById('visited-count').textContent = visited.size;
+    visited.forEach(i => {
+      const row = document.querySelector(`[data-idx="${i}"]`);
+      const st = document.getElementById('status-' + i);
+      if (row) row.classList.add('visited');
+      if (st) st.textContent = '✓ visited';
+    });
+  }
+  function markVisited(btn, i) {
+    setTimeout(() => {
+      visited.add(i);
+      localStorage.setItem('hs-li-visited', JSON.stringify([...visited]));
+      updateCount();
+    }, 800);
+  }
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const t = document.getElementById(btn.getAttribute('data-target'));
+      try {
+        await navigator.clipboard.writeText(t.value);
+        btn.textContent = '✓ Copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '📋 Copy DM'; btn.classList.remove('copied'); }, 2000);
+      } catch (e) {
+        t.select(); document.execCommand('copy');
+        btn.textContent = '✓ Copied (fallback)';
+      }
+    });
+  });
+  updateCount();
+</script>
+</body>
+</html>
