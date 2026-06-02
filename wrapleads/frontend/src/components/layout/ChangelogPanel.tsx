@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🧮 Material Cost Estimator — Auto-Fill from Your Inventory',
+    body: 'When creating a new job, if you leave Material Cost blank, WrapOS now shows an estimator panel below the field. It calls your actual inventory (brand, roll dimensions, unit cost) and computes how many rolls you need for that vehicle type and count — with a 15% waste factor baked in. Choose Full, Partial, or Spot coverage with one click. Each inventory item shows the roll count needed, your current stock, and whether you can cover the job without ordering more. If stock is short, the shortfall is flagged in amber. Click any estimate (e.g. "$2,400–$3,100 ↗") to instantly fill the Material Cost field. The range covers the low-to-high sq footage variation for that vehicle type. Add materials to your inventory in Settings → Materials to unlock this feature.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '⏱ Time-to-Close by Category — Which Deals Close Fastest?',
     body: 'Analytics now shows how long each deal category takes to close, from first contact to won status. Fleet deals that close in 12 days vs. DI-NOC deals that take 45 days — see them ranked with color-coded bars (green = faster than your average, amber = slower). Each row shows won count, average days, day range (fastest to slowest deal in that category), and average touches when win debrief data is available. Overall average and total win count sit in the top-right corner. Use this to set realistic close-time expectations per category, prioritize your fastest-closing segments when you need cash flow, and identify which categories need better follow-up cadences.',
   },

@@ -1255,6 +1255,87 @@ const VEHICLE_SQFT: Record<string, number> = {
 // 25" = 2.083 ft wide; 50' long = 2.083 × 50 = 104.17 sq ft per roll
 const SQFT_PER_ROLL = 25 / 12 * 50; // ~104.2 sq ft
 
+// ── Material Cost Estimator ───────────────────────────────────────────────────
+// Shown in the job creation form when material_cost is empty.
+// Calls /materials/estimate with the selected vehicle_type + vehicle_count,
+// then lets the user click a suggestion to auto-fill material_cost.
+function MaterialCostEstimator({ vehicleType, vehicleCount, onApply }: {
+  vehicleType: string;
+  vehicleCount: number;
+  onApply: (cost: number) => void;
+}) {
+  const [coverage, setCoverage] = useState<'full' | 'partial' | 'spot'>('full');
+  const { data, isLoading } = useQuery({
+    queryKey: ['mat-estimate', vehicleType, vehicleCount, coverage],
+    queryFn: () => api.estimateMaterialCost({ vehicle_type: vehicleType, vehicle_count: vehicleCount, coverage }),
+    staleTime: 60_000,
+    enabled: vehicleCount >= 1,
+  });
+
+  if (isLoading) return (
+    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>Estimating material cost…</div>
+  );
+  if (!data?.suggestions?.length) return (
+    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+      Add materials to inventory (Settings → Materials) to get cost estimates here.
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--bg-base)', border: '1px solid var(--border-soft)', borderRadius: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)' }}>
+          Material Estimate · {data.totalSqftLow}–{data.totalSqftHigh} sq ft
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['full', 'partial', 'spot'] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setCoverage(c)}
+              style={{
+                fontSize: 10, padding: '2px 7px', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer',
+                background: coverage === c ? 'var(--accent)' : 'transparent',
+                color: coverage === c ? '#fff' : 'var(--text-faint)',
+              }}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {data.suggestions.slice(0, 4).map((s) => (
+          <div
+            key={s.id}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border-soft)' }}
+          >
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500 }}>{s.name}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                {s.rollsNeededLow}–{s.rollsNeededHigh} rolls · {s.rollsInStock} in stock
+                {!s.canCoverWithStock && (
+                  <span style={{ color: '#f59e0b', marginLeft: 4 }}>⚠ need {s.shortfall} more</span>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onApply(s.costLow)}
+              style={{
+                fontSize: 11, padding: '3px 10px', border: '1px solid var(--accent)', borderRadius: 5,
+                background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              ${s.costLow.toLocaleString()}–{s.costHigh.toLocaleString()} ↗
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MaterialPOPanel({ job }: { job: InstalledJob }) {
   const showToast = useAppStore((s) => s.showToast);
   const [coverage, setCoverage] = useState<'full' | 'partial' | 'spot'>('full');
@@ -1796,6 +1877,14 @@ function JobModal({ job, onClose }: JobModalProps) {
                 <input className="input" type="number" min={0} step={50} {...f('material_cost')} placeholder="0" />
               </div>
             </div>
+            {/* ── Material Cost Estimator ── */}
+            {form.vehicle_type && form.vehicle_count && !form.material_cost && (
+              <MaterialCostEstimator
+                vehicleType={form.vehicle_type}
+                vehicleCount={Number(form.vehicle_count)}
+                onApply={(cost) => setForm((s) => ({ ...s, material_cost: String(cost) }))}
+              />
+            )}
             {form.job_revenue && form.material_cost && Number(form.job_revenue) > 0 && (
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: -4 }}>
                 Gross margin: <strong style={{ color: ((Number(form.job_revenue) - Number(form.material_cost)) / Number(form.job_revenue)) >= 0.4 ? '#22c55e' : '#f59e0b' }}>

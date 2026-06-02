@@ -11074,6 +11074,77 @@ app.delete('/materials/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /materials/estimate — compute rolls needed + material cost for a wrap job
+// Uses VEHICLE_DIMENSIONS sq footage range and material inventory unit costs.
+// coverage: 'full' (100%), 'partial' (55%), 'spot' (22%)
+app.get('/materials/estimate', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { vehicle_type = 'other', vehicle_count = 1, coverage = 'full', material_id } = req.query;
+  const count = Math.max(1, parseInt(vehicle_count, 10) || 1);
+
+  const dim = VEHICLE_DIMENSIONS[vehicle_type] || VEHICLE_DIMENSIONS.other;
+  const coveragePct = coverage === 'partial' ? 0.55 : coverage === 'spot' ? 0.22 : 1.0;
+  const sqftPerVehicleLow  = Math.round(dim.sqft[0] * coveragePct);
+  const sqftPerVehicleHigh = Math.round(dim.sqft[1] * coveragePct);
+  const totalSqftLow  = sqftPerVehicleLow  * count;
+  const totalSqftHigh = sqftPerVehicleHigh * count;
+
+  try {
+    // Fetch inventory items for this user
+    const { rows: mats } = await pool.query(
+      `SELECT id, brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, unit_cost
+       FROM material_inventory WHERE user_id=$1 ORDER BY unit_cost ASC`,
+      [uid]
+    );
+
+    // For each material, compute cost and stock coverage for this job
+    const suggestions = mats.map((m) => {
+      // Roll area in sq ft
+      const rollSqft = (m.roll_width_in / 12) * m.roll_length_ft;
+      // Add 15% waste factor
+      const rollsNeededLow  = Math.ceil((totalSqftLow  * 1.15) / rollSqft);
+      const rollsNeededHigh = Math.ceil((totalSqftHigh * 1.15) / rollSqft);
+      const costLow  = Math.round(rollsNeededLow  * Number(m.unit_cost));
+      const costHigh = Math.round(rollsNeededHigh * Number(m.unit_cost));
+      const canCover = m.rolls_in_stock >= rollsNeededLow;
+
+      return {
+        id: m.id,
+        name: `${m.brand} ${m.product_name}${m.finish ? ` (${m.finish})` : ''}`,
+        sku: m.sku,
+        rollSqft: Math.round(rollSqft),
+        rollsNeededLow,
+        rollsNeededHigh,
+        rollsInStock: parseFloat(m.rolls_in_stock),
+        unitCostPerRoll: Number(m.unit_cost),
+        costLow,
+        costHigh,
+        canCoverWithStock: canCover,
+        shortfall: canCover ? 0 : rollsNeededLow - parseFloat(m.rolls_in_stock),
+      };
+    });
+
+    // If a specific material_id was requested, put it first
+    if (material_id) {
+      const idx = suggestions.findIndex((s) => s.id === parseInt(material_id, 10));
+      if (idx > 0) suggestions.unshift(suggestions.splice(idx, 1)[0]);
+    }
+
+    res.json({
+      ok: true,
+      vehicleType: vehicle_type,
+      vehicleLabel: dim.label,
+      vehicleCount: count,
+      coverage,
+      sqftPerVehicleLow,
+      sqftPerVehicleHigh,
+      totalSqftLow,
+      totalSqftHigh,
+      suggestions: suggestions.slice(0, 8), // top 8 options
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/subcontractors', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   try {

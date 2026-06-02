@@ -2145,4 +2145,36 @@ export const api = {
     authFetch<{ ok: boolean; material: MaterialItem }>(`/materials/${id}/adjust`, { method: 'POST', body: JSON.stringify({ delta, reason }) }),
   deleteMaterial: (id: number) =>
     authFetch<{ ok: boolean }>(`/materials/${id}`, { method: 'DELETE' }),
+
+  estimateMaterialCost: (params: {
+    vehicle_type: string;
+    vehicle_count: number;
+    coverage?: 'full' | 'partial' | 'spot';
+    material_id?: number;
+  }) => {
+    const q = new URLSearchParams({
+      vehicle_type: params.vehicle_type,
+      vehicle_count: String(params.vehicle_count),
+      coverage: params.coverage ?? 'full',
+    });
+    if (params.material_id) q.set('material_id', String(params.material_id));
+    return authFetch<{
+      ok: boolean;
+      vehicleType: string;
+      vehicleLabel: string;
+      vehicleCount: number;
+      coverage: string;
+      sqftPerVehicleLow: number;
+      sqftPerVehicleHigh: number;
+      totalSqftLow: number;
+      totalSqftHigh: number;
+      suggestions: Array<{
+        id: number; name: string; sku: string | null;
+        rollSqft: number; rollsNeededLow: number; rollsNeededHigh: number;
+        rollsInStock: number; unitCostPerRoll: number;
+        costLow: number; costHigh: number;
+        canCoverWithStock: boolean; shortfall: number;
+      }>;
+    }>(`/materials/estimate?${q}`);
+  },
 };
