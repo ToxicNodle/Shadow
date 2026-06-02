@@ -2186,6 +2186,34 @@ export const api = {
     }>(`/materials/estimate?${q}`);
   },
 
+  // ── Appointments ──
+  getAppointments: (params?: { leadId?: number; upcoming?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.leadId) q.set('leadId', String(params.leadId));
+    if (params?.upcoming) q.set('upcoming', '1');
+    return authFetch<{ appointments: Array<{
+      id: number; lead_id: number | null; company: string | null; contact_name: string | null;
+      title: string; appt_type: string; scheduled_at: string; duration_mins: number;
+      location: string | null; notes: string | null; status: string;
+    }> }>(`/appointments${q.toString() ? '?' + q.toString() : ''}`);
+  },
+  getUpcomingAppointments: () =>
+    authFetch<{ appointments: Array<{
+      id: number; lead_id: number | null; lead_id_link: number | null; company: string | null;
+      contact_name: string | null; title: string; appt_type: string; scheduled_at: string;
+      duration_mins: number; location: string | null; notes: string | null; status: string;
+    }> }>('/appointments/upcoming'),
+  createAppointment: (data: {
+    leadId?: number; title?: string; apptType?: string;
+    scheduledAt: string; durationMins?: number; location?: string; notes?: string;
+  }) => authFetch<{ ok: boolean; appointment: { id: number } }>('/appointments', { method: 'POST', body: JSON.stringify(data) }),
+  updateAppointment: (id: number, data: {
+    title?: string; apptType?: string; scheduledAt?: string;
+    durationMins?: number; location?: string; notes?: string; status?: string;
+  }) => authFetch<{ ok: boolean }>(`/appointments/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteAppointment: (id: number) =>
+    authFetch<{ ok: boolean }>(`/appointments/${id}`, { method: 'DELETE' }),
+
   // ── Lead Deduplication ──
   findDuplicateLeads: () =>
     authFetch<{

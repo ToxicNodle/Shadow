@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📅 Appointment Scheduler — Fleet Measurements, Consults, Installs',
+    body: 'Every lead in My Leads now has an Appointments section (in the Info panel, below Contacts). Schedule any appointment type: Fleet Measurement, Consultation, Design Review, Install, or Follow-up. Pick a date, time, and duration (30–120 min), add a location and prep notes. Upcoming appointments appear with a color-coded left border by type (amber = measurement, blue = consultation, purple = design review, green = install). When an appointment is done, click "Done" to mark it complete — or "×" to delete it. Past appointments collapse into a disclosure group to keep the view clean. The Mission Dashboard shows an "Upcoming Appointments" card for the next 14 days. Today\'s appointments show a red "Today" badge. Click any appointment in Mission to jump directly to that lead. All appointments log an activity note to the lead timeline automatically.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🔀 Duplicate Lead Scanner — Find & Merge in One Click',
     body: 'Shops that import from multiple sources (FMCSA, SOS, signal worker, manual) accumulate duplicate records over time. The new Dedup Scanner (toolbar button in My Leads, or Command Palette → "Scan for Duplicate Leads") uses fuzzy name matching to find pairs of active leads that are likely the same company. Each pair shows side-by-side cards with status, location, email, phone, fleet size, and category. Three actions: "Keep A" (delete B, move B\'s history to A), "Keep B" (reverse), or "Not a duplicate" to skip the pair. When you merge, all activities, emails, proposals, and quotes from the deleted record are moved to the surviving lead — nothing is lost. Missing fields (email, phone, fleet size) are backfilled from the other record. A merge activity note is added to the timeline for audit trail. Pairs are ranked by similarity — 90%+ matches appear first.',
   },

@@ -28,6 +28,7 @@ import FleetGrowthCard from './FleetGrowthCard';
 import MaterialInventoryCard from './MaterialInventoryCard';
 import SubPayablesCard from './SubPayablesCard';
 import QuickStartCard from './QuickStartCard';
+import UpcomingAppointmentsCard from './UpcomingAppointmentsCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -2075,6 +2076,9 @@ export default function MissionView() {
         goal={parseFloat(settings.monthlyRevenueGoal || '0')}
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
+
+      {/* ── Upcoming Appointments ── */}
+      <UpcomingAppointmentsCard />
 
       {/* ── Quick Start — new user onboarding campaign launcher ── */}
       <QuickStartCard leadCount={leads.length} />

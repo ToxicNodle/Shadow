@@ -19,6 +19,7 @@ import CallOpenerPanel from './CallOpenerPanel';
 import LossDebriefPanel from './LossDebriefPanel';
 import ContactsPanel from './ContactsPanel';
 import DiscoveryGuidePanel from './DiscoveryGuidePanel';
+import AppointmentsPanel from './AppointmentsPanel';
 
 // ── Unsubscribed Badge ────────────────────────────────────────────────────────
 function UnsubscribedBadge({ leadId }: { leadId: number }) {
@@ -2752,6 +2753,9 @@ export default function InfoTab({ lead }: Props) {
 
       {/* Multi-contact manager — additional stakeholders at this account */}
       <ContactsPanel lead={local} />
+
+      {/* Appointment Scheduler — fleet measurements, consultations, installs */}
+      {lead.serverId && <AppointmentsPanel leadId={lead.serverId} />}
 
       {lead.serverId && <SimilarWinsPanel lead={local} />}
       {/* Discovery guide — shown for replied/meeting stage to help reps qualify and scope */}

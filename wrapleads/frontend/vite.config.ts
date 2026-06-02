@@ -62,6 +62,7 @@ export default defineConfig({
       '/push':              API,
       '/email-templates':  API,
       '/materials':        API,
+      '/appointments':     API,
       '/hook':             API,
       '/embed.js':         API,
     },

@@ -1051,6 +1051,30 @@ async function migrateDb() {
     console.warn('[migrate] Could not create email_unsubscribes table:', e.message);
   }
 
+  // Appointment scheduling — on-site measurements, design consults, installs
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS appointments (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        lead_id       BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        title         TEXT NOT NULL DEFAULT 'Appointment',
+        appt_type     TEXT NOT NULL DEFAULT 'measurement',
+        scheduled_at  TIMESTAMPTZ NOT NULL,
+        duration_mins INTEGER NOT NULL DEFAULT 60,
+        location      TEXT,
+        notes         TEXT,
+        status        TEXT NOT NULL DEFAULT 'upcoming',
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_appointments_user ON appointments(user_id, scheduled_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_appointments_lead ON appointments(lead_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create appointments table:', e.message);
+  }
+
   // Shareable ROI calculator links — pre-filled for a specific prospect
   try {
     await pool.query(`
@@ -3673,6 +3697,107 @@ app.post('/leads/:id/merge-into/:targetId', authMiddleware, async (req, res) => 
   } finally {
     client.release();
   }
+});
+
+// ============================================================================
+// Appointment Scheduling
+// ============================================================================
+
+const APPT_TYPES = ['measurement', 'consultation', 'design-review', 'install', 'follow-up', 'other'];
+
+// GET /appointments — upcoming appointments for this user
+app.get('/appointments', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { leadId, upcoming } = req.query;
+  try {
+    let where = 'WHERE a.user_id = $1';
+    const params = [uid];
+    if (leadId) { params.push(leadId); where += ` AND a.lead_id = $${params.length}`; }
+    if (upcoming === '1') where += ` AND a.scheduled_at >= NOW() - INTERVAL '1 hour'`;
+    const { rows } = await pool.query(`
+      SELECT a.*, l.company, l.contact_name, l.city AS lead_city, l.state AS lead_state
+      FROM appointments a
+      LEFT JOIN leads l ON l.id = a.lead_id
+      ${where}
+      ORDER BY a.scheduled_at ASC
+      LIMIT 100
+    `, params);
+    res.json({ appointments: rows });
+  } catch (e) { console.error('[appointments]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// POST /appointments — create
+app.post('/appointments', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { leadId, title, apptType, scheduledAt, durationMins, location, notes } = req.body || {};
+  if (!scheduledAt) return res.status(400).json({ error: 'scheduledAt required' });
+  const type = APPT_TYPES.includes(apptType) ? apptType : 'measurement';
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO appointments (user_id, lead_id, title, appt_type, scheduled_at, duration_mins, location, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+    `, [uid, leadId || null, title || 'Appointment', type, scheduledAt, durationMins || 60, location || null, notes || null]);
+
+    if (leadId) {
+      const compR = await pool.query('SELECT company FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+      const co = compR.rows[0]?.company || 'this lead';
+      await logActivity(pool, { leadId: parseInt(leadId, 10), userId: uid, type: 'note',
+        subject: 'Appointment scheduled',
+        body: `${rows[0].title} (${type}) on ${new Date(scheduledAt).toLocaleDateString()} at ${new Date(scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${location ? ` — ${location}` : ''}` });
+    }
+    res.json({ ok: true, appointment: rows[0] });
+  } catch (e) { console.error('[appointments/create]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /appointments/:id — update
+app.patch('/appointments/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  const { title, apptType, scheduledAt, durationMins, location, notes, status } = req.body || {};
+  try {
+    const sets = [];
+    const params = [];
+    const add = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
+    if (title       !== undefined) add('title', title);
+    if (apptType    !== undefined) add('appt_type', APPT_TYPES.includes(apptType) ? apptType : 'measurement');
+    if (scheduledAt !== undefined) add('scheduled_at', scheduledAt);
+    if (durationMins !== undefined) add('duration_mins', durationMins);
+    if (location    !== undefined) add('location', location);
+    if (notes       !== undefined) add('notes', notes);
+    if (status      !== undefined) add('status', status);
+    if (!sets.length) return res.json({ ok: true });
+    sets.push(`updated_at=NOW()`);
+    params.push(id, uid);
+    await pool.query(`UPDATE appointments SET ${sets.join(',')} WHERE id=$${params.length-1} AND user_id=$${params.length}`, params);
+    res.json({ ok: true });
+  } catch (e) { console.error('[appointments/patch]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /appointments/:id
+app.delete('/appointments/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  await pool.query('DELETE FROM appointments WHERE id=$1 AND user_id=$2', [parseInt(req.params.id,10), uid]);
+  res.json({ ok: true });
+});
+
+// GET /appointments/upcoming — next 7 days (for Mission card)
+app.get('/appointments/upcoming', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT a.*, l.company, l.contact_name, l.contact_email AS lead_email,
+             l.city AS lead_city, l.state AS lead_state, l.id AS lead_id_link
+      FROM appointments a
+      LEFT JOIN leads l ON l.id = a.lead_id
+      WHERE a.user_id = $1
+        AND a.scheduled_at >= NOW() - INTERVAL '1 hour'
+        AND a.scheduled_at <= NOW() + INTERVAL '14 days'
+        AND a.status = 'upcoming'
+      ORDER BY a.scheduled_at ASC
+      LIMIT 10
+    `, [uid]);
+    res.json({ appointments: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================================
