@@ -1635,12 +1635,13 @@ function AICoach({ lead }: { lead: Lead }) {
 
 function ProposalSection({ lead }: { lead: Lead }) {
   const [notes, setNotes] = useState('');
-  const [proposal, setProposal] = useState<{ token: string; title: string; id: number; status: string } | null>(null);
+  const [proposal, setProposal] = useState<{ token: string; title: string; id: number; status: string; expires_at?: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [templateSaved, setTemplateSaved] = useState(false);
+  const [showExpiryPicker, setShowExpiryPicker] = useState(false);
   const qc = useQueryClient();
 
   const mut = useMutation({
@@ -1697,6 +1698,24 @@ function ProposalSection({ lead }: { lead: Lead }) {
     },
   });
 
+  const expiryMut = useMutation({
+    mutationFn: (expires_at: string | null) => api.updateProposal(proposal!.id, { expires_at }),
+    onSuccess: (data) => {
+      setProposal((p) => p ? { ...p, expires_at: (data.proposal.expires_at as string | null) ?? null } : p);
+      setShowExpiryPicker(false);
+    },
+  });
+
+  function getExpiryInfo(expiresAt: string | null | undefined): { label: string; color: string; urgent: boolean } | null {
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    const days = Math.ceil(ms / 86_400_000);
+    if (days < 0) return { label: `Expired ${Math.abs(days)}d ago`, color: '#ef4444', urgent: true };
+    if (days === 0) return { label: 'Expires today!', color: '#f59e0b', urgent: true };
+    if (days <= 3) return { label: `Expires in ${days}d`, color: '#f59e0b', urgent: true };
+    return { label: `Expires in ${days}d`, color: 'var(--text-muted)', urgent: false };
+  }
+
   const url = proposal ? api.getProposalUrl(proposal.token) : null;
 
   function copy() {
@@ -1711,6 +1730,7 @@ function ProposalSection({ lead }: { lead: Lead }) {
     sent: { label: 'Sent', color: '#3b82f6' },
     approved: { label: 'Approved', color: '#10b981' },
     declined: { label: 'Declined', color: '#ef4444' },
+    expired: { label: 'Expired', color: '#ef4444' },
   };
 
   return (
@@ -1774,6 +1794,38 @@ function ProposalSection({ lead }: { lead: Lead }) {
               Viewed {viewData.view_count}× · Last seen {viewData.last_viewed_ago}
             </div>
           )}
+          {(() => {
+            const expInfo = getExpiryInfo(proposal.expires_at);
+            return expInfo ? (
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: expInfo.color }}>
+                {expInfo.urgent ? '⚠ ' : '⏱ '}{expInfo.label}
+                <button
+                  onClick={() => setShowExpiryPicker((s) => !s)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)', marginLeft: 6, padding: 0 }}
+                >edit</button>
+              </div>
+            ) : null;
+          })()}
+          {showExpiryPicker && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+              <input
+                type="date"
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px', flex: 1 }}
+                defaultValue={proposal.expires_at ? proposal.expires_at.split('T')[0] : ''}
+                min={new Date().toISOString().split('T')[0]}
+                onChange={(e) => {
+                  if (e.target.value) expiryMut.mutate(new Date(e.target.value + 'T23:59:59Z').toISOString());
+                  else expiryMut.mutate(null);
+                }}
+              />
+              <button
+                className="btn"
+                style={{ fontSize: 11, padding: '4px 8px', color: '#ef4444' }}
+                onClick={() => expiryMut.mutate(null)}
+              >Clear</button>
+            </div>
+          )}
           <div className="proposal-ready-url">{url}</div>
           <div className="proposal-ready-actions">
             <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={copy}>
@@ -1798,6 +1850,27 @@ function ProposalSection({ lead }: { lead: Lead }) {
             <button className="btn" style={{ fontSize: 12 }} onClick={() => { setShowSaveTemplate((s) => !s); setTemplateName(proposal?.title ?? ''); }}>
               Save as Template
             </button>
+            {!proposal.expires_at && (
+              <button
+                className="btn"
+                style={{ fontSize: 12 }}
+                onClick={() => setShowExpiryPicker((s) => !s)}
+                title="Set a deadline — proposal auto-expires on that date"
+              >
+                Set Expiry
+              </button>
+            )}
+            {showExpiryPicker && !proposal.expires_at && (
+              <input
+                type="date"
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px' }}
+                min={new Date().toISOString().split('T')[0]}
+                onChange={(e) => {
+                  if (e.target.value) expiryMut.mutate(new Date(e.target.value + 'T23:59:59Z').toISOString());
+                }}
+              />
+            )}
             <button className="btn" style={{ fontSize: 12 }} onClick={() => setProposal(null)}>
               New
             </button>

@@ -701,6 +701,7 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS roi_section TEXT`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS nudge_sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
   }
@@ -13888,6 +13889,40 @@ function startProposalNudgeWorker() {
   console.log('· Proposal Nudge worker: running (daily 10:30 AM — auto follows up on dark sent proposals)');
 }
 
+async function processProposalExpiry() {
+  try {
+    const { rows } = await pool.query(`
+      UPDATE proposals
+      SET status = 'expired', updated_at = NOW()
+      WHERE expires_at IS NOT NULL
+        AND expires_at < NOW()
+        AND status NOT IN ('won','lost','expired','approved')
+      RETURNING id, user_id, lead_id, title, expires_at
+    `);
+    for (const p of rows) {
+      if (p.lead_id) {
+        await logActivity(pool, {
+          leadId: p.lead_id, userId: p.user_id, type: 'note_added',
+          subject: `Proposal expired: "${p.title}"`,
+          metadata: { proposal_id: p.id, expires_at: p.expires_at, auto: true },
+        }).catch(() => {});
+      }
+    }
+    if (rows.length > 0) console.log(`[proposal-expiry] Expired ${rows.length} proposals`);
+  } catch (e) {
+    console.error('[proposal-expiry]', e.message);
+  }
+}
+
+function startProposalExpiryWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 0) processProposalExpiry();
+  };
+  setInterval(check, 60_000);
+  console.log('· Proposal Expiry worker: running (daily 8:00 AM — auto-marks expired proposals)');
+}
+
 // Referral ask email generation endpoint
 app.get('/leads/:id/referral-ask', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -15910,7 +15945,7 @@ app.get('/proposals/:id/views', authMiddleware, async (req, res) => {
 app.patch('/proposals/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const id = Number(req.params.id);
-  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url } = req.body || {};
+  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url, expires_at } = req.body || {};
   try {
     const existing = await pool.query('SELECT * FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Proposal not found' });
@@ -15942,6 +15977,7 @@ app.patch('/proposals/:id', authMiddleware, async (req, res) => {
       }
     }
     if (mockup_url !== undefined)  { fields.push(`mockup_url=$${idx++}`);   vals.push(mockup_url); }
+    if (expires_at !== undefined)  { fields.push(`expires_at=$${idx++}`);   vals.push(expires_at || null); }
 
     if (!fields.length) return res.json({ ok: true, proposal: p });
 
@@ -24640,6 +24676,7 @@ app.listen(PORT, async () => {
     startProspectIntelWorker();
     startReferralMiningWorker();
     startProposalNudgeWorker();
+    startProposalExpiryWorker();
     email.startTrialCron(pool);
     try {
       const { startSignalWorker } = require('./lib/signalWorker');

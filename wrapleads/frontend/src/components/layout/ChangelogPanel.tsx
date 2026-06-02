@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '⏰ Proposal Expiry — Set a Deadline, Auto-Expire at Midnight',
+    body: 'Proposals now support an expiration date. Click "Set Expiry" on any proposal and pick a date — the proposal page shows a live countdown ("Expires in 3 days") that\'s visible to the client. At 8 AM on the expiry date, a background worker automatically marks the proposal as Expired and logs it to the activity timeline. If the expiry date is within 3 days, the countdown turns amber with a warning icon. If it\'s already past, it shows "Expired 2 days ago" in red. Use this to create real urgency — "This quote is valid through the 15th" — and let WrapOS enforce it automatically. Clear the expiry date anytime to reset. Works for both AI-generated proposals and template-based ones.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📊 Email Template Performance — See Which Templates Actually Get Opened',
     body: 'Analytics now has an "Email Template Performance" card that shows open rates for every email template you use. For each template, WrapOS tracks how many times it was sent vs. how many times it was opened, giving you a clean percentage. The best-performing template is highlighted in blue. Color coding makes it instant: green bar = 40%+ open rate (strong), orange = 20–39% (average), gray = under 20% (needs work). Use it to A/B test approaches — create two versions of a cold intro email, send each to a batch of leads, and see which one actually gets read. Data is linked at send time: when you load a template in the email composer and hit Send, WrapOS silently tags the tracking pixel with that template\'s ID. No extra clicks, no workflow change. Requires Resend for email tracking.',
   },
