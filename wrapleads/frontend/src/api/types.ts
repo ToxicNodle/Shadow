@@ -138,6 +138,7 @@ export interface SavedSearch {
   };
   new_count: number;
   last_checked?: string;
+  alert_enabled: boolean;
 }
 
 export interface Settings {

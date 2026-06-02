@@ -247,6 +247,8 @@ export const api = {
     authFetch<void>(`/searches/saved/${id}`, { method: 'DELETE' }),
   runSavedSearch: (id: number) =>
     authFetch<{ new_count: number }>(`/searches/saved/${id}/run`, { method: 'POST' }),
+  toggleSavedSearchAlert: (id: number) =>
+    authFetch<{ ok: boolean; alert_enabled: boolean }>(`/searches/saved/${id}/alert`, { method: 'PATCH' }),
 
   // Apollo
   apolloSearch: (params: { apiKey: string; company: string; domain?: string; titles: string[]; limit?: number }) =>

@@ -179,6 +179,7 @@ async function migrateDb() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches (user_id)`);
+  await pool.query(`ALTER TABLE saved_searches ADD COLUMN IF NOT EXISTS alert_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS leads (
@@ -2622,7 +2623,7 @@ app.get('/carriers/by-dot/:dotNumber', authMiddleware, async (req, res) => {
 app.get('/searches/saved', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, name, filters, last_checked, new_count, created_at
+      `SELECT id, name, filters, last_checked, new_count, alert_enabled, created_at
        FROM saved_searches WHERE user_id = $1 ORDER BY created_at DESC`,
       [String(req.user.id)]
     );
@@ -2648,6 +2649,21 @@ app.delete('/searches/saved/:id', authMiddleware, async (req, res) => {
   try {
     await pool.query(`DELETE FROM saved_searches WHERE id = $1 AND user_id = $2`, [id, String(req.user.id)]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /searches/saved/:id/alert — toggle email/notification alert for new carriers matching this search
+app.patch('/searches/saved/:id/alert', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `UPDATE saved_searches SET alert_enabled = NOT alert_enabled WHERE id=$1 AND user_id=$2 RETURNING alert_enabled`,
+      [id, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, alert_enabled: rows[0].alert_enabled });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -13889,6 +13905,88 @@ function startProposalNudgeWorker() {
   console.log('· Proposal Nudge worker: running (daily 10:30 AM — auto follows up on dark sent proposals)');
 }
 
+async function processSavedSearchAlerts() {
+  const resend = getResend();
+  try {
+    const { rows: searches } = await pool.query(`
+      SELECT ss.id, ss.user_id, ss.name, ss.filters, ss.last_checked,
+             u.email AS user_email, u.settings_json
+      FROM saved_searches ss
+      JOIN users u ON u.id::TEXT = ss.user_id
+      WHERE ss.alert_enabled = TRUE
+    `);
+    for (const s of searches) {
+      try {
+        const filters = s.filters || {};
+        const conditions = [];
+        const params = [];
+        if (Array.isArray(filters.sources) && filters.sources.length) { params.push(filters.sources); conditions.push(`source = ANY($${params.length})`); }
+        if (Array.isArray(filters.industries) && filters.industries.length) { params.push(filters.industries); conditions.push(`industry = ANY($${params.length})`); }
+        if (Array.isArray(filters.states) && filters.states.length) { params.push(filters.states.map(x => String(x).toUpperCase())); conditions.push(`state = ANY($${params.length})`); }
+        if (filters.minFleet != null) { params.push(parseInt(filters.minFleet)); conditions.push(`fleet_size >= $${params.length}`); }
+        if (filters.maxFleet != null) { params.push(parseInt(filters.maxFleet)); conditions.push(`fleet_size <= $${params.length}`); }
+        if (filters.query && String(filters.query).trim()) { params.push(`%${String(filters.query).trim()}%`); conditions.push(`(name ILIKE $${params.length} OR dba_name ILIKE $${params.length})`); }
+        if (s.last_checked) { params.push(s.last_checked); conditions.push(`ingested_at > $${params.length}`); }
+        const where = conditions.length ? conditions.join(' AND ') : 'TRUE';
+        const { rows: [count] } = await pool.query(`SELECT COUNT(*)::INT AS n FROM companies WHERE ${where}`, params);
+        const newCount = count?.n || 0;
+        if (newCount === 0) continue;
+
+        // Create in-app notification
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, metadata) VALUES ($1,'saved_search_alert',$2,$3,$4)`,
+          [s.user_id, `${newCount} new carrier${newCount !== 1 ? 's' : ''} match "${s.name}"`,
+           `${newCount} new fleet carrier${newCount !== 1 ? 's' : ''} added to the database matching your saved search.`,
+           JSON.stringify({ saved_search_id: s.id, new_count: newCount })]
+        );
+
+        // Email alert if Resend configured
+        if (resend && s.user_email) {
+          const settings = s.settings_json || {};
+          const shopName = settings.companyName || 'WrapOS';
+          const filterSummary = [
+            Array.isArray(filters.states) && filters.states.length ? `States: ${filters.states.join(', ')}` : null,
+            filters.minFleet ? `Min fleet: ${filters.minFleet}` : null,
+            filters.maxFleet ? `Max fleet: ${filters.maxFleet}` : null,
+            filters.query ? `Search: "${filters.query}"` : null,
+          ].filter(Boolean).join(' · ') || 'All carriers';
+          const html = `<div style="font-family:-apple-system,sans-serif;max-width:500px;margin:0 auto;padding:32px">
+<div style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>
+<h2 style="font-size:20px;font-weight:900;margin:0 0 8px">🔔 ${newCount} new carrier${newCount !== 1 ? 's' : ''} found</h2>
+<p style="color:#6b7280;margin:0 0 16px">Your saved search <strong>"${s.name}"</strong> has ${newCount} new result${newCount !== 1 ? 's' : ''} since your last check.</p>
+<div style="background:#f8fafc;border-radius:8px;padding:12px 16px;font-size:12px;color:#374151;margin-bottom:20px">${filterSummary}</div>
+<p style="color:#6b7280;font-size:12px">Log in to WrapOS to view the new carriers and add them to your CRM.</p>
+</div>`;
+          await resend.emails.send({
+            from: process.env.RESEND_FROM_EMAIL || 'alerts@wrapos.io',
+            to: s.user_email,
+            subject: `🔔 ${newCount} new carrier${newCount !== 1 ? 's' : ''} match "${s.name}"`,
+            html,
+          }).catch(() => {});
+        }
+
+        await pool.query(
+          `UPDATE saved_searches SET last_checked = NOW(), new_count = $1 WHERE id = $2`,
+          [newCount, s.id]
+        );
+      } catch (e) {
+        console.warn(`[search-alerts] search ${s.id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[search-alerts]', e.message);
+  }
+}
+
+function startSavedSearchAlertWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 30) processSavedSearchAlerts();
+  };
+  setInterval(check, 60_000);
+  console.log('· Saved Search Alert worker: running (daily 8:30 AM — notifies on new matching carriers)');
+}
+
 async function processProposalExpiry() {
   try {
     const { rows } = await pool.query(`
@@ -24677,6 +24775,7 @@ app.listen(PORT, async () => {
     startReferralMiningWorker();
     startProposalNudgeWorker();
     startProposalExpiryWorker();
+    startSavedSearchAlertWorker();
     email.startTrialCron(pool);
     try {
       const { startSignalWorker } = require('./lib/signalWorker');

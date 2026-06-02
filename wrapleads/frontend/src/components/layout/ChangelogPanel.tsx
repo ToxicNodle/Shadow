@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔔 Saved Search Alerts — Get Notified When New Fleet Carriers Appear',
+    body: 'In the Discover view, every saved search chip now has a bell icon. Click it to turn on alerts — when new carriers matching your search criteria are added to the database (via FMCSA ingests, SAM.gov, SOS filings, or news signals), WrapOS sends you an in-app notification and an email. The email shows how many new carriers were found and the filter summary so you know which search triggered it. Amber bell = alerts on, gray bell = off. Use this to watch specific states, fleet sizes, or industries without having to remember to re-run searches manually. Example: save "Colorado fleet 20–100 vehicles" and get alerted whenever new trucking companies in that range appear in the database.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '⏰ Proposal Expiry — Set a Deadline, Auto-Expire at Midnight',
     body: 'Proposals now support an expiration date. Click "Set Expiry" on any proposal and pick a date — the proposal page shows a live countdown ("Expires in 3 days") that\'s visible to the client. At 8 AM on the expiry date, a background worker automatically marks the proposal as Expired and logs it to the activity timeline. If the expiry date is within 3 days, the countdown turns amber with a warning icon. If it\'s already past, it shows "Expired 2 days ago" in red. Use this to create real urgency — "This quote is valid through the 15th" — and let WrapOS enforce it automatically. Clear the expiry date anytime to reset. Works for both AI-generated proposals and template-based ones.',
   },

@@ -41,6 +41,15 @@ export function useSavedSearches() {
     onError: (e: Error) => showToast(e.message, 'error'),
   });
 
+  const alertMutation = useMutation({
+    mutationFn: (id: number) => api.toggleSavedSearchAlert(id),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['savedSearches'] });
+      showToast(data.alert_enabled ? 'Alert on — you\'ll be notified when new carriers match' : 'Alert off');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
   return {
     savedSearches: query.data ?? [],
     isLoading: query.isLoading,
@@ -48,5 +57,7 @@ export function useSavedSearches() {
     deleteSearch: deleteMutation.mutate,
     runSearch: runMutation.mutate,
     isRunning: runMutation.isPending,
+    toggleAlert: alertMutation.mutate,
+    isTogglingAlert: alertMutation.isPending,
   };
 }
