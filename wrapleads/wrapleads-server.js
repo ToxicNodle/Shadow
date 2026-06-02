@@ -971,6 +971,7 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_install_date DATE`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_crew_count INT DEFAULT 2`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS cross_sell_email_sent BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS care_email_sent_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
   }
@@ -8881,7 +8882,15 @@ app.post('/jobs', authMiddleware, async (req, res) => {
     [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null,
      material_cost || 0, job_revenue || 0, labor_hours || 0]
   );
-  res.json({ job: rows[0] });
+  const job = rows[0];
+  res.json({ job });
+  // Fire-and-forget: send care guide to lead email if available
+  if (job.lead_id) {
+    pool.query(`SELECT email, contact_name FROM leads WHERE id=$1`, [job.lead_id]).then(({ rows: leadRows }) => {
+      const lead = leadRows[0];
+      if (lead?.email) sendInstallCareEmail(uid, job, lead.email, lead.contact_name).catch(() => {});
+    }).catch(() => {});
+  }
 });
 
 app.put('/jobs/:id', authMiddleware, async (req, res) => {
@@ -13087,6 +13096,115 @@ const CROSS_SELL_MAP = {
   racing:      { service: 'race trailer wrap & hauler graphics', pitch: "Your car looks incredible — the next piece most race teams complete is the hauler. A branded trailer wrap turns your transport into a rolling billboard at every event. Want us to put together a hauler wrap concept?" },
   gc_referral: { service: 'fleet wraps for your own vehicles', pitch: 'On top of the work we do for your clients, have you considered branding your own service vehicles? We offer contractor fleet wraps that make your company look as sharp on the road as the work you deliver.' },
 };
+
+// ── Post-Install Care Guide Email ─────────────────────────────────────────────
+// Fires immediately when a new job is logged (fire-and-forget).
+const CARE_GUIDE = {
+  fleet: {
+    subject: (co) => `Wrap care guide for ${co} — keep your fleet looking sharp`,
+    tips: [
+      'Wait 7 days after install before washing. The adhesive needs time to fully cure.',
+      'Hand wash with mild pH-neutral soap and soft cloths or a gentle foam cannon. Automatic brushwash car washes will lift edges.',
+      'Avoid pressure washing directly at seams, edges, or corners — keep spray at least 18 inches from the vehicle.',
+      'Wax with a quality carnauba wax (avoid solvent-based products). For gloss wraps, wax every 6 months to protect print.',
+      'Remove fuel spills, bird droppings, and tree sap immediately. These are the #1 cause of premature wrap failure.',
+      'Park in a garage or shaded area when possible. UV and heat are the primary factors in vinyl lifespan.',
+    ],
+  },
+  colorchange: {
+    subject: (co) => `Color change wrap care — first 7 days are critical`,
+    tips: [
+      'Do not wash for the first 7 days. The adhesive requires a full cure under the full-body film.',
+      'Matte or satin finish? Never use wax, polish, or any shiny-finish product. Use a dedicated matte or satin detailer only.',
+      'Gloss color change: use a quality paint sealant (no silicone) — apply every 6 months.',
+      'Machine washes, brushwash tunnels, and high-pressure sprays will peel edges. Hand wash only.',
+      'Edge sealing is your most important long-term habit. Inspect door jamb edges monthly and re-seal with a heat gun if any lifting is noted.',
+      'Fuel or chemical spills: blot immediately with clean water — never scrub.',
+    ],
+  },
+  dinoc: {
+    subject: (co) => `DI-NOC architectural film care for ${co}`,
+    tips: [
+      'Wait 48 hours after install before wiping the surface — the film needs to fully bond.',
+      'Clean with a damp microfiber cloth and a mild all-purpose cleaner. Avoid acetone, alcohol-based sprays, or abrasive pads.',
+      'DI-NOC is not waterproof at edges. Avoid saturating surfaces directly at seams or near fixtures.',
+      'Direct sunlight on horizontal surfaces (countertops, desktops) can cause yellowing over 5+ years. A UV-blocking film over windows slows this.',
+      'For stone or wood pattern films: light pressure wipe only — scrubbing can abrade the surface texture pattern.',
+    ],
+  },
+  reatec: {
+    subject: (co) => `Reätec film care instructions for ${co}`,
+    tips: [
+      'Curing time is 24-48 hours. Avoid heavy cleaning during this window.',
+      'Use mild pH-neutral cleaners only. Harsh chemicals will dull the surface finish and may cause discoloration.',
+      'Do not use any solvent-based products on the film surface.',
+      'For window films: clean with standard glass cleaner and soft cloth. Avoid razor blades or scraping tools.',
+    ],
+  },
+  default: {
+    subject: (co) => `Care guide for your new wrap — ${co}`,
+    tips: [
+      'Wait 7 days after install before washing.',
+      'Hand wash with mild soap. Avoid pressure washers at seams and edges.',
+      'Remove fuel, bird droppings, and sap immediately — do not let them sit.',
+      'Park in shade when possible to extend vinyl lifespan.',
+    ],
+  },
+};
+
+async function sendInstallCareEmail(uid, job, leadEmail, contactName) {
+  try {
+    if (!leadEmail) return;
+    const settingsRow = await pool.query(`SELECT settings_json, email AS shop_email FROM users WHERE id=$1`, [uid]);
+    const s = settingsRow.rows[0]?.settings_json || {};
+    if (s.autoCareEmail === false) return;
+
+    const shopName = s.companyName || s.senderName || 'Your Wrap Shop';
+    const shopEmail = s.replyToEmail || settingsRow.rows[0]?.shop_email || null;
+    const contactFirst = (contactName || job.company || 'there').split(' ')[0];
+    const guide = CARE_GUIDE[job.wrap_category] || CARE_GUIDE.default;
+    const subject = guide.subject(job.company);
+
+    const tipsHtml = guide.tips.map((t) => `<li style="margin-bottom:8px;color:#1e293b;font-size:15px;line-height:1.6">${t}</li>`).join('');
+    const tipsTxt = guide.tips.map((t, i) => `${i + 1}. ${t}`).join('\n\n');
+    const vehicleLabel = `${job.vehicle_count} ${job.vehicle_type || 'vehicle'}${job.vehicle_count !== 1 ? 's' : ''}`;
+
+    const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px">
+<div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0">
+<div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>
+<p style="margin:0 0 12px 0;color:#1e293b;font-size:15px;line-height:1.6">Hi ${contactFirst},</p>
+<p style="margin:0 0 12px 0;color:#1e293b;font-size:15px;line-height:1.6">Your ${vehicleLabel} install is complete — here's how to keep your wrap looking great for years to come.</p>
+<div style="background:#f8fafc;border-radius:8px;padding:16px 20px;margin:16px 0">
+<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;margin-bottom:12px">CARE & MAINTENANCE GUIDE</div>
+<ul style="margin:0;padding:0 0 0 18px">${tipsHtml}</ul>
+</div>
+<p style="margin:16px 0 0;color:#64748b;font-size:13px;line-height:1.6">Questions? Reply to this email anytime — we're happy to help.</p>
+</div></body></html>`;
+
+    const resend = getResend();
+    if (!resend) return;
+
+    await resend.emails.send({
+      from: `${shopName} <${shopEmail || 'care@wrapos.com'}>`,
+      to: leadEmail,
+      subject,
+      html,
+      text: `Hi ${contactFirst},\n\nYour ${vehicleLabel} install is complete! Here's your care guide:\n\n${tipsTxt}\n\nQuestions? Reply anytime.\n\n${shopName}`,
+    });
+
+    await pool.query(`UPDATE installed_jobs SET care_email_sent_at = NOW() WHERE id = $1`, [job.id]);
+    if (job.lead_id) {
+      await logActivity(pool, {
+        leadId: job.lead_id, userId: uid, type: 'email_sent',
+        subject: `[Auto] Care guide: ${subject}`,
+        metadata: { job_id: job.id, auto: true, care: true },
+      });
+    }
+    console.log(`[care-guide] sent to ${leadEmail} for job ${job.id} (${job.company})`);
+  } catch (e) {
+    console.error('[care-guide] error for job', job?.id, ':', e.message);
+  }
+}
 
 async function processCrossSells() {
   try {

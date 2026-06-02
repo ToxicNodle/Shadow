@@ -545,6 +545,20 @@ export default function SettingsModal() {
           </p>
         </div>
         <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoCareEmail !== false}
+              onChange={e => setLocal(s => ({ ...s, autoCareEmail: e.target.checked }))}
+            />
+            Auto-send post-install care guide when a job is logged
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When you add a job in the Jobs view, WrapOS instantly emails the client a care guide with vinyl-specific cleaning instructions, curing period info, and maintenance tips. Category-aware: fleet/standard, matte color change, DI-NOC, Reätec each get tailored guidance. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
           <label className="field-label">Expected Response Time</label>
           <select className="select" {...f('autoReplyResponseTime')}>
             <option value="">1 business day (default)</option>

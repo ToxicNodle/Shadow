@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🧼 Auto Post-Install Care Guide — Sent the Moment You Log a Job',
+    body: 'When you add a completed job in the Jobs view, WrapOS automatically sends the client a care and maintenance guide specific to their wrap type. Fleet wraps get washing instructions, curing period info, wax recommendations, and the #1 causes of premature failure. Matte/satin color changes get the "never use wax" instruction plus matte-safe product guidance. DI-NOC architectural film gets interior cleaning tips and product warnings. Each guide is formatted as a clean, professional HTML email branded with your shop name. Toggle off in Settings → Automation if you prefer to send care guides manually. Requires Resend. The email is logged to the lead activity timeline. This fills a real gap — most shops either forget to send care instructions or use a generic document that doesn\'t match the film type.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🎉 Auto Kickoff Email — First Impression After Winning a Deal',
     body: 'When you mark a lead as Won, WrapOS immediately sends an AI-written project kickoff email to the client. The email thanks them for choosing you, outlines the next 3-4 steps in your workflow (vehicle survey, design consultation, material approval, install scheduling), and asks for any info needed to get started (vehicle list, brand colors, site contact). Completely automated — no manual drafting. Toggle it off per-shop in Settings if you prefer to write kickoff emails yourself. Requires a Resend API key. The email is logged to the lead\'s activity timeline so you always have a record. Works alongside the closed-won webhook — both fire when you move a lead to Won status.',
   },
