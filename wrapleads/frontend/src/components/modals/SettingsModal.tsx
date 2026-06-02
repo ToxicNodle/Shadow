@@ -569,6 +569,20 @@ export default function SettingsModal() {
             <input
               type="checkbox"
               style={{ width: 16, height: 16 }}
+              checked={local.autoProposalThankyou !== false}
+              onChange={e => setLocal(s => ({ ...s, autoProposalThankyou: e.target.checked }))}
+            />
+            Auto-send "Thank You + Next Steps" email when client approves a proposal
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When a client clicks Approve on your proposal portal page, WrapOS immediately sends them a branded email confirming their approval, outlining the 4-step process (survey → design → material order → install), and asking for vehicle list / brand guidelines. Keeps the project momentum going without any manual follow-up. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
               checked={local.autoCareEmail !== false}
               onChange={e => setLocal(s => ({ ...s, autoCareEmail: e.target.checked }))}
             />

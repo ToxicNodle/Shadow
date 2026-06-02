@@ -182,6 +182,7 @@ export interface Settings {
   autoProposalNudge: boolean;
   autoKickoffEmail: boolean;
   autoCareEmail: boolean;
+  autoProposalThankyou: boolean;
 }
 
 export interface CarrierSearchParams {
@@ -320,6 +321,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoProposalNudge: true,
   autoKickoffEmail: true,
   autoCareEmail: true,
+  autoProposalThankyou: true,
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────

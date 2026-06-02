@@ -18526,13 +18526,84 @@ app.post('/proposals/:token/approve', async (req, res) => {
     await pool.query(`UPDATE proposals SET status='approved', approved_at=NOW(), updated_at=NOW() WHERE token=$1`, [req.params.token]);
     if (p.lead_id) {
       await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [p.lead_id]);
-      const compR = await pool.query('SELECT company FROM leads WHERE id=$1', [p.lead_id]);
+      const compR = await pool.query('SELECT company, email, contact_name FROM leads WHERE id=$1', [p.lead_id]);
+      const lead = compR.rows[0] || {};
       await logActivity(pool, { leadId: p.lead_id, userId: p.user_id, type: 'status_changed', subject: 'Client approved proposal online' });
       await createNotification(p.user_id, {
         type: 'email_reply',
-        title: `🎉 ${compR.rows[0]?.company || 'A client'} approved your proposal!`,
+        title: `🎉 ${lead.company || 'A client'} approved your proposal!`,
         body: 'They clicked Approve on the proposal page. Time to seal the deal.',
         metadata: { proposal_token: req.params.token, lead_id: p.lead_id },
+      });
+
+      // Auto-send "Thank You + Next Steps" email to the client (fire-and-forget)
+      setImmediate(async () => {
+        try {
+          const resendKey = process.env.RESEND_API_KEY;
+          if (!resendKey) return;
+
+          const userR = await pool.query(`SELECT settings_json, email FROM users WHERE id=$1`, [p.user_id]);
+          const u = userR.rows[0];
+          if (!u) return;
+          const s = u.settings_json || {};
+          if (s.autoProposalThankyou === false) return; // opt-out check
+
+          const toEmail = lead.email;
+          if (!toEmail) return;
+
+          const shopName = s.companyName || s.senderName || 'our shop';
+          const senderName = s.senderName || 'The team';
+          const senderEmail = s.senderEmail || u.email || 'noreply@wrapos.app';
+          const shopPhone = s.phone || '';
+          const contactFirst = (lead.contact_name || '').split(' ')[0] || 'there';
+          const proposalTitle = p.title || 'your wrap project';
+          const appUrl = process.env.APP_URL || 'https://app.wrapleads.io';
+
+          const body = `Hi ${he(contactFirst)},
+
+<p>Thank you for approving the proposal — we're excited to get started on <strong>${he(proposalTitle)}</strong>!</p>
+
+<p><strong>Here's what happens next:</strong></p>
+<ol>
+  <li>We'll reach out to schedule a vehicle survey and confirm measurements</li>
+  <li>Our designer will prepare the final design files for your review</li>
+  <li>You'll get one last approval on the design before we order materials</li>
+  <li>We'll confirm your install date and coordinate vehicle access</li>
+</ol>
+
+<p>In the meantime, it helps to have:</p>
+<ul>
+  <li>Your vehicle list (year, make, model) if we don't already have it</li>
+  <li>Any brand guidelines, logo files, or color codes (PMS/CMYK preferred)</li>
+  <li>Preferred install window and any blackout dates</li>
+</ul>
+
+<p>Questions or anything you want to add? Reply to this email or call us${shopPhone ? ` at <strong>${he(shopPhone)}</strong>` : ''} — we're here to make this seamless.</p>
+
+<p>Looking forward to it,<br><strong>${he(senderName)}</strong><br>${he(shopName)}</p>`;
+
+          const htmlBody = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px"><div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0"><div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${he(shopName)}</div>${body}</div></body></html>`;
+
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: `${shopName} <${senderEmail}>`,
+              to: [toEmail],
+              subject: `✅ Proposal approved — here's what happens next`,
+              html: htmlBody,
+            }),
+          });
+
+          await logActivity(pool, {
+            leadId: p.lead_id, userId: p.user_id,
+            type: 'email_sent',
+            subject: `Auto thank-you: Proposal approved — next steps sent to ${toEmail}`,
+            metadata: { auto: true, proposal_token: req.params.token, thankyou: true },
+          });
+        } catch (e) {
+          console.warn('[proposal-thankyou] auto email failed:', e.message);
+        }
       });
     }
     res.json({ ok: true });

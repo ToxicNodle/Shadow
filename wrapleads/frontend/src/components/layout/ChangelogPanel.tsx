@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '✅ Auto Thank-You Email on Proposal Approval',
+    body: 'When a client clicks "Approve" on your proposal portal page, WrapOS now automatically sends them a branded confirmation email with the 4-step process: survey → design → material order → install. The email asks for their vehicle list and brand guidelines so the project can start without a back-and-forth round-trip. Includes your shop name, sender name, and phone number from Settings. Toggle it off in Settings → "Auto-send Thank You + Next Steps email when client approves a proposal" (on by default). The activity is logged to the lead timeline as "Auto thank-you: Proposal approved — next steps sent." Requires a Resend API key.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🧮 Material Cost Estimator — Auto-Fill from Your Inventory',
     body: 'When creating a new job, if you leave Material Cost blank, WrapOS now shows an estimator panel below the field. It calls your actual inventory (brand, roll dimensions, unit cost) and computes how many rolls you need for that vehicle type and count — with a 15% waste factor baked in. Choose Full, Partial, or Spot coverage with one click. Each inventory item shows the roll count needed, your current stock, and whether you can cover the job without ordering more. If stock is short, the shortfall is flagged in amber. Click any estimate (e.g. "$2,400–$3,100 ↗") to instantly fill the Material Cost field. The range covers the low-to-high sq footage variation for that vehicle type. Add materials to your inventory in Settings → Materials to unlock this feature.',
   },
