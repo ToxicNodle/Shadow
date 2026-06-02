@@ -167,7 +167,7 @@ export const api = {
     authFetch<import('./types').LeadActivity>(`/leads/${serverId}/activities`, {
       method: 'POST', body: JSON.stringify(activity),
     }),
-  sendEmail: (serverId: number, payload: { subject: string; body: string; toEmail: string; toName?: string }) =>
+  sendEmail: (serverId: number, payload: { subject: string; body: string; toEmail: string; toName?: string; template_id?: number }) =>
     authFetch<{ ok: boolean; resend_id?: string }>(`/leads/${serverId}/send-email`, {
       method: 'POST', body: JSON.stringify(payload),
     }),
@@ -1352,6 +1352,16 @@ export const api = {
       worstMarginJobs: Array<{ company: string; wrap_category: string; job_revenue: number; material_cost: number; vehicle_count: number; install_date: string; margin_pct: number }>;
       hasData: boolean;
     }>('/analytics/margin'),
+
+  // Email template performance analytics
+  getEmailTemplateAnalytics: () =>
+    authFetch<{
+      templates: Array<{
+        id: number; label: string; tag: string | null;
+        useCount: number; sends: number; opens: number;
+        openRate: number; avgOpensPerOpener: number | null; lastOpenAt: string | null;
+      }>;
+    }>('/analytics/email-templates'),
 
   // CAN-SPAM unsubscribe status for a lead's email
   getUnsubscribeStatus: (leadId: number) =>

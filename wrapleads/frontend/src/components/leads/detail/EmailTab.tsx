@@ -238,6 +238,7 @@ const TONES = ['Professional', 'Friendly', 'Direct', 'Consultative'];
 type TabMode = 'single' | 'sequence' | 'templates';
 
 interface EmailTemplate {
+  id?: number;
   label: string;
   tag: string;
   subject: string;
@@ -347,6 +348,7 @@ export default function EmailTab({ lead }: Props) {
   const [activating, setActivating] = useState(false);
   const [copiedTpl, setCopiedTpl] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
+  const [activeTemplateId, setActiveTemplateId] = useState<number | null>(null);
 
   // User-saved templates
   const { data: userTplData, refetch: refetchUserTpls } = useQuery({
@@ -409,6 +411,7 @@ export default function EmailTab({ lead }: Props) {
     const filled = fillTemplate(tpl);
     setResult(filled);
     setTabMode('single');
+    setActiveTemplateId(tpl.id ?? null);
   }
 
   function copyTemplate(tpl: EmailTemplate, idx: number) {
@@ -441,6 +444,7 @@ export default function EmailTab({ lead }: Props) {
     setLoading(true);
     setResult(null);
     setSequence(null);
+    setActiveTemplateId(null);
     try {
       if (tabMode === 'single') {
         const data = await api.generateEmail({ lead, emailType, tone, settings });
@@ -478,6 +482,7 @@ export default function EmailTab({ lead }: Props) {
         body: result.body,
         toEmail: lead.email,
         toName: lead.contactName || undefined,
+        ...(activeTemplateId ? { template_id: activeTemplateId } : {}),
       });
       qc.invalidateQueries({ queryKey: ['activities', lead.serverId] });
       qc.invalidateQueries({ queryKey: ['leads'] });

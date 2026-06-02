@@ -773,6 +773,106 @@ function EmailTimingCard() {
   );
 }
 
+function EmailTemplateStatsCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['email-template-analytics'],
+    queryFn: () => api.getEmailTemplateAnalytics(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+    </div>
+  );
+
+  const templates = data?.templates ?? [];
+  if (templates.length === 0) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+      <div className="an-card-title">Email Template Performance</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+        Save email templates and send them to prospects — WrapOS will track which templates get the highest open rates.
+      </p>
+    </div>
+  );
+
+  const withSends = templates.filter(t => t.sends > 0);
+  const bestTemplate = withSends.length > 0 ? withSends.reduce((best, t) => t.openRate > best.openRate ? t : best) : null;
+  const tagColor = (tag: string | null) => {
+    const h: Record<string, string> = { 'Intro': '#4d8af5', 'Follow-up': '#f4551c', 'Objection': '#f59e0b', 'Cold': '#8b5cf6' };
+    return h[tag ?? ''] ?? '#6b7280';
+  };
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Email Template Performance</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Open rates by template — {templates.length} template{templates.length !== 1 ? 's' : ''}, {withSends.reduce((s, t) => s + t.sends, 0)} tracked sends
+          </div>
+        </div>
+        {bestTemplate && (
+          <div style={{
+            background: 'rgba(77,138,245,0.1)', border: '1px solid rgba(77,138,245,0.3)',
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#4d8af5',
+          }}>
+            Best: {bestTemplate.label} — {bestTemplate.openRate}% open rate
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {templates.map(t => {
+          const barPct = Math.min(100, t.sends > 0 ? t.openRate : 0);
+          const isBest = bestTemplate?.id === t.id;
+          return (
+            <div key={t.id} style={{
+              display: 'grid', gridTemplateColumns: '1fr 180px 80px 80px',
+              alignItems: 'center', gap: 12,
+              padding: '10px 14px', borderRadius: 8,
+              background: isBest ? 'rgba(77,138,245,0.07)' : 'var(--bg-elev)',
+              border: `1px solid ${isBest ? 'rgba(77,138,245,0.25)' : 'var(--border-subtle)'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                  padding: '2px 6px', borderRadius: 4,
+                  background: `${tagColor(t.tag)}22`, color: tagColor(t.tag), flexShrink: 0,
+                }}>{t.tag ?? 'Custom'}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.label}</span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', borderRadius: 3, width: `${barPct}%`,
+                    background: isBest ? '#4d8af5' : barPct >= 40 ? '#00d97e' : barPct >= 20 ? '#f4551c' : '#6b7280',
+                    transition: 'width 0.5s ease',
+                  }} />
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: isBest ? '#4d8af5' : 'var(--text)', minWidth: 36, textAlign: 'right' }}>
+                  {t.sends > 0 ? `${t.openRate}%` : '—'}
+                </span>
+              </div>
+
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{t.sends}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>sends</div>
+              </div>
+
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: t.opens > 0 ? '#00d97e' : 'var(--text-faint)' }}>{t.opens}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>opens</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SequencePerformanceCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['sequence-performance'],
@@ -3690,6 +3790,9 @@ export default function AnalyticsView() {
 
         {/* ── Email Send-Time Intelligence ── */}
         <EmailTimingCard />
+
+        {/* ── Email Template Performance ── */}
+        <EmailTemplateStatsCard />
 
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />

@@ -341,6 +341,10 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_track_lead  ON email_tracking(lead_id)`);
   } catch (e) { console.warn('[migrate] Could not create email_tracking table:', e.message); }
   try {
+    await pool.query(`ALTER TABLE email_tracking ADD COLUMN IF NOT EXISTS template_id BIGINT REFERENCES email_templates(id) ON DELETE SET NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_track_tpl ON email_tracking(template_id) WHERE template_id IS NOT NULL`);
+  } catch (e) { console.warn('[migrate] Could not add template_id to email_tracking:', e.message); }
+  try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS lead_activities (
         id         BIGSERIAL PRIMARY KEY,
@@ -3274,7 +3278,7 @@ app.post('/leads/:id/activities', authMiddleware, async (req, res) => {
 app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
-  const { subject, body, toEmail, toName } = req.body || {};
+  const { subject, body, toEmail, toName, template_id } = req.body || {};
   if (!subject || !body || !toEmail) return res.status(400).json({ error: 'subject, body, toEmail required' });
 
   const uid = String(req.user.id);
@@ -3310,10 +3314,14 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   try {
     // Create tracking token
     const trackToken = require('crypto').randomBytes(16).toString('hex');
+    const tplId = template_id ? parseInt(template_id) : null;
     await pool.query(
-      `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
-      [trackToken, uid, id, subject]
+      `INSERT INTO email_tracking (token, user_id, lead_id, subject, template_id) VALUES ($1,$2,$3,$4,$5)`,
+      [trackToken, uid, id, subject, tplId || null]
     );
+    if (tplId) {
+      pool.query(`UPDATE email_templates SET use_count=use_count+1, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [tplId, uid]).catch(() => {});
+    }
     const baseUrl = process.env.APP_BASE_URL || APP_URL;
     const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
 
@@ -20591,6 +20599,46 @@ app.get('/analytics/email-timing', authMiddleware, async (req, res) => {
     });
   } catch (e) {
     console.error('[analytics/email-timing]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// Email template performance analytics
+app.get('/analytics/email-templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        et.id,
+        et.label,
+        et.tag,
+        et.use_count,
+        COUNT(tr.id)                                          AS sends,
+        SUM(CASE WHEN tr.open_count > 0 THEN 1 ELSE 0 END)  AS opens,
+        ROUND(AVG(CASE WHEN tr.open_count > 0 THEN tr.open_count ELSE NULL END)::numeric, 1) AS avg_opens_per_opener,
+        MAX(tr.opened_at)                                    AS last_open_at
+      FROM email_templates et
+      LEFT JOIN email_tracking tr ON tr.template_id = et.id AND tr.user_id = $1
+      WHERE et.user_id = $1
+      GROUP BY et.id, et.label, et.tag, et.use_count
+      ORDER BY sends DESC, et.use_count DESC
+    `, [uid]);
+
+    res.json({
+      templates: rows.map(r => ({
+        id: Number(r.id),
+        label: r.label,
+        tag: r.tag,
+        useCount: Number(r.use_count),
+        sends: Number(r.sends),
+        opens: Number(r.opens),
+        openRate: r.sends > 0 ? Math.round((r.opens / r.sends) * 100) : 0,
+        avgOpensPerOpener: r.avg_opens_per_opener ? Number(r.avg_opens_per_opener) : null,
+        lastOpenAt: r.last_open_at,
+      })),
+    });
+  } catch (e) {
+    console.error('[analytics/email-templates]', e.message);
     res.status(500).json({ ok: false });
   }
 });

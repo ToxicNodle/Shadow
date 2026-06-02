@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📊 Email Template Performance — See Which Templates Actually Get Opened',
+    body: 'Analytics now has an "Email Template Performance" card that shows open rates for every email template you use. For each template, WrapOS tracks how many times it was sent vs. how many times it was opened, giving you a clean percentage. The best-performing template is highlighted in blue. Color coding makes it instant: green bar = 40%+ open rate (strong), orange = 20–39% (average), gray = under 20% (needs work). Use it to A/B test approaches — create two versions of a cold intro email, send each to a batch of leads, and see which one actually gets read. Data is linked at send time: when you load a template in the email composer and hit Send, WrapOS silently tags the tracking pixel with that template\'s ID. No extra clicks, no workflow change. Requires Resend for email tracking.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🧼 Auto Post-Install Care Guide — Sent the Moment You Log a Job',
     body: 'When you add a completed job in the Jobs view, WrapOS automatically sends the client a care and maintenance guide specific to their wrap type. Fleet wraps get washing instructions, curing period info, wax recommendations, and the #1 causes of premature failure. Matte/satin color changes get the "never use wax" instruction plus matte-safe product guidance. DI-NOC architectural film gets interior cleaning tips and product warnings. Each guide is formatted as a clean, professional HTML email branded with your shop name. Toggle off in Settings → Automation if you prefer to send care guides manually. Requires Resend. The email is logged to the lead activity timeline. This fills a real gap — most shops either forget to send care instructions or use a generic document that doesn\'t match the film type.',
   },
