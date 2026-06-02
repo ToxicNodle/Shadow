@@ -1633,6 +1633,182 @@ function AICoach({ lead }: { lead: Lead }) {
   );
 }
 
+type PricingTier = { label: string; description: string; price: string; highlight: boolean; features: string[] };
+const EMPTY_TIER = (): PricingTier => ({ label: '', description: '', price: '', highlight: false, features: [''] });
+
+function TieredPricingEditor({ proposalId }: { proposalId: number }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [tiers, setTiers] = useState<PricingTier[]>([
+    { ...EMPTY_TIER(), label: 'Good' },
+    { ...EMPTY_TIER(), label: 'Better', highlight: true },
+    { ...EMPTY_TIER(), label: 'Best' },
+  ]);
+  const [saved, setSaved] = useState(false);
+
+  const saveMut = useMutation({
+    mutationFn: () => {
+      const valid = tiers.filter(t => t.label && t.price);
+      if (!valid.length) throw new Error('Add at least one tier with a label and price');
+      return api.updateProposal(proposalId, {
+        pricing_options: valid.map(t => ({
+          label: t.label,
+          description: t.description || undefined,
+          price: parseFloat(t.price) || 0,
+          highlight: t.highlight || undefined,
+          features: t.features.filter(Boolean),
+        })),
+      });
+    },
+    onSuccess: () => {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+      qc.invalidateQueries({ queryKey: ['proposal-views', proposalId] });
+      showToast('Tiered pricing saved to proposal', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  function updateTier(i: number, patch: Partial<PricingTier>) {
+    setTiers(ts => ts.map((t, idx) => idx === i ? { ...t, ...patch } : t));
+  }
+  function updateFeature(tierIdx: number, featIdx: number, val: string) {
+    setTiers(ts => ts.map((t, i) => i === tierIdx ? {
+      ...t, features: t.features.map((f, j) => j === featIdx ? val : f),
+    } : t));
+  }
+  function addFeature(i: number) {
+    setTiers(ts => ts.map((t, idx) => idx === i ? { ...t, features: [...t.features, ''] } : t));
+  }
+  function removeFeature(tierIdx: number, featIdx: number) {
+    setTiers(ts => ts.map((t, i) => i === tierIdx ? {
+      ...t, features: t.features.filter((_, j) => j !== featIdx),
+    } : t));
+  }
+  function addTier() {
+    if (tiers.length >= 4) return;
+    setTiers(ts => [...ts, EMPTY_TIER()]);
+  }
+  function removeTier(i: number) {
+    setTiers(ts => ts.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <div style={{ marginTop: 12, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 14px', background: open ? 'var(--bg-elev)' : 'transparent',
+          border: 'none', cursor: 'pointer', textAlign: 'left',
+        }}
+      >
+        <span style={{ fontSize: 14 }}>📦</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Good / Better / Best Pricing</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Add tiered options — client picks on the proposal page</div>
+        </div>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 14px 14px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 10 }}>
+            {tiers.map((tier, i) => (
+              <div key={i} style={{
+                border: `1px solid ${tier.highlight ? '#6366f150' : 'var(--border)'}`,
+                borderRadius: 8, padding: '10px 12px',
+                background: tier.highlight ? '#6366f108' : 'transparent',
+              }}>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1, fontSize: 12, padding: '4px 8px' }}
+                    placeholder="Tier name (e.g. Good, Standard, Premium)"
+                    value={tier.label}
+                    onChange={e => updateTier(i, { label: e.target.value })}
+                  />
+                  <input
+                    className="input"
+                    style={{ width: 100, fontSize: 12, padding: '4px 8px' }}
+                    placeholder="Price $"
+                    type="number"
+                    min="0"
+                    value={tier.price}
+                    onChange={e => updateTier(i, { price: e.target.value })}
+                  />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={tier.highlight}
+                      onChange={e => updateTier(i, { highlight: e.target.checked })}
+                    />
+                    <span>Highlight</span>
+                  </label>
+                  {tiers.length > 1 && (
+                    <button
+                      onClick={() => removeTier(i)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14, padding: '0 2px', flexShrink: 0 }}
+                      title="Remove tier"
+                    >×</button>
+                  )}
+                </div>
+                <input
+                  className="input"
+                  style={{ width: '100%', fontSize: 11, padding: '4px 8px', marginBottom: 6 }}
+                  placeholder="Short description (optional)"
+                  value={tier.description}
+                  onChange={e => updateTier(i, { description: e.target.value })}
+                />
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                  What's included
+                </div>
+                {tier.features.map((feat, j) => (
+                  <div key={j} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                    <input
+                      className="input"
+                      style={{ flex: 1, fontSize: 11, padding: '3px 7px' }}
+                      placeholder={`Feature ${j + 1}`}
+                      value={feat}
+                      onChange={e => updateFeature(i, j, e.target.value)}
+                    />
+                    {tier.features.length > 1 && (
+                      <button
+                        onClick={() => removeFeature(i, j)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 13, padding: '0 4px', flexShrink: 0 }}
+                      >−</button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  onClick={() => addFeature(i)}
+                  style={{ fontSize: 10, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                >+ Add feature</button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+            {tiers.length < 4 && (
+              <button className="btn" style={{ fontSize: 11 }} onClick={addTier}>+ Add Tier</button>
+            )}
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 11, marginLeft: 'auto' }}
+              disabled={saveMut.isPending}
+              onClick={() => saveMut.mutate()}
+            >
+              {saveMut.isPending ? 'Saving…' : saved ? '✓ Saved!' : 'Save to Proposal'}
+            </button>
+          </div>
+          {saveMut.isError && (
+            <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6 }}>{(saveMut.error as Error).message}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProposalSection({ lead }: { lead: Lead }) {
   const [notes, setNotes] = useState('');
   const [proposal, setProposal] = useState<{ token: string; title: string; id: number; status: string; expires_at?: string | null } | null>(null);
@@ -1875,6 +2051,8 @@ function ProposalSection({ lead }: { lead: Lead }) {
               New
             </button>
           </div>
+
+          <TieredPricingEditor proposalId={proposal.id} />
 
           {showSaveTemplate && (
             <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid var(--border)' }}>

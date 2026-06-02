@@ -703,6 +703,10 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS nudge_sent_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
+    // Tiered pricing: [{label, description, price, highlight, features:[]}]
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS pricing_options JSONB`);
+    // Stores which tier the client selected on approval
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS selected_tier TEXT`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
   }
@@ -16155,7 +16159,7 @@ app.get('/proposals/:id/views', authMiddleware, async (req, res) => {
 app.patch('/proposals/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const id = Number(req.params.id);
-  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url, expires_at } = req.body || {};
+  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url, expires_at, pricing_options } = req.body || {};
   try {
     const existing = await pool.query('SELECT * FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Proposal not found' });
@@ -16186,8 +16190,9 @@ app.patch('/proposals/:id', authMiddleware, async (req, res) => {
         fields.push(`sent_at=NOW()`);
       }
     }
-    if (mockup_url !== undefined)  { fields.push(`mockup_url=$${idx++}`);   vals.push(mockup_url); }
-    if (expires_at !== undefined)  { fields.push(`expires_at=$${idx++}`);   vals.push(expires_at || null); }
+    if (mockup_url !== undefined)       { fields.push(`mockup_url=$${idx++}`);       vals.push(mockup_url); }
+    if (expires_at !== undefined)       { fields.push(`expires_at=$${idx++}`);       vals.push(expires_at || null); }
+    if (pricing_options !== undefined)  { fields.push(`pricing_options=$${idx++}`);  vals.push(pricing_options ? JSON.stringify(pricing_options) : null); }
 
     if (!fields.length) return res.json({ ok: true, proposal: p });
 
@@ -18428,6 +18433,23 @@ app.get('/proposals/:token', async (req, res) => {
   .approve-btn{background:#22c55e;color:#fff;border:none;padding:14px 40px;border-radius:8px;font-size:16px;font-weight:700;cursor:pointer;letter-spacing:-.3px}
   .approve-btn:hover{background:#16a34a}
   .approved-badge{background:#dcfce7;border:2px solid #22c55e;border-radius:12px;padding:20px;text-align:center;color:#15803d;font-weight:700;font-size:16px}
+  /* Tiered pricing */
+  .tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin:8px 0 0}
+  .tier-card{border:2px solid #e5e7eb;border-radius:14px;padding:24px 20px;display:flex;flex-direction:column;position:relative;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+  .tier-card:hover{border-color:#6366f1;box-shadow:0 4px 18px rgba(99,102,241,.12)}
+  .tier-card.selected{border-color:#22c55e;box-shadow:0 4px 18px rgba(34,197,94,.18)}
+  .tier-card.highlighted{border-color:#6366f1;background:#f5f3ff}
+  .tier-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:#6366f1;color:#fff;font-size:10px;font-weight:800;padding:3px 12px;border-radius:99px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+  .tier-label{font-size:15px;font-weight:800;color:#111;margin-bottom:4px;text-align:center}
+  .tier-price{font-size:26px;font-weight:900;color:#111;text-align:center;letter-spacing:-1px;margin-bottom:14px}
+  .tier-desc{font-size:12px;color:#555;text-align:center;margin-bottom:14px;line-height:1.5}
+  .tier-features{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;flex:1}
+  .tier-features li{font-size:12px;color:#333;display:flex;align-items:flex-start;gap:7px}
+  .tier-features li::before{content:"✓";color:#22c55e;font-weight:800;flex-shrink:0;margin-top:1px}
+  .tier-select-btn{margin-top:18px;width:100%;padding:10px;border-radius:8px;border:2px solid #6366f1;background:#fff;color:#6366f1;font-size:13px;font-weight:700;cursor:pointer;transition:background .15s,color .15s}
+  .tier-select-btn:hover,.tier-card.selected .tier-select-btn{background:#6366f1;color:#fff}
+  .tier-card.selected .tier-select-btn{background:#22c55e;border-color:#22c55e}
+  @media(max-width:600px){.tiers{grid-template-columns:1fr}}
   .mockup-section{margin-bottom:36px}
   .mockup-frame{position:relative;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,.08);background:#000}
   .mockup-frame img{width:100%;display:block}
@@ -18467,7 +18489,22 @@ app.get('/proposals/:token', async (req, res) => {
 
     <div class="section">
       <div class="section-label">Investment</div>
-      ${sanitizeProposalHtml(p.pricing_html || '')}
+      ${(() => {
+        let tiers = null;
+        try { tiers = p.pricing_options ? (Array.isArray(p.pricing_options) ? p.pricing_options : JSON.parse(p.pricing_options)) : null; } catch(e) { tiers = null; }
+        if (tiers && tiers.length) {
+          return `<div class="tiers">${tiers.map(t => `
+            <div class="tier-card${t.highlight ? ' highlighted' : ''}" data-tier="${he(t.label)}">
+              ${t.highlight ? `<span class="tier-badge">Most Popular</span>` : ''}
+              <div class="tier-label">${he(t.label)}</div>
+              <div class="tier-price">$${Number(t.price).toLocaleString()}</div>
+              ${t.description ? `<div class="tier-desc">${he(t.description)}</div>` : ''}
+              ${t.features && t.features.length ? `<ul class="tier-features">${t.features.map(f => `<li>${he(f)}</li>`).join('')}</ul>` : ''}
+              ${approved ? '' : `<button class="tier-select-btn" onclick="selectTier(this,'${he(t.label)}')">Select this package</button>`}
+            </div>`).join('')}</div>`;
+        }
+        return sanitizeProposalHtml(p.pricing_html || '');
+      })()}
     </div>
 
     ${p.roi_section ? `
@@ -18498,13 +18535,28 @@ app.get('/proposals/:token', async (req, res) => {
   </div>
 </div>
 <script>
+let _selectedTier = null;
+function selectTier(btn, tierLabel) {
+  _selectedTier = tierLabel;
+  document.querySelectorAll('.tier-card').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.tier-select-btn').forEach(b => b.textContent = 'Select this package');
+  btn.closest('.tier-card').classList.add('selected');
+  btn.textContent = '✓ Selected';
+  const approveBtn = document.getElementById('approveBtn');
+  if (approveBtn) {
+    approveBtn.textContent = 'Approve — ' + tierLabel;
+    approveBtn.style.opacity = '1';
+  }
+}
 const btn = document.getElementById('approveBtn');
 if (btn) {
   btn.addEventListener('click', async () => {
     btn.disabled = true; btn.textContent = 'Approving…';
-    const resp = await fetch('/proposals/${req.params.token}/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    const body = _selectedTier ? JSON.stringify({ selected_tier: _selectedTier }) : '{}';
+    const resp = await fetch('/proposals/${req.params.token}/approve', { method:'POST', headers:{'Content-Type':'application/json'}, body });
     if (resp.ok) {
-      btn.closest('.approve-section').innerHTML = '<div class="approved-badge">✓ Approved! We will reach out shortly. Thank you!</div>';
+      const msg = _selectedTier ? '✓ ' + _selectedTier + ' package approved! We will reach out shortly. Thank you!' : '✓ Approved! We will reach out shortly. Thank you!';
+      btn.closest('.approve-section').innerHTML = '<div class="approved-badge">' + msg + '</div>';
     } else {
       btn.textContent = 'Error — try again'; btn.disabled = false;
     }
@@ -18520,15 +18572,21 @@ if (btn) {
 // PUBLIC — client approves proposal
 app.post('/proposals/:token/approve', async (req, res) => {
   try {
+    const { selected_tier } = req.body || {};
     const { rows } = await pool.query('SELECT * FROM proposals WHERE token=$1', [req.params.token]);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const p = rows[0];
-    await pool.query(`UPDATE proposals SET status='approved', approved_at=NOW(), updated_at=NOW() WHERE token=$1`, [req.params.token]);
+    await pool.query(
+      `UPDATE proposals SET status='approved', approved_at=NOW(), updated_at=NOW()
+       ${selected_tier ? `, selected_tier=$2` : ''} WHERE token=$1`,
+      selected_tier ? [req.params.token, selected_tier] : [req.params.token]
+    );
     if (p.lead_id) {
       await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [p.lead_id]);
       const compR = await pool.query('SELECT company, email, contact_name FROM leads WHERE id=$1', [p.lead_id]);
       const lead = compR.rows[0] || {};
-      await logActivity(pool, { leadId: p.lead_id, userId: p.user_id, type: 'status_changed', subject: 'Client approved proposal online' });
+      const approveSubject = selected_tier ? `Client approved proposal online — selected "${selected_tier}" package` : 'Client approved proposal online';
+      await logActivity(pool, { leadId: p.lead_id, userId: p.user_id, type: 'status_changed', subject: approveSubject });
       await createNotification(p.user_id, {
         type: 'email_reply',
         title: `🎉 ${lead.company || 'A client'} approved your proposal!`,

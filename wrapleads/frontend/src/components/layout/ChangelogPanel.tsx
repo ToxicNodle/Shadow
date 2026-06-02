@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📦 Good / Better / Best Tiered Proposal Pricing',
+    body: 'Proposals now support tiered pricing — the first vehicle wrap CRM to do it. In the AI Proposal panel, click "Good / Better / Best Pricing" to build up to 4 tiers (e.g. Good: spot graphics $2,500 · Better: partial wrap $4,800 · Best: full fleet wrap $7,200). Each tier has a label, price, optional short description, and bullet-point feature list. Mark one tier "Highlight" to show it with a "Most Popular" badge on the client-facing proposal page. When the client opens the link, they see the tiers side-by-side and click "Select this package" before approving — their choice is recorded and shown in the activity log ("Client approved — selected Best package"). The approval thank-you email also references their selected tier. Use this to upsell — most clients pick the middle or highlighted tier.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '✅ Auto Thank-You Email on Proposal Approval',
     body: 'When a client clicks "Approve" on your proposal portal page, WrapOS now automatically sends them a branded confirmation email with the 4-step process: survey → design → material order → install. The email asks for their vehicle list and brand guidelines so the project can start without a back-and-forth round-trip. Includes your shop name, sender name, and phone number from Settings. Toggle it off in Settings → "Auto-send Thank You + Next Steps email when client approves a proposal" (on by default). The activity is logged to the lead timeline as "Auto thank-you: Proposal approved — next steps sent." Requires a Resend API key.',
   },
