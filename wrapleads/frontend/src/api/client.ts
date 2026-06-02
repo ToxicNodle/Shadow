@@ -725,6 +725,16 @@ export const api = {
   getProposalVersion: (proposalId: number, versionId: number) =>
     authFetch<{ ok: boolean; version: Record<string, unknown> }>(`/proposals/${proposalId}/versions/${versionId}`),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
+
+  // Proposal template library
+  getProposalTemplates: () =>
+    authFetch<{ ok: boolean; templates: Array<{ id: number; name: string; category: string | null; intro: string | null; services: string | null; pricing_html: string | null; timeline: string | null; notes: string | null; use_count: number; created_at: string }> }>('/proposals/templates'),
+  saveProposalAsTemplate: (proposalId: number, name: string, category?: string) =>
+    authFetch<{ ok: boolean; template: { id: number; name: string; category: string | null; created_at: string } }>(`/proposals/${proposalId}/save-as-template`, { method: 'POST', body: JSON.stringify({ name, category }) }),
+  deleteProposalTemplate: (id: number) =>
+    authFetch<{ ok: boolean }>(`/proposals/templates/${id}`, { method: 'DELETE' }),
+  createProposalFromTemplate: (leadId: number, templateId: number) =>
+    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>('/proposals/from-template', { method: 'POST', body: JSON.stringify({ lead_id: leadId, template_id: templateId }) }),
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
   getMyWebhookUrl: () => authFetch<{ url: string }>('/me/webhook-url'),
   getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),

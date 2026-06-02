@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📄 Proposal Template Library — Save & Reuse Your Best Proposals',
+    body: 'The Proposal Writer in each lead now has a template library. After generating an AI proposal you like, click "Save as Template" and give it a name (e.g. "Fleet Wrap Standard", "DI-NOC Commercial", "Color Change Premium"). The next time you create a proposal for any lead, saved templates appear as chips above the AI generator — one click creates the full proposal instantly without consuming an AI generation. Templates track a use count so you can see your most-used structures. Templates are category-aware (fleet, color change, DI-NOC, etc.) and support the [Company] placeholder which auto-substitutes the prospect\'s name. Useful for shops with standardized pricing tiers, common service bundles, or category-specific approaches.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📅 CRM Follow-up Calendar — Subscribe Your Follow-up Dates in Google/Apple/Outlook',
     body: 'Settings now has a "CRM Follow-up Calendar" section with a subscribe URL for your WrapOS follow-up reminders. Copy the URL and add it to Google Calendar (Other calendars → From URL), Apple Calendar (File → New Calendar Subscription), or Outlook (Add calendar → Subscribe from web). Every lead with a follow-up date appears as an all-day event with a 1-hour reminder. The calendar updates live as WrapOS sets new follow-up dates — no manual syncing. Events include the company name, contact, and current CRM status. Works alongside the bid deadline calendar that\'s already in the Bids view.',
   },

@@ -719,6 +719,28 @@ async function migrateDb() {
     console.warn('[migrate] Could not create proposal_versions table:', e.message);
   }
 
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS proposal_templates (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        category     TEXT,
+        intro        TEXT,
+        services     TEXT,
+        pricing_html TEXT,
+        timeline     TEXT,
+        notes        TEXT,
+        use_count    INT NOT NULL DEFAULT 0,
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ptpl_user ON proposal_templates(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create proposal_templates table:', e.message);
+  }
+
   // Sprint 7: quote_requests table — inbound lead capture
   try {
     await pool.query(`
@@ -15771,6 +15793,138 @@ app.delete('/proposals/:id', authMiddleware, async (req, res) => {
   try {
     await pool.query('DELETE FROM proposals WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Proposal Template Library ─────────────────────────────────────────────────
+
+// GET /proposals/templates — list user's saved proposal templates
+app.get('/proposals/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, category, intro, services, pricing_html, timeline, notes, use_count, created_at
+       FROM proposal_templates WHERE user_id = $1 ORDER BY use_count DESC, created_at DESC`,
+      [uid]
+    );
+    res.json({ ok: true, templates: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/templates — create a new template manually
+app.post('/proposals/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { name, category, intro, services, pricing_html, timeline, notes } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ error: 'Template name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO proposal_templates (user_id, name, category, intro, services, pricing_html, timeline, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [uid, name.trim(), category || null, intro || null, services || null, pricing_html || null, timeline || null, notes || null]
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /proposals/templates/:id — update template
+app.patch('/proposals/templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const { name, category, intro, services, pricing_html, timeline, notes } = req.body || {};
+  try {
+    const check = await pool.query('SELECT id FROM proposal_templates WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'Not found' });
+    const fields = [], vals = [];
+    let i = 1;
+    if (name !== undefined)         { fields.push(`name=$${i++}`);         vals.push(name); }
+    if (category !== undefined)     { fields.push(`category=$${i++}`);     vals.push(category); }
+    if (intro !== undefined)        { fields.push(`intro=$${i++}`);        vals.push(intro); }
+    if (services !== undefined)     { fields.push(`services=$${i++}`);     vals.push(services); }
+    if (pricing_html !== undefined) { fields.push(`pricing_html=$${i++}`); vals.push(pricing_html); }
+    if (timeline !== undefined)     { fields.push(`timeline=$${i++}`);     vals.push(timeline); }
+    if (notes !== undefined)        { fields.push(`notes=$${i++}`);        vals.push(notes); }
+    if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+    fields.push(`updated_at=NOW()`);
+    vals.push(id, uid);
+    const { rows } = await pool.query(
+      `UPDATE proposal_templates SET ${fields.join(',')} WHERE id=$${i++} AND user_id=$${i} RETURNING *`,
+      vals
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /proposals/templates/:id
+app.delete('/proposals/templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query('DELETE FROM proposal_templates WHERE id=$1 AND user_id=$2', [Number(req.params.id), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/:id/save-as-template — save an existing proposal as a reusable template
+app.post('/proposals/:id/save-as-template', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const { name, category } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ error: 'Template name required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT intro, services, pricing_html, timeline, notes FROM proposals WHERE id=$1 AND user_id=$2`,
+      [id, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Proposal not found' });
+    const p = rows[0];
+    const { rows: tpl } = await pool.query(
+      `INSERT INTO proposal_templates (user_id, name, category, intro, services, pricing_html, timeline, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, name, category, created_at`,
+      [uid, name.trim(), category || null, p.intro, p.services, p.pricing_html, p.timeline, p.notes]
+    );
+    res.json({ ok: true, template: tpl[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/from-template — create a new proposal for a lead using a saved template
+// Skips AI generation entirely; template content is used as-is with the lead's company name
+// substituted where relevant.
+app.post('/proposals/from-template', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { lead_id, template_id } = req.body || {};
+  if (!lead_id || !template_id) return res.status(400).json({ error: 'lead_id and template_id required' });
+  try {
+    const [leadR, tplR] = await Promise.all([
+      pool.query(`SELECT * FROM leads WHERE id=$1 AND user_id=$2`, [lead_id, uid]),
+      pool.query(`SELECT * FROM proposal_templates WHERE id=$1 AND user_id=$2`, [template_id, uid]),
+    ]);
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    if (!tplR.rows.length) return res.status(404).json({ error: 'Template not found' });
+    const lead = leadR.rows[0];
+    const tpl = tplR.rows[0];
+
+    // Substitute company name placeholder in template content
+    const sub = (txt) => (txt || '').replace(/\[Company\]/gi, lead.company || 'your company').replace(/\[company\]/g, lead.company || 'your company');
+
+    const token = require('crypto').randomUUID();
+    const title = `Wrap Proposal — ${lead.company}`;
+    const { rows: proposal } = await pool.query(
+      `INSERT INTO proposals (user_id, lead_id, token, title, intro, services, pricing_html, timeline, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, token, title, status, created_at`,
+      [uid, lead_id, token, title, sub(tpl.intro), sub(tpl.services), tpl.pricing_html || null, sub(tpl.timeline), sub(tpl.notes)]
+    );
+
+    // Increment template use count
+    await pool.query(`UPDATE proposal_templates SET use_count = use_count + 1, updated_at = NOW() WHERE id = $1`, [template_id]);
+
+    if (lead_id) {
+      await logActivity(pool, {
+        leadId: lead_id, userId: uid, type: 'note_added',
+        subject: `Proposal created from template: ${tpl.name}`,
+        metadata: { proposal_id: proposal[0].id, template_id, template_name: tpl.name },
+      });
+    }
+
+    res.json({ ok: true, proposal: proposal[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

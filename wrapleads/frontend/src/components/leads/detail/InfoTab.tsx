@@ -1638,6 +1638,9 @@ function ProposalSection({ lead }: { lead: Lead }) {
   const [proposal, setProposal] = useState<{ token: string; title: string; id: number; status: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateSaved, setTemplateSaved] = useState(false);
   const qc = useQueryClient();
 
   const mut = useMutation({
@@ -1649,6 +1652,28 @@ function ProposalSection({ lead }: { lead: Lead }) {
       status: (data.proposal.status as string) ?? 'draft',
     }),
   });
+
+  const fromTemplateMut = useMutation({
+    mutationFn: (templateId: number) => api.createProposalFromTemplate(lead.serverId!, templateId),
+    onSuccess: (data) => setProposal({
+      token: data.proposal.token as string,
+      title: data.proposal.title as string,
+      id: data.proposal.id as number,
+      status: (data.proposal.status as string) ?? 'draft',
+    }),
+  });
+
+  const saveTemplateMut = useMutation({
+    mutationFn: () => api.saveProposalAsTemplate(proposal!.id, templateName.trim(), lead.category || undefined),
+    onSuccess: () => { setTemplateSaved(true); setShowSaveTemplate(false); setTemplateName(''); setTimeout(() => setTemplateSaved(false), 3000); },
+  });
+
+  const { data: templatesData } = useQuery({
+    queryKey: ['proposal-templates'],
+    queryFn: () => api.getProposalTemplates(),
+    staleTime: 60_000,
+  });
+  const templates = templatesData?.templates ?? [];
 
   const { data: viewData } = useQuery({
     queryKey: ['proposal-views', proposal?.id],
@@ -1693,6 +1718,29 @@ function ProposalSection({ lead }: { lead: Lead }) {
       <div className="proposal-section-title">AI Proposal Writer</div>
       {!proposal ? (
         <>
+          {templates.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 6 }}>Load from saved template</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    className="btn"
+                    style={{ fontSize: 11, padding: '4px 10px' }}
+                    disabled={fromTemplateMut.isPending}
+                    onClick={() => { if (lead.serverId) fromTemplateMut.mutate(t.id); }}
+                    title={t.category ? `Category: ${t.category}` : undefined}
+                  >
+                    {t.name}
+                    {t.use_count > 0 && <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-faint)' }}>×{t.use_count}</span>}
+                  </button>
+                ))}
+              </div>
+              {fromTemplateMut.isPending && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Creating from template…</div>}
+              {fromTemplateMut.isError && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{(fromTemplateMut.error as Error).message}</div>}
+              <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0 8px', opacity: 0.4 }} />
+            </div>
+          )}
           <textarea
             className="input"
             placeholder="Any extra context for the AI? (optional — vehicle types, specific asks, budget hints…)"
@@ -1708,7 +1756,7 @@ function ProposalSection({ lead }: { lead: Lead }) {
             disabled={mut.isPending}
             onClick={() => mut.mutate()}
           >
-            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : 'Generate Full Proposal'}
+            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : 'Generate Full Proposal (AI)'}
           </button>
         </>
       ) : (
@@ -1747,10 +1795,37 @@ function ProposalSection({ lead }: { lead: Lead }) {
             <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowVersions(!showVersions)}>
               History
             </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => { setShowSaveTemplate((s) => !s); setTemplateName(proposal?.title ?? ''); }}>
+              Save as Template
+            </button>
             <button className="btn" style={{ fontSize: 12 }} onClick={() => setProposal(null)}>
               New
             </button>
           </div>
+
+          {showSaveTemplate && (
+            <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Save Proposal as Reusable Template</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  className="input"
+                  style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
+                  placeholder="Template name (e.g. Fleet Wrap Standard, DI-NOC Commercial)…"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                />
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                  disabled={!templateName.trim() || saveTemplateMut.isPending}
+                  onClick={() => saveTemplateMut.mutate()}
+                >
+                  {saveTemplateMut.isPending ? 'Saving…' : 'Save Template'}
+                </button>
+              </div>
+              {templateSaved && <div style={{ fontSize: 11, color: '#10b981', marginTop: 6 }}>Template saved — available next time you create a proposal.</div>}
+            </div>
+          )}
 
           {showVersions && (
             <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid var(--border)' }}>
