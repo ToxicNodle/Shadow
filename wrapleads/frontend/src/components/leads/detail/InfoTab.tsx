@@ -16,6 +16,7 @@ import WinDebriefPanel from './WinDebriefPanel';
 import AccountHealthCard from './AccountHealthCard';
 import MeetingPrepPanel from './MeetingPrepPanel';
 import CallOpenerPanel from './CallOpenerPanel';
+import VideoPitchPanel from './VideoPitchPanel';
 import LossDebriefPanel from './LossDebriefPanel';
 import ContactsPanel from './ContactsPanel';
 import DiscoveryGuidePanel from './DiscoveryGuidePanel';
@@ -2771,6 +2772,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <CompetitiveIntelPanel lead={local} />}
       {lead.serverId && <NearbyCarriersPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
+      {lead.serverId && !['won','lost'].includes(local.status) && <VideoPitchPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && local.status === 'won' && <ClientLTVCard lead={local} />}
       {lead.serverId && local.status === 'won' && <AccountHealthCard lead={local} />}

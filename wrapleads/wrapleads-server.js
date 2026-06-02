@@ -12918,6 +12918,72 @@ Write in third person, present tense. No bullet points — flowing prose only.`;
   }
 });
 
+// POST /ai/video-pitch-script — 90-second personalized video pitch script (requireShopFlow)
+// Returns a structured script the rep can read aloud when recording a video message (Loom/BombBomb).
+// Video pitches have 3-5× higher response rates than text emails.
+app.post('/ai/video-pitch-script', authMiddleware, requireShopFlow, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  const { leadId } = req.body || {};
+  if (!leadId) return res.status(400).json({ error: 'leadId required' });
+
+  const uid = String(req.user.id);
+  try {
+    const [leadR, settingsR] = await Promise.all([
+      pool.query('SELECT * FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const s = settingsR.rows[0]?.settings_json || {};
+    const senderName = s.senderName || 'the team';
+    const shopName = s.companyName || 'our shop';
+    const shopLocation = s.shopCity ? `${s.shopCity}, ${s.shopState || ''}` : 'your area';
+
+    const catNote = {
+      fleet: `commercial fleet wraps — brand visibility on every truck, ROI vs. billboards`,
+      dinoc: `DI-NOC architectural film — surface renovation without demo`,
+      gc_referral: `commercial graphics spec through GC relationships`,
+      construction: `construction fleet and equipment wraps`,
+      colorchange: `color-change wrap — premium aesthetics, reversible`,
+      racing: `race car and motorsport livery`,
+      reatec: `Rea Tec film — realistic stone/marble/wood surfaces`,
+      wallgraphics: `wall and window graphics`,
+      design: `custom branding and design`,
+    }[lead.category] || 'vehicle graphics and wraps';
+
+    const prompt = `You are a top-performing sales coach. Generate a 90-second personalized video pitch script for ${senderName} at ${shopName} (located in ${shopLocation}) to send to ${lead.contact_name || 'the fleet manager'} at ${lead.company}.
+
+Specialty: ${catNote}
+Fleet size: ${lead.fleet_size ? `~${lead.fleet_size} vehicles` : 'unknown'}
+Location: ${lead.city ? `${lead.city}, ${lead.state}` : 'unknown'}
+Pitch angle from CRM: ${lead.pitch_angle || 'none noted'}
+Current stage: ${lead.status}
+
+Return a JSON object with these exact fields:
+{
+  "hook": "1-2 sentence opener — specific to this company, conversational, not generic. Reference something real (fleet size, location, category signal).",
+  "valueStatement": "2-3 sentences on how ${shopName} specifically helps companies like ${lead.company}. Concrete ROI or outcome.",
+  "proofPoint": "1 sentence social proof — 'We recently wrapped [generic fleet type] in [generic state]...' Keep it real-sounding but don't make up specific company names.",
+  "callToAction": "1 sentence soft CTA — '15 minutes this week? I can walk you through some concepts that might work for your fleet.'",
+  "totalTimeEstimate": "estimated read time in seconds (target 75-90)",
+  "talkingPoints": ["3-4 bullet points to keep visible while recording — quick reference"]
+}`;
+
+    const result = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    let parsed;
+    try {
+      const jsonMatch = result.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(jsonMatch?.[0] ?? result);
+    } catch {
+      return res.status(500).json({ error: 'AI response could not be parsed' });
+    }
+
+    res.json({ ok: true, script: parsed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── AI Lead Category Suggestion ───────────────────────────────────────────────
 // Fast single-call inference: given a company name, suggest the best wrap
 // category, estimated fleet size range, and a one-line pitch angle.

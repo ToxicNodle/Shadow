@@ -2238,6 +2238,19 @@ export const api = {
       '/leads/bulk-sms', { method: 'POST', body: JSON.stringify({ leadIds, message }) }
     ),
 
+  generateVideoPitchScript: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      script: {
+        hook: string;
+        valueStatement: string;
+        proofPoint: string;
+        callToAction: string;
+        totalTimeEstimate: number;
+        talkingPoints: string[];
+      };
+    }>('/ai/video-pitch-script', { method: 'POST', body: JSON.stringify({ leadId }) }),
+
   updateJobStatus: (jobId: number, status: 'scheduled' | 'in_progress' | 'complete') =>
     authFetch<{ ok: boolean; job_status: string }>(`/jobs/${jobId}/status`, { method: 'PATCH', body: JSON.stringify({ job_status: status }) }),
 };

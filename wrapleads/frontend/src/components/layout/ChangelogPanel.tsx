@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🎬 Video Pitch Script Generator — 90-Second Personalized Scripts for Loom/BombBomb',
+    body: 'Every active lead now has a "Video Pitch Script" panel in the Info tab (below the call opener). Click "Generate Script" and Claude writes a structured 90-second video script personalized to that company\'s fleet size, location, category, and CRM notes. Four timed sections: Hook (0–15s), Value Statement (15–45s), Proof Point (45–70s), and Call to Action (70–90s). Talking points strip at the top keeps key facts visible while you\'re recording. Copy the full script to clipboard, open Loom or BombBomb, hit record. Video pitches typically get 3–5× higher reply rates than text emails. Requires ShopFlow tier + Anthropic API key.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📱 Bulk SMS Campaign — Text Your Entire Pipeline in One Shot',
     body: 'Select any group of leads and click "Bulk SMS" in the bulk action toolbar. Write a message using template variables ({first}, {company}, {sender}, {shop}) and WrapOS sends it via your Twilio number to every selected lead that has a phone number. Automatically skips opted-out contacts — no compliance risk. Character counter warns when you exceed 160 chars (SMS segment boundary). Results summary shows sent/skipped/errors. Requires Twilio credentials in Settings. Each sent SMS is logged to the lead\'s activity timeline and updates last_contacted. Combine with Smart Segments for precision: filter to "Going Cold" leads, select all, send a personal re-engagement text in under 30 seconds.',
   },
