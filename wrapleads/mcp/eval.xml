@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<evals>
+  <!--
+    WrapOS MCP Server — Evaluation Questions
+    Run these via: npx @modelcontextprotocol/inspector node dist/index.js
+    Each eval verifies a tool call round-trip and expected response shape.
+  -->
+
+  <eval id="1" tool="leads_list" category="leads">
+    <description>List leads filtered by status and category</description>
+    <input>{"status": "contacted", "category": "fleet", "limit": 10}</input>
+    <expected_contains>results</expected_contains>
+    <success_criteria>Returns JSON array of leads; each item has id, company_name, status="contacted", category="fleet"</success_criteria>
+  </eval>
+
+  <eval id="2" tool="leads_get" category="leads">
+    <description>Retrieve a single lead by ID</description>
+    <input>{"id": 1}</input>
+    <expected_contains>company_name</expected_contains>
+    <success_criteria>Returns single lead object with id=1, company_name, status, category, email, phone fields present</success_criteria>
+  </eval>
+
+  <eval id="3" tool="leads_create" category="leads">
+    <description>Create a new lead with minimum required fields</description>
+    <input>{"company_name": "Apex Freight LLC", "category": "fleet", "status": "new"}</input>
+    <expected_contains>Created lead</expected_contains>
+    <success_criteria>Returns success confirmation with new lead id; GET /leads confirms company_name="Apex Freight LLC"</success_criteria>
+  </eval>
+
+  <eval id="4" tool="leads_update" category="leads">
+    <description>Advance a lead from contacted to meeting stage</description>
+    <input>{"id": 1, "status": "meeting", "notes": "Demo call scheduled for Thursday 2pm"}</input>
+    <expected_contains>Updated lead</expected_contains>
+    <success_criteria>Returns success; subsequent leads_get on same id shows status="meeting"</success_criteria>
+  </eval>
+
+  <eval id="5" tool="carriers_search" category="discovery">
+    <description>Discover fleet carriers near a state with minimum fleet size</description>
+    <input>{"state": "IN", "min_fleet_size": 25, "max_fleet_size": 200, "limit": 20}</input>
+    <expected_contains>results</expected_contains>
+    <success_criteria>Returns carriers sorted by wrap_score descending; each has dot_number, legal_name, fleet_size between 25-200, state="IN"</success_criteria>
+  </eval>
+
+  <eval id="6" tool="email_generate" category="email">
+    <description>Generate a cold outreach email for a fleet lead</description>
+    <input>{"lead_id": 1, "tone": "professional", "focus": "fleet wrap ROI and brand visibility"}</input>
+    <expected_contains>subject</expected_contains>
+    <success_criteria>Returns object with subject and body fields; body mentions fleet/vehicles; subject is compelling and under 60 chars</success_criteria>
+  </eval>
+
+  <eval id="7" tool="email_send" category="email">
+    <description>Send an email to a lead with explicit subject and body</description>
+    <input>{"lead_id": 1, "subject": "Quick question about your fleet branding", "body": "Hi there, I noticed your fleet of 45 trucks could benefit from professional wrapping. Would you be open to a 10-minute call?", "to_email": "test@example.com"}</input>
+    <expected_contains>Email sent</expected_contains>
+    <success_criteria>Returns success confirmation; lead activity log shows outbound_email entry</success_criteria>
+  </eval>
+
+  <eval id="8" tool="proposals_create" category="proposals">
+    <description>Create a proposal for a fleet wrap job</description>
+    <input>{"lead_id": 1, "title": "45-Truck Fleet Wrap — Apex Freight", "amount": 87500, "vehicle_count": 45, "notes": "Full coverage vinyl, 3-year warranty"}</input>
+    <expected_contains>Created proposal</expected_contains>
+    <success_criteria>Returns success with proposal token; proposal accessible at /p/{token}; amount=87500 stored</success_criteria>
+  </eval>
+
+  <eval id="9" tool="analytics_pipeline" category="analytics">
+    <description>Get pipeline stage distribution for value metrics</description>
+    <input>{}</input>
+    <expected_contains>total_pipeline_value</expected_contains>
+    <success_criteria>Returns object with stage breakdown (new, contacted, replied, meeting, proposal counts + values) and total_pipeline_value</success_criteria>
+  </eval>
+
+  <eval id="10" tool="mission_followups" category="mission">
+    <description>Get leads due for follow-up today</description>
+    <input>{"limit": 15}</input>
+    <expected_contains>results</expected_contains>
+    <success_criteria>Returns leads where followup_due_at &lt;= today; each has company_name, status, days_overdue; ordered by most overdue first</success_criteria>
+  </eval>
+
+  <eval id="11" tool="leads_log_activity" category="leads">
+    <description>Log a phone call outcome on a lead</description>
+    <input>{"lead_id": 1, "type": "call", "note": "Spoke with John Smith, fleet manager. Interested in getting a quote for 12 box trucks. Call back next Tuesday."}</input>
+    <expected_contains>Logged activity</expected_contains>
+    <success_criteria>Returns success; leads_get_activities on same lead shows new call entry with note text</success_criteria>
+  </eval>
+
+  <eval id="12" tool="carriers_import" category="discovery">
+    <description>Import a carrier from the FMCSA database into the user CRM</description>
+    <input>{"dot_number": "12345", "category": "fleet"}</input>
+    <expected_contains>Imported carrier</expected_contains>
+    <success_criteria>Returns success with new lead id; lead visible in leads_list with source="fmcsa"</success_criteria>
+  </eval>
+
+  <eval id="13" tool="sequence_generate" category="email">
+    <description>Generate a multi-touch email sequence for a cold fleet lead</description>
+    <input>{"lead_id": 1, "num_emails": 3, "goal": "book a discovery call about fleet wrapping"}</input>
+    <expected_contains>sequence</expected_contains>
+    <success_criteria>Returns array of 3 emails; each has subject, body, delay_days; delay_days increases across the sequence; tone escalates appropriately</success_criteria>
+  </eval>
+
+  <eval id="14" tool="analytics_market_opportunity" category="analytics">
+    <description>Get market opportunity stats for untouched carriers</description>
+    <input>{"state": "IN"}</input>
+    <expected_contains>untouched_carriers</expected_contains>
+    <success_criteria>Returns untouched_carriers count, estimated_opportunity_value, top categories breakdown for Indiana</success_criteria>
+  </eval>
+
+  <eval id="15" tool="mission_today_score" category="mission">
+    <description>Get the daily activity score for gamification display</description>
+    <input>{}</input>
+    <expected_contains>total_score</expected_contains>
+    <success_criteria>Returns total_score integer, calls_made, emails_sent, deals_advanced, wins_today; all non-negative integers</success_criteria>
+  </eval>
+
+</evals>
