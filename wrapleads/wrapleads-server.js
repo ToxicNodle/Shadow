@@ -9165,6 +9165,75 @@ app.delete('/jobs/:id', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /proposals/:id/create-job — convert an approved proposal into a new installed job
+app.post('/proposals/:id/create-job', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const proposalId = parseInt(req.params.id, 10);
+  try {
+    const { rows: pRows } = await pool.query(
+      `SELECT p.*, l.company, l.category, l.city, l.state, l.contact_name
+       FROM proposals p
+       LEFT JOIN leads l ON l.id = p.lead_id
+       WHERE p.id=$1 AND p.user_id=$2`,
+      [proposalId, uid]
+    );
+    if (!pRows.length) return res.status(404).json({ error: 'Not found' });
+    const p = pRows[0];
+
+    // Derive revenue from pricing_options (selected tier or best tier price)
+    let revenue = null;
+    if (p.pricing_options) {
+      try {
+        const tiers = Array.isArray(p.pricing_options) ? p.pricing_options : JSON.parse(p.pricing_options);
+        if (p.selected_tier) {
+          const chosen = tiers.find(t => t.label === p.selected_tier);
+          if (chosen) revenue = Number(chosen.price) || null;
+        }
+        if (!revenue && tiers.length) {
+          // Fall back to highest-priced tier
+          revenue = Math.max(...tiers.map(t => Number(t.price) || 0)) || null;
+        }
+      } catch (_) {}
+    }
+
+    // Map lead category to vehicle/wrap category
+    const CAT_MAP = {
+      fleet: 'fleet', colorchange: 'colorchange', dinoc: 'dinoc', reatec: 'reatec',
+      construction: 'fleet', wallgraphics: 'wallgraphics', design: 'fleet',
+      gc_referral: 'fleet', racing: 'colorchange',
+    };
+    const wrapCategory = CAT_MAP[p.category] || 'fleet';
+
+    const installDate = new Date();
+    installDate.setDate(installDate.getDate() + 14); // default: 14 days from now
+
+    const { rows: jobRows } = await pool.query(
+      `INSERT INTO installed_jobs
+         (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, install_date, life_years, notes, job_revenue, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'scheduled')
+       RETURNING id`,
+      [uid, p.lead_id || null, p.company || 'Unknown',
+       'other', 1, wrapCategory,
+       installDate.toISOString().slice(0, 10),
+       5,
+       `Created from proposal: ${p.title}${p.selected_tier ? ` — "${p.selected_tier}" package` : ''}`,
+       revenue]
+    );
+    const jobId = jobRows[0].id;
+
+    await logActivity(pool, {
+      leadId: p.lead_id, userId: uid, type: 'note',
+      subject: `Job created from proposal: ${p.title}`,
+      metadata: { proposal_id: proposalId, job_id: jobId, auto: true },
+    });
+
+    res.json({ ok: true, jobId });
+  } catch (e) {
+    console.error('[proposal/create-job]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /jobs/:id/create-reorder-lead — manually convert an installed job into a re-order CRM lead
 app.post('/jobs/:id/create-reorder-lead', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);

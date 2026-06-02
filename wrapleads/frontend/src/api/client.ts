@@ -727,6 +727,8 @@ export const api = {
   getProposalVersion: (proposalId: number, versionId: number) =>
     authFetch<{ ok: boolean; version: Record<string, unknown> }>(`/proposals/${proposalId}/versions/${versionId}`),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
+  createJobFromProposal: (proposalId: number) =>
+    authFetch<{ ok: boolean; jobId: number }>(`/proposals/${proposalId}/create-job`, { method: 'POST' }),
 
   // Proposal template library
   getProposalTemplates: () =>

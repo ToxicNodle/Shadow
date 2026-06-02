@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🏗 Create Job from Approved Proposal — One Click',
+    body: 'When a client approves your proposal, a new "🏗 Create Job" button appears in the Proposal panel. Click it to instantly create a new job pre-filled with the company name, wrap category (inferred from lead category), estimated revenue (from the approved pricing tier), and a default install date 14 days out. The job appears immediately in your Jobs view — open it to fill in material details, upload photos, and assign install dates. An activity note is logged to the lead timeline referencing the source proposal. Saves the step of manually creating a job and re-entering client info after every approval.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '✦ AI Subject Line Suggester — 3 Alternatives, One Click',
     body: 'After generating an email, a new "✦ Try different" button appears next to the subject line. Click it and Claude instantly generates 3 alternative subject lines using different psychological angles: Curiosity (make them wonder), Specificity (mention their fleet size or location), and Direct (acknowledge their pain point). Each alternative shows a one-sentence explanation of why it works. Click any option to swap it in — or dismiss the panel and keep the original. Powered by Claude Haiku for near-instant results. Works on all generated emails — initial outreach, follow-ups, re-engagement, and templates.',
   },

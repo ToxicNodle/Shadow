@@ -1819,6 +1819,7 @@ function ProposalSection({ lead }: { lead: Lead }) {
   const [templateSaved, setTemplateSaved] = useState(false);
   const [showExpiryPicker, setShowExpiryPicker] = useState(false);
   const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
 
   const mut = useMutation({
     mutationFn: () => api.createProposal(lead.serverId!, notes),
@@ -1908,6 +1909,15 @@ function ProposalSection({ lead }: { lead: Lead }) {
     declined: { label: 'Declined', color: '#ef4444' },
     expired: { label: 'Expired', color: '#ef4444' },
   };
+
+  const createJobMut = useMutation({
+    mutationFn: () => api.createJobFromProposal(proposal!.id),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      showToast(`Job #${data.jobId} created — head to Jobs to complete the details`, 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
 
   return (
     <div className="proposal-section">
@@ -2018,6 +2028,17 @@ function ProposalSection({ lead }: { lead: Lead }) {
             {proposal.status === 'sent' && (
               <button className="btn" style={{ fontSize: 12, color: '#10b981', borderColor: '#10b98120' }} onClick={() => statusMut.mutate('approved')} disabled={statusMut.isPending}>
                 Mark Approved
+              </button>
+            )}
+            {proposal.status === 'approved' && (
+              <button
+                className="btn"
+                style={{ fontSize: 12, color: '#10b981', fontWeight: 700, borderColor: '#10b98130', background: '#10b98108' }}
+                onClick={() => createJobMut.mutate()}
+                disabled={createJobMut.isPending}
+                title="Create a new job pre-filled with this proposal's data"
+              >
+                {createJobMut.isPending ? 'Creating…' : '🏗 Create Job'}
               </button>
             )}
             <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowVersions(!showVersions)}>
