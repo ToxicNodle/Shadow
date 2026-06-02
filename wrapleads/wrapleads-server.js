@@ -8072,6 +8072,112 @@ Return raw JSON only — an array matching the same order:
 });
 
 // ----------------------------------------------------------------------------
+// AI — Good / Better / Best package quote generator
+// Produces three pricing tiers for a wrap project so the client self-selects.
+// The middle tier is deliberately the most compelling (anchoring effect).
+// ----------------------------------------------------------------------------
+app.post('/ai/package-quote', authMiddleware, requireShopFlow, async (req, res) => {
+  const { lead, vehicleCount = 1, vehicleType = 'Vehicle', extraNotes = '', settings } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Missing ANTHROPIC_API_KEY' });
+
+  const CATEGORY_CONTEXT = {
+    fleet: 'commercial fleet (box trucks, semi-tractors, vans, or trailers)',
+    dinoc: 'architectural surface (interior walls, columns, or furniture)',
+    construction: 'construction / contractor vehicle (pickup trucks, work vans, equipment)',
+    racing: 'race car or motorsports vehicle (aggressive livery required)',
+    colorchange: 'full vehicle color-change wrap (passenger car or crossover)',
+    wallgraphics: 'wall graphic or interior branding installation',
+    gc_referral: 'commercial project referred by a general contractor',
+    design: 'custom wrap design project',
+    reatec: '3M Rea-Tec reflective film (visibility/safety application)',
+  };
+  const catCtx = CATEGORY_CONTEXT[lead?.category] || 'vehicle wrap';
+  const shopName = settings?.companyName || 'our shop';
+  const fleetSz = parseInt(lead?.fleetSize, 10) || vehicleCount;
+
+  const prompt = `You are a pricing strategist for ${shopName}, a professional vehicle wrap company.
+Project: ${vehicleCount} ${vehicleType}(s) — ${catCtx}
+Client: ${lead?.company || 'Fleet customer'} in ${lead?.state || 'the US'}
+Fleet size: ${fleetSz} vehicles
+Extra notes: ${extraNotes || 'None'}
+
+Generate exactly 3 pricing packages using the "Good / Better / Best" model.
+The MIDDLE package should be 35–45% more expensive than Good and clearly the best value.
+The BEST package should be 60–80% more expensive than Good and position premium quality.
+
+For a ${catCtx} application, typical price ranges per vehicle:
+- Fleet wraps: $2,500–$5,000 per vehicle (partial to full)
+- Color change: $3,000–$6,500 per vehicle
+- Construction: $800–$2,500 per vehicle (partial wrap typical)
+- Racing livery: $5,000–$15,000 per vehicle
+- DI-NOC / wall: $15–$45 per sqft installed
+- Adjust for quantity — multi-vehicle discounts apply (typically 10–20% off for 10+ vehicles)
+
+Return ONLY raw JSON with this exact structure (no markdown, no explanation):
+{
+  "packages": [
+    {
+      "tier": "Essential",
+      "tagline": "5-7 word punchy tagline",
+      "pricePerVehicle": 2500,
+      "totalPrice": 2500,
+      "vinyl": "Name the specific vinyl type (e.g., 3M 1080 Cast, Avery MPI 1105)",
+      "warranty": "1 year",
+      "timeline": "5–7 business days",
+      "features": ["feature 1", "feature 2", "feature 3", "feature 4"],
+      "bestFor": "Who this tier is best for (1 sentence)"
+    },
+    {
+      "tier": "Professional",
+      "tagline": "5-7 word punchy tagline",
+      "pricePerVehicle": 3500,
+      "totalPrice": 3500,
+      "vinyl": "Name the specific vinyl type",
+      "warranty": "3 years",
+      "timeline": "7–10 business days",
+      "features": ["feature 1", "feature 2", "feature 3", "feature 4", "feature 5"],
+      "bestFor": "Who this tier is best for (1 sentence)"
+    },
+    {
+      "tier": "Premium",
+      "tagline": "5-7 word punchy tagline",
+      "pricePerVehicle": 4500,
+      "totalPrice": 4500,
+      "vinyl": "Name the specific vinyl type",
+      "warranty": "5 years",
+      "timeline": "10–14 business days",
+      "features": ["feature 1", "feature 2", "feature 3", "feature 4", "feature 5", "feature 6"],
+      "bestFor": "Who this tier is best for (1 sentence)"
+    }
+  ],
+  "intro": "1–2 sentence intro for the quote email",
+  "closingLine": "1 sentence closing CTA"
+}`;
+
+  try {
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 1500);
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return res.status(500).json({ error: 'AI returned invalid response' });
+    const parsed = JSON.parse(m[0]);
+
+    // Ensure totalPrice reflects vehicle count
+    const count = parseInt(vehicleCount, 10) || 1;
+    if (parsed.packages) {
+      parsed.packages = parsed.packages.map((pkg) => ({
+        ...pkg,
+        totalPrice: (pkg.pricePerVehicle || 0) * count,
+      }));
+    }
+
+    res.json({ ok: true, ...parsed });
+  } catch (e) {
+    console.error('[ai/package-quote]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // AI — quote / proposal generator
 // ----------------------------------------------------------------------------
 app.post('/ai/proposal', authMiddleware, requireWrapOS, async (req, res) => {

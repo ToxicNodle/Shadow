@@ -2324,6 +2324,33 @@ export const api = {
       body: JSON.stringify({ ...params, emailType: 'Follow-up', tone: 'Professional' }),
     }),
 
+  generatePackageQuote: (params: {
+    lead: { company: string; category: string; state: string | null; fleetSize: string | null };
+    vehicleCount: number;
+    vehicleType: string;
+    extraNotes: string;
+    settings: object;
+  }) =>
+    authFetch<{
+      ok: boolean;
+      packages: {
+        tier: string;
+        tagline: string;
+        pricePerVehicle: number;
+        totalPrice: number;
+        vinyl: string;
+        warranty: string;
+        timeline: string;
+        features: string[];
+        bestFor: string;
+      }[];
+      intro: string;
+      closingLine: string;
+    }>('/ai/package-quote', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
   getBlitzCandidates: () =>
     authFetch<{
       ok: boolean;

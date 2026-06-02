@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '✦ Good / Better / Best Package Quote Generator',
+    body: 'New "Good / Better / Best" panel in the Quotes tab for every lead (collapsible, gold header). Enter the vehicle count, select a vehicle type from the dropdown, and optionally add notes. Click "Generate Packages" and Claude generates three pricing tiers tailored to the lead\'s category (fleet, DI-NOC, racing, etc.) and state. Each package includes: a tier name (Essential/Professional/Premium), a punchy tagline, per-vehicle and total price, the specific vinyl film brand (e.g., 3M 1080 Cast, Avery MPI 1105), warranty length, installation timeline, 4–6 feature bullets, and a one-line "best for" description. The Professional tier is automatically marked "Most Popular" — this is the anchoring effect in action (most clients choose the middle). Multi-vehicle discounts are applied automatically. Copy the complete package comparison as formatted email text with one click. Requires ShopFlow tier + Anthropic API key.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '⚡ Email Blitz Mode — Fire Personalized Follow-Ups in Minutes',
     body: 'New "Blitz" button in the Mission Dashboard header (lightning bolt icon, orange). Opens a full-screen modal that shows overdue follow-up leads one at a time — like a card deck. For each lead, Claude Haiku auto-generates a personalized 3-sentence follow-up email tailored to their company, fleet size, location, and pipeline stage. Review and edit the subject + body inline. Hit "Send & Next" to fire the email immediately and move to the next card. Or "Skip" to pass, or "Snooze 2 wks" to silence the lead for two weeks. Progress bar at the top shows position in queue. When done, shows a summary: X sent, Y skipped, Z snoozed. The queue is intelligently prioritized: overdue follow-up dates come first, then leads by days since last contact. Each sent email is tracked (opens/clicks), logged to the activity timeline, and updates last_contacted. Requires Resend for sending. AI generation requires Anthropic API key. Blitz a queue of 15 follow-ups in under 5 minutes.',
   },

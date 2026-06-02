@@ -7,6 +7,7 @@ import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import type { Lead } from '../../../api/types';
 import type { ShopQuote, QuoteStatus } from '../../../api/types';
+import PackageQuotePanel from './PackageQuotePanel';
 
 // ── Wrap ROI Calculator ────────────────────────────────────────────────────────
 // Impressions benchmarks by vehicle type (vehicles/day × avg daily impressions).
@@ -770,6 +771,8 @@ export default function QuotesTab({ lead }: Props) {
 
       {/* Pre-send coach — fires before building the quote */}
       <ProposalCoachPanel lead={lead} />
+      {/* Good / Better / Best AI package quote generator */}
+      <PackageQuotePanel lead={lead} />
       {/* Proposal decay meter — shown when status is 'proposal' */}
       <ProposalDecayMeter lead={lead} />
       {/* Quote Timing Intelligence — actual sent_at + category benchmarks + AI draft */}
