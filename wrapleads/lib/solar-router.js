@@ -1348,6 +1348,10 @@ function buildSolarRouter(deps) {
         metadata: {
           helioscout_pack: pack,
           helioscout_state: String(state || '').toUpperCase(),
+          // helioscout_user_id is optional; when present, fulfillLeadPack uses
+          // it directly instead of falling back to email→user lookup. The
+          // public sales page doesn't set it; the in-app upgrade flow does.
+          ...(req.body?.user_id ? { helioscout_user_id: String(req.body.user_id) } : {}),
           fulfillment: 'lead_pack',
         },
       });
@@ -1584,6 +1588,98 @@ Return ONLY a JSON object: {"rewrite": "...", "what_changed": "..."}`;
         WHERE l.user_id = $1 AND l.category = 'commercial_solar' AND la.created_at IS NOT NULL
       `, [uid]);
       res.json(r.rows[0] || {});
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── CRM integrations (Phase B4) ─────────────────────────────────────────
+  // HubSpot OAuth + contact push. Pattern intended to extend to Salesforce
+  // and Pipedrive later — `crm_connections` already keys by provider.
+  const hubspot = require('./integrations/hubspot');
+
+  // GET /solar/integrations/hubspot/connect → 302 to HubSpot OAuth
+  router.get('/integrations/hubspot/connect', authMiddleware, (req, res) => {
+    try {
+      const redirectUri = `${appBaseUrl}/solar/integrations/hubspot/callback`;
+      const url = hubspot.getAuthorizeUrl(req.user.id, redirectUri);
+      res.redirect(url);
+    } catch (e) {
+      const status = e.code === 'HUBSPOT_NOT_CONFIGURED' ? 503 : 500;
+      res.status(status).json({ error: e.message, code: e.code });
+    }
+  });
+
+  // GET /solar/integrations/hubspot/callback (no auth — HubSpot calls this)
+  // state param carries the user_id we set in getAuthorizeUrl.
+  router.get('/integrations/hubspot/callback', async (req, res) => {
+    const { code, state } = req.query;
+    if (!code || !state) return res.status(400).send('Missing code or state');
+    try {
+      const redirectUri = `${appBaseUrl}/solar/integrations/hubspot/callback`;
+      const tokenJson = await hubspot.exchangeCodeForToken(code, redirectUri);
+      await hubspot.saveTokenForUser(pool, state, tokenJson);
+      // Best-effort: create custom HelioScout properties so the first push
+      // doesn't fail. Don't block on it.
+      hubspot.ensureCustomProperties(pool, state).catch(err =>
+        console.warn('[hubspot] ensureCustomProperties failed:', err.message)
+      );
+      if (logActivity) {
+        try { await logActivity(state, null, 'integration_connected', { provider: 'hubspot', account_id: tokenJson.hub_id }); } catch {}
+      }
+      // Redirect to SolarScout Integrations tab
+      res.redirect(`/?mode=solar_scout&tab=integrations&connected=hubspot`);
+    } catch (e) {
+      console.error('[hubspot callback]', e);
+      res.status(500).send(`HubSpot connection failed: ${e.message}`);
+    }
+  });
+
+  // GET /solar/integrations/status → which CRMs are connected for this user
+  router.get('/integrations/status', authMiddleware, async (req, res) => {
+    try {
+      const r = await pool.query(
+        `SELECT provider, account_id, account_name, updated_at FROM crm_connections WHERE user_id = $1`,
+        [String(req.user.id)]
+      );
+      res.json({
+        hubspot_configured: !!process.env.HUBSPOT_CLIENT_ID,
+        connections: r.rows,
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /solar/integrations/hubspot/disconnect
+  router.post('/integrations/hubspot/disconnect', authMiddleware, express.json(), async (req, res) => {
+    try {
+      await hubspot.disconnect(pool, req.user.id);
+      if (logActivity) {
+        try { await logActivity(req.user.id, null, 'integration_disconnected', { provider: 'hubspot' }); } catch {}
+      }
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /solar/integrations/hubspot/push — manually re-push a state pack's
+  // leads to the user's connected HubSpot. Useful for re-syncing after a
+  // pack purchase or for testing. Body: { state: 'TX' } or { leads: [...] }.
+  router.post('/integrations/hubspot/push', authMiddleware, express.json(), async (req, res) => {
+    try {
+      const { state, leads } = req.body || {};
+      let toPush = Array.isArray(leads) ? leads : null;
+      if (!toPush && state) {
+        // Load from this user's commercial_solar leads in the state
+        const r = await pool.query(`
+          SELECT l.company, l.city, l.state, l.naics_code, l.naics_sector,
+                 c.industry, c.building_sqft, c.latitude, c.longitude
+          FROM leads l
+          LEFT JOIN companies c ON c.id = l.source_company_id
+          WHERE l.user_id = $1 AND l.category = 'commercial_solar' AND l.state = $2
+          LIMIT 500
+        `, [String(req.user.id), String(state).toUpperCase()]);
+        toPush = r.rows;
+      }
+      if (!toPush || !toPush.length) return res.status(400).json({ error: 'No leads to push' });
+      const result = await hubspot.pushContacts(pool, req.user.id, toPush);
+      res.json(result);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 

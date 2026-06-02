@@ -790,6 +790,29 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_auction_bids_a ON solar_auction_bids(auction_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_auction_bids_i ON solar_auction_bids(installer_id)`);
   } catch (e) { console.warn('[migrate] Could not create solar_auction_bids:', e.message); }
+
+  // CRM integrations — HubSpot/Salesforce/Pipedrive OAuth token storage.
+  // Phase B4. One row per (user_id, provider). Tokens auto-refreshed by
+  // lib/integrations/hubspot.js#getValidToken — long-lived refresh, short-lived access.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_connections (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        provider      TEXT NOT NULL,
+        access_token  TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at    TIMESTAMPTZ,
+        account_id    TEXT,
+        account_name  TEXT,
+        scopes        TEXT[] DEFAULT '{}',
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, provider)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_crm_user_provider ON crm_connections(user_id, provider)`);
+  } catch (e) { console.warn('[migrate] Could not create crm_connections:', e.message); }
 }
 
 // ----------------------------------------------------------------------------
@@ -9193,6 +9216,43 @@ async function fulfillLeadPack(session) {
       pack, state, amount_total: session.amount_total, session_id: session.id, files: files.length,
     })]);
   } catch (e) { /* non-fatal */ }
+
+  // Phase B4: push the pack's leads into the buyer's connected CRM (HubSpot).
+  // Resolves user_id from Stripe metadata first (set at checkout for logged-in
+  // buyers), falls back to looking up by buyer email. Skips silently when the
+  // buyer has no HubSpot connection — non-fatal to the purchase.
+  try {
+    let userId = session.metadata?.helioscout_user_id || null;
+    if (!userId) {
+      const ur = await pool.query(`SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`, [buyerEmail]);
+      userId = ur.rows[0]?.id ? String(ur.rows[0].id) : null;
+    }
+    if (userId && files.length) {
+      const hubspot = require('./lib/integrations/hubspot');
+      const conn = await hubspot.isConnected(pool, userId);
+      if (conn.connected) {
+        // Parse CSV rows from the pack file (just the first/state file — for
+        // the National Pack we'd want to batch-push every state, but for B4
+        // ship we focus on the single-state common case).
+        const { parse } = require('csv-parse/sync');
+        const csvPath = path.join(dir, files[0]);
+        const csvText = fs.readFileSync(csvPath, 'utf-8');
+        const rows = parse(csvText, { columns: true, skip_empty_lines: true, trim: true });
+        const result = await hubspot.pushContacts(pool, userId, rows);
+        console.log(`[fulfillLeadPack] hubspot push: ${result.ok}/${rows.length} ok, ${result.failed} failed`);
+        try {
+          await pool.query(`
+            INSERT INTO outreach_audit_log (user_id, channel, recipient, consent_basis, metadata)
+            VALUES ($1, 'crm_push', $2, 'purchase_fulfillment', $3)
+          `, [String(userId), buyerEmail.toLowerCase(), JSON.stringify({
+            provider: 'hubspot', pack, state, ...result,
+          })]);
+        } catch { /* non-fatal */ }
+      }
+    }
+  } catch (e) {
+    console.warn('[fulfillLeadPack] hubspot push failed (non-fatal):', e.message);
+  }
 }
 
 // AI prompt builder for the commercial-solar vertical — replaces the wrap-shop

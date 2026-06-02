@@ -962,4 +962,25 @@ export const api = {
   // EventSource URL for live auction bid streaming (public, tokenized)
   solarAuctionStreamUrl: (token: string) =>
     `${window.location.origin}/solar/auctions/${token}/stream`,
+
+  // CRM integrations (Phase B4) — HubSpot first, more providers later.
+  getIntegrationsStatus: () =>
+    authFetch<{
+      hubspot_configured: boolean;
+      connections: Array<{ provider: string; account_id: string | null; account_name: string | null; updated_at: string }>;
+    }>('/solar/integrations/status'),
+
+  // URL to start HubSpot OAuth — this is a redirect endpoint, so we open it in
+  // the same tab and let it bounce through HubSpot back to the callback.
+  hubspotConnectUrl: () => `${window.location.origin}/solar/integrations/hubspot/connect`,
+
+  disconnectHubSpot: () =>
+    authFetch<{ ok: boolean }>('/solar/integrations/hubspot/disconnect', { method: 'POST', body: '{}' }),
+
+  // Manually re-sync this user's commercial_solar leads in a state to HubSpot
+  pushHubSpotState: (state: string) =>
+    authFetch<{ ok: number; failed: number; errors: Array<{ batch_index: number; status: number; body: string }> }>(
+      '/solar/integrations/hubspot/push',
+      { method: 'POST', body: JSON.stringify({ state }) }
+    ),
 };

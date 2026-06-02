@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useSolarLeads, useQualifiedSolarLeads, useSolarCompany, useImportSolarLead, useQualifyLead, useOpenSolarAuction, useSolarAuctions, useAwardSolarAuction, usePilotInstallers, useCreatePilotInstaller, useSolarSla, useCreateSolarProposal, useSolarOverview, useImportSolarCsv } from '../../hooks/useSolar';
 import { useAppStore } from '../../store/useAppStore';
+import { api } from '../../api/client';
 import type { SolarLead, SolarSearchParams, SolarAuction } from '../../api/types';
 import UsHeatmap from './UsHeatmap';
 
 const ROOF_TYPES = ['flat', 'membrane', 'metal', 'shingle', 'unknown'];
 const STATES_QUICK = ['AZ', 'TX', 'CA', 'FL', 'NJ', 'NY', 'IL', 'OH', 'GA', 'NC'];
 
-type Tab = 'overview' | 'discover' | 'qualified' | 'qualify' | 'csv' | 'pilot' | 'auctions' | 'sla';
+type Tab = 'overview' | 'discover' | 'qualified' | 'qualify' | 'csv' | 'pilot' | 'auctions' | 'sla' | 'integrations';
 
 export default function SolarScoutView() {
   const [tab, setTab] = useState<Tab>('overview');
@@ -23,6 +25,7 @@ export default function SolarScoutView() {
       {tab === 'pilot'     && <PilotTab />}
       {tab === 'auctions'  && <AuctionsTab />}
       {tab === 'sla'       && <SlaTab />}
+      {tab === 'integrations' && <IntegrationsTab />}
     </div>
   );
 }
@@ -54,6 +57,7 @@ function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
     { key: 'auctions',  label: 'Auctions',       hint: 'Live installer bidding' },
     { key: 'pilot',     label: 'Installers',     hint: 'Manage your installer network' },
     { key: 'sla',       label: 'Speed-to-Lead',  hint: 'Time-to-first-touch dashboard' },
+    { key: 'integrations', label: 'Integrations', hint: 'Connected CRMs (HubSpot) + data sync' },
   ];
   return (
     <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
@@ -862,4 +866,140 @@ function ProposalButton({ companyId, importMut }: { companyId: number; importMut
       </button>
     </span>
   );
+}
+
+function IntegrationsTab() {
+  const [status, setStatus] = useState<{ hubspot_configured: boolean; connections: Array<{ provider: string; account_id: string | null; account_name: string | null; updated_at: string }> } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [pushState, setPushState] = useState('TX');
+  const [pushResult, setPushResult] = useState<{ ok: number; failed: number } | null>(null);
+  const toast = useAppStore(s => s.showToast);
+
+  useEffect(() => {
+    api.getIntegrationsStatus().then(setStatus).catch((e: Error) => toast(e.message, 'error'));
+    // Detect ?connected=hubspot from the OAuth callback redirect
+    if (new URLSearchParams(window.location.search).get('connected') === 'hubspot') {
+      toast('HubSpot connected ✓', 'success');
+    }
+  }, []);
+
+  const hubspot = status?.connections?.find(c => c.provider === 'hubspot');
+  const connected = !!hubspot;
+
+  async function connect() {
+    if (!status?.hubspot_configured) {
+      toast('HubSpot OAuth not configured on the server — set HUBSPOT_CLIENT_ID and HUBSPOT_CLIENT_SECRET', 'error');
+      return;
+    }
+    window.location.href = api.hubspotConnectUrl();
+  }
+  async function disconnect() {
+    setBusy(true);
+    try {
+      await api.disconnectHubSpot();
+      const s = await api.getIntegrationsStatus();
+      setStatus(s);
+      toast('HubSpot disconnected', 'success');
+    } catch (e) { toast(String((e as Error).message), 'error'); }
+    finally { setBusy(false); }
+  }
+  async function push() {
+    setBusy(true); setPushResult(null);
+    try {
+      const r = await api.pushHubSpotState(pushState);
+      setPushResult({ ok: r.ok, failed: r.failed });
+      toast(`Pushed ${r.ok} to HubSpot${r.failed ? ` (${r.failed} failed)` : ''}`, r.failed ? 'error' : 'success');
+    } catch (e) { toast(String((e as Error).message), 'error'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 20, maxWidth: 760 }}>
+      <div style={cardStyle()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 8, background: '#ff7a59', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 18 }}>HS</div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>HubSpot</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Auto-sync purchased lead packs into your HubSpot contacts</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 4, background: connected ? 'rgba(34,197,94,0.15)' : 'rgba(148,163,184,0.15)', color: connected ? '#22c55e' : '#94a3b8', letterSpacing: '0.05em' }}>
+            {connected ? 'CONNECTED' : 'NOT CONNECTED'}
+          </div>
+        </div>
+
+        {connected ? (
+          <>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Account ID: <code>{hubspot.account_id || '—'}</code> · Connected {new Date(hubspot.updated_at).toLocaleString()}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={disconnect} disabled={busy} style={secondaryButtonStyle()}>Disconnect</button>
+            </div>
+            <div style={{ marginTop: 20, padding: 14, background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Manual sync</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+                Push your existing commercial_solar leads in a state to HubSpot. Each lead becomes a HubSpot contact with custom HelioScout properties (fit score, payback, provenance URL, sales script).
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select value={pushState} onChange={e => setPushState(e.target.value)} style={{ padding: '8px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 13 }}>
+                  {STATES_QUICK.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <button onClick={push} disabled={busy} style={primaryButtonStyle()}>{busy ? 'Pushing…' : `Push ${pushState} → HubSpot`}</button>
+              </div>
+              {pushResult && (
+                <div style={{ marginTop: 10, fontSize: 12, color: pushResult.failed ? '#ef4444' : '#22c55e' }}>
+                  ✓ {pushResult.ok} synced{pushResult.failed ? ` · ${pushResult.failed} failed` : ''}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+              Sync purchased lead packs straight into your HubSpot. Each lead lands as a contact with custom properties: <strong>fit score, NAICS, recommended ownership, estimated savings, payback, provenance URL, and the CFO sales script</strong>.
+            </div>
+            <button onClick={connect} disabled={busy || !status?.hubspot_configured} style={{ ...primaryButtonStyle(), background: '#ff7a59' }}>
+              Connect HubSpot →
+            </button>
+            {status && !status.hubspot_configured && (
+              <div style={{ marginTop: 10, fontSize: 12, color: '#f59e0b' }}>
+                ⚠ Server not configured. Admin must set <code>HUBSPOT_CLIENT_ID</code> and <code>HUBSPOT_CLIENT_SECRET</code>.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div style={{ ...cardStyle(), opacity: 0.6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 8, background: '#0ea5e9', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 18 }}>SF</div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Salesforce</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Coming after HubSpot validation</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...cardStyle(), opacity: 0.6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 8, background: '#16a34a', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 18 }}>PD</div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Pipedrive</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Coming after HubSpot validation</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function cardStyle(): CSSProperties {
+  return {
+    padding: 20,
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 12,
+  };
 }
