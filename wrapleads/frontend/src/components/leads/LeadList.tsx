@@ -9,6 +9,7 @@ import { api, getToken } from '../../api/client';
 import { STATUSES } from '../../api/types';
 import type { LeadStatus } from '../../api/types';
 import BroadcastModal from '../modals/BroadcastModal';
+import UrlImportModal from '../modals/UrlImportModal';
 
 // ── Filter Presets Bar ────────────────────────────────────────────────────────
 const BUILTIN_PRESETS: { name: string; icon: string; filter: Partial<ActiveFilter> }[] = [
@@ -268,8 +269,10 @@ export default function LeadList() {
     activeFilter, currentLeadId, setCurrentLeadId, setFilter,
     leadSort, setLeadSort,
     selectedLeadIds, selectAllLeads, clearLeadSelection,
-    setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen,
+    setBulkOutreachOpen, setCsvImportOpen, setPasteImportOpen, setShopVoxImportOpen, setCardScanOpen,
+    urlImportOpen, setUrlImportOpen,
     pendingOpenLeadServerId, setPendingOpenLeadServerId,
+    showToast,
   } = useAppStore((s) => ({
     activeFilter: s.activeFilter,
     currentLeadId: s.currentLeadId,
@@ -283,8 +286,13 @@ export default function LeadList() {
     setBulkOutreachOpen: s.setBulkOutreachOpen,
     setCsvImportOpen: s.setCsvImportOpen,
     setPasteImportOpen: s.setPasteImportOpen,
+    setShopVoxImportOpen: s.setShopVoxImportOpen,
+    setCardScanOpen: s.setCardScanOpen,
+    urlImportOpen: s.urlImportOpen,
+    setUrlImportOpen: s.setUrlImportOpen,
     pendingOpenLeadServerId: s.pendingOpenLeadServerId,
     setPendingOpenLeadServerId: s.setPendingOpenLeadServerId,
+    showToast: s.showToast,
   }));
 
   const qc = useQueryClient();
@@ -295,6 +303,7 @@ export default function LeadList() {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [bulkTagInput, setBulkTagInput] = useState('');
+  const [emailHuntRunning, setEmailHuntRunning] = useState(false);
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -412,6 +421,19 @@ export default function LeadList() {
     );
   }
 
+  async function runEmailHunt() {
+    setEmailHuntRunning(true);
+    try {
+      const r = await api.bulkFindEmails();
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast(`Email hunt complete — ${r.found} emails found out of ${r.processed} leads checked`, r.found > 0 ? 'success' : 'info');
+    } catch {
+      showToast('Email hunt failed', 'error');
+    } finally {
+      setEmailHuntRunning(false);
+    }
+  }
+
   return (
     <div className="lead-list-wrap">
       <div className="lead-list-toolbar">
@@ -457,6 +479,32 @@ export default function LeadList() {
         <button
           className="btn"
           style={{ fontSize: 12, padding: '4px 10px' }}
+          onClick={() => setCardScanOpen(true)}
+          title="Scan a business card photo — AI extracts name, company, email, phone instantly"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <rect x="2" y="5" width="20" height="14" rx="2" />
+            <line x1="2" y1="10" x2="22" y2="10" />
+          </svg>
+          Scan Card
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', borderColor: 'rgba(77,138,245,0.4)', color: '#4d8af5' }}
+          onClick={() => setUrlImportOpen(true)}
+          title="Paste any URL — AI extracts company data from websites, LinkedIn, or directories"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+          From URL
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px' }}
           onClick={() => setCsvImportOpen(true)}
           title="Import leads from CSV"
         >
@@ -466,6 +514,18 @@ export default function LeadList() {
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
           Import CSV
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', borderColor: 'rgba(239,68,68,0.4)', color: '#f87171' }}
+          onClick={() => setShopVoxImportOpen(true)}
+          title="Migrate your ShopVOX customer list"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M5 12h14M12 5l7 7-7 7" />
+          </svg>
+          From ShopVOX
         </button>
 
         <button
@@ -480,6 +540,26 @@ export default function LeadList() {
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
           Export CSV
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#4d8af5', borderColor: 'rgba(77,138,245,0.4)' }}
+          onClick={runEmailHunt}
+          disabled={emailHuntRunning}
+          title="Auto-discover emails for leads with a website but no email address (free, uses name pattern matching)"
+        >
+          {emailHuntRunning ? (
+            <><span className="spinner" style={{ width: 10, height: 10, marginRight: 4, borderColor: 'rgba(77,138,245,0.3)', borderTopColor: '#4d8af5' }} />Hunting…</>
+          ) : (
+            <>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
+              </svg>
+              Find Emails
+            </>
+          )}
         </button>
 
         <button
@@ -725,6 +805,8 @@ export default function LeadList() {
           onSent={() => { clearLeadSelection(); setBroadcastOpen(false); }}
         />
       )}
+
+      {urlImportOpen && <UrlImportModal onClose={() => setUrlImportOpen(false)} />}
     </div>
   );
 }

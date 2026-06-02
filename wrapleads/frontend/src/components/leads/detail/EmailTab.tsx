@@ -3,6 +3,135 @@ import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
+import SmartFollowupButton from './SmartFollowupButton';
+
+// ── Per-lead Send Timing Chip ─────────────────────────────────────────────────
+function SendTimingChip({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['send-timing', leadId],
+    queryFn: () => api.getLeadSendTiming(leadId),
+    staleTime: 30 * 60_000,
+  });
+  if (!data) return null;
+  const sourceColor = data.source === 'lead' ? '#00d97e' : data.source === 'global' ? '#4d8af5' : 'var(--text-faint)';
+  const sourceLabel = data.source === 'lead' ? 'contact-specific' : data.source === 'global' ? 'your best time' : 'industry default';
+  return (
+    <div title={data.tip} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '4px 10px', borderRadius: 20, marginBottom: 10,
+      border: `1px solid ${sourceColor}40`, background: `${sourceColor}10`,
+      fontSize: 11, cursor: 'default',
+    }}>
+      <span style={{ fontSize: 13 }}>📬</span>
+      <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Best time to send:</span>
+      <span style={{ color: sourceColor, fontWeight: 700 }}>{data.label}</span>
+      <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>({sourceLabel})</span>
+    </div>
+  );
+}
+
+// ── AI Thread Summarizer ──────────────────────────────────────────────────────
+function ThreadSummaryPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [result, setResult] = useState<{ summary: string[]; nextAction: string; sentiment: 'positive' | 'neutral' | 'negative' } | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () => api.getEmailThreadSummary(lead.serverId!),
+    onSuccess: (d) => { setResult(d); setOpen(true); },
+  });
+
+  if (!lead.serverId) return null;
+
+  const sentColor = result?.sentiment === 'positive' ? '#00d97e' : result?.sentiment === 'negative' ? '#ef4444' : '#f59e0b';
+  const sentLabel = result?.sentiment === 'positive' ? 'Positive momentum' : result?.sentiment === 'negative' ? 'Needs attention' : 'Neutral tone';
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {!open ? (
+        <button
+          onClick={() => mut.mutate()}
+          disabled={mut.isPending}
+          style={{
+            width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+            border: '1px solid var(--border)', background: 'var(--surface)',
+            color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 14 }}>🧠</span>
+          {mut.isPending ? 'Summarizing thread…' : 'Summarize Email Thread'}
+          <span style={{
+            marginLeft: 'auto', fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em',
+            color: '#4d8af5', padding: '1px 5px', border: '1px solid #4d8af550', borderRadius: 4,
+          }}>AI</span>
+        </button>
+      ) : result && (
+        <div style={{
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 14, marginBottom: 4,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-faint)' }}>
+              🧠 Thread Summary
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, color: sentColor, fontWeight: 700 }}>● {sentLabel}</span>
+              <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14 }}>✕</button>
+            </div>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16, marginBottom: 10 }}>
+            {result.summary.map((s, i) => (
+              <li key={i} style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, marginBottom: 4 }}>{s}</li>
+            ))}
+          </ul>
+          <div style={{
+            borderTop: '1px solid var(--border-subtle)', paddingTop: 10,
+            display: 'flex', alignItems: 'flex-start', gap: 8,
+          }}>
+            <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚡</span>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', lineHeight: 1.5 }}>
+              {result.nextAction}
+            </div>
+          </div>
+          <button
+            onClick={() => { setOpen(false); setResult(null); mut.reset(); }}
+            style={{
+              marginTop: 8, fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer',
+            }}
+          >
+            Regenerate
+          </button>
+        </div>
+      )}
+      {mut.isError && (
+        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>Failed to summarize — try again.</div>
+      )}
+    </div>
+  );
+}
+
+function UnsubscribedWarning({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['unsub-status', leadId],
+    queryFn: () => api.getUnsubscribeStatus(leadId),
+    staleTime: 5 * 60_000,
+  });
+  if (!data?.unsubscribed) return null;
+  return (
+    <div style={{
+      background: '#7f1d1d22', border: '1px solid #ef444450', borderRadius: 8,
+      padding: '10px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8,
+    }}>
+      <span style={{ fontSize: 16 }}>⊘</span>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>This contact has unsubscribed</div>
+        <div style={{ fontSize: 11, color: '#ef444499', marginTop: 2 }}>
+          {data.email} opted out of future emails
+          {data.unsubscribed_at ? ` on ${new Date(data.unsubscribed_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}` : ''}.
+          Sending will be blocked.
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Email Engagement Timeline ─────────────────────────────────────────────────
 function EmailEngagementTimeline({ lead }: { lead: Lead }) {
@@ -314,9 +443,10 @@ export default function EmailTab({ lead }: Props) {
     } catch (e: unknown) {
       const msg = (e as Error).message;
       if (msg.includes('RESEND_API_KEY')) {
-        // Fall back to copying — log it anyway
         copy(`Subject: ${result.subject}\n\n${result.body}`);
         showToast('Resend not configured — copied to clipboard instead');
+      } else if (msg.includes('unsubscribed')) {
+        showToast('This contact has unsubscribed — email blocked', 'error');
       } else {
         showToast(msg, 'error');
       }
@@ -346,8 +476,36 @@ export default function EmailTab({ lead }: Props) {
     }
   }
 
+  function handleSmartFollowupDraft(subject: string, body: string) {
+    setResult({ subject, body });
+    setTabMode('single');
+  }
+
   return (
     <div>
+      {/* CAN-SPAM: warn if contact has unsubscribed */}
+      {lead.serverId && <UnsubscribedWarning leadId={lead.serverId} />}
+
+      {/* Smart Follow-up AI composer */}
+      {lead.serverId && (
+        <SmartFollowupButton
+          lead={{
+            serverId: lead.serverId,
+            company: lead.company,
+            contactName: lead.contactName ?? null,
+            status: lead.status,
+            email: lead.email ?? null,
+          }}
+          onUseDraft={handleSmartFollowupDraft}
+        />
+      )}
+
+      {/* AI thread summarizer */}
+      {lead.serverId && <ThreadSummaryPanel lead={lead} />}
+
+      {/* Optimal send timing chip */}
+      {lead.serverId && <SendTimingChip leadId={lead.serverId} />}
+
       {/* Email engagement tracking */}
       <EmailEngagementTimeline lead={lead} />
 

@@ -1,12 +1,48 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Lead, LeadCategory, LeadStatus, VehicleType } from '../../../api/types';
 import { CATEGORIES, STATUSES } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
+import FindEmailPanel from './FindEmailPanel';
+import SimilarWinsPanel from './SimilarWinsPanel';
+import LossReasonModal from '../../modals/LossReasonModal';
+import DealCoachPanel from './DealCoachPanel';
+import WinDebriefPanel from './WinDebriefPanel';
+import AccountHealthCard from './AccountHealthCard';
+import MeetingPrepPanel from './MeetingPrepPanel';
+import CallOpenerPanel from './CallOpenerPanel';
+import LossDebriefPanel from './LossDebriefPanel';
+import ContactsPanel from './ContactsPanel';
+import DiscoveryGuidePanel from './DiscoveryGuidePanel';
+
+// ── Unsubscribed Badge ────────────────────────────────────────────────────────
+function UnsubscribedBadge({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['unsub-status', leadId],
+    queryFn: () => api.getUnsubscribeStatus(leadId),
+    staleTime: 5 * 60_000,
+  });
+  if (!data?.unsubscribed) return null;
+  return (
+    <div style={{
+      marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4,
+      background: '#7f1d1d22', border: '1px solid #ef444450', borderRadius: 4,
+      padding: '2px 7px', fontSize: 10, color: '#ef4444',
+    }}>
+      <span>⊘</span>
+      <span>Unsubscribed — do not email</span>
+      {data.unsubscribed_at && (
+        <span style={{ color: '#ef444480', marginLeft: 2 }}>
+          · {new Date(data.unsubscribed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+        </span>
+      )}
+    </div>
+  );
+}
 
 // ── AI Call Script Panel ──────────────────────────────────────────────────────
 // ── Wrap ROI Calculator ───────────────────────────────────────────────────────
@@ -18,6 +54,285 @@ const MEDIA_BENCHMARKS: { name: string; cpm: number; isWrap?: boolean }[] = [
   { name: 'Digital Display',cpm: 3.55 },
 ];
 
+// ── Multi-Location Expansion ──────────────────────────────────────────────────
+function MultiLocationExpansion({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<Array<{ company: string; city: string; state: string; fleet_size: number | null; reasoning: string }> | null>(null);
+  const [creating, setCreating] = useState<number | null>(null);
+  const [created, setCreated] = useState<Set<number>>(new Set());
+  const showToast = useAppStore((s) => s.showToast);
+  const setCurrentLeadId = useAppStore((s) => s.setCurrentLeadId);
+  const qc = useQueryClient();
+
+  const fleetNum = parseInt(String(lead.fleetSize ?? '0'), 10);
+  if (lead.status !== 'won' || fleetNum < 10) return null;
+
+  async function fetchSuggestions() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const result = await api.suggestLocations(lead.serverId);
+      setSuggestions(result.suggestions);
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createLead(idx: number, s: { company: string; city: string; state: string; fleet_size: number | null }) {
+    if (!lead.serverId) return;
+    setCreating(idx);
+    try {
+      const result = await api.createLocationLead(lead.serverId, { ...s, category: lead.category });
+      setCreated((c) => new Set([...c, idx]));
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      showToast(`Added ${s.company} to pipeline`);
+      if (result.clientId) setCurrentLeadId(result.clientId);
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setCreating(null);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <button
+        className="btn"
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, fontWeight: 600 }}
+        onClick={() => { if (!suggestions && !open) fetchSuggestions(); setOpen((v) => !v); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ghost-green)" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          Expand to Other Locations
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--text-faint)', fontWeight: 400 }}>
+          {fleetNum}+ vehicle fleet — likely has other terminals
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '12px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+              AI analyzing likely locations for {lead.company}…
+            </div>
+          )}
+          {suggestions && suggestions.map((s, i) => (
+            <div key={i} style={{
+              background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+              padding: '8px 10px', marginBottom: 6, display: 'flex', gap: 8, alignItems: 'flex-start',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{s.company}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{[s.city, s.state].filter(Boolean).join(', ')}{s.fleet_size ? ` · ~${s.fleet_size} vehicles` : ''}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2, fontStyle: 'italic' }}>{s.reasoning}</div>
+              </div>
+              <button
+                className="btn"
+                disabled={created.has(i) || creating === i}
+                onClick={() => createLead(i, s)}
+                style={{
+                  fontSize: 10, padding: '3px 9px', flexShrink: 0,
+                  background: created.has(i) ? '#22c55e22' : undefined,
+                  borderColor: created.has(i) ? '#22c55e' : undefined,
+                  color: created.has(i) ? '#22c55e' : undefined,
+                }}
+              >
+                {created.has(i) ? '✓ Added' : creating === i ? '…' : 'Add →'}
+              </button>
+            </div>
+          ))}
+          {suggestions && suggestions.length === 0 && (
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0' }}>No additional locations suggested for this company.</p>
+          )}
+          {suggestions && (
+            <button
+              className="btn"
+              style={{ fontSize: 10, marginTop: 4 }}
+              onClick={() => { setSuggestions(null); setCreated(new Set()); fetchSuggestions(); }}
+            >
+              Regenerate
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Win-Back Email Panel (for lost leads) ─────────────────────────────────────
+function WinBackPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState<{ subject: string; body: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  if (lead.status !== 'lost') return null;
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    setOpen(true);
+    try {
+      const r = await api.generateWinBackEmail(lead.serverId);
+      setEmail({ subject: r.subject, body: r.body });
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copy() {
+    if (!email) return;
+    navigator.clipboard.writeText(`Subject: ${email.subject}\n\n${email.body}`)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  }
+
+  return (
+    <div style={{ margin: '12px 0', border: '1px solid rgba(239,68,68,.2)', borderRadius: 10, overflow: 'hidden' }}>
+      <button
+        onClick={() => open ? setOpen(false) : (email ? setOpen(true) : generate())}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 14px', background: 'rgba(239,68,68,.06)', border: 'none', cursor: 'pointer',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+          </svg>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#f87171' }}>Generate Win-Back Email</span>
+        </div>
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '12px 14px' }}>
+          {loading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} /> Crafting re-engagement email…
+            </div>
+          )}
+          {email && !loading && (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#4d8af5', marginBottom: 4 }}>
+                Subject: {email.subject}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
+                {email.body}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={copy}>
+                  {copied ? '✓ Copied!' : 'Copy Email'}
+                </button>
+                <button className="btn" style={{ fontSize: 11 }} onClick={generate}>
+                  Regenerate
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Referral Ask Panel ─────────────────────────────────────────────────────────
+function ReferralAskPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState<{ subject: string; body: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  if (lead.status !== 'won') return null;
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const result = await api.generateReferralAsk(lead.serverId);
+      setEmail({ subject: result.subject, body: result.body });
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copy() {
+    if (!email) return;
+    navigator.clipboard.writeText(`Subject: ${email.subject}\n\n${email.body}`).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    showToast('Referral ask email copied to clipboard');
+  }
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <button
+        className="btn"
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, fontWeight: 600 }}
+        onClick={() => { if (!email && !open) generate(); setOpen((v) => !v); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ghost-green)" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Ask for Referrals
+        </span>
+        <span style={{ fontSize: 9, color: 'var(--text-faint)', fontWeight: 400 }}>AI writes the email</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />Writing referral ask…
+            </div>
+          )}
+          {email && (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                Subject
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, fontStyle: 'italic' }}>
+                {email.subject}
+              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                Body
+              </div>
+              <div style={{
+                fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6,
+                background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6,
+                padding: '8px 10px', marginBottom: 8, whiteSpace: 'pre-wrap',
+              }}>
+                {email.body}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  className="btn"
+                  style={{ flex: 1, fontSize: 11, fontWeight: 600, background: copied ? '#22c55e22' : undefined, borderColor: copied ? '#22c55e' : undefined, color: copied ? '#22c55e' : undefined }}
+                  onClick={copy}
+                >
+                  {copied ? '✓ Copied' : 'Copy Email'}
+                </button>
+                <button className="btn" style={{ fontSize: 11 }} onClick={() => { setEmail(null); generate(); }}>
+                  Regenerate
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WrapROICalculator({ lead }: { lead: Lead }) {
   const fleet = parseInt(String(lead.fleetSize ?? '10'), 10) || 10;
   const [open, setOpen] = useState(false);
@@ -25,7 +340,32 @@ function WrapROICalculator({ lead }: { lead: Lead }) {
   const [milesPerYear, setMilesPerYear] = useState(36500);
   const [lifespanYears, setLifespanYears] = useState(5);
   const [copied, setCopied] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [roiLink, setRoiLink] = useState<{ token: string } | null>(null);
+  const [linkLoading, setLinkLoading] = useState(false);
   const showToast = useAppStore((s) => s.showToast);
+
+  async function generateShareLink() {
+    if (!lead.serverId) return;
+    setLinkLoading(true);
+    try {
+      const result = await api.getOrCreateRoiLink(lead.serverId);
+      setRoiLink(result.link);
+      showToast('ROI calculator link ready to share');
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+
+  function copyShareLink() {
+    if (!roiLink) return;
+    const baseUrl = window.location.origin;
+    const url = `${baseUrl}/roi/${roiLink.token}`;
+    navigator.clipboard.writeText(url).catch(() => {});
+    showToast('ROI calculator link copied to clipboard');
+  }
 
   const totalCost           = fleet * costPerVehicle;
   const annualImpressions   = fleet * milesPerYear * 600; // 600 impressions/mile — industry avg
@@ -143,9 +483,65 @@ function WrapROICalculator({ lead }: { lead: Lead }) {
             </div>
           </div>
 
-          <button className="btn" style={{ width: '100%', fontSize: 11, fontWeight: 600 }} onClick={copyROI}>
-            {copied ? '✓ Copied!' : 'Copy ROI Summary for Proposal →'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn" style={{ flex: 1, fontSize: 11, fontWeight: 600 }} onClick={copyROI}>
+              {copied ? '✓ Copied!' : 'Copy Summary'}
+            </button>
+            {lead.serverId && (
+              <button
+                className="btn"
+                style={{ flex: 1, fontSize: 11, fontWeight: 600, background: 'var(--signal-blue)', color: '#fff', border: 'none' }}
+                onClick={() => { generateShareLink(); setShareModalOpen(true); }}
+                disabled={linkLoading}
+              >
+                {linkLoading ? '…' : 'Share Calculator'}
+              </button>
+            )}
+          </div>
+
+          {shareModalOpen && (
+            <div style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(2px)',
+            }} onClick={() => setShareModalOpen(false)}>
+              <div
+                style={{
+                  background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 12, padding: 20,
+                  maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Share ROI Calculator</h3>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                  Share this interactive calculator with {lead.contactName || lead.company}. They can adjust vehicle count, cost, and mileage to see their own ROI.
+                </p>
+                {roiLink ? (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${window.location.origin}/roi/${roiLink.token}`}
+                      style={{
+                        flex: 1, padding: '8px 10px', fontSize: 11, background: 'var(--bg-input)',
+                        border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontFamily: 'monospace',
+                      }}
+                    />
+                    <button
+                      className="btn"
+                      onClick={copyShareLink}
+                      style={{ fontSize: 11, fontWeight: 600, padding: '8px 14px' }}
+                    >
+                      Copy Link
+                    </button>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
+                    Loading…
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -274,6 +670,477 @@ function CallScriptPanel({ lead }: { lead: Lead }) {
                 </button>
               </div>
             </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Warm Reference Engine ─────────────────────────────────────────────────────
+// Surface WON customers you can name-drop when pitching a new lead.
+function WarmReferencesPanel({ lead }: { lead: Lead }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['warm-references', lead.serverId],
+    queryFn: () => api.getWarmReferences(lead.serverId!),
+    enabled: !!lead.serverId,
+    staleTime: 5 * 60_000,
+  });
+
+  if (!lead.serverId || isLoading || !data?.references?.length) return null;
+
+  const CAT_SHORT: Record<string, string> = {
+    fleet: 'Fleet', design: 'Interior', construction: 'Construction',
+    dinoc: 'DI-NOC', reatec: 'Rea Tec', colorchange: 'Color Change',
+    wallgraphics: 'Wall Graphics', gc_referral: 'GC Referral', racing: 'Motorsport',
+  };
+
+  return (
+    <section style={{
+      margin: '12px 0', padding: '10px 14px', borderRadius: 8,
+      background: 'rgba(0,217,126,0.05)', border: '1px solid rgba(0,217,126,0.18)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+        <span style={{ fontSize: 13 }}>🤝</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Social Proof — Drop These References
+        </span>
+      </div>
+      <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        You've won similar accounts. Name-drop these in your pitch — fleet managers ask "have you done this before?"
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {data.references.map((ref) => (
+          <div key={ref.id} style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 8px', borderRadius: 6,
+            background: 'rgba(0,217,126,0.04)', border: '1px solid rgba(0,217,126,0.1)',
+          }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 6, flexShrink: 0,
+              background: 'rgba(0,217,126,0.15)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontWeight: 800, fontSize: 12, color: 'var(--green)',
+            }}>
+              {ref.company[0]?.toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {ref.company}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                {[ref.city, ref.state].filter(Boolean).join(', ')}
+                {ref.category ? ` · ${CAT_SHORT[ref.category] || ref.category}` : ''}
+                {ref.days_ago <= 365 ? ` · ${Math.round(ref.days_ago / 30)}mo ago` : ''}
+              </div>
+            </div>
+            {ref.job_revenue != null && ref.job_revenue > 0 && (
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', flexShrink: 0 }}>
+                ${ref.job_revenue.toLocaleString()}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <p style={{ margin: '8px 0 0', fontSize: 10, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+        "We wrapped {data.references[0]?.company} right here in {data.references[0]?.state} — happy to connect you."
+      </p>
+    </section>
+  );
+}
+
+// ── Prospect News Intelligence ────────────────────────────────────────────────
+function ProspectNewsPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [articles, setArticles] = useState<Array<{ title: string; link: string; pubDate: string; source: string }> | null>(null);
+  const [checked, setChecked] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function fetchNews() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const res = await api.checkLeadNews(lead.serverId);
+      setArticles(res.articles);
+      setChecked(true);
+    } catch (e: unknown) {
+      showToast((e as Error).message || 'News check failed', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function formatDate(d: string) {
+    try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch { return ''; }
+  }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', justifyContent: 'space-between', fontSize: 12 }}
+        onClick={() => { setOpen((v) => !v); if (!checked && !open) fetchNews(); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/><path d="M9 9h6M9 13h6M9 17h4"/>
+          </svg>
+          Company News Intel
+          {articles !== null && articles.length > 0 && (
+            <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: 'rgba(77,138,245,0.15)', color: '#4d8af5' }}>
+              {articles.length} recent
+            </span>
+          )}
+          {checked && articles?.length === 0 && (
+            <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>no recent news</span>
+          )}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+          {loading ? <span className="spinner" style={{ width: 11, height: 11 }} /> : open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {loading && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="spinner" style={{ width: 11, height: 11 }} />
+              Searching Google News for {lead.company}…
+            </div>
+          )}
+
+          {!loading && articles !== null && articles.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+              No news articles found for "{lead.company}" in the last 30 days.
+              {' '}<button className="btn" style={{ fontSize: 10, padding: '1px 6px' }} onClick={fetchNews}>Refresh</button>
+            </div>
+          )}
+
+          {!loading && articles !== null && articles.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.08em', color: '#4d8af5', marginBottom: 2 }}>
+                Use these as icebreakers in your next email or call
+              </div>
+              {articles.map((a, i) => (
+                <div key={i} style={{ padding: '7px 10px', background: 'rgba(77,138,245,0.06)', borderRadius: 7, borderLeft: '2px solid rgba(77,138,245,0.3)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', lineHeight: 1.4, marginBottom: 3 }}>
+                    {a.title.replace(/\s*[-—–]\s*[A-Z][A-Za-z0-9\s&.]+$/, '')}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {a.source && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{a.source}</span>}
+                    {a.pubDate && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>· {formatDate(a.pubDate)}</span>}
+                    <a href={a.link} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 10, color: '#4d8af5', marginLeft: 'auto', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}>
+                      Read →
+                    </a>
+                  </div>
+                </div>
+              ))}
+              <button className="btn" style={{ fontSize: 10, alignSelf: 'flex-start' }} onClick={fetchNews} disabled={loading}>
+                ↺ Refresh
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Competitive Intel — analyze a competitor wrap photo, get counter-pitch ────
+function CompetitiveIntelPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<{
+    visualObservations: string[];
+    competitorStrengths: string[];
+    competitorWeaknesses: string[];
+    counterPitch: string;
+    keySellingPoints: string[];
+    estimatedQuality: 'budget' | 'mid-range' | 'premium';
+  } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const showToast = useAppStore((s) => s.showToast);
+
+  const QUALITY_COLOR = { budget: '#ef4444', 'mid-range': '#f59e0b', premium: '#22c55e' } as const;
+
+  async function analyze(file: File) {
+    setLoading(true);
+    setError(null);
+    setPreviewUrl(URL.createObjectURL(file));
+    try {
+      const res = await api.analyzeCompetitorPhoto(file);
+      setAnalysis(res.analysis);
+    } catch (e: unknown) {
+      setError((e as Error).message || 'Analysis failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) analyze(file);
+    e.target.value = '';
+  }
+
+  function reset() {
+    setAnalysis(null);
+    setPreviewUrl(null);
+    setError(null);
+  }
+
+  function copyPitch() {
+    if (!analysis) return;
+    const text = [
+      `COMPETITIVE COUNTER-PITCH — ${lead.company}`,
+      '',
+      `Competitor Wrap Quality: ${analysis.estimatedQuality.toUpperCase()}`,
+      '',
+      'COUNTER-PITCH:',
+      analysis.counterPitch,
+      '',
+      'KEY SELLING POINTS:',
+      ...analysis.keySellingPoints.map((p) => `• ${p}`),
+      '',
+      'COMPETITOR WEAKNESSES OBSERVED:',
+      ...analysis.competitorWeaknesses.map((w) => `• ${w}`),
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(() => showToast('Competitive pitch copied!'));
+  }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', justifyContent: 'space-between', fontSize: 12 }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
+          </svg>
+          Competitive Intel
+          {analysis && (
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(239,68,68,0.12)', color: '#ef4444' }}>
+              {analysis.estimatedQuality}
+            </span>
+          )}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▴' : '▾'}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {!analysis && !loading && (
+            <>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+                Upload a competitor's wrap photo. AI will analyze design quality, identify weaknesses, and generate a counter-pitch for {lead.company}.
+              </p>
+              <div
+                style={{
+                  border: '2px dashed var(--border)', borderRadius: 8, padding: '20px 16px',
+                  textAlign: 'center', cursor: 'pointer', transition: 'border-color 0.15s',
+                }}
+                onClick={() => fileRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) analyze(f); }}
+              >
+                <div style={{ fontSize: 22, marginBottom: 6 }}>📸</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Drop competitor photo here</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>or click to browse · JPG, PNG, WEBP</div>
+              </div>
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+            </>
+          )}
+
+          {loading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+              {previewUrl && <img src={previewUrl} alt="" style={{ width: 48, height: 36, objectFit: 'cover', borderRadius: 4 }} />}
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+              Analyzing competitor wrap…
+            </div>
+          )}
+
+          {error && <div className="error-box">{error}</div>}
+
+          {analysis && !loading && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {previewUrl && (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <img src={previewUrl} alt="Competitor wrap" style={{ width: 90, height: 66, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 4 }}>Estimated Quality</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: QUALITY_COLOR[analysis.estimatedQuality] }}>
+                      {analysis.estimatedQuality.charAt(0).toUpperCase() + analysis.estimatedQuality.slice(1)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Counter-pitch — most important */}
+              <div style={{ padding: '10px 12px', background: 'rgba(77,138,245,0.08)', borderRadius: 8, borderLeft: '3px solid #4d8af5' }}>
+                <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#4d8af5', marginBottom: 6 }}>Counter-Pitch</div>
+                <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6 }}>{analysis.counterPitch}</div>
+              </div>
+
+              {/* Key selling points */}
+              {analysis.keySellingPoints.length > 0 && (
+                <div style={{ padding: '8px 12px', background: 'rgba(0,217,126,0.07)', borderRadius: 8, borderLeft: '3px solid #00d97e' }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#00d97e', marginBottom: 6 }}>Your Advantages</div>
+                  {analysis.keySellingPoints.map((p, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#00d97e', flexShrink: 0 }}>✓</span>{p}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Weaknesses */}
+              {analysis.competitorWeaknesses.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-muted)', marginBottom: 6 }}>Competitor Weaknesses</div>
+                  {analysis.competitorWeaknesses.map((w, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#ef4444', flexShrink: 0 }}>✗</span>{w}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Strengths */}
+              {analysis.competitorStrengths.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-muted)', marginBottom: 6 }}>What They Did Right</div>
+                  {analysis.competitorStrengths.map((s, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                      <span style={{ color: '#f59e0b', flexShrink: 0 }}>△</span>{s}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }} onClick={copyPitch}>
+                  Copy Pitch
+                </button>
+                <button className="btn" style={{ fontSize: 12 }} onClick={reset}>
+                  ↺ New Photo
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Lead Intelligence Brief ───────────────────────────────────────────────────
+function LeadIntelBriefPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const [brief, setBrief] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const showToast = useAppStore((s) => s.showToast);
+
+  async function generate() {
+    if (!lead.serverId) return;
+    setLoading(true);
+    try {
+      const res = await api.generateLeadBrief(lead.serverId);
+      if (res.brief) setBrief(res.brief);
+    } catch {
+      showToast('Failed to generate brief');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!lead.serverId) return null;
+
+  // Parse the structured brief into sections for styled display
+  const sections: { header: string; body: string; color: string }[] = [];
+  if (brief) {
+    const SECTION_MAP: [string, string][] = [
+      ['COMPANY FIT', '#4d8af5'],
+      ['PITCH ANGLE', 'var(--accent)'],
+      ['ICEBREAKER', '#10b981'],
+      ['OBJECTIONS', '#f59e0b'],
+      ['NEXT ACTION', '#22c55e'],
+    ];
+    for (const [header, color] of SECTION_MAP) {
+      const re = new RegExp(`\\*\\*${header}\\*\\*\\s*[—–-]?\\s*([\\s\\S]*?)(?=\\*\\*[A-Z ]+\\*\\*|$)`);
+      const match = brief.match(re);
+      if (match) sections.push({ header, body: match[1].trim(), color });
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <button
+        className="btn"
+        style={{ width: '100%', justifyContent: 'space-between', fontSize: 12 }}
+        onClick={() => { setOpen((v) => !v); if (!brief && !open) generate(); }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4d8af5" strokeWidth="2">
+            <path d="M12 2l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6-4.6-1.9 4.6-1.9z"/>
+            <path d="M20 3v4M18 5h4"/>
+          </svg>
+          <span style={{ color: 'var(--text)' }}>AI Lead Brief</span>
+          {brief && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>· ready</span>}
+        </span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+          {loading ? <span className="spinner" style={{ width: 11, height: 11 }} /> : open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {loading && !brief && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '8px 0' }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+              Analyzing {lead.company}…
+            </div>
+          )}
+
+          {sections.length > 0 ? sections.map((sec) => (
+            <div key={sec.header} style={{
+              background: `${sec.color}08`,
+              border: `1px solid ${sec.color}22`,
+              borderLeft: `3px solid ${sec.color}`,
+              borderRadius: '0 7px 7px 0',
+              padding: '8px 12px',
+            }}>
+              <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: sec.color, marginBottom: 5 }}>
+                {sec.header}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                {sec.body}
+              </div>
+            </div>
+          )) : brief ? (
+            <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{brief}</div>
+          ) : null}
+
+          {brief && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 11, flex: 1, justifyContent: 'center' }}
+                onClick={() => {
+                  navigator.clipboard.writeText(brief);
+                  showToast('Brief copied');
+                }}
+              >
+                Copy Brief
+              </button>
+              <button className="btn" style={{ fontSize: 11 }} onClick={generate} disabled={loading}>
+                ↻ Regenerate
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -806,6 +1673,73 @@ function tagColor(tag: string) {
   return TAG_PALETTE[Math.abs(h) % TAG_PALETTE.length];
 }
 
+function computeSmartTags(lead: Lead): string[] {
+  const suggestions: string[] = [];
+  const fleet = parseInt(lead.fleetSize || '0', 10) || 0;
+
+  // Fleet size signals
+  if (fleet >= 100) suggestions.push('large fleet', '100+ units');
+  else if (fleet >= 50) suggestions.push('mid-size fleet');
+  else if (fleet >= 25) suggestions.push('small fleet');
+
+  // Category signals
+  if (lead.category === 'fleet') suggestions.push('fleet ops', 'recurring potential');
+  if (lead.category === 'construction') suggestions.push('contractor', 'project-based');
+  if (lead.category === 'gc_referral') suggestions.push('referral source', 'gc partner');
+  if (lead.category === 'racing') suggestions.push('sponsorship', 'race team');
+  if (lead.category === 'colorchange') suggestions.push('enthusiast', 'premium buyer');
+  if (lead.category === 'dinoc') suggestions.push('architectural', 'commercial interior');
+  if (lead.category === 'wallgraphics') suggestions.push('interior branding');
+
+  // High-value fleet
+  if (fleet >= 50 && (lead.category === 'fleet' || lead.category === 'construction')) {
+    suggestions.push('high-value fleet');
+  }
+
+  // Status signals
+  if (lead.status === 'replied') suggestions.push('engaged', 'warm');
+  if (lead.status === 'won') suggestions.push('closed customer', 'repeat potential');
+  if (lead.status === 'proposal') suggestions.push('decision pending');
+  if (lead.status === 'meeting') suggestions.push('in conversation');
+  if (lead.status === 'cold') suggestions.push('needs re-engage');
+
+  // Contact quality signals
+  if (lead.email && lead.phone) suggestions.push('fully contactable');
+  if (!lead.email && !lead.phone) suggestions.push('needs contact info');
+  if (lead.referred_by) suggestions.push('referral');
+
+  return [...new Set(suggestions)];
+}
+
+function SmartTagSuggestions({ lead, onApply }: { lead: Lead; onApply: (tag: string) => void }) {
+  const existing = new Set(lead.tags ?? []);
+  const smart = computeSmartTags(lead).filter((t) => !existing.has(t));
+  if (smart.length === 0) return null;
+  return (
+    <div style={{ marginTop: 6, marginBottom: 4 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 5 }}>
+        Smart Suggestions
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+        {smart.map((tag) => (
+          <button
+            key={tag}
+            onClick={() => onApply(tag)}
+            style={{
+              fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+              border: '1px dashed var(--border)', background: 'transparent',
+              color: 'var(--text-faint)',
+            }}
+            title={`Add tag: ${tag}`}
+          >
+            + {tag}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TagEditor({ lead, onSave }: { lead: Lead; onSave: (tags: string[]) => void }) {
   const [tags, setTags] = useState<string[]>(lead.tags ?? []);
   const [input, setInput] = useState('');
@@ -883,6 +1817,85 @@ function TagEditor({ lead, onSave }: { lead: Lead; onSave: (tags: string[]) => v
   );
 }
 
+// ── Client Lifetime Value ─────────────────────────────────────────────────────
+function ClientLTVCard({ lead }: { lead: Lead }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['lead-ltv', lead.serverId],
+    queryFn: () => api.getLeadLTV(lead.serverId!),
+    staleTime: 5 * 60_000,
+    enabled: !!lead.serverId,
+  });
+
+  if (isLoading || !data?.ok || data.jobCount === 0) return null;
+
+  const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+
+  return (
+    <div style={{ padding: '12px 14px', background: '#22c55e0a', border: '1px solid #22c55e30', borderRadius: 10, marginBottom: 10 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#22c55e', marginBottom: 8 }}>
+        Client Lifetime Value
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#22c55e', lineHeight: 1 }}>{fmt(data.totalRevenue)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>total revenue</div>
+        </div>
+        <div style={{ width: 1, background: '#22c55e20', flexShrink: 0 }} />
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', lineHeight: 1 }}>{data.jobCount}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>job{data.jobCount !== 1 ? 's' : ''}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', lineHeight: 1 }}>{data.totalVehicles}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>vehicles</div>
+        </div>
+        {data.grossMarginPct !== null && (
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: data.grossMarginPct >= 50 ? '#22c55e' : data.grossMarginPct >= 30 ? '#f59e0b' : '#ef4444', lineHeight: 1 }}>
+              {data.grossMarginPct}%
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>margin</div>
+          </div>
+        )}
+      </div>
+      {data.firstJob && (
+        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+          First job {new Date(data.firstJob).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+          {data.lastJob && data.lastJob !== data.firstJob && ` · Last ${new Date(data.lastJob).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Deal Heat Score ───────────────────────────────────────────────────────────
+function HeatScoreBadge({ leadId }: { leadId: number }) {
+  const { data } = useQuery({
+    queryKey: ['heat-score', leadId],
+    queryFn: () => api.getHeatScore(leadId),
+    staleTime: 2 * 60_000,
+  });
+
+  if (!data?.ok || data.score < 5) return null;
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: `${data.color}10`, border: `1px solid ${data.color}35`, borderRadius: 9, marginBottom: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 52 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, color: data.color, lineHeight: 1 }}>{data.score}</div>
+        <div style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: data.color, opacity: 0.8 }}>heat</div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: data.color, marginBottom: 3 }}>{data.label} Deal</div>
+        {data.signals.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+            {data.signals.map((s, i) => <span key={i}>{i > 0 ? ' · ' : ''}{s}</span>)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function InfoTab({ lead }: Props) {
   const { updateLead } = useLeads();
   const { setProposalOpen } = useAppStore((s) => ({ setProposalOpen: s.setProposalOpen }));
@@ -933,6 +1946,11 @@ export default function InfoTab({ lead }: Props) {
             <CompletenessBar lead={local} />
           </div>
         </div>
+      )}
+
+      {/* Deal Heat Score */}
+      {local.serverId && !['won', 'lost'].includes(local.status) && (
+        <HeatScoreBadge leadId={local.serverId} />
       )}
 
       {['won', 'lost'].includes(local.status) && (
@@ -1009,6 +2027,13 @@ export default function InfoTab({ lead }: Props) {
           onChange={(e) => setLocal({ ...local, email: e.target.value })}
           onBlur={(e) => patch('email', e.target.value)}
         />
+        {!local.email && (
+          <FindEmailPanel
+            lead={lead}
+            onSelectEmail={(email) => { setLocal({ ...local, email }); patch('email', email); }}
+          />
+        )}
+        {local.email && lead.serverId && <UnsubscribedBadge leadId={lead.serverId} />}
       </div>
 
       <div className="field-row">
@@ -1023,14 +2048,39 @@ export default function InfoTab({ lead }: Props) {
               style={{ flex: 1 }}
             />
             {local.phone && (
-              <button
-                className="btn"
-                style={{ fontSize: 11, padding: '4px 10px', whiteSpace: 'nowrap' }}
-                onClick={() => setShowSms(true)}
-                title="Send SMS"
-              >
-                SMS
-              </button>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <a
+                  href={`tel:${local.phone}`}
+                  onClick={() => {
+                    if (lead.serverId) {
+                      api.logActivity(lead.serverId, { type: 'called', subject: `Called ${local.contactName || local.company}` }).catch(() => {});
+                    }
+                  }}
+                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+                  title="Call & auto-log activity"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.62 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                  Call
+                </a>
+                <button
+                  className="btn"
+                  style={{ fontSize: 11, padding: '4px 10px', whiteSpace: 'nowrap' }}
+                  onClick={() => setShowSms(true)}
+                  title="Send SMS"
+                >
+                  SMS
+                </button>
+                <a
+                  href={`https://wa.me/${local.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Hi ${local.contactName ? local.contactName.split(' ')[0] : 'there'}, this is reaching out from a vehicle wrap shop about a fleet graphics quote for ${local.company}. Do you have a minute to chat?`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid #25d36622', background: '#25d36608', color: '#25d366', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+                  title="Open WhatsApp with pre-filled message"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                  WhatsApp
+                </a>
+              </div>
             )}
           </div>
         </div>
@@ -1107,6 +2157,14 @@ export default function InfoTab({ lead }: Props) {
         onSave={(tags) => {
           setLocal({ ...local, tags });
           if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { tags } as Partial<Lead> });
+        }}
+      />
+      <SmartTagSuggestions
+        lead={local}
+        onApply={(tag) => {
+          const next = [...(local.tags ?? []), tag];
+          setLocal({ ...local, tags: next });
+          if (lead.serverId) updateLead({ serverId: lead.serverId, patch: { tags: next } as Partial<Lead> });
         }}
       />
 
@@ -1191,14 +2249,42 @@ export default function InfoTab({ lead }: Props) {
         Generate Quote / Proposal
       </button>
 
+      {/* Multi-contact manager — additional stakeholders at this account */}
+      <ContactsPanel lead={local} />
+
+      {lead.serverId && <SimilarWinsPanel lead={local} />}
+      {/* Discovery guide — shown for replied/meeting stage to help reps qualify and scope */}
+      {lead.serverId && ['replied', 'meeting'].includes(local.status) && <DiscoveryGuidePanel lead={local} />}
+      {lead.serverId && !['won','lost'].includes(local.status) && <CallOpenerPanel lead={local} />}
+      {lead.serverId && <MeetingPrepPanel lead={local} />}
+      {lead.serverId && <DealCoachPanel lead={local} />}
       {lead.serverId && <AICoach lead={local} />}
       {lead.serverId && <FollowUpRecommender lead={local} />}
+      {lead.serverId && <WarmReferencesPanel lead={local} />}
+      {lead.serverId && <ProspectNewsPanel lead={local} />}
+      {lead.serverId && <LeadIntelBriefPanel lead={local} />}
+      {lead.serverId && <CompetitiveIntelPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
+      {lead.serverId && local.status === 'won' && <ClientLTVCard lead={local} />}
+      {lead.serverId && local.status === 'won' && <AccountHealthCard lead={local} />}
+      {lead.serverId && local.status === 'won' && <WinDebriefPanel lead={local} />}
+      {lead.serverId && local.status === 'lost' && <LossDebriefPanel lead={local} />}
+      {lead.serverId && local.status === 'won' && <ReferralAskPanel lead={local} />}
+      {lead.serverId && local.status === 'won' && <MultiLocationExpansion lead={local} />}
+      {lead.serverId && local.status === 'lost' && <WinBackPanel lead={local} />}
       {lead.serverId && <ProposalSection lead={local} />}
 
-      {showWinLoss && lead.serverId && (
+      {showWinLoss && lead.serverId && local.status === 'won' && (
         <WinLossModal lead={local} onClose={() => setShowWinLoss(false)} />
+      )}
+      {showWinLoss && lead.serverId && local.status === 'lost' && (
+        <LossReasonModal
+          leadId={lead.serverId}
+          company={local.company}
+          onClose={() => setShowWinLoss(false)}
+          onDone={() => setShowWinLoss(false)}
+        />
       )}
       {showSms && lead.serverId && (
         <SmsModal lead={local} onClose={() => setShowSms(false)} />

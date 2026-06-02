@@ -1,8 +1,96 @@
-import { useState, useCallback } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { showToast } from '../../utils/toast';
 import type { ShopQuote, QuoteLineItem, QuoteStatus } from '../../api/types';
+
+function fmtK(n: number | null | undefined) {
+  if (!n) return '—';
+  if (n >= 1000) return `$${Math.round(n / 1000)}K`;
+  return `$${Math.round(n).toLocaleString()}`;
+}
+
+function WinRateAdvisor({ category, currentTotal }: { category: string; currentTotal: number }) {
+  const { data } = useQuery({
+    queryKey: ['pricing-intel', category],
+    queryFn: () => api.getPricingIntel(category),
+    staleTime: 10 * 60_000,
+  });
+
+  if (!data?.hasData) return null;
+  const cat = data.categories[0];
+  if (!cat || cat.totalDeals < 3 || !cat.tiers) return null;
+
+  const sweetSpot = cat.tiers.find(t => t.isSweetSpot);
+  if (!sweetSpot) return null;
+
+  const inSweetSpot = currentTotal >= sweetSpot.minPrice && currentTotal <= sweetSpot.maxPrice;
+  const overSweetSpot = currentTotal > sweetSpot.maxPrice;
+
+  const color = inSweetSpot ? '#00d97e' : overSweetSpot ? '#ef4444' : '#f59e0b';
+  const icon = inSweetSpot ? '✓' : overSweetSpot ? '↑' : '↓';
+  const label = inSweetSpot
+    ? `In your sweet spot (${cat.winRate}% win rate)`
+    : overSweetSpot
+      ? `Above sweet spot — win rate may drop`
+      : currentTotal > 0
+        ? `Below sweet spot — consider raising price`
+        : `Sweet spot: ${fmtK(sweetSpot.minPrice)}–${fmtK(sweetSpot.maxPrice)} (${sweetSpot.winRate ?? '?'}% wins)`;
+
+  return (
+    <div style={{
+      padding: '5px 14px', borderBottom: '1px solid var(--border)',
+      display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+      background: `${color}08`,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 800, color, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+        {icon} Win-Rate Advisor
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+        {label}
+      </span>
+      {currentTotal > 0 && !inSweetSpot && (
+        <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+          · Best range: {fmtK(sweetSpot.minPrice)}–{fmtK(sweetSpot.maxPrice)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function PricingBenchmarkStrip({ category }: { category: string }) {
+  const { data } = useQuery({
+    queryKey: ['pricing-benchmarks', category],
+    queryFn: () => api.getPricingBenchmarks(category),
+    staleTime: 5 * 60_000,
+  });
+
+  if (!data?.hasData) return null;
+  const s = data.stats;
+  if (!s) return null;
+
+  return (
+    <div style={{
+      padding: '7px 24px', borderBottom: '1px solid var(--border)',
+      display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
+      background: 'rgba(77,138,245,0.04)',
+    }}>
+      <span style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#4d8af5', flexShrink: 0 }}>
+        Your {s.job_count} {category} job{Number(s.job_count) !== 1 ? 's' : ''}:
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+        Avg {fmtK(s.avg_total)}
+        {s.avg_per_vehicle ? ` · ${fmtK(s.avg_per_vehicle)}/vehicle` : ''}
+        {' · '}Range {fmtK(s.min_total)}–{fmtK(s.max_total)}
+      </span>
+      {data.recentJobs.length > 0 && (
+        <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 4 }}>
+          Last: {data.recentJobs.slice(0, 2).map(j => `${j.company} ${fmtK(j.job_revenue)}`).join(' · ')}
+        </span>
+      )}
+    </div>
+  );
+}
 
 const STATUS_LABELS: Record<QuoteStatus, string> = {
   draft: 'Draft',
@@ -21,6 +109,28 @@ const STATUS_COLORS: Record<QuoteStatus, string> = {
 };
 
 const UNIT_OPTIONS = ['vehicle', 'sqft', 'hour', 'flat', 'panel', 'set', 'item'];
+
+// Approximate wrap sq footage by vehicle type + coverage level
+// Based on 3M / Avery installer training specs + industry estimating guides
+const VEHICLE_SQFT: Record<string, { label: string; full: number; partial: number; spot: number }> = {
+  cargo_van: { label: 'Cargo Van', full: 380, partial: 200, spot: 80 },
+  cargo_van_hiRoof: { label: 'High-Roof Van', full: 430, partial: 230, spot: 90 },
+  sprinter: { label: 'Sprinter Van', full: 470, partial: 250, spot: 95 },
+  box_truck_16: { label: '16ft Box Truck', full: 650, partial: 350, spot: 130 },
+  box_truck_24: { label: '24ft Box Truck', full: 900, partial: 480, spot: 170 },
+  box_truck_26: { label: '26ft Box Truck', full: 980, partial: 520, spot: 190 },
+  semi_tractor: { label: 'Semi Tractor', full: 720, partial: 380, spot: 140 },
+  semi_trailer_48: { label: '48ft Semi Trailer', full: 1300, partial: 700, spot: 240 },
+  semi_trailer_53: { label: '53ft Semi Trailer', full: 1420, partial: 750, spot: 260 },
+  pickup_truck: { label: 'Pickup Truck', full: 280, partial: 150, spot: 60 },
+  suv: { label: 'SUV / Crossover', full: 320, partial: 170, spot: 65 },
+  sedan: { label: 'Sedan / Car', full: 240, partial: 130, spot: 50 },
+  flatbed_truck: { label: 'Flatbed Truck', full: 600, partial: 320, spot: 120 },
+  refrigerated_trailer: { label: 'Reefer Trailer', full: 1380, partial: 720, spot: 250 },
+  step_van: { label: 'Step Van / P-Truck', full: 580, partial: 310, spot: 115 },
+  transit_bus: { label: 'Transit Bus', full: 2200, partial: 1100, spot: 400 },
+  shuttle_bus: { label: 'Shuttle Bus', full: 900, partial: 480, spot: 170 },
+};
 
 const DEFAULT_LINE_ITEMS: QuoteLineItem[] = [
   { id: crypto.randomUUID(), description: 'Full vehicle wrap – labor & installation', qty: 1, unit: 'vehicle', unitPrice: 0, total: 0 },
@@ -87,6 +197,7 @@ const QUOTE_TEMPLATES: QuoteTemplate[] = [
 interface Props {
   leadId: number;
   leadCompany: string;
+  leadCategory?: string;
   quote?: ShopQuote;
   onClose: () => void;
   onSaved: () => void;
@@ -97,7 +208,171 @@ function fmt(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose, onSaved, onAccepted }: Props) {
+function SqftCalculator({ onApply }: { onApply: (sqft: number, vehicleLabel: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [vehicleType, setVehicleType] = useState('cargo_van');
+  const [coverage, setCoverage] = useState<'full' | 'partial' | 'spot'>('full');
+  const [qty, setQty] = useState(1);
+
+  const spec = VEHICLE_SQFT[vehicleType];
+  const sqftPer = spec ? spec[coverage] : 0;
+  const totalSqft = sqftPer * qty;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5,
+          background: 'var(--bg-elev-2)', border: '1px solid var(--border)',
+          color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+        }}
+      >
+        📐 Sq Footage Helper {open ? '▲' : '▾'}
+      </button>
+
+      {open && (
+        <div style={{
+          marginTop: 6, padding: '10px 12px', borderRadius: 8,
+          background: 'rgba(77,138,245,0.06)', border: '1px solid rgba(77,138,245,0.2)',
+        }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 3 }}>Vehicle type</div>
+              <select
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px', minWidth: 160 }}
+                value={vehicleType}
+                onChange={e => setVehicleType(e.target.value)}
+              >
+                {Object.entries(VEHICLE_SQFT).map(([k, v]) => (
+                  <option key={k} value={k}>{v.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 3 }}>Coverage</div>
+              <select
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px' }}
+                value={coverage}
+                onChange={e => setCoverage(e.target.value as 'full' | 'partial' | 'spot')}
+              >
+                <option value="full">Full Wrap</option>
+                <option value="partial">Partial (~55%)</option>
+                <option value="spot">Spot / Decals (~20%)</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 3 }}>Vehicles</div>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={qty}
+                onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                className="input"
+                style={{ width: 60, fontSize: 12, padding: '4px 8px', textAlign: 'center' }}
+              />
+            </div>
+            <div style={{ paddingBottom: 2 }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: '#4d8af5' }}>
+                {totalSqft.toLocaleString()} sqft
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{sqftPer} × {qty} vehicle{qty !== 1 ? 's' : ''}</div>
+            </div>
+            <button
+              onClick={() => { onApply(totalSqft, `${qty}× ${spec?.label ?? vehicleType} ${coverage} wrap`); setOpen(false); }}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6,
+                background: '#4d8af5', color: '#fff', border: 'none', cursor: 'pointer',
+              }}
+            >
+              Apply to Material Line
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── VIN Lookup Widget ─────────────────────────────────────────────────────────
+function VinLookup({ onResult }: { onResult: (label: string, wrapType: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [vin, setVin] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ label: string; bodyClass: string | null; gvwr: string | null; wrapType: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const clean = vin.replace(/\s/g, '').toUpperCase();
+    if (clean.length !== 17) { setResult(null); setError(null); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const d = await api.decodeVin(clean);
+        setResult({ label: d.label, bodyClass: d.bodyClass, gvwr: d.gvwr, wrapType: d.wrapType });
+      } catch (e: unknown) {
+        setError((e as Error).message || 'VIN decode failed');
+        setResult(null);
+      } finally {
+        setLoading(false);
+      }
+    }, 500);
+  }, [vin]);
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5,
+          background: 'var(--bg-elev-2)', border: '1px solid var(--border)',
+          color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+        }}
+      >
+        🔍 VIN Lookup {open ? '▲' : '▾'}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, padding: '10px 12px', borderRadius: 8, background: 'rgba(77,138,245,0.06)', border: '1px solid rgba(77,138,245,0.2)' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 4 }}>Enter a 17-character VIN — auto-decodes via NHTSA</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              className="input"
+              style={{ fontFamily: 'var(--mono)', fontSize: 13, letterSpacing: '0.05em', maxWidth: 210, textTransform: 'uppercase' }}
+              value={vin}
+              maxLength={17}
+              onChange={(e) => setVin(e.target.value)}
+              placeholder="1HGBH41JXMN109186"
+            />
+            {loading && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Looking up…</span>}
+            {error && <span style={{ fontSize: 12, color: 'var(--red)' }}>{error}</span>}
+            {result && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>{result.label}</span>
+                {result.bodyClass && <span style={{ fontSize: 11, color: 'var(--text-dim)', background: 'var(--bg-elev-2)', padding: '2px 6px', borderRadius: 4 }}>{result.bodyClass}</span>}
+                {result.gvwr && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>GVWR {result.gvwr}</span>}
+                <button
+                  className="btn"
+                  style={{ fontSize: 11, padding: '3px 8px' }}
+                  onClick={() => onResult(result.label, result.wrapType)}
+                >
+                  Use this vehicle →
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function QuoteBuilderModal({ leadId, leadCompany, leadCategory, quote, onClose, onSaved, onAccepted }: Props) {
   const qc = useQueryClient();
   const isEdit = !!quote;
 
@@ -111,10 +386,65 @@ export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose,
     quote?.line_items?.length ? quote.line_items : DEFAULT_LINE_ITEMS
   );
   const [saving, setSaving] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+
+  const { data: templatesData, refetch: refetchTemplates } = useQuery({
+    queryKey: ['quote-templates'],
+    queryFn: () => api.getQuoteTemplates(),
+    staleTime: 5 * 60_000,
+  });
+  const userTemplates = templatesData?.templates ?? [];
 
   function loadTemplate(tpl: QuoteTemplate) {
     setLineItems(tpl.items.map((item) => ({ ...item, id: crypto.randomUUID() })));
     if (!isEdit) setTitle(`${tpl.name} Wrap Quote`);
+  }
+
+  async function saveAsTemplate() {
+    const name = newTemplateName.trim();
+    if (!name || lineItems.length === 0) return;
+    setSavingTemplate(true);
+    try {
+      await api.saveQuoteTemplate(name, lineItems.map(({ description, qty, unit, unitPrice, total }) => ({ description, qty, unit, unitPrice, total })));
+      await refetchTemplates();
+      setNewTemplateName('');
+      setShowSaveTemplate(false);
+      showToast(`Template "${name}" saved`);
+    } catch {
+      showToast('Could not save template', 'error');
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function deleteUserTemplate(id: number, name: string) {
+    try {
+      await api.deleteQuoteTemplate(id);
+      await refetchTemplates();
+      showToast(`Template "${name}" deleted`);
+    } catch {
+      showToast('Could not delete template', 'error');
+    }
+  }
+
+  function applySqft(sqft: number, vehicleLabel: string) {
+    setLineItems((prev) => {
+      const matIdx = prev.findIndex(
+        (i) => i.unit === 'sqft' && (i.description.toLowerCase().includes('vinyl') || i.description.toLowerCase().includes('material') || i.description.toLowerCase().includes('film'))
+      );
+      const newDesc = `Material – ${vehicleLabel} (${sqft.toLocaleString()} sqft)`;
+      if (matIdx >= 0) {
+        return prev.map((item, idx) => {
+          if (idx !== matIdx) return item;
+          const updated = { ...item, qty: sqft, description: newDesc };
+          updated.total = Math.round(updated.qty * updated.unitPrice * 100) / 100;
+          return updated;
+        });
+      }
+      return [...prev, { id: crypto.randomUUID(), description: newDesc, qty: sqft, unit: 'sqft', unitPrice: 0, total: 0 }];
+    });
   }
 
   const subtotal = lineItems.reduce((s, i) => s + (i.total || 0), 0);
@@ -266,10 +596,71 @@ export default function QuoteBuilderModal({ leadId, leadCompany, quote, onClose,
                 {tpl.name}
               </button>
             ))}
+            {userTemplates.map((tpl) => (
+              <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <button
+                  onClick={() => loadTemplate({ name: tpl.name, items: tpl.items as QuoteLineItem[] })}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: '5px 0 0 5px',
+                    background: '#4d8af508', border: '1px solid #4d8af533', borderRight: 'none',
+                    color: '#4d8af5', cursor: 'pointer',
+                  }}
+                  title={`Load saved template: ${tpl.name}`}
+                >
+                  ★ {tpl.name}
+                </button>
+                <button
+                  onClick={() => deleteUserTemplate(tpl.id, tpl.name)}
+                  style={{
+                    fontSize: 10, padding: '3px 6px', borderRadius: '0 5px 5px 0',
+                    background: '#4d8af508', border: '1px solid #4d8af533',
+                    color: '#6b7280', cursor: 'pointer',
+                  }}
+                  title="Delete this saved template"
+                >✕</button>
+              </div>
+            ))}
+            {!showSaveTemplate ? (
+              <button
+                onClick={() => setShowSaveTemplate(true)}
+                style={{ fontSize: 11, padding: '3px 9px', borderRadius: 5, border: '1px dashed var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                title="Save current line items as a reusable template"
+              >
+                + Save as Template
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <input
+                  autoFocus
+                  placeholder="Template name…"
+                  value={newTemplateName}
+                  onChange={(e) => setNewTemplateName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveAsTemplate(); if (e.key === 'Escape') setShowSaveTemplate(false); }}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--accent)', background: 'var(--bg-elev-2)', color: 'var(--text)', outline: 'none', width: 140 }}
+                />
+                <button onClick={saveAsTemplate} disabled={savingTemplate || !newTemplateName.trim()} style={{ fontSize: 11, padding: '3px 9px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                  {savingTemplate ? '…' : 'Save'}
+                </button>
+                <button onClick={() => setShowSaveTemplate(false)} style={{ fontSize: 11, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>✕</button>
+              </div>
+            )}
           </div>
+
+          {/* Pricing benchmarks from job history */}
+          {leadCategory && <PricingBenchmarkStrip category={leadCategory} />}
+          {leadCategory && <WinRateAdvisor category={leadCategory} currentTotal={subtotal} />}
 
           {/* Scrollable body */}
           <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
+
+            {/* VIN Lookup */}
+            <VinLookup onResult={(label, _wrapType) => {
+              setTitle(`${leadCompany ? leadCompany + ' — ' : ''}${label} Wrap Quote`);
+              showToast(`Vehicle identified: ${label}`, 'success');
+            }} />
+
+            {/* Sq Footage Helper */}
+            <SqftCalculator onApply={applySqft} />
 
             {/* Line items table */}
             <div className="qb-table">

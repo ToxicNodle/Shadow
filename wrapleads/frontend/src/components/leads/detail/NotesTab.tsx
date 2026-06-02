@@ -1,9 +1,131 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Lead } from '../../../api/types';
 import { useLeads } from '../../../hooks/useLeads';
 import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
+
+// Web Speech API type shim — these aren't in TS's default lib
+/* eslint-disable @typescript-eslint/no-explicit-any */
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+// ── Voice Note Recorder ───────────────────────────────────────────────────────
+function VoiceNoteButton({ onTranscript }: { onTranscript: (text: string) => void }) {
+  const [state, setState] = useState<'idle' | 'listening' | 'done'>('idle');
+  const [interimText, setInterimText] = useState('');
+  const [finalText, setFinalText] = useState('');
+  const recogRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const showToast = useAppStore((s) => s.showToast);
+
+  const isSupported = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+
+  const stop = useCallback(() => {
+    recogRef.current?.stop();
+    setState('done');
+  }, []);
+
+  useEffect(() => {
+    return () => { recogRef.current?.stop(); };
+  }, []);
+
+  function startListening() {
+    if (!isSupported) { showToast('Voice notes require Chrome or Safari', 'error'); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const r = new SR();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = 'en-US';
+    let accumulated = '';
+
+    r.onresult = (e: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) accumulated += t + ' ';
+        else interim = t;
+      }
+      setFinalText(accumulated);
+      setInterimText(interim);
+    };
+
+    r.onend = () => {
+      setState((prev) => prev === 'listening' ? 'done' : prev);
+      setInterimText('');
+    };
+
+    r.onerror = () => { showToast('Microphone error — check browser permissions', 'error'); setState('idle'); };
+
+    recogRef.current = r;
+    r.start();
+    setState('listening');
+    setFinalText('');
+    setInterimText('');
+  }
+
+  function useNote() {
+    const text = finalText.trim();
+    if (text) { onTranscript(text); }
+    setState('idle');
+    setFinalText('');
+    setInterimText('');
+  }
+
+  function discard() {
+    setState('idle');
+    setFinalText('');
+    setInterimText('');
+  }
+
+  if (!isSupported) return null;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      {state === 'idle' && (
+        <button
+          onClick={startListening}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '6px 12px', borderRadius: 7, border: '1px solid #f4551c44', background: '#f4551c08', color: '#f4551c', cursor: 'pointer', fontWeight: 600 }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" stroke="currentColor" fill="none" strokeWidth="2" strokeLinecap="round"/></svg>
+          Voice Note
+        </button>
+      )}
+
+      {state === 'listening' && (
+        <div style={{ background: '#f4551c0d', border: '1px solid #f4551c44', borderRadius: 9, padding: '10px 12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#ef4444', animation: 'pulse 1s ease-in-out infinite' }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: 0.5 }}>Recording…</span>
+            <button onClick={stop} style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid #f4551c', background: 'none', color: '#f4551c', cursor: 'pointer', fontWeight: 600 }}>Stop</button>
+          </div>
+          {(finalText || interimText) && (
+            <p style={{ fontSize: 13, color: finalText ? 'var(--text)' : 'var(--text-muted)', margin: 0, lineHeight: 1.5, fontStyle: interimText && !finalText ? 'italic' : 'normal' }}>
+              {finalText}{interimText && <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>{interimText}</span>}
+            </p>
+          )}
+          {!finalText && !interimText && <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: 0 }}>Speak now…</p>}
+        </div>
+      )}
+
+      {state === 'done' && finalText && (
+        <div style={{ background: '#22c55e0d', border: '1px solid #22c55e44', borderRadius: 9, padding: '10px 12px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Voice Note Transcribed</div>
+          <p style={{ fontSize: 13, color: 'var(--text)', margin: '0 0 10px', lineHeight: 1.5 }}>{finalText}</p>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={useNote} style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Use Note →</button>
+            <button onClick={startListening} style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>Re-record</button>
+            <button onClick={discard} style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>Discard</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── AI Notes Brief ────────────────────────────────────────────────────────────
 function AINotesBrief({ lead }: { lead: Lead }) {
@@ -147,6 +269,7 @@ export default function NotesTab({ lead }: Props) {
     <div>
       {/* Quick-add note */}
       <div className="note-journal-add">
+        <VoiceNoteButton onTranscript={(text) => { setQuickNote((prev) => prev ? prev + ' ' + text : text); quickRef.current?.focus(); }} />
         <textarea
           ref={quickRef}
           className="input"

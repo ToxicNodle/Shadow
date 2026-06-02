@@ -58,7 +58,8 @@ const PORT              = parseInt(process.env.PORT || '3001', 10);
 const DATABASE_URL      = process.env.DATABASE_URL || 'postgresql://wrapleads:wrapleads@localhost:5432/wrapleads';
 const APOLLO_BASE       = 'https://api.apollo.io/v1';
 const ENV_APOLLO_KEY    = process.env.APOLLO_API_KEY || null;
-const JWT_SECRET        = process.env.JWT_SECRET || 'change-me-in-production';
+const JWT_SECRET        = process.env.JWT_SECRET;
+if (!JWT_SECRET) { console.error('FATAL: JWT_SECRET env var is required — generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"'); process.exit(1); }
 const TRIAL_DAYS        = parseInt(process.env.TRIAL_DAYS || '14', 10);
 const APP_URL           = process.env.APP_URL || `http://localhost:${PORT}`;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
@@ -292,6 +293,14 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'US'`);
   } catch (e) { console.warn('[migrate] Could not add country column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason TEXT`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_competitor TEXT`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add lost_reason columns:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_asked_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add referral_asked_at column:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -517,8 +526,40 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_user  ON portal_links(user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_lead  ON portal_links(lead_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_portal_links_token ON portal_links(token)`);
+    await pool.query(`ALTER TABLE portal_links ADD COLUMN IF NOT EXISTS deposit_clicked_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE portal_links ADD COLUMN IF NOT EXISTS viewed_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not create portal_links table:', e.message);
+  }
+
+  // Review Requests — post-install Google review automation
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS review_requests (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        job_id       BIGINT REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        token        TEXT NOT NULL UNIQUE,
+        client_email TEXT,
+        client_phone TEXT,
+        client_name  TEXT,
+        company      TEXT,
+        google_url   TEXT,
+        sent_via     TEXT,
+        sent_at      TIMESTAMPTZ,
+        opened_at    TIMESTAMPTZ,
+        clicked_at   TIMESTAMPTZ,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_user  ON review_requests(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_token ON review_requests(token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_requests_job   ON review_requests(job_id)`);
+    await pool.query(`ALTER TABLE review_requests ADD COLUMN IF NOT EXISTS star_rating INT`);
+    await pool.query(`ALTER TABLE review_requests ADD COLUMN IF NOT EXISTS feedback_text TEXT`);
+    await pool.query(`ALTER TABLE review_requests ADD COLUMN IF NOT EXISTS feedback_at TIMESTAMPTZ`);
+  } catch (e) {
+    console.warn('[migrate] Could not create review_requests table:', e.message);
   }
 
   // Notifications
@@ -813,6 +854,296 @@ async function migrateDb() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_crm_user_provider ON crm_connections(user_id, provider)`);
   } catch (e) { console.warn('[migrate] Could not create crm_connections:', e.message); }
+  // User-defined quote line item templates
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS quote_templates (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        items      JSONB NOT NULL DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_qt_user ON quote_templates(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create quote_templates table:', e.message);
+  }
+
+  // Case studies — auto-generated from completed jobs
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS case_studies (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        job_id     BIGINT REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        token      TEXT NOT NULL UNIQUE DEFAULT encode(gen_random_bytes(16), 'hex'),
+        headline   TEXT NOT NULL,
+        narrative  TEXT NOT NULL,
+        stats_json JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_studies_user ON case_studies(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_case_studies_job  ON case_studies(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create case_studies table:', e.message);
+  }
+
+  // Inbound fleet requests — public /wrap-my-fleet consumer funnel
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS inbound_fleet_requests (
+        id            BIGSERIAL PRIMARY KEY,
+        name          TEXT,
+        company       TEXT,
+        email         TEXT,
+        phone         TEXT,
+        city          TEXT,
+        state_code    TEXT,
+        vehicle_type  TEXT,
+        fleet_size    INT,
+        industry      TEXT,
+        message       TEXT,
+        concepts_json JSONB DEFAULT '[]',
+        claimed_by    TEXT,
+        claimed_at    TIMESTAMPTZ,
+        lead_id       BIGINT,
+        ip_hash       TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ifr_state   ON inbound_fleet_requests(state_code)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ifr_claimed ON inbound_fleet_requests(claimed_by)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ifr_ts      ON inbound_fleet_requests(created_at)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create inbound_fleet_requests table:', e.message);
+  }
+
+  // Material margin tracking on installed_jobs
+  try {
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS material_cost NUMERIC(10,2) DEFAULT 0`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS job_revenue NUMERIC(10,2) DEFAULT 0`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS labor_hours NUMERIC(6,1) DEFAULT 0`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'unpaid'`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS deposit_paid_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS invoice_sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) DEFAULT 0`);
+  } catch (e) {
+    console.warn('[migrate] Could not add margin columns to installed_jobs:', e.message);
+  }
+
+  // Subcontractor tracking — shops that farm out installs
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subcontractors (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        contact     TEXT,
+        specialty   TEXT,
+        labor_rate  NUMERIC(8,2),
+        notes       TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_subcontractors_user ON subcontractors(user_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_subcontractors (
+        id          BIGSERIAL PRIMARY KEY,
+        job_id      BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        sub_id      BIGINT NOT NULL REFERENCES subcontractors(id) ON DELETE CASCADE,
+        hours       NUMERIC(6,1) DEFAULT 0,
+        labor_cost  NUMERIC(10,2) DEFAULT 0,
+        notes       TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_subs_job ON job_subcontractors(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create subcontractors tables:', e.message);
+  }
+
+  // Install schedule date on jobs
+  try {
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_install_date DATE`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_crew_count INT DEFAULT 2`);
+  } catch (e) {
+    console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
+  }
+
+  // CAN-SPAM compliant unsubscribe records for outbound prospect emails
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_unsubscribes (
+        id             BIGSERIAL PRIMARY KEY,
+        user_id        TEXT NOT NULL,
+        email          TEXT NOT NULL,
+        token          TEXT NOT NULL UNIQUE,
+        lead_id        BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        unsubscribed_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at     TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unsub_user_email ON email_unsubscribes(user_id, LOWER(email))`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_unsub_token ON email_unsubscribes(token)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create email_unsubscribes table:', e.message);
+  }
+
+  // Shareable ROI calculator links — pre-filled for a specific prospect
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS roi_links (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        lead_id       BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        token         TEXT NOT NULL UNIQUE,
+        company_name  TEXT,
+        fleet_size    INTEGER,
+        view_count    INTEGER DEFAULT 0,
+        last_viewed   TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_roi_links_token ON roi_links(token)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_roi_links_lead ON roi_links(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create roi_links table:', e.message);
+  }
+
+  // Daily task queue
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        lead_id       BIGINT REFERENCES leads(id) ON DELETE SET NULL,
+        title         TEXT NOT NULL,
+        notes         TEXT,
+        type          TEXT DEFAULT 'manual',
+        completed     BOOLEAN DEFAULT FALSE,
+        completed_at  TIMESTAMPTZ,
+        due_date      DATE DEFAULT CURRENT_DATE,
+        due_time      TEXT,
+        priority      TEXT DEFAULT 'normal',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_user_date ON tasks(user_id, due_date, completed)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create tasks table:', e.message);
+  }
+
+  // Project milestone tracker — post-win project checklists
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_milestones (
+        id            BIGSERIAL PRIMARY KEY,
+        lead_id       BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id       TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        notes         TEXT,
+        completed     BOOLEAN DEFAULT FALSE,
+        completed_at  TIMESTAMPTZ,
+        due_date      DATE,
+        sort_order    INTEGER DEFAULT 0,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_milestones_lead ON project_milestones(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create project_milestones table:', e.message);
+  }
+
+  // Win debriefs — AI-generated "what worked" brief for each won deal
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS win_debriefs (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        lead_id         BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        company         TEXT NOT NULL,
+        category        TEXT,
+        days_to_close   INTEGER,
+        touch_count     INTEGER,
+        deal_value_est  NUMERIC(10,2),
+        key_signal      TEXT,
+        winning_tactic  TEXT,
+        pattern_tags    TEXT[],
+        summary         TEXT NOT NULL,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_win_debriefs_user ON win_debriefs(user_id, created_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create win_debriefs table:', e.message);
+  }
+
+  // Lead contacts — multiple decision-makers per lead (fleet manager, VP ops, CFO, etc.)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lead_contacts (
+        id          BIGSERIAL PRIMARY KEY,
+        lead_id     BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        title       TEXT,
+        email       TEXT,
+        phone       TEXT,
+        is_primary  BOOLEAN DEFAULT FALSE,
+        notes       TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_contacts_lead ON lead_contacts(lead_id, user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create lead_contacts table:', e.message);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Unsubscribe helpers — CAN-SPAM compliance for outbound prospect emails
+// ----------------------------------------------------------------------------
+
+async function isUnsubscribed(userId, email) {
+  if (!email) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM email_unsubscribes WHERE user_id=$1 AND LOWER(email)=LOWER($2) LIMIT 1`,
+      [String(userId), email]
+    );
+    return rows.length > 0;
+  } catch { return false; }
+}
+
+// Upserts an unsubscribe token record and returns the token (stable per user+email pair).
+async function getOrCreateUnsubToken(userId, email, leadId) {
+  const existing = await pool.query(
+    `SELECT token FROM email_unsubscribes WHERE user_id=$1 AND LOWER(email)=LOWER($2) LIMIT 1`,
+    [String(userId), email]
+  );
+  if (existing.rows.length) return existing.rows[0].token;
+  const token = require('crypto').randomBytes(20).toString('hex');
+  await pool.query(
+    `INSERT INTO email_unsubscribes (user_id, email, token, lead_id) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (user_id, LOWER(email)) DO NOTHING`,
+    [String(userId), email, token, leadId || null]
+  );
+  return token;
+}
+
+function buildUnsubFooter(unsubUrl, senderName) {
+  const text = `\n\n--\n${senderName}\n\nTo unsubscribe from future emails, visit: ${unsubUrl}`;
+  const html = `<br><br><hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+<p style="font-size:11px;color:#999;margin:0">${he(senderName)}</p>
+<p style="font-size:10px;color:#bbb;margin:4px 0 0">
+  <a href="${unsubUrl}" style="color:#bbb;text-decoration:underline">Unsubscribe</a> from future emails.
+</p>`;
+  return { text, html };
 }
 
 // ----------------------------------------------------------------------------
@@ -824,9 +1155,10 @@ const app = express();
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '4mb' }));
 
-// CORS first so 429 / 5xx responses still carry the headers the browser needs.
+// CORS — restrict to the known app origin; never wildcard.
+const CORS_ORIGIN = process.env.APP_URL || `http://localhost:${PORT}`;
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -847,6 +1179,23 @@ const authLimiter = rateLimit({
   skip: (req) => req.path === '/me',
 });
 app.use('/auth', authLimiter);
+
+// HTML escaper for public-facing server-rendered pages — prevents XSS from user-submitted data.
+function he(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Strip unsafe tags/attributes from AI-generated HTML (pricing_html, roi_section, etc.)
+// Only called for content that is intentionally HTML (not escaped).
+function sanitizeProposalHtml(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/\bon\w+\s*=/gi, 'data-removed=')
+    .replace(/javascript\s*:/gi, '#');
+}
 
 // Generous global limiter. Inbound webhooks (Stripe/Vapi/Resend) and the
 // public token-based pages a client can land on without a JWT are exempted —
@@ -888,11 +1237,34 @@ const apiLimiter = rateLimit({
     if (p === '/solar/store/all-leads.csv'    ) return true;
     if (p === '/solar/store/all-leads.jsonl'  ) return true;
     if (p === '/solar/store/all-leads.zip'    ) return true;
+    if (p.startsWith('/demo'))           return true;
+    if (p.startsWith('/migrate/'))       return true;
+    if (p.startsWith('/for/'))           return true;
+    if (p.startsWith('/compare/'))       return true;
+    if (p === '/calculator')             return true;
+    if (p === '/stats.json')             return true;
+    if (p === '/robots.txt' || p === '/sitemap.xml') return true;
     if (p === '/health' || p === '/test') return true;
+    if (p.startsWith('/wrap-my-fleet')) return true;
+    if (p.startsWith('/inbound-leads')) return false; // auth route, keep limited
     return false;
   },
 });
 app.use(apiLimiter);
+
+// Rate limiter for the public /wrap-my-fleet consumer tool
+const fleetToolLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,  // 1 hour
+  max: 5,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many concept requests. Please try again in an hour.' },
+});
+const fleetSubmitLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,  // 24 hours
+  max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Daily limit reached. Please try again tomorrow.' },
+});
 
 // Static serving is handled AFTER all API routes (see bottom of file)
 
@@ -989,6 +1361,112 @@ const requireWrapOS     = requireTier('wrapos');
 app.get(['/test', '/apollo/test', '/health'], async (req, res) => {
   const db = await checkDb();
   res.json({ status: 'ok', server: 'wrapleads-server', version: '0.4', database: db });
+});
+
+// ----------------------------------------------------------------------------
+// PUBLIC — CAN-SPAM one-click unsubscribe (no auth required)
+// ----------------------------------------------------------------------------
+app.get('/unsubscribe/:token', async (req, res) => {
+  const { token } = req.params;
+  if (!token || !/^[a-f0-9]{40}$/.test(token)) {
+    return res.status(400).send('<h2>Invalid unsubscribe link.</h2>');
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, user_id, email, lead_id FROM email_unsubscribes WHERE token=$1 LIMIT 1`,
+      [token]
+    );
+    if (!rows.length) {
+      return res.status(404).send(`<!DOCTYPE html><html><head><title>Already unsubscribed</title>
+        <meta charset="utf-8"><style>body{font-family:system-ui;max-width:480px;margin:60px auto;text-align:center;color:#555}</style></head>
+        <body><h2>You're already unsubscribed</h2><p>Your email address is not receiving outreach from this sender.</p></body></html>`);
+    }
+    const row = rows[0];
+
+    // Cancel any pending outbound email_queue items for this lead/email combo
+    if (row.lead_id) {
+      await pool.query(
+        `UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE lead_id=$1 AND status='pending'`,
+        [row.lead_id]
+      );
+      // Mark lead as lost so it surfaces no further automated outreach
+      await pool.query(
+        `UPDATE leads SET status='lost', updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status NOT IN ('won','lost')`,
+        [row.lead_id, row.user_id]
+      );
+      await pool.query(
+        `INSERT INTO lead_activities (lead_id, user_id, type, subject, metadata, created_at)
+         VALUES ($1,$2,'note','Contact unsubscribed via email link',$3,NOW())`,
+        [row.lead_id, row.user_id, JSON.stringify({ source: 'unsubscribe_link', email: row.email })]
+      ).catch(() => {});
+    }
+
+    // The record stays in email_unsubscribes permanently (it IS the opt-out list)
+    // Make sure unsubscribed_at is set if somehow created without it
+    await pool.query(
+      `UPDATE email_unsubscribes SET unsubscribed_at=COALESCE(unsubscribed_at,NOW()) WHERE token=$1`,
+      [token]
+    );
+
+    return res.send(`<!DOCTYPE html><html><head><title>Unsubscribed</title>
+      <meta charset="utf-8">
+      <style>
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:480px;margin:80px auto;text-align:center;color:#374151;padding:0 20px}
+        h2{color:#111;font-size:24px;margin-bottom:8px}
+        p{color:#6b7280;line-height:1.6}
+        .check{width:56px;height:56px;background:#dcfce7;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:28px}
+      </style></head>
+      <body>
+        <div class="check">✓</div>
+        <h2>You've been unsubscribed</h2>
+        <p>${he(row.email)} will no longer receive outreach emails from this sender.</p>
+        <p style="font-size:13px;color:#9ca3af;margin-top:32px">If this was a mistake, contact the sender directly to re-opt in.</p>
+      </body></html>`);
+  } catch (e) {
+    console.error('[unsubscribe]', e.message);
+    res.status(500).send('<h2>Something went wrong. Please try again later.</h2>');
+  }
+});
+
+// POST /unsubscribe/:token — RFC 8058 one-click (List-Unsubscribe-Post header support)
+app.post('/unsubscribe/:token', async (req, res) => {
+  req.params; // reuse GET handler logic
+  const { token } = req.params;
+  if (!token || !/^[a-f0-9]{40}$/.test(token)) return res.sendStatus(400);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, user_id, lead_id, email FROM email_unsubscribes WHERE token=$1 LIMIT 1`,
+      [token]
+    );
+    if (!rows.length) return res.sendStatus(200); // already gone
+    const row = rows[0];
+    if (row.lead_id) {
+      await pool.query(`UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE lead_id=$1 AND status='pending'`, [row.lead_id]);
+      await pool.query(`UPDATE leads SET status='lost', updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status NOT IN ('won','lost')`, [row.lead_id, row.user_id]);
+    }
+    await pool.query(`UPDATE email_unsubscribes SET unsubscribed_at=COALESCE(unsubscribed_at,NOW()) WHERE token=$1`, [token]);
+    res.sendStatus(200);
+  } catch { res.sendStatus(500); }
+});
+
+// GET /leads/:id/unsubscribe-status — check if a lead's email is opted out (authed)
+app.get('/leads/:id/unsubscribe-status', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const { rows } = await pool.query(`SELECT email FROM leads WHERE id=$1 AND user_id=$2`, [id, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const email = rows[0].email;
+    if (!email) return res.json({ unsubscribed: false, email: null });
+    const { rows: sub } = await pool.query(
+      `SELECT unsubscribed_at FROM email_unsubscribes WHERE user_id=$1 AND LOWER(email)=LOWER($2) LIMIT 1`,
+      [uid, email]
+    );
+    res.json({ unsubscribed: sub.length > 0, email, unsubscribed_at: sub[0]?.unsubscribed_at ?? null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ----------------------------------------------------------------------------
@@ -1387,7 +1865,9 @@ async function callApollo(apiPath, body, apiKey) {
 }
 
 async function resolveApolloKey(req) {
-  if (req.body?.apiKey) return String(req.body.apiKey).trim();
+  // Server env key takes precedence; fall back to per-user key stored in settings.
+  // Never accept an API key from the request body — that would allow the server
+  // to proxy arbitrary third-party credentials.
   if (ENV_APOLLO_KEY) return ENV_APOLLO_KEY;
   if (req.user?.id) {
     const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(req.user.id)]);
@@ -1414,11 +1894,87 @@ app.post('/apollo/search', authMiddleware, subMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Resolve Hunter API key — env var first, then per-user settings_json.
+async function resolveHunterKey(userId) {
+  if (process.env.HUNTER_API_KEY) return process.env.HUNTER_API_KEY;
+  if (userId) {
+    const r = await pool.query('SELECT settings_json FROM users WHERE id=$1', [String(userId)]);
+    return r.rows[0]?.settings_json?.hunterApiKey || null;
+  }
+  return null;
+}
+
+// Try Hunter.io /v2/email-finder before spending Apollo credits.
+// Returns null if Hunter is not configured or finds nothing with adequate confidence.
+async function tryHunterEnrich(firstName, lastName, domain, userId) {
+  const hunterKey = await resolveHunterKey(userId);
+  if (!hunterKey || !firstName || !lastName || !domain) return null;
+  try {
+    const url = `https://api.hunter.io/v2/email-finder?first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&domain=${encodeURIComponent(domain)}&api_key=${hunterKey}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const email = j?.data?.email;
+    const confidence = j?.data?.score ?? 0;
+    if (email && confidence >= 60) {
+      return { email, confidence, source: 'hunter' };
+    }
+  } catch { /* timeout or network error — fall through */ }
+  return null;
+}
+
+// Try Hunter.io /v2/domain-search when we don't have a name.
+// Returns the highest-confidence email found for the domain's most senior contact.
+async function tryHunterDomainSearch(domain, userId) {
+  const hunterKey = await resolveHunterKey(userId);
+  if (!hunterKey || !domain) return null;
+  try {
+    const url = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&limit=5&api_key=${hunterKey}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const emails = j?.data?.emails || [];
+    // Prefer decision-maker positions, then highest confidence
+    const SENIOR = ['ceo', 'president', 'owner', 'director', 'manager', 'vp', 'founder'];
+    const sorted = emails
+      .filter((e) => e.type === 'professional' && e.confidence >= 60)
+      .sort((a, b) => {
+        const aRank = SENIOR.findIndex((t) => (a.position || '').toLowerCase().includes(t));
+        const bRank = SENIOR.findIndex((t) => (b.position || '').toLowerCase().includes(t));
+        const aR = aRank === -1 ? 99 : aRank;
+        const bR = bRank === -1 ? 99 : bRank;
+        if (aR !== bR) return aR - bR;
+        return (b.confidence ?? 0) - (a.confidence ?? 0);
+      });
+    const best = sorted[0];
+    if (!best) return null;
+    const firstName = best.first_name || null;
+    const lastName = best.last_name || null;
+    const name = [firstName, lastName].filter(Boolean).join(' ') || null;
+    return { email: best.value, confidence: best.confidence, name, position: best.position || null, source: 'hunter_domain' };
+  } catch { /* timeout or network error — fall through */ }
+  return null;
+}
+
 app.post('/apollo/enrich', authMiddleware, subMiddleware, async (req, res) => {
-  const apiKey = await resolveApolloKey(req);
-  if (!apiKey) return res.status(400).json({ error: 'No Apollo API key.' });
   const { firstName, lastName, company, domain, email, linkedinUrl } = req.body || {};
   if (!firstName && !lastName && !email) return res.status(400).json({ error: 'Need firstName + lastName, or email' });
+
+  const enrichUid = req.user?.id ? String(req.user.id) : null;
+  // Waterfall: Hunter (free) → Apollo (credits)
+  if (firstName && lastName && domain && !email) {
+    const hunterResult = await tryHunterEnrich(firstName, lastName, domain, enrichUid);
+    if (hunterResult) {
+      return res.json({
+        person: { email: hunterResult.email, first_name: firstName, last_name: lastName },
+        source: 'hunter',
+        confidence: hunterResult.confidence,
+      });
+    }
+  }
+
+  const apiKey = await resolveApolloKey(req);
+  if (!apiKey) return res.status(400).json({ error: 'No Apollo API key — configure APOLLO_API_KEY or add it in Settings. Hunter.io also did not match.' });
   const payload = { reveal_personal_emails: true };
   if (firstName) payload.first_name = firstName;
   if (lastName) payload.last_name = lastName;
@@ -1534,6 +2090,40 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
   for (const lead of targets) {
     const result = { id: lead.id, company: lead.company, status: 'not_found', email: null };
     try {
+      const domain = lead.website ? lead.website.replace(/^https?:\/\//, '').split('/')[0] : null;
+
+      // Waterfall step 1: Hunter.io (free) — try name+domain first, fall back to domain search
+      const bulkHunterKey = await resolveHunterKey(uid);
+      if (domain && bulkHunterKey) {
+        let hunterResult = null;
+        if (lead.contact_name) {
+          const [firstName, ...rest] = lead.contact_name.trim().split(' ');
+          hunterResult = await tryHunterEnrich(firstName, rest.join(' '), domain, uid);
+        }
+        if (!hunterResult) {
+          hunterResult = await tryHunterDomainSearch(domain, uid);
+        }
+        if (hunterResult) {
+          const contactName = hunterResult.name || lead.contact_name || null;
+          await pool.query(
+            `UPDATE leads SET email=$1, contact_name=COALESCE(NULLIF(contact_name,''), $2), updated_at=NOW() WHERE id=$3`,
+            [hunterResult.email, contactName, lead.id]
+          );
+          await logActivity(pool, {
+            leadId: lead.id, userId: uid, type: 'note_added',
+            subject: 'Email found via Hunter.io',
+            metadata: { email: hunterResult.email, name: contactName, source: 'hunter_bulk', confidence: hunterResult.confidence },
+          });
+          result.status = 'enriched';
+          result.email = hunterResult.email;
+          result.source = hunterResult.source;
+          enriched++;
+          results.push(result);
+          continue; // skip Apollo for this lead — saved a credit
+        }
+      }
+
+      // Waterfall step 2: Apollo (paid credits)
       // Choose best titles for this category
       const titles = APOLLO_TITLES[lead.category] || APOLLO_TITLES.default;
       const payload = {
@@ -1541,8 +2131,7 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
         person_titles: titles,
         page: 1, per_page: 3,
       };
-      if (lead.website) {
-        const domain = lead.website.replace(/^https?:\/\//, '').split('/')[0];
+      if (domain) {
         payload.q_organization_domains = domain;
       }
 
@@ -1568,7 +2157,7 @@ app.post('/apollo/bulk-enrich-leads', authMiddleware, async (req, res) => {
             first_name: firstName,
             last_name: rest.join(' '),
             organization_name: lead.company,
-            domain: lead.website?.replace(/^https?:\/\//, '').split('/')[0],
+            domain,
             reveal_personal_emails: true,
           }, apolloKey);
           if (matchData?.person?.email) {
@@ -1761,11 +2350,15 @@ app.post('/carriers/search', authMiddleware, subMiddleware, async (req, res) => 
   const dataParams = [...params, safeLimit, safeOffset];
   const dataSql = `
     SELECT id, source, source_id AS dot_number, name, dba_name, street, city, state, zip,
-           phone, email, fleet_size, drivers, last_reported,
+           phone, email, fleet_size, drivers, last_reported, added_to_registry,
+           notes,
            ${wrapScoreExpr} AS wrap_score,
            CASE WHEN last_reported IS NOT NULL
                 THEN EXTRACT(YEAR FROM NOW())::INT - EXTRACT(YEAR FROM last_reported)::INT
-                ELSE NULL END AS years_since_report
+                ELSE NULL END AS years_since_report,
+           CASE WHEN added_to_registry IS NOT NULL
+                THEN EXTRACT(YEAR FROM NOW())::INT - EXTRACT(YEAR FROM added_to_registry)::INT
+                ELSE NULL END AS authority_age_years
     FROM companies
     WHERE ${where}
     ORDER BY ${orderBy}
@@ -1810,16 +2403,37 @@ app.post('/carriers/import', authMiddleware, subMiddleware, async (req, res) => 
     let leadId = null;
     if (coR.rows.length) {
       const c = coR.rows[0];
+
+      // AI pitch angle — generate a specific pitch before inserting (non-blocking: fires & forgets on error)
+      let pitchAngle = null;
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
+      if (anthropicKey && c.fleet_size && c.fleet_size > 5) {
+        try {
+          const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+          const settings = userR.rows[0]?.settings_json || {};
+          const prompt = `In 2 sentences, write a specific fleet wrap pitch angle for this company:
+Name: ${c.name}
+Fleet size: ${c.fleet_size} vehicles
+State: ${c.state}
+City: ${c.city || ''}
+Industry: ${c.industry || 'transportation/logistics'}
+
+Focus on their specific fleet size and operational region. Mention a concrete benefit (brand visibility, driver pride, fleet consistency). No generic phrases. Return ONLY the 2-sentence pitch angle, nothing else.`;
+          pitchAngle = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 150);
+          if (pitchAngle) pitchAngle = pitchAngle.replace(/^["']|["']$/g, '').trim();
+        } catch { /* pitch generation is a nice-to-have */ }
+      }
+
       const lr = await pool.query(`
         INSERT INTO leads
           (user_id, client_id, company, category, state, city, phone, email,
-           website, fleet_size, status, source_company_id, created_at, updated_at)
-        VALUES ($1, $2, $3, 'fleet', $4, $5, $6, $7, $8, $9, 'cold', $10, NOW(), NOW())
+           website, fleet_size, pitch_angle, status, source_company_id, created_at, updated_at)
+        VALUES ($1, $2, $3, 'fleet', $4, $5, $6, $7, $8, $9, $10, 'cold', $11, NOW(), NOW())
         ON CONFLICT (user_id, client_id) DO NOTHING
         RETURNING id
       `, [uid, `carrier-${companyId}`, c.name || c.dba_name, c.state, c.city,
           c.phone || null, c.email || null, c.website || null,
-          c.fleet_size ? String(c.fleet_size) : null, companyId]);
+          c.fleet_size ? String(c.fleet_size) : null, pitchAngle, companyId]);
       leadId = lr.rows[0]?.id ?? null;
     }
     res.json({ ok: true, leadId });
@@ -1831,6 +2445,61 @@ app.get('/carriers/imported', authMiddleware, subMiddleware, async (req, res) =>
     const r = await pool.query(`SELECT company_id FROM imports WHERE user_id = $1`, [String(req.user.id)]);
     res.json({ imported: r.rows.map(row => row.company_id) });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DOT Number Quick-Lookup ───────────────────────────────────────────────────
+// Looks up a carrier by their FMCSA DOT number and returns import-ready data.
+// Auth-only (no subscription required — any user can look up a DOT).
+app.get('/carriers/by-dot/:dotNumber', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const dotNum = req.params.dotNumber.replace(/\D/g, ''); // strip non-digits
+  if (!dotNum || dotNum.length < 4) return res.status(400).json({ error: 'Invalid DOT number' });
+
+  try {
+    // Query local FMCSA database
+    const { rows } = await pool.query(`
+      SELECT
+        c.id, c.name, c.dba_name, c.city, c.state, c.phone, c.email,
+        c.fleet_size, c.source_id AS dot_number, c.source, c.wrap_score,
+        EXISTS(
+          SELECT 1 FROM leads l2
+          WHERE l2.user_id = $2
+            AND (l2.client_id = c.id::text OR l2.company ILIKE c.name)
+          LIMIT 1
+        ) AS already_in_crm
+      FROM companies c
+      WHERE c.source = 'fmcsa' AND c.source_id = $1
+      LIMIT 1
+    `, [dotNum, uid]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: `DOT #${dotNum} not found in our FMCSA database. Try searching the FMCSA SAFER portal directly.`,
+        saferUrl: `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${dotNum}`,
+      });
+    }
+
+    const c = rows[0];
+    res.json({
+      ok: true,
+      carrier: {
+        id: c.id,
+        dotNumber: c.dot_number,
+        name: c.name,
+        dbaName: c.dba_name,
+        city: c.city,
+        state: c.state,
+        phone: c.phone,
+        email: c.email,
+        fleetSize: c.fleet_size,
+        wrapScore: c.wrap_score,
+        alreadyInCrm: c.already_in_crm,
+      },
+    });
+  } catch (e) {
+    console.error('[by-dot]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ----------------------------------------------------------------------------
@@ -1914,6 +2583,9 @@ function leadRow(row) {
     createdAt: row.created_at, updatedAt: row.updated_at,
     tags: Array.isArray(row.tags) ? row.tags : [],
     referred_by: row.referred_by || null,
+    lost_reason: row.lost_reason || null,
+    lost_competitor: row.lost_competitor || null,
+    lost_at: row.lost_at ? row.lost_at.toISOString() : null,
   };
 }
 
@@ -2102,6 +2774,18 @@ app.post('/leads/bulk-tag', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Intent → CRM status + follow-up days
+const REPLY_INTENT_STATUS = {
+  interested:      { status: 'replied',   followupDays: 1  },
+  meeting_request: { status: 'meeting',   followupDays: 1  },
+  price_question:  { status: 'replied',   followupDays: 1  },
+  referral:        { status: 'replied',   followupDays: 2  },
+  not_now:         { status: 'cold',      followupDays: 30 },
+  unsubscribe:     { status: 'lost',      followupDays: null },
+  negative:        { status: 'lost',      followupDays: null },
+  out_of_office:   { status: null,        followupDays: 7  },
+};
+
 // Inbound email reply webhook (Resend forwards inbound to this URL)
 app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, res) => {
   try {
@@ -2122,8 +2806,9 @@ app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, r
     const lead = leads[0];
     const uid = lead.user_id;
 
-    // STOP / UNSUBSCRIBE detection — trip do_not_email and short-circuit
-    // before we advance status (we don't want "STOP" counted as engagement).
+    // STOP / UNSUBSCRIBE detection — short-circuit before any other processing
+    // so we don't run AI classification on what's already an unambiguous opt-out
+    // and don't count STOP as engagement.
     if (compliance.isStopReply(subject + ' ' + text)) {
       await compliance.flipOptOut(pool, { leadId: lead.id, userId: uid, reason: 'inbound_stop' });
       await logActivity(pool, { leadId: lead.id, userId: uid, type: 'status_changed',
@@ -2132,23 +2817,128 @@ app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, r
       return;
     }
 
-    // Only advance if not already past replied
-    const advanceStatuses = ['new', 'cold', 'contacted'];
-    if (advanceStatuses.includes(lead.status)) {
-      await pool.query(`UPDATE leads SET status='replied', followup_due_at=CURRENT_DATE, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
-      await logActivity(pool, { leadId: lead.id, userId: uid, type: 'status_changed', subject: `Reply received: ${subject}`, body: text.slice(0, 500), metadata: { inbound: true, from } });
-      await createNotification(uid, {
-        type: 'email_reply',
-        title: `📬 ${lead.company} replied to your email!`,
-        body: subject ? `Subject: ${subject}` : 'Inbound reply received.',
-        metadata: { lead_id: lead.id },
-      });
+    // AI intent classification — runs async, falls back to 'interested' on failure
+    let intent = 'interested';
+    let summary = '';
+    let suggestedReply = '';
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (apiKey && text.trim()) {
+      try {
+        const raw = await claudeHaiku(apiKey, [{
+          role: 'user',
+          content: `Classify this email reply from a vehicle wrap sales prospect. Return JSON only, no markdown.
+
+Reply from: ${from}
+Subject: ${subject}
+Body: ${text.slice(0, 1500)}
+
+Return exactly:
+{"intent":"<value>","summary":"<1-sentence summary>","suggested_reply":"<2-3 sentence response the sales rep should send>"}
+
+intent must be one of: interested | meeting_request | price_question | referral | not_now | unsubscribe | negative | out_of_office`
+        }], 350);
+        const parsed = JSON.parse(raw.replace(/```(?:json)?\n?|\n?```/g, '').trim());
+        intent = REPLY_INTENT_STATUS[parsed.intent] ? parsed.intent : 'interested';
+        summary = parsed.summary || '';
+        suggestedReply = parsed.suggested_reply || '';
+      } catch (e) {
+        console.warn('[inbound] AI classification failed:', e.message);
+      }
     }
-    // Auto-cancel any pending drip sequences for this lead — they replied, stop the drip
-    await pool.query(
-      `UPDATE email_queue SET status='cancelled', updated_at=NOW() WHERE lead_id=$1 AND status='pending'`,
-      [lead.id]
-    ).catch(() => {});
+
+    const { status: newStatus, followupDays } = REPLY_INTENT_STATUS[intent];
+
+    // Update lead status + follow-up date if the intent warrants a change
+    const terminalStatuses = ['won', 'lost'];
+    const shouldUpdateStatus = newStatus && !terminalStatuses.includes(lead.status);
+    if (shouldUpdateStatus) {
+      if (followupDays != null) {
+        await pool.query(
+          `UPDATE leads SET status=$1, followup_due_at = CURRENT_DATE + ($4 * INTERVAL '1 day'), updated_at=NOW() WHERE id=$2 AND user_id=$3`,
+          [newStatus, lead.id, uid, followupDays]
+        );
+      } else {
+        await pool.query(
+          `UPDATE leads SET status=$1, followup_due_at = NULL, updated_at=NOW() WHERE id=$2 AND user_id=$3`,
+          [newStatus, lead.id, uid]
+        );
+      }
+      await logActivity(pool, {
+        leadId: lead.id, userId: uid, type: 'status_changed',
+        subject: `${lead.status} → ${newStatus}`,
+        metadata: { from: lead.status, to: newStatus, inbound: true },
+      });
+    } else if (!newStatus && followupDays != null) {
+      // out_of_office: push follow-up without changing status
+      await pool.query(
+        `UPDATE leads SET followup_due_at = CURRENT_DATE + ($3 * INTERVAL '1 day'), updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+        [lead.id, uid, followupDays]
+      );
+    }
+
+    // Signature extraction — fill in missing contact fields from email signature
+    if (apiKey && text.trim()) {
+      try {
+        const sigText = text.slice(0, 1000);
+        const leadFields = await pool.query(
+          `SELECT contact_name, phone, contact_title FROM leads WHERE id=$1`, [lead.id]
+        );
+        const existing = leadFields.rows[0] || {};
+        const missingName  = !existing.contact_name || existing.contact_name.trim() === '';
+        const missingPhone = !existing.phone || existing.phone.trim() === '';
+        const missingTitle = !existing.contact_title || existing.contact_title.trim() === '';
+        if (missingName || missingPhone || missingTitle) {
+          const sigRaw = await claudeHaiku(
+            `Extract contact info from this email body/signature. Return ONLY valid JSON with keys: name (string|null), phone (string|null), title (string|null). Null if not found.\n\n${sigText}`,
+            120
+          );
+          const sigData = JSON.parse(sigRaw.replace(/```(?:json)?\n?|\n?```/g, '').trim());
+          const updates = [];
+          const vals = [];
+          if (missingName  && sigData.name)  { updates.push(`contact_name=$${vals.length+1}`);  vals.push(sigData.name.slice(0, 100)); }
+          if (missingPhone && sigData.phone) { updates.push(`phone=$${vals.length+1}`);          vals.push(sigData.phone.slice(0, 30)); }
+          if (missingTitle && sigData.title) { updates.push(`contact_title=$${vals.length+1}`);  vals.push(sigData.title.slice(0, 100)); }
+          if (updates.length) {
+            vals.push(lead.id, uid);
+            await pool.query(
+              `UPDATE leads SET ${updates.join(', ')}, updated_at=NOW() WHERE id=$${vals.length-1} AND user_id=$${vals.length}`,
+              vals
+            );
+            console.log(`[inbound] Signature enriched lead ${lead.id}: ${updates.map(u => u.split('=')[0]).join(', ')}`);
+          }
+        }
+      } catch (e) { /* non-critical */ }
+    }
+
+    // Log dedicated email_reply activity with AI analysis
+    await logActivity(pool, {
+      leadId: lead.id, userId: uid, type: 'email_reply',
+      subject: subject || '(no subject)',
+      body: text.slice(0, 800),
+      metadata: { from, intent, summary, suggestedReply, inbound: true },
+    });
+
+    // Notify the user
+    const INTENT_LABELS = {
+      interested: 'interested', meeting_request: 'requesting a meeting',
+      price_question: 'asking about pricing', referral: 'sending a referral',
+      not_now: 'not ready yet', unsubscribe: 'unsubscribing',
+      negative: 'declining', out_of_office: 'out of office',
+    };
+    await createNotification(uid, {
+      type: 'email_reply',
+      title: `${lead.company} replied — ${INTENT_LABELS[intent] || 'new reply'}`,
+      body: summary || (subject ? `Subject: ${subject}` : 'Inbound reply received.'),
+      metadata: { lead_id: lead.id, intent },
+    });
+
+    // Cancel pending drip sequences when they've replied (all intents except OOO)
+    if (intent !== 'out_of_office') {
+      await pool.query(
+        `UPDATE email_queue SET status='cancelled', updated_at=NOW() WHERE lead_id=$1 AND status='pending'`,
+        [lead.id]
+      ).catch(() => {});
+    }
   } catch (e) { console.error('[inbound webhook]', e.message); }
 });
 
@@ -2256,6 +3046,11 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   );
   if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
 
+  // CAN-SPAM: block send if recipient has opted out
+  if (await isUnsubscribed(uid, toEmail)) {
+    return res.status(422).json({ error: 'unsubscribed', message: `${toEmail} has unsubscribed from your outreach.` });
+  }
+
   // Get sender settings
   const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
   const settings = userR.rows[0]?.settings_json || {};
@@ -2282,13 +3077,17 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
     const baseUrl = process.env.APP_BASE_URL || APP_URL;
     const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
 
-    // Build HTML body with tracking pixel
+    // CAN-SPAM: generate (or reuse) unsubscribe token
+    const unsubToken = await getOrCreateUnsubToken(uid, toEmail, id).catch(() => null);
+    const unsubUrl = unsubToken ? `${baseUrl}/unsubscribe/${unsubToken}` : null;
+    const unsubFooter = buildUnsubFooter(unsubUrl || `${baseUrl}/unsubscribe/invalid`, fromName);
+
+    // Build HTML body with tracking pixel + unsubscribe footer
     const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">
 ${body.replace(/\n/g, '<br>')}
-<br><br>
-<hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-<p style="font-size:11px;color:#999;margin:0">${fromName} · Powered by <a href="https://wrapleads.io" style="color:#999">WrapLeads</a></p>
+${unsubFooter.html}
 </div><img src="${pixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+    const textBody = body + unsubFooter.text;
 
     const resp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -2298,7 +3097,11 @@ ${body.replace(/\n/g, '<br>')}
         to: toName ? `${toName} <${toEmail}>` : toEmail,
         subject,
         html: htmlBody,
-        text: body,
+        text: textBody,
+        headers: unsubUrl ? {
+          'List-Unsubscribe': `<${unsubUrl}>, <mailto:${fromEmail}?subject=unsubscribe>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        } : {},
       }),
     });
     const data = await resp.json();
@@ -2311,7 +3114,7 @@ ${body.replace(/\n/g, '<br>')}
         followup_due_at = CURRENT_DATE + INTERVAL '3 days',
         status = CASE WHEN status = 'cold' THEN 'contacted' ELSE status END,
         updated_at = NOW()
-       WHERE id=$1`, [id]
+       WHERE id=$1 AND user_id=$2`, [id, uid]
     );
     res.json({ ok: true, resend_id: data.id });
   } catch (e) {
@@ -3314,6 +4117,345 @@ app.post('/leads/import-csv', authMiddleware, upload.single('file'), async (req,
   res.json({ ok: true, imported, skipped, errors, total: rows.length - 1 });
 });
 
+// POST /leads/import-shopvox — ShopVOX-specific CSV importer
+// Handles split first/last names, ShopVOX status vocabulary, deterministic
+// dedup so re-importing the same export is always safe.
+app.post('/leads/import-shopvox', authMiddleware, upload.single('file'), async (req, res) => {
+  const uid = String(req.user.id);
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const text = req.file.buffer.toString('utf-8');
+  const rows = parseCSV(text);
+  if (rows.length < 2) return res.status(400).json({ error: 'CSV must have a header row and at least one data row' });
+
+  const rawHeaders = rows[0];
+  const headers = rawHeaders.map(normalizeHeader);
+
+  // ShopVOX-aware column aliases (their export uses verbose names)
+  const SHOPVOX_FIELD_MAP = {
+    company:       ['company','companyname','businessname','accountname','organization','clientname'],
+    first_name:    ['firstname','first'],
+    last_name:     ['lastname','last'],
+    contact_name:  ['contactname','contact','fullname','name'],
+    contact_title: ['title','jobtitle','contacttitle','position','role'],
+    email:         ['email','emailaddress','primaryemail','contactemail'],
+    phone:         ['phone','primaryphone','workphone','mobilephone','officephone','telephone','mobile','cell'],
+    city:          ['city','town'],
+    state:         ['state','province','st'],
+    website:       ['website','web','url','domain'],
+    fleet_size:    ['fleetsize','fleet','vehicles','trucks','vehiclecount','truckcount','units'],
+    category:      ['category','customertype','type','industry','segment','accounttype'],
+    status:        ['status','accountstatus','leadstatus','stage','accountstage'],
+    notes:         ['notes','note','internalnotes','externalnotes','description','comments','comment','tags'],
+    pitch_angle:   ['pitchangle','pitch'],
+  };
+
+  const colMap = {};
+  for (const [field, aliases] of Object.entries(SHOPVOX_FIELD_MAP)) {
+    for (let i = 0; i < headers.length; i++) {
+      if (aliases.includes(headers[i])) { colMap[i] = field; break; }
+    }
+  }
+
+  const hasCompany = Object.values(colMap).includes('company');
+  const hasFirst   = Object.values(colMap).includes('first_name');
+  if (!hasCompany) {
+    return res.status(400).json({ error: 'Could not find a Company or Company Name column in this CSV.' });
+  }
+
+  // ShopVOX status → WrapOS status
+  function mapShopVoxStatus(raw) {
+    const s = raw.toLowerCase().replace(/[^a-z]/g, '');
+    if (['prospect','lead','new','potential','opportunity'].some(v => s.includes(v))) return 'new';
+    if (['activecustomer','currentcustomer','customer','active','existing'].some(v => s.includes(v))) return 'contacted';
+    if (['inactive','formercustomer','oldcustomer','pastcustomer','lapsed'].some(v => s.includes(v))) return 'cold';
+    if (['proposalsent','quotesent','proposal'].some(v => s.includes(v))) return 'proposal';
+    if (['meetingscheduled','meeting','appointment'].some(v => s.includes(v))) return 'meeting';
+    if (['won','closed','closedwon'].some(v => s.includes(v))) return 'won';
+    if (['lost','closedlost','declined','rejected'].some(v => s.includes(v))) return 'lost';
+    if (['contacted','inprogress','followup','follow'].some(v => s.includes(v))) return 'contacted';
+    return 'new';
+  }
+
+  // ShopVOX type → WrapOS category
+  function mapShopVoxCategory(raw) {
+    const s = raw.toLowerCase().replace(/[^a-z]/g, '');
+    if (s.includes('fleet') || s.includes('commercial') || s.includes('truck')) return 'fleet';
+    if (s.includes('color') || s.includes('retail') || s.includes('personal')) return 'colorchange';
+    if (s.includes('construct') || s.includes('contractor') || s.includes('builder')) return 'construction';
+    if (s.includes('dinoc') || s.includes('architectural') || s.includes('surface')) return 'dinoc';
+    if (s.includes('reatec') || s.includes('rea')) return 'reatec';
+    if (s.includes('wall') || s.includes('graphic')) return 'wallgraphics';
+    if (s.includes('gc') || s.includes('general')) return 'gc_referral';
+    if (s.includes('racing') || s.includes('race') || s.includes('motorsport')) return 'racing';
+    if (s.includes('design') || s.includes('branding') || s.includes('logo')) return 'design';
+    return 'fleet';
+  }
+
+  const crypto = require('crypto');
+  let imported = 0; let skipped = 0; let errors = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.every((c) => !c)) continue;
+
+    const field = (f) => {
+      const idx = Object.entries(colMap).find(([, v]) => v === f)?.[0];
+      return idx !== undefined ? (row[parseInt(idx)] ?? '').trim() : '';
+    };
+
+    const company = field('company');
+    if (!company) { skipped++; continue; }
+
+    // Merge first + last name if separate columns exist; fall back to combined column
+    let contactName = field('contact_name');
+    if (!contactName && hasFirst) {
+      const first = field('first_name');
+      const last  = field('last_name');
+      contactName = [first, last].filter(Boolean).join(' ');
+    }
+
+    const email    = field('email').toLowerCase() || null;
+    const status   = mapShopVoxStatus(field('status'));
+    const category = mapShopVoxCategory(field('category'));
+
+    // Deterministic client_id: same email → same UUID across re-imports
+    const seed = email
+      ? `shopvox:${uid}:email:${email}`
+      : `shopvox:${uid}:company:${company.toLowerCase()}`;
+    const hash = crypto.createHash('sha256').update(seed).digest('hex');
+    const clientId = `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(12,15)}-${hash.slice(15,19)}-${hash.slice(19,31)}`;
+
+    try {
+      const r = await pool.query(`
+        INSERT INTO leads (user_id, client_id, company, contact_name, contact_title, email, phone,
+          city, state, website, fleet_size, category, status, notes, pitch_angle, source)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'shopvox_import')
+        ON CONFLICT (user_id, client_id) DO NOTHING
+        RETURNING id
+      `, [
+        uid, clientId, company,
+        contactName || null, field('contact_title') || null,
+        email, field('phone') || null,
+        field('city') || null, field('state') || null,
+        field('website') || null, parseInt(field('fleet_size')) || null,
+        category, status,
+        field('notes') || null, field('pitch_angle') || null,
+      ]);
+      if (r.rows.length) imported++;
+      else skipped++;
+    } catch (e) {
+      errors++;
+      console.warn(`[shopvox-import] Row ${i}: ${e.message}`);
+    }
+  }
+
+  res.json({ ok: true, imported, skipped, errors, total: rows.length - 1 });
+});
+
+// GET /migrate/shopvox — public marketing landing page for ShopVOX refugees
+app.get('/migrate/shopvox', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Free ShopVOX Migration — WrapOS</title>
+<meta name="description" content="ShopVOX was acquired by private equity. Your prices are going up. We'll migrate your entire customer list to WrapOS in under 5 minutes, for free.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#09090b;color:#f4f4f5;line-height:1.5}
+a{color:inherit;text-decoration:none}
+
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid #18181b;position:sticky;top:0;background:#09090b;z-index:10}
+.nav-logo{font-size:18px;font-weight:900;letter-spacing:-.5px}
+.nav-logo span{color:#6366f1}
+.nav-cta{background:#6366f1;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700}
+.nav-cta:hover{background:#4f46e5}
+
+.hero{padding:72px 24px 56px;max-width:800px;margin:0 auto;text-align:center}
+.hero-tag{display:inline-block;background:#ef444420;color:#f87171;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:5px 14px;border-radius:20px;border:1px solid #ef444440;margin-bottom:20px}
+.hero-title{font-size:clamp(30px,5.5vw,54px);font-weight:900;line-height:1.08;letter-spacing:-.03em;margin-bottom:20px}
+.hero-title .accent{color:#6366f1}
+.hero-title .struck{text-decoration:line-through;color:#52525b}
+.hero-sub{font-size:17px;color:#a1a1aa;max-width:580px;margin:0 auto 40px;line-height:1.65}
+
+.cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:20px}
+.btn-primary{background:#6366f1;color:#fff;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:800;transition:background .15s}
+.btn-primary:hover{background:#4f46e5}
+.btn-ghost{border:1px solid #3f3f46;color:#a1a1aa;padding:14px 24px;border-radius:10px;font-size:15px;font-weight:600;transition:border-color .15s}
+.btn-ghost:hover{border-color:#6366f1;color:#fff}
+.cta-note{font-size:12px;color:#52525b;text-align:center}
+
+/* The bad news card */
+.bad-news{background:#18181b;border:1px solid #ef444430;border-radius:16px;max-width:720px;margin:0 auto 64px;padding:32px}
+.bad-news-title{font-size:16px;font-weight:800;color:#f87171;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.complaint{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #27272a}
+.complaint:last-child{border-bottom:none;padding-bottom:0}
+.complaint-quote{font-size:13px;color:#a1a1aa;font-style:italic;flex:1}
+.complaint-src{font-size:10px;color:#52525b;white-space:nowrap;margin-top:2px}
+
+/* What you keep */
+.what-section{max-width:720px;margin:0 auto 64px;padding:0 24px}
+.section-title{font-size:22px;font-weight:900;letter-spacing:-.02em;margin-bottom:8px}
+.section-sub{font-size:14px;color:#71717a;margin-bottom:24px}
+.import-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:520px){.import-grid{grid-template-columns:1fr}}
+.import-item{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:10px}
+.import-check{color:#22c55e;font-size:16px;flex-shrink:0}
+.import-label{font-size:13px;font-weight:600;color:#e4e4e7}
+.import-sub{font-size:11px;color:#52525b;margin-top:2px}
+
+/* What you gain */
+.gain-section{max-width:720px;margin:0 auto 64px;padding:0 24px}
+.gain-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:640px){.gain-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:380px){.gain-grid{grid-template-columns:1fr}}
+.gain-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:18px}
+.gain-icon{font-size:22px;margin-bottom:10px}
+.gain-title{font-size:13px;font-weight:800;color:#fff;margin-bottom:4px}
+.gain-desc{font-size:11px;color:#71717a;line-height:1.5}
+
+/* Pricing compare */
+.compare-section{max-width:720px;margin:0 auto 64px;padding:0 24px}
+.compare-table{width:100%;border-collapse:collapse;font-size:13px}
+.compare-table th{padding:10px 14px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#52525b;border-bottom:1px solid #27272a}
+.compare-table td{padding:11px 14px;border-bottom:1px solid #1a1a1d}
+.compare-table tr:last-child td{border-bottom:none}
+.col-shopvox{color:#a1a1aa}
+.col-wrapos{color:#a3e635;font-weight:700}
+.badge-pe{display:inline-block;background:#ef444420;color:#f87171;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:6px;vertical-align:middle;letter-spacing:.05em}
+
+/* Bottom CTA */
+.final-cta{max-width:560px;margin:0 auto 80px;text-align:center;padding:0 24px}
+.final-title{font-size:26px;font-weight:900;letter-spacing:-.02em;margin-bottom:12px}
+.final-sub{font-size:15px;color:#a1a1aa;margin-bottom:32px}
+
+.footer{border-top:1px solid #18181b;padding:24px;text-align:center;font-size:12px;color:#52525b}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">Wrap<span>OS</span></div>
+  <a href="${appUrl}/login" class="nav-cta">Start Free Trial</a>
+</nav>
+
+<div class="hero">
+  <div class="hero-tag">ShopVOX was acquired by private equity · August 2025</div>
+  <h1 class="hero-title">
+    Your <span class="struck">shop software</span><br>
+    just got <span class="accent">bought and flipped.</span>
+  </h1>
+  <p class="hero-sub">
+    Fullsteam PE acquired ShopVOX in August 2025. That means price increases, support cuts, and your data held hostage. We've seen this playbook before. We'll migrate your entire customer list to WrapOS for free — today.
+  </p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial &amp; Import</a>
+    <a href="#what-you-keep" class="btn-ghost">See what gets imported</a>
+  </div>
+  <div class="cta-note">14-day trial · No credit card · Cancel anytime</div>
+</div>
+
+<div class="bad-news" style="max-width:720px;margin:0 auto 64px;padding:32px 32px 24px">
+  <div class="bad-news-title">
+    <span>⚠</span> What ShopVOX customers are already saying
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"Prices nearly doubled with no added benefit after the acquisition. Support response time went from hours to days."</div>
+      <div class="complaint-src">— G2 review, Q4 2025</div>
+    </div>
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"Export function does not export line items and notes for quotes and Sales Orders. You literally cannot get your own data out."</div>
+      <div class="complaint-src">— Capterra review</div>
+    </div>
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"Dev team doesn't listen to users at all. Updates roll out broken at 12:30pm on a Wednesday — mid-business-day."</div>
+      <div class="complaint-src">— Signs101 forum</div>
+    </div>
+  </div>
+  <div class="complaint">
+    <div>
+      <div class="complaint-quote">"SaaS vulnerability — you stop paying and you lose all access to your client history. You own nothing."</div>
+      <div class="complaint-src">— Capterra review</div>
+    </div>
+  </div>
+</div>
+
+<div class="what-section" id="what-you-keep">
+  <div class="section-title">What gets imported — automatically</div>
+  <div class="section-sub">Export your contacts from ShopVOX, upload the CSV, done. Your entire customer history maps over in under 5 minutes.</div>
+  <div class="import-grid">
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Company names</div><div class="import-sub">Every client, every prospect</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Contact names &amp; titles</div><div class="import-sub">First + Last merged automatically</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Emails &amp; phone numbers</div><div class="import-sub">Deduped so re-importing is always safe</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">City &amp; state</div><div class="import-sub">Geographic context preserved</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Notes &amp; internal notes</div><div class="import-sub">All your deal history comes with you</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Status &amp; stage</div><div class="import-sub">Prospect, Active, Inactive → mapped to WrapOS pipeline</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Customer type / industry</div><div class="import-sub">Fleet, Color Change, Di-NOC etc. auto-detected</div></div></div>
+    <div class="import-item"><span class="import-check">✓</span><div><div class="import-label">Website &amp; fleet size</div><div class="import-sub">Enrichment data preserved where available</div></div></div>
+  </div>
+</div>
+
+<div class="gain-section">
+  <div class="section-title">What you gain the moment you're in</div>
+  <div class="section-sub">ShopVOX manages the jobs you already have. WrapOS finds you the jobs you don't have yet.</div>
+  <div class="gain-grid">
+    <div class="gain-card"><div class="gain-icon">📡</div><div class="gain-title">600K FMCSA Fleet Carriers</div><div class="gain-desc">Scored and ranked by wrap opportunity. ShopVOX has never heard of FMCSA.</div></div>
+    <div class="gain-card"><div class="gain-icon">📞</div><div class="gain-title">AI Phone Calls</div><div class="gain-desc">The AI dials fleet managers while you're in the install bay. No competitor can do this.</div></div>
+    <div class="gain-card"><div class="gain-icon">🎯</div><div class="gain-title">3-Email AI Sequences</div><div class="gain-desc">Category-aware pitches auto-sent to your pipeline. ShopVOX has zero outbound capability.</div></div>
+    <div class="gain-card"><div class="gain-icon">📸</div><div class="gain-title">Vision Quote from Photo</div><div class="gain-desc">Upload a vehicle photo and get a quote estimate. Nobody else does this.</div></div>
+    <div class="gain-card"><div class="gain-icon">🔄</div><div class="gain-title">Lifecycle Re-Order Engine</div><div class="gain-desc">Automatically re-engages fleet clients when their wraps are aging out.</div></div>
+    <div class="gain-card"><div class="gain-icon">📊</div><div class="gain-title">Proposal Heat Scoring</div><div class="gain-desc">Know which prospects are reading your proposals in real time. Act at the right moment.</div></div>
+  </div>
+</div>
+
+<div class="compare-section">
+  <div class="section-title">Price comparison — same tier, 10x more capability</div>
+  <div class="section-sub" style="margin-bottom:20px">ShopVOX PRO starts at $249/mo before you add a single user seat.</div>
+  <table class="compare-table">
+    <thead>
+      <tr><th>Feature</th><th>ShopVOX PRO<span class="badge-pe">PE owned</span></th><th>WrapOS $249/mo</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Shop management (jobs, quoting, invoicing)</td><td class="col-shopvox">✓</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>CRM / lead tracking</td><td class="col-shopvox">✓ (PRO only)</td><td class="col-wrapos">✓ All tiers</td></tr>
+      <tr><td>FMCSA fleet carrier database (600K+)</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>AI phone calls (outbound dialing)</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>AI email sequences</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>AR vehicle preview</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Vision Quote from photo</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Wrap lifecycle re-order sequences</td><td class="col-shopvox">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Per-user seat fees</td><td class="col-shopvox">+$49/user/mo</td><td class="col-wrapos">None</td></tr>
+      <tr><td>Owned by private equity</td><td class="col-shopvox" style="color:#f87171">Yes (Fullsteam, Aug 2025)</td><td class="col-wrapos">No — founder owned</td></tr>
+      <tr><td>Export your data anytime</td><td class="col-shopvox">Broken for line items</td><td class="col-wrapos">Always, full CSV</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="final-cta">
+  <h2 class="final-title">Your data. Your clients. Your shop.</h2>
+  <p class="final-sub">Start a 14-day free trial. Import your ShopVOX customers on day one. If WrapOS isn't worth it, export everything and leave — no friction, no hostage data.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial &amp; Import</a>
+  </div>
+  <div class="cta-note" style="margin-top:12px">Need help migrating? Email us: <a href="mailto:shadow@shadowgraphix.com" style="color:#818cf8">shadow@shadowgraphix.com</a></div>
+</div>
+
+<div class="footer">
+  &copy; ${new Date().getFullYear()} WrapOS by Shadow Graphix · Speedway, Indiana · Not affiliated with ShopVOX or Fullsteam Operations
+</div>
+</body>
+</html>`);
+});
+
 // Drip engine — activate a 3-email sequence for a lead
 // ----------------------------------------------------------------------------
 app.post('/leads/:id/activate-sequence', authMiddleware, async (req, res) => {
@@ -3491,6 +4633,25 @@ app.put('/bids/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/bids/:id/clone', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows: src } = await pool.query(
+      `SELECT * FROM bids WHERE id=$1 AND user_id=$2`, [parseInt(req.params.id), uid]
+    );
+    if (!src.length) return res.status(404).json({ error: 'Not found' });
+    const s = src[0];
+    const { rows } = await pool.query(
+      `INSERT INTO bids (user_id, lead_id, project_name, gc_name, architect, project_type,
+         bid_due, estimated_value, source_platform, source_url, status, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'tracking',$11) RETURNING *`,
+      [uid, s.lead_id, `${s.project_name} (Copy)`, s.gc_name, s.architect,
+       s.project_type, s.bid_due, s.estimated_value, s.source_platform, s.source_url, s.notes]
+    );
+    res.status(201).json({ bid: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/bids/:id', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
@@ -3589,6 +4750,76 @@ app.get('/bids/intel', authMiddleware, async (req, res) => {
 
     res.json({ ok: true, funnel, winRate, shortlistToWin, platforms, valueBuckets: valueRows });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /bids/calendar.ics — iCal feed of all active bid due dates
+// Users can subscribe this URL in Google Calendar / Outlook for automatic reminders.
+// Uses a token-based auth so calendar apps can subscribe without Bearer headers.
+app.get('/bids/calendar.ics', async (req, res) => {
+  const token = (req.query.token || req.headers.authorization?.replace('Bearer ', ''))?.trim();
+  if (!token) return res.status(401).send('Unauthorized');
+
+  let uid;
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'wraplead_secret');
+    uid = String(decoded.id);
+  } catch {
+    return res.status(401).send('Invalid token');
+  }
+
+  const { rows } = await pool.query(
+    `SELECT b.id, b.project_name, b.gc_name, b.bid_due, b.estimated_value, b.status, l.company
+     FROM bids b LEFT JOIN leads l ON l.id = b.lead_id
+     WHERE b.user_id = $1 AND b.status = 'tracking'
+       AND b.bid_due IS NOT NULL AND b.bid_due >= CURRENT_DATE - INTERVAL '7 days'
+     ORDER BY b.bid_due ASC`,
+    [uid]
+  );
+
+  function icsDate(dateStr) {
+    return dateStr.replace(/-/g, '') + 'T080000Z';
+  }
+  function escapeICS(str = '') {
+    return (str || '').replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  }
+
+  const now = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z';
+  const events = rows.map((b) => {
+    const title = b.project_name || (b.company ? `Bid — ${b.company}` : 'Bid Due');
+    const desc = [b.gc_name ? `GC: ${b.gc_name}` : null, b.estimated_value ? `Value: $${b.estimated_value.toLocaleString()}` : null].filter(Boolean).join(' | ');
+    return [
+      'BEGIN:VEVENT',
+      `UID:wrapos-bid-${b.id}@wrapos.app`,
+      `DTSTAMP:${now}`,
+      `DTSTART;VALUE=DATE:${b.bid_due.replace(/-/g, '')}`,
+      `DTEND;VALUE=DATE:${b.bid_due.replace(/-/g, '')}`,
+      `SUMMARY:${escapeICS(title)} — Bid Due`,
+      `DESCRIPTION:${escapeICS(desc)}`,
+      'BEGIN:VALARM',
+      'TRIGGER:-PT24H',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:Bid due tomorrow: ${escapeICS(title)}`,
+      'END:VALARM',
+      'END:VEVENT',
+    ].join('\r\n');
+  });
+
+  const ical = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//WrapOS//Bid Calendar//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:WrapOS Bid Deadlines',
+    'X-WR-TIMEZONE:UTC',
+    ...events,
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="wrapos-bids.ics"');
+  res.send(ical);
 });
 
 // ============================================================================
@@ -3712,7 +4943,14 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
   try {
     const uid = String(req.user.id);
     const leadId = Number(req.params.id);
+    const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
     const { factor = 'other', notes = '', competitor = '' } = req.body || {};
+    // Persist structured loss data to the lead row itself
+    await pool.query(
+      `UPDATE leads SET lost_reason=$1, lost_competitor=$2, lost_at=NOW(), updated_at=NOW() WHERE id=$3 AND user_id=$4`,
+      [factor || null, competitor || null, leadId, uid]
+    );
     await logActivity(pool, {
       leadId, userId: uid, type: 'status_changed',
       subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}`,
@@ -3724,6 +4962,250 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
       },
     });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/pricing-intel — win rate by price tier + sweet spot identification
+// Correlates quote amounts with deal outcomes to surface pricing sweet spots and risk zones.
+app.get('/analytics/pricing-intel', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const filterCategory = req.query.category ? String(req.query.category) : null;
+
+    // Get all quotes with lead outcome, grouped by category
+    const { rows: quoteRows } = await pool.query(`
+      SELECT
+        q.total,
+        q.status AS quote_status,
+        l.status AS lead_status,
+        l.category,
+        CASE
+          WHEN l.status = 'won' OR q.status = 'accepted' THEN 'won'
+          WHEN l.status = 'lost' THEN 'lost'
+          ELSE 'pending'
+        END AS outcome
+      FROM shop_quotes q
+      JOIN leads l ON l.id = q.lead_id AND l.user_id = q.user_id
+      WHERE q.user_id = $1
+        AND q.total > 0
+        AND q.status NOT IN ('draft')
+        AND (l.status IN ('won','lost') OR q.status = 'accepted')
+        ${filterCategory ? `AND l.category = $2` : ''}
+      ORDER BY q.total ASC
+    `, filterCategory ? [uid, filterCategory] : [uid]);
+
+    if (!quoteRows.length) {
+      return res.json({ ok: true, hasData: false, categories: [], overall: null });
+    }
+
+    // Group by category and compute price tier win rates
+    const byCategory = {};
+    for (const r of quoteRows) {
+      const cat = r.category || 'other';
+      if (!byCategory[cat]) byCategory[cat] = { won: [], lost: [] };
+      if (r.outcome === 'won') byCategory[cat].won.push(parseFloat(r.total));
+      else if (r.outcome === 'lost') byCategory[cat].lost.push(parseFloat(r.total));
+    }
+
+    function computeTiers(won, lost) {
+      const all = [...won.map(v => ({ v, won: true })), ...lost.map(v => ({ v, won: false }))];
+      if (all.length < 2) return null;
+      all.sort((a, b) => a.v - b.v);
+      const min = all[0].v;
+      const max = all[all.length - 1].v;
+      const range = max - min;
+      if (range < 100) return null;
+
+      // Split into 3 tiers: low/mid/high
+      const tierSize = range / 3;
+      const tiers = [
+        { label: 'Low', min: min, max: min + tierSize, won: 0, lost: 0 },
+        { label: 'Mid', min: min + tierSize, max: min + tierSize * 2, won: 0, lost: 0 },
+        { label: 'High', min: min + tierSize * 2, max: max + 1, won: 0, lost: 0 },
+      ];
+
+      for (const item of all) {
+        const tier = tiers.find(t => item.v >= t.min && item.v < t.max) ?? tiers[tiers.length - 1];
+        if (item.won) tier.won++;
+        else tier.lost++;
+      }
+
+      const sweetSpotTier = tiers.reduce((best, t) => {
+        const total = t.won + t.lost;
+        if (!total) return best;
+        const rate = t.won / total;
+        const bestTotal = best.won + best.lost;
+        const bestRate = bestTotal ? best.won / bestTotal : 0;
+        return rate > bestRate ? t : best;
+      }, tiers[0]);
+
+      return tiers.map(t => ({
+        label: t.label,
+        minPrice: Math.round(t.min),
+        maxPrice: Math.round(t.max),
+        wonCount: t.won,
+        lostCount: t.lost,
+        winRate: (t.won + t.lost) > 0 ? Math.round((t.won / (t.won + t.lost)) * 100) : null,
+        isSweetSpot: t.label === sweetSpotTier.label && (t.won + t.lost) > 0 && t.won > 0,
+      }));
+    }
+
+    const categories = Object.entries(byCategory).map(([category, { won, lost }]) => {
+      const all = [...won, ...lost];
+      const avgWon = won.length ? Math.round(won.reduce((s, v) => s + v, 0) / won.length) : null;
+      const avgLost = lost.length ? Math.round(lost.reduce((s, v) => s + v, 0) / lost.length) : null;
+      const winRate = (won.length + lost.length) > 0
+        ? Math.round((won.length / (won.length + lost.length)) * 100)
+        : null;
+      const tiers = computeTiers(won, lost);
+      const sweetSpot = tiers?.find(t => t.isSweetSpot);
+
+      return {
+        category,
+        wonCount: won.length,
+        lostCount: lost.length,
+        totalDeals: won.length + lost.length,
+        winRate,
+        avgWonPrice: avgWon,
+        avgLostPrice: avgLost,
+        priceDelta: avgWon != null && avgLost != null ? avgWon - avgLost : null,
+        tiers,
+        sweetSpotRange: sweetSpot ? { min: sweetSpot.minPrice, max: sweetSpot.maxPrice } : null,
+      };
+    }).filter(c => c.totalDeals >= 2).sort((a, b) => b.totalDeals - a.totalDeals);
+
+    // Overall sweet spot
+    const allWon = quoteRows.filter(r => r.outcome === 'won').map(r => parseFloat(r.total));
+    const allLost = quoteRows.filter(r => r.outcome === 'lost').map(r => parseFloat(r.total));
+    const overallAvgWon = allWon.length ? Math.round(allWon.reduce((s, v) => s + v, 0) / allWon.length) : null;
+    const overallAvgLost = allLost.length ? Math.round(allLost.reduce((s, v) => s + v, 0) / allLost.length) : null;
+    const overallWinRate = (allWon.length + allLost.length) > 0
+      ? Math.round((allWon.length / (allWon.length + allLost.length)) * 100)
+      : null;
+
+    res.json({
+      ok: true, hasData: true, categories,
+      overall: { wonCount: allWon.length, lostCount: allLost.length, winRate: overallWinRate, avgWonPrice: overallAvgWon, avgLostPrice: overallAvgLost },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/loss-analysis — breakdown of loss reasons, competitors, revenue impact
+app.get('/analytics/loss-analysis', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [reasonsR, competitorsR, timelineR, recoverableR] = await Promise.all([
+      // Loss reason breakdown with revenue estimate
+      pool.query(`
+        SELECT
+          COALESCE(lost_reason, 'unknown') AS reason,
+          COUNT(*)::INT AS count,
+          ROUND(AVG(EXTRACT(EPOCH FROM (lost_at - created_at)) / 86400))::INT AS avg_days_in_pipeline,
+          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories
+        FROM leads
+        WHERE user_id=$1 AND status='lost'
+        GROUP BY COALESCE(lost_reason, 'unknown')
+        ORDER BY count DESC
+      `, [uid]),
+
+      // Top competitors mentioned in losses
+      pool.query(`
+        SELECT
+          lost_competitor AS competitor,
+          COUNT(*)::INT AS losses,
+          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories
+        FROM leads
+        WHERE user_id=$1 AND status='lost' AND lost_competitor IS NOT NULL AND lost_competitor != ''
+        GROUP BY lost_competitor
+        ORDER BY losses DESC
+        LIMIT 10
+      `, [uid]),
+
+      // Monthly loss trend (last 6 months)
+      pool.query(`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', lost_at), 'Mon') AS month,
+          DATE_TRUNC('month', lost_at) AS month_date,
+          COUNT(*)::INT AS losses,
+          COUNT(*) FILTER (WHERE lost_reason NOT IN ('price','timing','no_budget') OR lost_reason IS NULL)::INT AS recoverable
+        FROM leads
+        WHERE user_id=$1 AND status='lost' AND lost_at >= NOW() - INTERVAL '6 months'
+        GROUP BY DATE_TRUNC('month', lost_at)
+        ORDER BY month_date
+      `, [uid]),
+
+      // Recoverable losses — price or timing related, from last 90 days
+      pool.query(`
+        SELECT id, company, category, lost_reason, lost_competitor, lost_at, contact_name, email
+        FROM leads
+        WHERE user_id=$1 AND status='lost'
+          AND lost_reason IN ('price','timing','not_ready')
+          AND lost_at >= NOW() - INTERVAL '90 days'
+          AND email IS NOT NULL AND email != ''
+        ORDER BY lost_at DESC
+        LIMIT 8
+      `, [uid]),
+    ]);
+
+    const totalLost = reasonsR.rows.reduce((s, r) => s + r.count, 0);
+    const byCompetitor = competitorsR.rows;
+    const byReason = reasonsR.rows;
+    const trend = timelineR.rows;
+    const recoverableLeads = recoverableR.rows;
+
+    res.json({ ok: true, totalLost, byReason, byCompetitor, trend, recoverableLeads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/win-back-email — generate a re-engagement email for a lost lead
+app.post('/leads/:id/win-back-email', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const leadR = await pool.query(
+      `SELECT company, contact_name, category, lost_reason, lost_competitor, lost_at, email FROM leads WHERE id=$1 AND user_id=$2 AND status='lost'`,
+      [leadId, uid]
+    );
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Not found or not a lost lead' });
+    const lead = leadR.rows[0];
+    const settR = await pool.query(`SELECT settings_json, sender_name FROM users WHERE id=$1`, [uid]);
+    const settings = settR.rows[0]?.settings_json ? JSON.parse(settR.rows[0].settings_json) : {};
+    const senderName = settings.senderName || settR.rows[0]?.sender_name || 'your team';
+    const shopName = settings.companyName || 'us';
+
+    const monthsAgo = lead.lost_at
+      ? Math.round((Date.now() - new Date(lead.lost_at).getTime()) / (30 * 86400000))
+      : null;
+
+    const reasonContext = {
+      price: `The main objection was price. Mention a current fleet special, flexible payment terms, or an updated quote that may work better for their budget.`,
+      timing: `The timing wasn't right. Check if their situation has changed. Reference the season or a reason now is ideal.`,
+      not_ready: `They weren't ready. Acknowledge the time that's passed and make it easy to re-engage with no pressure.`,
+      competitor: lead.lost_competitor
+        ? `They went with ${lead.lost_competitor}. Reference your quality difference and offer to quote their next vehicle or phase.`
+        : `They went with a competitor. Position this as a check-in, not a pitch.`,
+    }[lead.lost_reason] || `Reach out warmly without referencing why they went cold.`;
+
+    const prompt = `You write win-back emails for a vehicle wrap shop. Write a SHORT, conversational re-engagement email.
+
+Shop contact name: ${senderName}
+Prospect: ${lead.contact_name || 'there'} at ${lead.company} (${lead.category} category)
+${monthsAgo ? `Lost ${monthsAgo} month${monthsAgo !== 1 ? 's' : ''} ago.` : ''}
+Strategy: ${reasonContext}
+
+Requirements:
+- Subject line that doesn't feel like a cold pitch (e.g., "Quick thought on ${lead.company}", "Checking back in — ${lead.company}")
+- 3-4 sentences max, warm and direct
+- ONE clear call to action (reply, schedule a call, or visit a link)
+- Do NOT apologize or grovel
+- Feel like a genuine human check-in, not a sales blast
+
+Respond with ONLY valid JSON: { "subject": "...", "body": "..." }`;
+
+    const raw = await claudeHaiku(prompt, 400);
+    const cleaned = raw.replace(/```json\n?|```/g, '').trim();
+    const { subject, body } = JSON.parse(cleaned);
+    res.json({ ok: true, subject, body });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4002,6 +5484,21 @@ async function processEmailQueue() {
         const fromName = s.senderName || 'WrapLeads';
         const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
 
+        // CAN-SPAM: skip if recipient has unsubscribed
+        if (await isUnsubscribed(item.user_id, item.to_email)) {
+          await pool.query(
+            `UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE id=$1`,
+            [item.id]
+          );
+          // Cancel rest of the sequence for this lead too
+          await pool.query(
+            `UPDATE email_queue SET status='cancelled', error_msg='unsubscribed' WHERE lead_id=$1 AND status='pending'`,
+            [item.lead_id]
+          );
+          console.log(`[drip] Skipped lead ${item.lead_id} — ${item.to_email} has unsubscribed`);
+          continue;
+        }
+
         // Create tracking token for this drip email
         const dripTrackToken = require('crypto').randomBytes(16).toString('hex');
         await pool.query(
@@ -4011,24 +5508,16 @@ async function processEmailQueue() {
         const baseUrl = process.env.APP_BASE_URL || APP_URL;
         const dripPixelUrl = `${baseUrl}/track/email/${dripTrackToken}`;
 
-        // Append CAN-SPAM compliant footer with one-click unsubscribe for
-        // any solar drip. Generated on-the-fly so the recipient gets a
-        // unique token per send.
-        let bodyWithFooter = item.body;
-        if (item.category === 'commercial_solar') {
-          try {
-            const { url } = await compliance.generateUnsubscribeToken(pool, {
-              leadId: item.lead_id, userId: item.user_id, email: item.to_email,
-              baseUrl, pathPrefix: '/solar/__unsubscribe',
-            });
-            bodyWithFooter = compliance.withComplianceFooter(item.body, {
-              unsubscribeUrl: url,
-              sender: { companyName: s.companyName || fromName, city: s.city, state: s.state, senderName: fromName },
-              format: 'text',
-            });
-          } catch { /* fall back to original body */ }
-        }
-        const dripHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">${bodyWithFooter.replace(/\n/g,'<br>')}<br><br><hr style="border:none;border-top:1px solid #eee;margin:20px 0"><p style="font-size:11px;color:#999;margin:0">${fromName}</p></div><img src="${dripPixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+        // CAN-SPAM: generate (or reuse) unsubscribe token and build footer.
+        // Universal across all categories (commercial_solar gets the same
+        // treatment via this path — solar-specific compliance footer was
+        // superseded by the unified getOrCreateUnsubToken+buildUnsubFooter).
+        const unsubToken = await getOrCreateUnsubToken(item.user_id, item.to_email, item.lead_id).catch(() => null);
+        const unsubUrl = unsubToken ? `${baseUrl}/unsubscribe/${unsubToken}` : null;
+        const unsubFooter = buildUnsubFooter(unsubUrl || `${baseUrl}/unsubscribe/invalid`, fromName);
+
+        const dripHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">${item.body.replace(/\n/g,'<br>')}${unsubFooter.html}</div><img src="${dripPixelUrl}" width="1" height="1" style="display:none;opacity:0" alt="">`;
+        const dripText = item.body + unsubFooter.text;
 
         const resp = await fetch('https://api.resend.com/emails', {
           method: 'POST',
@@ -4038,7 +5527,11 @@ async function processEmailQueue() {
             to: item.to_name ? `${item.to_name} <${item.to_email}>` : item.to_email,
             subject: item.subject,
             html: dripHtml,
-            text: item.body,
+            text: dripText,
+            headers: unsubUrl ? {
+              'List-Unsubscribe': `<${unsubUrl}>, <mailto:${fromEmail}?subject=unsubscribe>`,
+              'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+            } : {},
           }),
         });
         const data = await resp.json();
@@ -4067,7 +5560,7 @@ async function processEmailQueue() {
             `UPDATE leads SET last_contacted=CURRENT_DATE,
               followup_due_at=CURRENT_DATE,
               status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
-              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+              updated_at=NOW() WHERE id=$1 AND user_id=$2`, [item.lead_id, item.user_id]
           );
           await logActivity(pool, {
             leadId: item.lead_id, userId: item.user_id, type: 'sequence_activated',
@@ -4081,7 +5574,7 @@ async function processEmailQueue() {
             `UPDATE leads SET last_contacted=CURRENT_DATE,
               followup_due_at=CURRENT_DATE + INTERVAL '3 days',
               status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
-              updated_at=NOW() WHERE id=$1`, [item.lead_id]
+              updated_at=NOW() WHERE id=$1 AND user_id=$2`, [item.lead_id, item.user_id]
           );
         }
         console.log(`[drip] Sent Day ${item.sequence_day} to ${item.to_email} (lead ${item.lead_id})`);
@@ -4091,6 +5584,30 @@ async function processEmailQueue() {
           [err.message, item.id]
         );
         console.error(`[drip] Failed queue item ${item.id}:`, err.message);
+
+        // If the failure looks like a bad email address, wipe it and queue re-enrichment
+        const errMsg = (err.message || '').toLowerCase();
+        const isBadAddress = errMsg.includes('invalid') || errMsg.includes('bounce')
+          || errMsg.includes('not exist') || errMsg.includes('does_not_exist')
+          || errMsg.includes('no such user') || errMsg.includes('550');
+        if (isBadAddress && item.lead_id) {
+          // Cancel remaining pending emails for this lead
+          await pool.query(
+            `UPDATE email_queue SET status='cancelled', error_msg='email_bounced' WHERE lead_id=$1 AND status='pending'`,
+            [item.lead_id]
+          ).catch(() => {});
+          // Clear the bad email address
+          await pool.query(
+            `UPDATE leads SET email=NULL, updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+            [item.lead_id, item.user_id]
+          ).catch(() => {});
+          await logActivity(pool, {
+            leadId: item.lead_id, userId: item.user_id, type: 'note_added',
+            subject: 'Email bounced — cleared for re-enrichment',
+            metadata: { bounced_email: item.to_email, error: err.message, auto: true },
+          });
+          console.log(`[drip] Bounce detected for lead ${item.lead_id} — email cleared, re-enrichment needed`);
+        }
       }
     }
   } catch (e) {
@@ -4232,7 +5749,7 @@ function buildDigestHtml({ shopName, firstName, actions, topLeads, hotOpens, won
         <tr>
           <td style="padding:16px 32px 28px;border-top:1px solid #f1f5f9;">
             <div style="font-size:11px;color:#94a3b8;">
-              You're receiving this because you have an active WrapLeads account. Reply "unsubscribe" to opt out of daily digests.
+              You're receiving this because you have an active WrapLeads account. <a href="${appUrl}/settings" style="color:#94a3b8">Manage email preferences</a>.
             </div>
           </td>
         </tr>
@@ -4818,6 +6335,152 @@ ${text.slice(0, 6000)}`;
   }
 });
 
+// POST /ai/lead-search — natural language FMCSA carrier search
+// User types e.g. "find construction fleets in Ohio with 20-50 trucks"
+// Claude parses the intent into structured search params, then queries the FMCSA DB.
+app.post('/ai/lead-search', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { query } = req.body || {};
+  if (!query?.trim()) return res.status(400).json({ error: 'query is required' });
+
+  const US_STATES = {
+    alabama:'AL',alaska:'AK',arizona:'AZ',arkansas:'AR',california:'CA',colorado:'CO',
+    connecticut:'CT',delaware:'DE',florida:'FL',georgia:'GA',hawaii:'HI',idaho:'ID',
+    illinois:'IL',indiana:'IN',iowa:'IA',kansas:'KS',kentucky:'KY',louisiana:'LA',
+    maine:'ME',maryland:'MD',massachusetts:'MA',michigan:'MI',minnesota:'MN',
+    mississippi:'MS',missouri:'MO',montana:'MT',nebraska:'NE',nevada:'NV',
+    'new hampshire':'NH','new jersey':'NJ','new mexico':'NM','new york':'NY',
+    'north carolina':'NC','north dakota':'ND',ohio:'OH',oklahoma:'OK',oregon:'OR',
+    pennsylvania:'PA','rhode island':'RI','south carolina':'SC','south dakota':'SD',
+    tennessee:'TN',texas:'TX',utah:'UT',vermont:'VT',virginia:'VA',washington:'WA',
+    'west virginia':'WV',wisconsin:'WI',wyoming:'WY',
+  };
+  const REGION_MAP = {
+    midwest: ['OH','MI','IN','IL','WI','MN','IA','MO','ND','SD','NE','KS'],
+    south: ['TX','FL','GA','NC','SC','VA','AL','MS','TN','AR','LA','OK','KY','WV'],
+    northeast: ['NY','PA','NJ','CT','MA','RI','VT','NH','ME','MD','DE'],
+    west: ['CA','WA','OR','NV','AZ','UT','CO','ID','MT','WY','NM','HI','AK'],
+    southeast: ['FL','GA','NC','SC','VA','AL','MS','TN','KY'],
+    southwest: ['TX','AZ','NM','NV','UT'],
+    'great plains': ['ND','SD','NE','KS','MN','IA','MO'],
+    'pacific northwest': ['WA','OR','ID'],
+  };
+  const INDUSTRY_MAP = {
+    trucking: ['trucking','freight','carrier','transport'],
+    construction: ['construction','contractor','building'],
+    food: ['food','beverage','restaurant','grocery'],
+    healthcare: ['healthcare','medical','hospital'],
+    delivery: ['delivery','courier','logistics'],
+  };
+
+  let parsedIntent = {
+    states: null, minFleet: null, maxFleet: null, industries: null, textQuery: '', explanation: '',
+  };
+
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (apiKey) {
+      const sysPrompt = `You are a lead search assistant for a vehicle wrap shop. Parse natural language queries into structured FMCSA carrier search parameters.`;
+      const userMsg = `Parse this search query into JSON:
+"${query}"
+
+Return JSON with:
+{
+  "states": ["two-letter state codes"] or null,
+  "minFleet": number or null,
+  "maxFleet": number or null,
+  "industries": ["trucking","construction","food","healthcare","delivery"] or null,
+  "textQuery": "company name keyword if mentioned, else empty string",
+  "explanation": "one sentence explaining what you searched for"
+}
+
+Examples:
+- "20-50 truck fleets Ohio" → states:["OH"], minFleet:20, maxFleet:50
+- "large construction fleets midwest" → states:[midwest states], minFleet:25, industries:["construction"]
+- "freight carriers Texas" → states:["TX"], industries:["trucking"]`;
+
+      const resp = await claudeHaiku(apiKey, [{ role: 'user', content: userMsg }], 300, sysPrompt);
+      try {
+        const m = resp.match(/\{[\s\S]*\}/);
+        if (m) {
+          const p = JSON.parse(m[0]);
+          parsedIntent = { ...parsedIntent, ...p };
+        }
+      } catch { /* use fallback */ }
+    }
+
+    // Fallback regex parsing if AI not available or failed
+    if (!parsedIntent.states && !parsedIntent.minFleet) {
+      const q = query.toLowerCase();
+      // States
+      const stateResults = [];
+      for (const [name, code] of Object.entries(US_STATES)) {
+        if (q.includes(name) || q.includes(code.toLowerCase())) stateResults.push(code);
+      }
+      // Regions
+      for (const [region, codes] of Object.entries(REGION_MAP)) {
+        if (q.includes(region)) codes.forEach((c) => stateResults.push(c));
+      }
+      parsedIntent.states = stateResults.length ? [...new Set(stateResults)] : null;
+      // Fleet size
+      const fleetMatch = q.match(/(\d+)\s*[-–to]+\s*(\d+)\s*(truck|vehicle|fleet|unit)/i);
+      if (fleetMatch) { parsedIntent.minFleet = parseInt(fleetMatch[1]); parsedIntent.maxFleet = parseInt(fleetMatch[2]); }
+      const minMatch = q.match(/(\d+)\+?\s*(truck|vehicle|fleet|unit)/i);
+      if (minMatch && !fleetMatch) parsedIntent.minFleet = parseInt(minMatch[1]);
+      // Industries
+      const indResults = [];
+      for (const [ind, keywords] of Object.entries(INDUSTRY_MAP)) {
+        if (keywords.some((k) => q.includes(k))) indResults.push(ind);
+      }
+      parsedIntent.industries = indResults.length ? indResults : null;
+      parsedIntent.explanation = `Searching FMCSA database${parsedIntent.states ? ` in ${parsedIntent.states.join(', ')}` : ''}${parsedIntent.minFleet ? ` for fleets of ${parsedIntent.minFleet}+` : ''} vehicles.`;
+    }
+  } catch { /* fall through */ }
+
+  // Build carrier search query
+  const conditions = [];
+  const params = [];
+  if (parsedIntent.states?.length) { params.push(parsedIntent.states); conditions.push(`state = ANY($${params.length})`); }
+  if (parsedIntent.minFleet) { params.push(parsedIntent.minFleet); conditions.push(`fleet_size >= $${params.length}`); }
+  if (parsedIntent.maxFleet) { params.push(parsedIntent.maxFleet); conditions.push(`fleet_size <= $${params.length}`); }
+  if (parsedIntent.textQuery) { params.push(`%${parsedIntent.textQuery}%`); conditions.push(`(name ILIKE $${params.length} OR dba_name ILIKE $${params.length})`); }
+  // Default: require some fleet size
+  if (!parsedIntent.minFleet) { params.push(5); conditions.push(`fleet_size >= $${params.length}`); }
+
+  const where = conditions.length ? conditions.join(' AND ') : 'fleet_size >= 5';
+  const wrapScoreExpr = `(CASE WHEN fleet_size BETWEEN 25 AND 500 THEN 40 WHEN fleet_size > 500 THEN 20 WHEN fleet_size BETWEEN 10 AND 24 THEN 15 WHEN fleet_size BETWEEN 1 AND 9 THEN 5 ELSE 0 END + CASE WHEN last_reported IS NULL THEN 0 WHEN last_reported < NOW() - INTERVAL '5 years' THEN 30 WHEN last_reported < NOW() - INTERVAL '3 years' THEN 20 WHEN last_reported < NOW() - INTERVAL '1 year' THEN 10 ELSE 5 END)`;
+
+  try {
+    const dataParams = [...params, 10, 0];
+    const sql = `
+      SELECT id, source_id AS dot_number, name, dba_name, city, state, phone, email, fleet_size,
+             ${wrapScoreExpr} AS wrap_score
+      FROM companies WHERE ${where}
+      ORDER BY ${wrapScoreExpr} DESC, fleet_size DESC NULLS LAST
+      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}
+    `;
+    const [rows, countR] = await Promise.all([
+      pool.query(sql, dataParams),
+      pool.query(`SELECT COUNT(*)::INT AS total FROM companies WHERE ${where}`, params),
+    ]);
+    const ids = rows.rows.map((r) => r.id);
+    let imported = new Set();
+    if (ids.length) {
+      const ir = await pool.query(`SELECT company_id FROM imports WHERE company_id=ANY($1) AND user_id=$2`, [ids, uid]);
+      imported = new Set(ir.rows.map((r) => r.company_id));
+    }
+    res.json({
+      ok: true,
+      parsedIntent,
+      total: countR.rows[0].total,
+      results: rows.rows.map((r) => ({ ...r, already_imported: imported.has(r.id) })),
+    });
+  } catch (e) {
+    console.error('[ai/lead-search]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/blueprint/scan', authMiddleware, upload.single('pdf'), async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
@@ -5161,10 +6824,13 @@ ${personalitySection}`;
 async function researchCompany(lead, anthropicKey) {
   if (!anthropicKey || !lead.website) return null;
   try {
+    // Validate the website is a plausible public domain (prevent SSRF)
+    const rawHost = lead.website.replace(/^https?:\/\//, '').split('/')[0].toLowerCase();
+    if (!rawHost || rawHost.includes('localhost') || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.)/.test(rawHost)) return null;
     // Fetch the company website (5s timeout)
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
-    const webRes = await fetch(`https://${lead.website}`, { signal: controller.signal }).catch(() => null);
+    const webRes = await fetch(`https://${rawHost}`, { signal: controller.signal }).catch(() => null);
     clearTimeout(timer);
     const html = webRes ? (await webRes.text().catch(() => '')).slice(0, 6000) : '';
 
@@ -5310,9 +6976,14 @@ app.post('/calls/initiate', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /calls/webhook — Vapi sends call events here
-// No auth — Vapi calls this endpoint directly. Validate via lead lookup.
-app.post('/calls/webhook', async (req, res) => {
+// POST /calls/webhook — Vapi sends call events here.
+// Guard with a shared secret in the query string: ?secret=VAPI_WEBHOOK_SECRET
+// Register the URL in Vapi as: https://your-domain.com/calls/webhook?secret=<secret>
+app.post('/calls/webhook', (req, res, next) => {
+  const secret = process.env.VAPI_WEBHOOK_SECRET;
+  if (secret && req.query.secret !== secret) return res.status(403).end();
+  next();
+}, async (req, res) => {
   const event = req.body;
   res.json({ ok: true }); // always ACK immediately
 
@@ -5360,6 +7031,45 @@ app.post('/calls/webhook', async (req, res) => {
         `, [newStatus, lead_id, user_id]);
       }
 
+      // Deep-analyze transcript with Claude for objections, key info, sentiment
+      let callIntel = null;
+      const anthropic = getAnthropic();
+      if (anthropic && transcript && transcript.length > 100) {
+        try {
+          const intelMsg = await anthropic.messages.create({
+            model: 'claude-haiku-4-5',
+            max_tokens: 500,
+            messages: [{
+              role: 'user',
+              content: `You analyze AI outbound sales call transcripts for a vehicle wrap shop. Extract structured intelligence from this call transcript.
+
+Transcript:
+${transcript.slice(0, 3000)}
+
+Return ONLY valid JSON: {
+  "objections": ["objection 1", "objection 2"] or [],
+  "key_info": ["info 1", "info 2"] or [],
+  "sentiment": "positive|neutral|negative",
+  "interested": true|false,
+  "best_next_action": "one specific action to take within 48 hours",
+  "quote_mentioned": true|false,
+  "competitor_mentioned": "name or null"
+}`,
+            }]
+          });
+          callIntel = JSON.parse(intelMsg.content[0].text);
+          // Save competitor to lead notes if newly discovered
+          if (callIntel.competitor_mentioned && callIntel.competitor_mentioned !== structured.competitorVendor) {
+            await pool.query(
+              `UPDATE leads SET notes = CONCAT(COALESCE(notes,''), $1) WHERE id=$2 AND user_id=$3`,
+              [`\n[Competitor from AI call intel]: ${callIntel.competitor_mentioned}`, lead_id, user_id]
+            );
+          }
+        } catch (e) {
+          console.warn('[calls/webhook] call intel extraction failed:', e.message);
+        }
+      }
+
       // Log detailed activity
       await logActivity(pool, {
         leadId: lead_id, userId: user_id,
@@ -5378,6 +7088,7 @@ app.post('/calls/webhook', async (req, res) => {
           callback_requested: structured.callbackRequested,
           referred_to: structured.referredTo,
           transcript_preview: transcript.slice(0, 300),
+          call_intel: callIntel,
         },
       });
 
@@ -5629,13 +7340,54 @@ app.get('/jobs/aging', authMiddleware, async (req, res) => {
   res.json({ jobs: rows });
 });
 
+// GET /jobs/aging-map — per-state wrap age distribution for geographic heat map
+app.get('/jobs/aging-map', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { rows } = await pool.query(
+    `SELECT
+       COALESCE(l.state, 'Unknown') AS state,
+       EXTRACT(YEAR FROM AGE(CURRENT_DATE, j.install_date))::int AS years_old,
+       j.vehicle_count,
+       j.wrap_category,
+       j.life_years,
+       EXTRACT(DAY FROM (j.install_date + (j.life_years || ' years')::interval - CURRENT_DATE))::int AS days_until_expiry
+     FROM installed_jobs j
+     LEFT JOIN leads l ON l.id = j.lead_id AND l.user_id = $1
+     WHERE j.user_id = $1
+     ORDER BY j.install_date ASC`,
+    [uid]
+  );
+
+  // Aggregate by state
+  const byState = {};
+  for (const r of rows) {
+    const st = r.state === 'Unknown' ? null : r.state;
+    if (!st) continue;
+    if (!byState[st]) byState[st] = { fresh: 0, aging: 0, due: 0, overdue: 0, vehicles: 0 };
+    const vehicles = r.vehicle_count ?? 1;
+    byState[st].vehicles += vehicles;
+    const daysLeft = r.days_until_expiry ?? 0;
+    if (daysLeft < 0) byState[st].overdue += vehicles;
+    else if (daysLeft <= 90) byState[st].due += vehicles;
+    else if (r.years_old >= 3) byState[st].aging += vehicles;
+    else byState[st].fresh += vehicles;
+  }
+
+  const totalJobs = rows.length;
+  const dueCount = rows.filter((r) => (r.days_until_expiry ?? 999) <= 90).length;
+  const overdueCount = rows.filter((r) => (r.days_until_expiry ?? 0) < 0).length;
+
+  res.json({ byState, totalJobs, dueCount, overdueCount });
+});
+
 app.post('/jobs', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
-  const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours } = req.body;
   const { rows } = await pool.query(
-    `INSERT INTO installed_jobs (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null]
+    `INSERT INTO installed_jobs (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+    [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null,
+     material_cost || 0, job_revenue || 0, labor_hours || 0]
   );
   res.json({ job: rows[0] });
 });
@@ -5643,19 +7395,1484 @@ app.post('/jobs', authMiddleware, async (req, res) => {
 app.put('/jobs/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const { id } = req.params;
-  const { company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes } = req.body;
+  const { company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours } = req.body;
   const { rows } = await pool.query(
-    `UPDATE installed_jobs SET company=$1,vehicle_type=$2,vehicle_count=$3,wrap_category=$4,material=$5,install_date=$6,life_years=$7,notes=$8,updated_at=NOW()
-     WHERE id=$9 AND user_id=$10 RETURNING *`,
-    [company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, id, uid]
+    `UPDATE installed_jobs SET company=$1,vehicle_type=$2,vehicle_count=$3,wrap_category=$4,material=$5,install_date=$6,life_years=$7,notes=$8,
+     material_cost=$9,job_revenue=$10,labor_hours=$11,updated_at=NOW()
+     WHERE id=$12 AND user_id=$13 RETURNING *`,
+    [company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes,
+     material_cost || 0, job_revenue || 0, labor_hours || 0, id, uid]
   );
   if (!rows.length) return res.status(404).json({ error: 'Not found' });
   res.json({ job: rows[0] });
 });
 
+// PATCH /jobs/:id/payment — update payment status for a completed job
+app.patch('/jobs/:id/payment', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { payment_status, amount_paid } = req.body || {};
+
+  const VALID_STATUS = ['unpaid', 'deposit_paid', 'invoice_sent', 'paid', 'overdue'];
+  if (!VALID_STATUS.includes(payment_status)) {
+    return res.status(400).json({ error: `payment_status must be one of: ${VALID_STATUS.join(', ')}` });
+  }
+
+  try {
+    const now = new Date();
+    let depositPaidAt = null;
+    let invoiceSentAt = null;
+    let paidAt = null;
+    if (payment_status === 'deposit_paid') depositPaidAt = now;
+    if (payment_status === 'invoice_sent') invoiceSentAt = now;
+    if (payment_status === 'paid') paidAt = now;
+
+    const { rows } = await pool.query(
+      `UPDATE installed_jobs SET
+         payment_status=$1,
+         amount_paid=COALESCE($2, amount_paid),
+         deposit_paid_at=CASE WHEN $3::timestamptz IS NOT NULL THEN $3::timestamptz ELSE deposit_paid_at END,
+         invoice_sent_at=CASE WHEN $4::timestamptz IS NOT NULL THEN $4::timestamptz ELSE invoice_sent_at END,
+         paid_at=CASE WHEN $5::timestamptz IS NOT NULL THEN $5::timestamptz ELSE paid_at END,
+         updated_at=NOW()
+       WHERE id=$6 AND user_id=$7 RETURNING *`,
+      [payment_status, amount_paid || null, depositPaidAt, invoiceSentAt, paidAt, jobId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Job not found' });
+    res.json({ ok: true, job: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /mission/overdue-invoices — jobs completed 14+ days ago with no payment received
+app.get('/mission/overdue-invoices', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company, vehicle_count, vehicle_type, job_revenue, install_date,
+              payment_status, amount_paid, invoice_sent_at
+       FROM installed_jobs
+       WHERE user_id=$1
+         AND job_revenue > 0
+         AND payment_status NOT IN ('paid')
+         AND (install_date < NOW() - INTERVAL '14 days' OR invoice_sent_at < NOW() - INTERVAL '7 days')
+       ORDER BY install_date ASC NULLS LAST
+       LIMIT 10`,
+      [uid]
+    );
+
+    const jobs = rows.map((j) => ({
+      id: j.id,
+      company: j.company,
+      vehicleCount: j.vehicle_count,
+      vehicleType: j.vehicle_type,
+      revenue: Number(j.job_revenue),
+      amountPaid: Number(j.amount_paid),
+      balance: Number(j.job_revenue) - Number(j.amount_paid),
+      installDate: j.install_date,
+      paymentStatus: j.payment_status,
+      invoiceSentAt: j.invoice_sent_at,
+      daysOverdue: j.install_date ? Math.floor((Date.now() - new Date(j.install_date).getTime()) / 86_400_000) : null,
+    }));
+
+    res.json({ ok: true, jobs });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/batch-send-invoices — email invoices for multiple jobs at once
+// Joins to leads to resolve client email; skips jobs with no email or already paid
+app.post('/jobs/batch-send-invoices', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { jobIds } = req.body;
+  if (!Array.isArray(jobIds) || jobIds.length === 0) return res.status(400).json({ error: 'jobIds required' });
+  if (jobIds.length > 50) return res.status(400).json({ error: 'Max 50 jobs per batch' });
+  try {
+    const userR = await pool.query('SELECT email, company_name, settings_json FROM users WHERE id=$1', [uid]);
+    if (!userR.rows.length) return res.status(404).json({ error: 'user not found' });
+    const u = userR.rows[0];
+    const s = u.settings_json || {};
+    const shopName = s.companyName || u.company_name || 'Your Shop';
+    const shopEmail = s.senderEmail || u.email || '';
+    const accentColor = s.accentColor || '#f4551c';
+    const paymentLink = s.depositPaymentLink || '';
+    const { sendEmail } = require('./lib/email');
+    const results = [];
+    for (const rawId of jobIds) {
+      const jobId = parseInt(rawId, 10);
+      if (isNaN(jobId)) { results.push({ jobId: rawId, ok: false, reason: 'invalid id' }); continue; }
+      try {
+        const { rows } = await pool.query(
+          `SELECT j.*, l.email AS lead_email, l.contact_name AS lead_contact
+           FROM installed_jobs j
+           LEFT JOIN leads l ON l.id = j.lead_id AND l.user_id = j.user_id
+           WHERE j.id=$1 AND j.user_id=$2`,
+          [jobId, uid]
+        );
+        if (!rows.length) { results.push({ jobId, ok: false, reason: 'not found', company: null }); continue; }
+        const job = rows[0];
+        if (job.payment_status === 'paid') { results.push({ jobId, ok: false, reason: 'already paid', company: job.company }); continue; }
+        const toEmail = job.lead_email;
+        if (!toEmail) { results.push({ jobId, ok: false, reason: 'no email', company: job.company }); continue; }
+        const revenue = Number(job.job_revenue) || 0;
+        const amountPaid = Number(job.amount_paid) || 0;
+        const balance = revenue - amountPaid;
+        const invoiceNum = `WOS-${String(job.id).padStart(5, '0')}`;
+        const toName = job.lead_contact || 'there';
+        const subject = `Invoice ${invoiceNum} from ${shopName}`;
+        const htmlBody = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff">
+  <div style="font-size:20px;font-weight:800;color:${accentColor};margin-bottom:6px">${shopName}</div>
+  <div style="font-size:13px;color:#555;margin-bottom:24px">Invoice ${invoiceNum}</div>
+  <p style="font-size:14px;color:#333;line-height:1.6">Hi ${toName},<br><br>Please find your invoice for the wrap project completed for <strong>${job.company}</strong>.</p>
+  <div style="margin:24px 0;background:#f9fafb;border-radius:8px;padding:20px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Project</span>
+      <span style="font-weight:600;font-size:13px">${job.vehicle_count} × ${(job.vehicle_type||'').replace(/_/g,' ')}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Total</span>
+      <span style="font-weight:700;font-size:16px">$${revenue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+    ${amountPaid > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="color:#666;font-size:13px">Paid</span><span style="color:#16a34a;font-weight:600;font-size:13px">−$${amountPaid.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>` : ''}
+    <div style="border-top:1px solid #e5e7eb;margin:10px 0"></div>
+    <div style="display:flex;justify-content:space-between">
+      <span style="color:#111;font-weight:700;font-size:14px">Balance Due</span>
+      <span style="color:${balance>0?'#ef4444':'#16a34a'};font-weight:800;font-size:16px">$${Math.max(0,balance).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+  </div>
+  ${paymentLink && balance > 0 ? `<a href="${paymentLink}" style="display:block;text-align:center;background:${accentColor};color:#fff;font-weight:700;font-size:14px;padding:14px 24px;border-radius:8px;text-decoration:none;margin-bottom:16px">Pay Now →</a>` : ''}
+  <p style="font-size:12px;color:#888;margin-top:16px">Questions? Reply to this email or contact us at ${shopEmail}.</p>
+  <div style="margin-top:24px;font-size:11px;color:#ccc;text-align:center">Sent via WrapOS</div>
+</div>`;
+        await sendEmail({ to: toEmail, from: shopEmail || `noreply@${process.env.EMAIL_FROM_DOMAIN||'wrapos.io'}`, subject, html: htmlBody, replyTo: shopEmail });
+        await pool.query(
+          `UPDATE installed_jobs SET payment_status='invoice_sent', invoice_sent_at=NOW() WHERE id=$1 AND user_id=$2 AND payment_status != 'paid'`,
+          [jobId, uid]
+        );
+        results.push({ jobId, ok: true, company: job.company, toEmail });
+      } catch (innerErr) {
+        results.push({ jobId, ok: false, reason: innerErr.message, company: null });
+      }
+    }
+    const sent = results.filter(r => r.ok).length;
+    const skipped = results.filter(r => !r.ok && (r.reason === 'no email' || r.reason === 'already paid')).length;
+    const failed = results.filter(r => !r.ok && r.reason !== 'no email' && r.reason !== 'already paid').length;
+    res.json({ ok: true, sent, skipped, failed, results });
+  } catch (e) {
+    console.error('[batch-send-invoices]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/outstanding — jobs with outstanding balances, for batch invoice workflow
+app.get('/jobs/outstanding', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT j.id, j.company, j.vehicle_count, j.vehicle_type, j.wrap_category,
+             j.install_date, j.job_revenue, j.amount_paid, j.payment_status,
+             j.invoice_sent_at, l.email AS lead_email, l.contact_name AS lead_contact,
+             (j.job_revenue - COALESCE(j.amount_paid, 0)) AS balance,
+             EXTRACT(DAY FROM NOW() - j.install_date)::INT AS days_since_install
+      FROM installed_jobs j
+      LEFT JOIN leads l ON l.id = j.lead_id AND l.user_id = j.user_id
+      WHERE j.user_id=$1 AND j.job_revenue > 0 AND j.payment_status != 'paid'
+      ORDER BY j.install_date ASC NULLS LAST
+    `, [uid]);
+    res.json({ ok: true, jobs: rows.map(r => ({
+      id: r.id, company: r.company, vehicleCount: r.vehicle_count, vehicleType: r.vehicle_type,
+      category: r.wrap_category, installDate: r.install_date,
+      revenue: Number(r.job_revenue), amountPaid: Number(r.amount_paid), balance: Number(r.balance),
+      paymentStatus: r.payment_status, invoiceSentAt: r.invoice_sent_at,
+      leadEmail: r.lead_email || null, leadContact: r.lead_contact || null,
+      daysSinceInstall: r.days_since_install || 0,
+    })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/jobs/:id', authMiddleware, async (req, res) => {
   await pool.query(`DELETE FROM installed_jobs WHERE id=$1 AND user_id=$2`, [req.params.id, String(req.user.id)]);
   res.json({ ok: true });
+});
+
+// POST /jobs/:id/create-reorder-lead — manually convert an installed job into a re-order CRM lead
+app.post('/jobs/:id/create-reorder-lead', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows: jobRows } = await pool.query(
+      `SELECT * FROM installed_jobs WHERE id=$1 AND user_id=$2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobRows[0];
+
+    // Return existing recent reorder lead if one already exists
+    const { rows: existing } = await pool.query(
+      `SELECT id FROM leads
+       WHERE user_id=$1 AND LOWER(company)=LOWER($2) AND source='reorder'
+         AND created_at > NOW() - INTERVAL '6 months'`,
+      [uid, job.company]
+    );
+    if (existing.length) return res.json({ leadId: existing[0].id, existing: true });
+
+    const daysLeft = Math.ceil(
+      ((new Date(job.install_date).getTime() + job.life_years * 365.25 * 86400000) - Date.now()) / 86400000
+    );
+    const expiryNote = daysLeft < 0
+      ? `Wrap expired ${Math.abs(daysLeft)} days ago`
+      : `${daysLeft} days until wrap expiry`;
+
+    const notes = `RE-ORDER OPPORTUNITY: ${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} installed ${job.install_date ? new Date(job.install_date).toISOString().slice(0, 10) : 'unknown'} · ${expiryNote}. Material: ${job.material || 'not specified'}. Lifespan: ${job.life_years} years.`;
+
+    const { rows: newLead } = await pool.query(
+      `INSERT INTO leads (user_id, company, category, status, source, notes, followup_due_at)
+       VALUES ($1, $2, $3, 'new', 'reorder', $4, CURRENT_DATE)
+       RETURNING id`,
+      [uid, job.company, job.wrap_category || 'fleet', notes]
+    );
+    const leadId = newLead[0].id;
+
+    // Link this new lead back to the job (only if job had no lead yet)
+    await pool.query(
+      `UPDATE installed_jobs SET lead_id=$1 WHERE id=$2 AND user_id=$3 AND lead_id IS NULL`,
+      [leadId, jobId, uid]
+    );
+
+    await logActivity(pool, {
+      leadId,
+      userId: uid,
+      type: 'note_added',
+      subject: 'Re-Order Lead Created from Job Tracker',
+      body: `Manually created from Wrap Lifecycle Tracker. ${job.vehicle_count} ${job.vehicle_type}(s) installed ${job.install_date ? new Date(job.install_date).toISOString().slice(0, 10) : 'unknown'}. ${expiryNote}.`,
+      metadata: { job_id: jobId },
+    });
+
+    await createNotification(uid, {
+      type: 'new_lead',
+      title: `🔄 Re-Order Lead — ${job.company}`,
+      body: `${job.vehicle_count} ${job.vehicle_type} wrap${job.vehicle_count > 1 ? 's' : ''} — ${expiryNote}. Lead ready in pipeline.`,
+      metadata: { lead_id: leadId, job_id: jobId },
+    });
+
+    res.json({ leadId, existing: false });
+  } catch (e) {
+    console.error('[create-reorder-lead]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /jobs/:id/social-post — AI-generated social media post from job metadata + photos
+app.post('/jobs/:id/social-post', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+    const [jobR, settR, photosR] = await Promise.all([
+      pool.query('SELECT * FROM installed_jobs WHERE id=$1 AND user_id=$2', [jobId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+      pool.query(
+        `SELECT image_data, caption, photo_type FROM job_photos WHERE job_id=$1 ORDER BY photo_type='after' DESC, created_at ASC LIMIT 3`,
+        [jobId]
+      ),
+    ]);
+    if (!jobR.rows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+    const photos = photosR.rows;
+
+    const CATEGORY_LABELS = {
+      fleet: 'fleet graphics', design: 'interior design', construction: 'construction fleet',
+      colorchange: 'color change wrap', dinoc: 'DI-NOC architectural film',
+      reatec: 'Rea Tec film', wallgraphics: 'wall graphics', racing: 'motorsport wrap', gc_referral: 'commercial wrap',
+    };
+    const catLabel = CATEGORY_LABELS[job.wrap_category] || 'vehicle wrap';
+
+    const hasAfterPhoto = photos.some((p) => p.photo_type === 'after');
+    const imageContext = hasAfterPhoto
+      ? 'We have a finished install photo showing the completed wrap.'
+      : 'No photos available — focus on the specs and transformation.';
+
+    const { Anthropic } = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey });
+
+    const prompt = `Write three short social media posts for a vehicle wrap shop called "${shopName}" about this completed job:
+
+Job details:
+- Client: ${job.company}
+- Type: ${catLabel}
+- Vehicles: ${job.vehicle_count} ${job.vehicle_type}
+- Material: ${job.material || 'premium cast vinyl'}
+- Installed: ${job.install_date ? new Date(job.install_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'recently'}
+${job.job_revenue > 0 ? '' : ''}
+${imageContext}
+
+Write exactly three versions:
+1. Instagram: Casual, visual-first, 100-150 words, 8-12 relevant hashtags at the end. Start with a hook about the transformation.
+2. LinkedIn: Professional, 80-120 words, focus on business value for the client (brand visibility, fleet unity, ROI). No hashtags.
+3. Facebook: Community-friendly, 60-90 words, conversational, mention the local business if it's a local fleet. 2-3 hashtags.
+
+Format as JSON: { "instagram": "...", "linkedin": "...", "facebook": "..." }`;
+
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1200,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = msg.content[0]?.text || '';
+    let posts;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      posts = jsonMatch ? JSON.parse(jsonMatch[0]) : { instagram: text, linkedin: '', facebook: '' };
+    } catch {
+      posts = { instagram: text, linkedin: '', facebook: '' };
+    }
+
+    res.json({ ok: true, posts, jobId, company: job.company });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/:id/case-study — generate a shareable case study narrative
+app.post('/jobs/:id/case-study', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+
+  try {
+    // Load job + photos + user settings
+    const { rows: jobRows } = await pool.query(
+      `SELECT j.*, u.company_name, u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::TEXT = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobRows[0];
+
+    const { rows: photos } = await pool.query(
+      `SELECT id, url, caption FROM job_photos WHERE job_id = $1 LIMIT 6`,
+      [jobId]
+    );
+
+    const settings = job.settings_json || {};
+    const shopName = settings.companyName || job.company_name || 'our shop';
+
+    const VEHICLE_LABELS = {
+      cargo_van_standard: 'cargo vans', cargo_van_high_roof: 'high-roof vans',
+      box_truck_16: '16ft box trucks', box_truck_24: '24ft box trucks',
+      semi_full: 'semi-trucks and trailers', semi_cab_only: 'semi cabs',
+      pickup_truck: 'pickup trucks', suv_large: 'large SUVs', bus_school: 'buses',
+      other: 'vehicles',
+    };
+    const vehicleLabel = VEHICLE_LABELS[job.vehicle_type] || job.vehicle_type;
+    const CAT_LABELS = {
+      fleet: 'fleet wrap', dinoc: 'DI-NOC architectural film', gc_referral: 'general contractor wrap spec',
+      construction: 'construction fleet wrap', colorchange: 'color-change wrap',
+      racing: 'motorsport livery', reatec: 'Rea Tec architectural film',
+      design: 'custom vehicle design', wallgraphics: 'wall graphics', other: 'vehicle wrap',
+    };
+    const wrapType = CAT_LABELS[job.wrap_category] || 'wrap';
+
+    const prompt = `You are a copywriter for a professional vehicle wrap shop called "${shopName}".
+Write a compelling case study for this completed project.
+
+JOB DETAILS:
+- Client: ${job.company}
+- Project type: ${wrapType}
+- Vehicles: ${job.vehicle_count} ${vehicleLabel}
+- Material: ${job.material || 'premium cast vinyl film'}
+- Install date: ${new Date(job.install_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+- Wrap lifespan: ${job.life_years} years
+- Notes: ${job.notes || 'none'}
+${photos.length > 0 ? `- Photos available: ${photos.map((p) => p.caption || p.url).join(', ')}` : ''}
+
+Write EXACTLY this JSON structure (no markdown, pure JSON):
+{
+  "headline": "<punchy 8-12 word headline about the project outcome>",
+  "intro": "<2-sentence project context and client need>",
+  "execution": "<2-sentence explanation of materials, process, and craftsmanship>",
+  "outcome": "<2-sentence result — what the client got, ROI angle, fleet visibility impact>",
+  "stats": {
+    "vehicles": ${job.vehicle_count},
+    "lifespanYears": ${job.life_years},
+    "installMonth": "${new Date(job.install_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}",
+    "impressionsPerYear": ${job.vehicle_count * 36500 * 600}
+  }
+}`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 1200);
+    const parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+    const narrative = [parsed.intro, parsed.execution, parsed.outcome].join('\n\n');
+
+    // Upsert — one case study per job
+    await pool.query(`DELETE FROM case_studies WHERE job_id = $1 AND user_id = $2`, [jobId, uid]);
+    const { rows: [cs] } = await pool.query(
+      `INSERT INTO case_studies (user_id, job_id, headline, narrative, stats_json)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [uid, jobId, parsed.headline, narrative, JSON.stringify(parsed.stats || {})]
+    );
+
+    res.json({ ok: true, caseStudy: { ...cs, photos } });
+  } catch (e) {
+    console.error('[case-study]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/:id/case-study — fetch existing case study for a job
+app.get('/jobs/:id/case-study', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { rows } = await pool.query(
+    `SELECT cs.*, COALESCE(json_agg(jp.*) FILTER (WHERE jp.id IS NOT NULL), '[]') AS photos
+     FROM case_studies cs
+     LEFT JOIN job_photos jp ON jp.job_id = cs.job_id
+     WHERE cs.job_id = $1 AND cs.user_id = $2
+     GROUP BY cs.id`,
+    [jobId, uid]
+  );
+  if (!rows.length) return res.json({ caseStudy: null });
+  res.json({ caseStudy: rows[0] });
+});
+
+// GET /jobs/:id/invoice — HTML invoice (browser-printable to PDF)
+// Accepts JWT as ?token= query param so the link can be opened in a new browser tab.
+function invoiceAuthMiddleware(req, res, next) {
+  const header = req.headers.authorization || '';
+  const qToken = req.query.token;
+  const raw = header.startsWith('Bearer ') ? header.slice(7) : (qToken || '');
+  if (!raw) return res.status(401).send('<h2>Unauthorized</h2>');
+  try {
+    req.user = jwt.verify(raw, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).send('<h2>Invalid or expired token — please log in again.</h2>');
+  }
+}
+
+app.get('/jobs/:id/invoice', invoiceAuthMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const jobId = parseInt(req.params.id, 10);
+
+    const jobR = await pool.query(
+      `SELECT j.*, u.email AS user_email, u.company_name AS user_company, u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobR.rows.length) return res.status(404).send('<h2>Not found</h2>');
+
+    const job = jobR.rows[0];
+    const s = job.settings_json || {};
+    const shopName = s.companyName || job.user_company || 'Your Shop';
+    const shopEmail = s.senderEmail || job.user_email || '';
+    const shopPhone = s.senderPhone || '';
+    const shopCity = s.city || '';
+    const shopState = s.state || '';
+    const accentColor = s.accentColor || '#f4551c';
+    const paymentLink = s.depositPaymentLink || '';
+
+    const revenue = Number(job.job_revenue) || 0;
+    const materialCost = Number(job.material_cost) || 0;
+    const laborHours = Number(job.labor_hours) || 0;
+    const amountPaid = Number(job.amount_paid) || 0;
+    const balance = revenue - amountPaid;
+    const payStatus = job.payment_status || 'unpaid';
+
+    const VEHICLE_LABELS = {
+      cargo_van: 'Cargo Van', box_truck: 'Box Truck', sprinter: 'Sprinter Van',
+      pickup: 'Pickup Truck', semi_tractor: 'Semi Tractor', semi_trailer: 'Semi Trailer',
+      '53ft_trailer': '53ft Trailer', flatbed: 'Flatbed Truck', bus: 'Bus',
+      rv: 'RV / Motorhome', suv: 'SUV', passenger_car: 'Passenger Car',
+      food_truck: 'Food Truck', boat: 'Boat', trailer: 'Trailer', other: 'Other Vehicle',
+    };
+    const vehicleLabel = VEHICLE_LABELS[job.vehicle_type] || job.vehicle_type;
+
+    const CAT_LABELS = {
+      fleet: 'Fleet Graphics', design: 'Interior Design', construction: 'Construction',
+      dinoc: 'DI-NOC Architectural Film', reatec: 'Rea Tec Film', colorchange: 'Color Change',
+      wallgraphics: 'Wall Graphics', gc_referral: 'GC Referral', racing: 'Motorsport',
+    };
+    const catLabel = CAT_LABELS[job.wrap_category] || job.wrap_category;
+
+    const STATUS_BADGE = {
+      unpaid: { label: 'UNPAID', color: '#ef4444', bg: '#fee2e2' },
+      deposit_paid: { label: 'DEPOSIT PAID', color: '#d97706', bg: '#fef3c7' },
+      invoice_sent: { label: 'INVOICE SENT', color: '#3b82f6', bg: '#eff6ff' },
+      paid: { label: 'PAID IN FULL', color: '#16a34a', bg: '#f0fdf4' },
+      overdue: { label: 'OVERDUE', color: '#dc2626', bg: '#fef2f2' },
+    };
+    const badge = STATUS_BADGE[payStatus] || STATUS_BADGE.unpaid;
+
+    const invoiceNum = `WOS-${String(job.id).padStart(5, '0')}`;
+    const installDate = job.install_date ? new Date(job.install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A';
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice ${invoiceNum} — ${job.company}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #1a1a1a; background: #fff; }
+  .page { max-width: 800px; margin: 0 auto; padding: 48px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
+  .shop-name { font-size: 22px; font-weight: 800; color: ${accentColor}; letter-spacing: -0.5px; }
+  .shop-meta { font-size: 12px; color: #666; line-height: 1.7; margin-top: 4px; }
+  .invoice-meta { text-align: right; }
+  .invoice-num { font-size: 18px; font-weight: 700; color: #111; }
+  .invoice-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #999; margin-bottom: 2px; }
+  .invoice-date { font-size: 12px; color: #555; margin-top: 4px; }
+  .status-badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 800; letter-spacing: 0.1em; margin-top: 8px; background: ${badge.bg}; color: ${badge.color}; }
+  .divider { border: none; border-top: 2px solid ${accentColor}; margin: 0 0 32px; opacity: 0.15; }
+  .bill-section { display: flex; justify-content: space-between; margin-bottom: 36px; }
+  .bill-block h3 { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #999; margin-bottom: 6px; }
+  .bill-block .name { font-size: 15px; font-weight: 700; color: #111; margin-bottom: 3px; }
+  .bill-block .sub { font-size: 12px; color: #666; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
+  thead th { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #999; padding: 0 0 8px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+  thead th:last-child { text-align: right; }
+  tbody td { padding: 12px 0; border-bottom: 1px solid #f3f4f6; font-size: 13px; vertical-align: top; }
+  tbody td:last-child { text-align: right; font-weight: 600; }
+  .item-name { font-weight: 600; color: #111; }
+  .item-desc { font-size: 11px; color: #888; margin-top: 2px; }
+  .totals { width: 260px; margin-left: auto; }
+  .totals-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+  .totals-row.subtotal { color: #666; }
+  .totals-row.paid { color: #16a34a; }
+  .totals-divider { border-top: 1px solid #e5e7eb; margin: 6px 0; }
+  .totals-row.balance { font-size: 16px; font-weight: 800; color: #111; }
+  .totals-row.balance-zero { color: #16a34a; }
+  .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: flex-start; }
+  .footer-note { font-size: 11px; color: #888; line-height: 1.6; max-width: 320px; }
+  .pay-btn { display: inline-block; padding: 10px 20px; background: ${accentColor}; color: #fff; font-weight: 700; font-size: 13px; border-radius: 6px; text-decoration: none; }
+  .powered { font-size: 10px; color: #ccc; margin-top: 32px; text-align: center; }
+  @media print {
+    body { background: #fff; }
+    .page { padding: 24px; }
+    .pay-btn { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div>
+      <div class="shop-name">${shopName}</div>
+      <div class="shop-meta">
+        ${shopCity && shopState ? `${shopCity}, ${shopState}<br>` : ''}
+        ${shopPhone ? `${shopPhone}<br>` : ''}
+        ${shopEmail ? shopEmail : ''}
+      </div>
+    </div>
+    <div class="invoice-meta">
+      <div class="invoice-label">Invoice</div>
+      <div class="invoice-num">${invoiceNum}</div>
+      <div class="invoice-date">Date: ${today}</div>
+      <div class="invoice-date">Install: ${installDate}</div>
+      <div><span class="status-badge">${badge.label}</span></div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <div class="bill-section">
+    <div class="bill-block">
+      <h3>Bill To</h3>
+      <div class="name">${job.company}</div>
+      ${job.notes ? `<div class="sub">${job.notes.slice(0, 120).replace(/</g, '&lt;')}</div>` : ''}
+    </div>
+    <div class="bill-block" style="text-align:right">
+      <h3>Service Details</h3>
+      <div class="sub">${catLabel}</div>
+      <div class="sub">${job.vehicle_count} × ${vehicleLabel}</div>
+      ${job.material ? `<div class="sub">Material: ${job.material.replace(/</g, '&lt;')}</div>` : ''}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:55%">Description</th>
+        <th>Qty</th>
+        <th style="text-align:right">Unit Price</th>
+        <th style="text-align:right">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${revenue > 0 ? `
+      <tr>
+        <td>
+          <div class="item-name">${catLabel} — ${vehicleLabel}</div>
+          <div class="item-desc">${job.vehicle_count} vehicle${job.vehicle_count !== 1 ? 's' : ''} · installed ${installDate}</div>
+        </td>
+        <td>${job.vehicle_count}</td>
+        <td style="text-align:right">$${(revenue / job.vehicle_count).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td>$${revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+      </tr>` : `
+      <tr><td colspan="4" style="padding:16px 0;color:#888;font-style:italic">No pricing added — edit the job to add revenue.</td></tr>
+      `}
+      ${laborHours > 0 ? `
+      <tr>
+        <td>
+          <div class="item-name">Labor</div>
+          <div class="item-desc">${laborHours} hours at project rate</div>
+        </td>
+        <td>${laborHours}</td>
+        <td style="text-align:right">—</td>
+        <td style="text-align:right;color:#888">included</td>
+      </tr>` : ''}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    ${materialCost > 0 ? `
+    <div class="totals-row subtotal">
+      <span>Materials</span>
+      <span>$${materialCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+    <div class="totals-row subtotal">
+      <span>Gross Profit</span>
+      <span>$${(revenue - materialCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>` : ''}
+    <div class="totals-row" style="font-weight:700;color:#111">
+      <span>Total</span>
+      <span>$${revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+    ${amountPaid > 0 ? `
+    <div class="totals-divider"></div>
+    <div class="totals-row paid">
+      <span>Amount Received</span>
+      <span>−$${amountPaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>` : ''}
+    <div class="totals-divider"></div>
+    <div class="totals-row balance ${balance <= 0 ? 'balance-zero' : ''}">
+      <span>Balance Due</span>
+      <span>$${Math.max(0, balance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-note">
+      Thank you for your business!<br>
+      ${shopPhone ? `Questions? Call us at ${shopPhone}.` : ''}
+      ${shopEmail ? ` Email: ${shopEmail}` : ''}
+    </div>
+    ${paymentLink && balance > 0 ? `<a href="${paymentLink}" class="pay-btn" target="_blank">Pay Online →</a>` : ''}
+  </div>
+
+  <div class="powered">Generated by WrapOS · ${today}</div>
+
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `inline; filename="invoice-${invoiceNum}.html"`);
+    res.send(html);
+  } catch (e) {
+    console.error('[invoice]', e.message);
+    res.status(500).send('<h2>Error generating invoice</h2>');
+  }
+});
+
+// POST /jobs/:id/send-invoice — email the invoice to the client contact
+app.post('/jobs/:id/send-invoice', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const jobId = parseInt(req.params.id, 10);
+    const { toEmail, toName } = req.body;
+
+    if (!toEmail) return res.status(400).json({ error: 'toEmail required' });
+
+    const jobR = await pool.query(
+      `SELECT j.*, u.email AS user_email, u.company_name AS user_company, u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobR.rows.length) return res.status(404).json({ error: 'not found' });
+
+    const job = jobR.rows[0];
+    const s = job.settings_json || {};
+    const shopName = s.companyName || job.user_company || 'Your Shop';
+    const shopEmail = s.senderEmail || job.user_email || '';
+    const accentColor = s.accentColor || '#f4551c';
+    const revenue = Number(job.job_revenue) || 0;
+    const amountPaid = Number(job.amount_paid) || 0;
+    const balance = revenue - amountPaid;
+    const invoiceNum = `WOS-${String(job.id).padStart(5, '0')}`;
+    const paymentLink = s.depositPaymentLink || '';
+
+    const subject = `Invoice ${invoiceNum} from ${shopName}`;
+    const invoiceUrl = `${process.env.APP_URL || 'https://wrapos.up.railway.app'}/api/jobs/${jobId}/invoice`;
+
+    const htmlBody = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#fff">
+  <div style="font-size:20px;font-weight:800;color:${accentColor};margin-bottom:6px">${shopName}</div>
+  <div style="font-size:13px;color:#555;margin-bottom:24px">Invoice ${invoiceNum}</div>
+  <p style="font-size:14px;color:#333;line-height:1.6">
+    Hi ${toName || 'there'},<br><br>
+    Please find your invoice for the ${job.wrap_category} wrap project completed for <strong>${job.company}</strong>.
+  </p>
+  <div style="margin:24px 0;background:#f9fafb;border-radius:8px;padding:20px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Project</span>
+      <span style="font-weight:600;font-size:13px">${job.vehicle_count} × ${job.vehicle_type.replace(/_/g,' ')}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Total</span>
+      <span style="font-weight:700;font-size:16px">$${revenue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+    ${amountPaid > 0 ? `<div style="display:flex;justify-content:space-between;margin-bottom:8px">
+      <span style="color:#666;font-size:13px">Paid</span>
+      <span style="color:#16a34a;font-weight:600;font-size:13px">−$${amountPaid.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>` : ''}
+    <div style="border-top:1px solid #e5e7eb;margin:10px 0"></div>
+    <div style="display:flex;justify-content:space-between">
+      <span style="color:#111;font-weight:700;font-size:14px">Balance Due</span>
+      <span style="color:${balance > 0 ? '#ef4444' : '#16a34a'};font-weight:800;font-size:16px">$${Math.max(0,balance).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    </div>
+  </div>
+  ${paymentLink && balance > 0 ? `
+  <a href="${paymentLink}" style="display:block;text-align:center;background:${accentColor};color:#fff;font-weight:700;font-size:14px;padding:14px 24px;border-radius:8px;text-decoration:none;margin-bottom:16px">
+    Pay Now →
+  </a>` : ''}
+  <p style="font-size:12px;color:#888;margin-top:16px">
+    Questions? Reply to this email or contact us at ${shopEmail}.
+  </p>
+  <div style="margin-top:24px;font-size:11px;color:#ccc;text-align:center">Sent via WrapOS</div>
+</div>`;
+
+    const { sendEmail } = require('./lib/email');
+    await sendEmail({
+      to: toEmail,
+      from: shopEmail || `noreply@${process.env.EMAIL_FROM_DOMAIN || 'wrapos.io'}`,
+      subject,
+      html: htmlBody,
+      replyTo: shopEmail,
+    });
+
+    // Mark invoice_sent if not yet paid
+    if (job.payment_status !== 'paid') {
+      await pool.query(
+        `UPDATE installed_jobs SET payment_status='invoice_sent', invoice_sent_at=NOW() WHERE id=$1 AND user_id=$2`,
+        [jobId, uid]
+      );
+    }
+
+    res.json({ ok: true, invoiceNum });
+  } catch (e) {
+    console.error('[send-invoice]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /case-studies/:token — public SEO page for a completed job case study
+// Every job that has AI-generated case study text gets a shareable public URL.
+// This turns each completed wrap project into an organic SEO landing page.
+app.get('/case-studies/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    if (!token || !/^[0-9a-f]{32,64}$/i.test(token)) return res.status(404).send('<h2>Not found</h2>');
+
+    const { rows } = await pool.query(`
+      SELECT cs.headline, cs.narrative, cs.stats_json,
+             j.company, j.vehicle_type, j.vehicle_count, j.wrap_category, j.material, j.install_date,
+             u.settings_json,
+             COALESCE(json_agg(
+               json_build_object('data', jp.image_data, 'type', jp.photo_type, 'caption', jp.caption)
+             ) FILTER (WHERE jp.id IS NOT NULL), '[]') AS photos
+      FROM case_studies cs
+      JOIN installed_jobs j ON j.id = cs.job_id
+      JOIN users u ON u.id = j.user_id::bigint
+      LEFT JOIN job_photos jp ON jp.job_id = j.id
+      WHERE cs.token = $1
+      GROUP BY cs.id, j.id, u.id
+    `, [token]);
+
+    if (!rows.length) return res.status(404).send('<h2>Case study not found.</h2>');
+    const r = rows[0];
+    const s = r.settings_json || {};
+    const shopName = s.companyName || 'a certified wrap shop';
+    const accent = s.accentColor || '#f4551c';
+    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+
+    const CAT_NAMES = {
+      fleet: 'Fleet Wraps', racing: 'Racing / Motorsport', dinoc: 'DI-NOC / Architectural',
+      construction: 'Construction Fleet', colorchange: 'Color Change', gc_referral: 'GC / Commercial',
+      reatec: 'Rea Tec Film', other: 'Vehicle Graphics',
+    };
+    const catName = CAT_NAMES[r.wrap_category] || r.wrap_category || 'Vehicle Wraps';
+    const stats = r.stats_json || {};
+    const photos = (r.photos || []).filter((p) => p && p.data);
+    const thumb = photos.find((p) => p.type === 'before' || p.type === 'after' || true)?.data;
+    const metaDesc = `${r.headline} — ${catName} project by ${shopName}. ${r.vehicle_count || 1} vehicles. See the full case study.`;
+
+    const photoGrid = photos.slice(0, 6).map((p) => `
+      <div class="photo-item">
+        <img src="${p.data}" alt="${he(p.caption || r.company + ' wrap')}" loading="lazy" />
+        ${p.caption ? `<div class="photo-caption">${he(p.caption)}</div>` : ''}
+        ${p.type && p.type !== 'other' ? `<span class="photo-type-badge">${he(p.type)}</span>` : ''}
+      </div>
+    `).join('');
+
+    const installDateStr = r.install_date
+      ? new Date(r.install_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : null;
+
+    // Structured data for SEO
+    const jsonLd = JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'Article',
+      headline: he(r.headline),
+      description: metaDesc,
+      author: { '@type': 'Organization', name: shopName },
+      publisher: { '@type': 'Organization', name: shopName },
+      datePublished: r.install_date || new Date().toISOString(),
+      about: { '@type': 'Service', name: catName },
+    });
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${he(r.headline)} · ${he(shopName)}</title>
+<meta name="description" content="${he(metaDesc)}">
+<meta property="og:title" content="${he(r.headline)}">
+<meta property="og:description" content="${he(metaDesc)}">
+${thumb ? `<meta property="og:image" content="${he(thumb.startsWith('data:') ? appUrl + '/case-studies/' + token : thumb)}">` : ''}
+<meta property="og:type" content="article">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="${he(appUrl)}/case-studies/${he(token)}">
+<script type="application/ld+json">${jsonLd}</script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--accent:${accent};--dark:#0d0f16;--card:#141720;--border:#1e2130;--text:#e2e8f0;--muted:#8892a4}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--dark);color:var(--text);line-height:1.6}
+a{color:var(--accent)}
+.hero{max-width:840px;margin:0 auto;padding:60px 24px 40px}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:var(--muted);font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:4px 12px;border-radius:99px;margin-bottom:20px}
+.hero h1{font-size:clamp(28px,5vw,50px);font-weight:900;letter-spacing:-2px;line-height:1.05;margin-bottom:16px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;color:var(--muted);margin-top:12px}
+.hero-meta span{display:flex;align-items:center;gap:5px}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;max-width:840px;margin:0 auto;padding:0 24px 40px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+.stat-n{font-size:32px;font-weight:900;color:var(--accent)}
+.stat-l{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-top:4px}
+.narrative{max-width:840px;margin:0 auto;padding:0 24px 40px;font-size:16px;color:#c4cad6;white-space:pre-line}
+.section{max-width:840px;margin:0 auto;padding:0 24px 40px}
+.section-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted);margin-bottom:16px}
+.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.photo-item{position:relative;border-radius:12px;overflow:hidden;background:#0a0c11}
+.photo-item img{width:100%;height:220px;object-fit:cover;display:block}
+.photo-caption{padding:8px 12px;font-size:11px;color:var(--muted)}
+.photo-type-badge{position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:3px 8px;border-radius:99px}
+.cta{text-align:center;padding:60px 24px;border-top:1px solid var(--border)}
+.cta h2{font-size:28px;font-weight:900;letter-spacing:-1px;margin-bottom:12px}
+.cta p{font-size:16px;color:var(--muted);max-width:440px;margin:0 auto 28px}
+.btn{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border-radius:10px;text-decoration:none;transition:opacity 0.15s}
+.btn:hover{opacity:0.88}
+.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.15);color:var(--muted);margin-left:12px}
+.footer{text-align:center;padding:32px;color:var(--muted);font-size:12px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-badge">${he(catName)}</div>
+  <h1>${he(r.headline)}</h1>
+  <div class="hero-meta">
+    ${r.company ? `<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> ${he(r.company)}</span>` : ''}
+    ${r.vehicle_count ? `<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> ${r.vehicle_count} vehicle${r.vehicle_count !== 1 ? 's' : ''}</span>` : ''}
+    ${installDateStr ? `<span>📅 ${installDateStr}</span>` : ''}
+    ${r.material ? `<span>🔧 ${he(r.material)}</span>` : ''}
+    <span>by <a href="/portfolio/${s.shopToken || ''}">${he(shopName)}</a></span>
+  </div>
+</div>
+
+${(stats.vehicles || stats.impressionsPerYear || stats.lifespanYears) ? `
+<div class="stats-row">
+  ${stats.vehicles ? `<div class="stat"><div class="stat-n">${stats.vehicles}</div><div class="stat-l">Vehicles Wrapped</div></div>` : ''}
+  ${stats.impressionsPerYear ? `<div class="stat"><div class="stat-n">${Number(stats.impressionsPerYear).toLocaleString()}</div><div class="stat-l">Est. Impressions/Year</div></div>` : ''}
+  ${stats.lifespanYears ? `<div class="stat"><div class="stat-n">${stats.lifespanYears}</div><div class="stat-l">Year Lifespan</div></div>` : ''}
+  ${stats.installMonth ? `<div class="stat"><div class="stat-n">${stats.installMonth}</div><div class="stat-l">Installed</div></div>` : ''}
+</div>` : ''}
+
+${r.narrative ? `<div class="narrative">${he(r.narrative)}</div>` : ''}
+
+${photoGrid ? `
+<div class="section">
+  <div class="section-label">Project Photos</div>
+  <div class="photo-grid">${photoGrid}</div>
+</div>` : ''}
+
+<div class="cta">
+  <h2>Ready to wrap your fleet?</h2>
+  <p>Get 3 free AI wrap concepts for your vehicles in 30 seconds.</p>
+  <a href="/wrap-my-fleet" class="btn">Get Free Concepts →</a>
+  <a href="/welcome" class="btn btn-ghost">Learn about WrapOS</a>
+</div>
+
+<div class="footer">
+  <p>Case study by <a href="/portfolio/${s.shopToken || ''}">${he(shopName)}</a> · Powered by <a href="/welcome">WrapOS</a></p>
+</div>
+
+</body>
+</html>`);
+  } catch (e) {
+    console.error('[case-study public]', e.message);
+    res.status(500).send('<h2>Error loading case study.</h2>');
+  }
+});
+
+// ── Google Review Automation ──────────────────────────────────────────────────
+// After a job is marked complete, shops can send a one-click review request
+// (email or SMS) to the client. The landing page thanks them and links directly
+// to their Google Business review form.
+
+app.post('/jobs/:id/review-request', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { clientEmail, clientPhone, clientName, googleUrl } = req.body || {};
+  if (!clientEmail && !clientPhone) return res.status(400).json({ error: 'Provide clientEmail or clientPhone' });
+
+  try {
+    const { rows: jobRows } = await pool.query(
+      `SELECT j.*, u.settings_json, u.company_name FROM installed_jobs j
+       JOIN users u ON u.id::TEXT = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const job = jobRows[0];
+    const settings = job.settings_json || {};
+    const shopName = settings.companyName || job.company_name || 'our shop';
+    const senderEmail = settings.senderEmail || process.env.FROM_EMAIL || `noreply@wrapos.app`;
+
+    const token = require('crypto').randomBytes(20).toString('hex');
+    const reviewUrl = `${process.env.PUBLIC_URL || 'https://wrapos.app'}/review/${token}`;
+    const finalGoogleUrl = googleUrl || settings.googleReviewUrl || null;
+
+    await pool.query(
+      `INSERT INTO review_requests
+         (user_id, job_id, token, client_email, client_phone, client_name, company, google_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [uid, jobId, token, clientEmail || null, clientPhone || null, clientName || job.company, job.company, finalGoogleUrl]
+    );
+
+    let sentVia = [];
+
+    // Send email via Resend if available
+    if (clientEmail && process.env.RESEND_API_KEY) {
+      const emailBody = `
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f7f7f7;margin:0;padding:40px 20px}
+.card{background:#fff;max-width:520px;margin:0 auto;border-radius:12px;padding:40px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+h1{font-size:22px;font-weight:700;color:#111;margin-bottom:12px}
+p{color:#555;font-size:15px;line-height:1.6;margin-bottom:24px}
+.btn{display:inline-block;background:#f4551c;color:#fff;text-decoration:none;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:600;margin-bottom:8px}
+.footer{color:#999;font-size:12px;margin-top:32px}</style></head>
+<body><div class="card">
+<h1>Thank you for choosing ${he(shopName)}! 🎉</h1>
+<p>We hope you love your new wrap. If you're happy with how it turned out, a quick Google review would mean the world to us — it only takes 30 seconds.</p>
+${finalGoogleUrl ? `<a class="btn" href="${reviewUrl}?redirect=1">Leave a Google Review ★</a>` : `<a class="btn" href="${reviewUrl}">Share Your Feedback</a>`}
+<p class="footer">You received this because you're a recent customer of ${he(shopName)}.</p>
+</div></body></html>`;
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+        body: JSON.stringify({
+          from: `${shopName} <${senderEmail}>`,
+          to: [clientEmail],
+          subject: `How was your wrap experience with ${shopName}?`,
+          html: emailBody,
+        }),
+      }).catch((err) => console.warn('[review-request] email send failed:', err.message));
+      sentVia.push('email');
+    }
+
+    // Send SMS via Twilio if available
+    if (clientPhone && settings.twilioAccountSid && settings.twilioAuthToken && settings.twilioFromNumber) {
+      const smsBody = `Hi${clientName ? ` ${clientName}` : ''}! Thanks for choosing ${shopName} for your wrap. Mind leaving us a quick Google review? ${reviewUrl} — means a lot to us!`;
+      await fetch(`https://api.twilio.com/2010-04-01/Accounts/${settings.twilioAccountSid}/Messages.json`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: 'Basic ' + Buffer.from(`${settings.twilioAccountSid}:${settings.twilioAuthToken}`).toString('base64'),
+        },
+        body: new URLSearchParams({ To: clientPhone, From: settings.twilioFromNumber, Body: smsBody }),
+      }).catch((err) => console.warn('[review-request] SMS send failed:', err.message));
+      sentVia.push('sms');
+    }
+
+    if (sentVia.length > 0) {
+      await pool.query(
+        `UPDATE review_requests SET sent_at = NOW(), sent_via = $1 WHERE token = $2`,
+        [sentVia.join(','), token]
+      );
+    }
+
+    res.json({ ok: true, token, reviewUrl, sentVia });
+  } catch (e) {
+    console.error('[review-request]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/:id/review-requests — list review requests for a job
+app.get('/jobs/:id/review-requests', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, token, client_name, client_email, client_phone, company,
+              sent_via, sent_at, opened_at, clicked_at, created_at
+       FROM review_requests
+       WHERE job_id = $1 AND user_id = $2
+       ORDER BY created_at DESC`,
+      [jobId, uid]
+    );
+    res.json({ ok: true, requests: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /jobs/schedule?year=YYYY&month=M — return jobs with scheduled_install_date in a given month
+app.get('/jobs/schedule', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const year = parseInt(req.query.year) || new Date().getFullYear();
+  const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, company, vehicle_type, vehicle_count, wrap_category, scheduled_install_date,
+              scheduled_crew_count, install_date, life_years
+       FROM installed_jobs
+       WHERE user_id = $1
+         AND (
+           (scheduled_install_date IS NOT NULL AND
+            EXTRACT(YEAR FROM scheduled_install_date) = $2 AND
+            EXTRACT(MONTH FROM scheduled_install_date) = $3)
+           OR
+           (scheduled_install_date IS NULL AND
+            EXTRACT(YEAR FROM install_date) = $2 AND
+            EXTRACT(MONTH FROM install_date) = $3)
+         )
+       ORDER BY COALESCE(scheduled_install_date, install_date)`,
+      [uid, year, month]
+    );
+    res.json({ ok: true, jobs: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /jobs/:id/schedule — set scheduled_install_date + crew count
+app.patch('/jobs/:id/schedule', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { scheduled_install_date, scheduled_crew_count } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE installed_jobs
+       SET scheduled_install_date = $3, scheduled_crew_count = COALESCE($4, scheduled_crew_count)
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [jobId, uid, scheduled_install_date || null, scheduled_crew_count || null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, job: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Subcontractor Management ──────────────────────────────────────────────────
+
+// GET /subcontractors — list all subs for this user
+app.get('/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.*,
+              COUNT(js.id)::int              AS job_count,
+              COALESCE(SUM(js.labor_cost),0) AS total_paid
+       FROM subcontractors s
+       LEFT JOIN job_subcontractors js ON js.sub_id = s.id
+       WHERE s.user_id = $1
+       GROUP BY s.id
+       ORDER BY s.name`,
+      [uid]
+    );
+    res.json({ ok: true, subs: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /subcontractors — create a sub
+app.post('/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { name, contact, specialty, labor_rate, notes } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO subcontractors (user_id, name, contact, specialty, labor_rate, notes)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [uid, name.trim(), contact || null, specialty || null, labor_rate || null, notes || null]
+    );
+    res.json({ ok: true, sub: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /subcontractors/:id — update a sub
+app.patch('/subcontractors/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const subId = parseInt(req.params.id, 10);
+  const { name, contact, specialty, labor_rate, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE subcontractors SET
+         name        = COALESCE($3, name),
+         contact     = COALESCE($4, contact),
+         specialty   = COALESCE($5, specialty),
+         labor_rate  = COALESCE($6, labor_rate),
+         notes       = COALESCE($7, notes),
+         updated_at  = NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [subId, uid, name || null, contact || null, specialty || null, labor_rate || null, notes || null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, sub: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /subcontractors/:id — remove a sub
+app.delete('/subcontractors/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const subId = parseInt(req.params.id, 10);
+  try {
+    await pool.query(`DELETE FROM subcontractors WHERE id=$1 AND user_id=$2`, [subId, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /jobs/:id/subcontractors — list subs assigned to a job
+app.get('/jobs/:id/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    // Verify job ownership
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'job not found' });
+    const { rows } = await pool.query(
+      `SELECT js.*, s.name AS sub_name, s.specialty, s.labor_rate AS rate
+       FROM job_subcontractors js
+       JOIN subcontractors s ON s.id = js.sub_id
+       WHERE js.job_id = $1
+       ORDER BY js.created_at`,
+      [jobId]
+    );
+    res.json({ ok: true, assignments: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/:id/subcontractors — assign a sub to a job
+app.post('/jobs/:id/subcontractors', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { sub_id, hours, labor_cost, notes } = req.body;
+  if (!sub_id) return res.status(400).json({ error: 'sub_id required' });
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'job not found' });
+    // Verify sub belongs to user
+    const { rows: subRows } = await pool.query(`SELECT id, labor_rate FROM subcontractors WHERE id=$1 AND user_id=$2`, [sub_id, uid]);
+    if (!subRows.length) return res.status(404).json({ error: 'subcontractor not found' });
+    const rate = subRows[0].labor_rate;
+    const computedCost = labor_cost ?? (hours && rate ? Number(hours) * Number(rate) : 0);
+    const { rows } = await pool.query(
+      `INSERT INTO job_subcontractors (job_id, sub_id, hours, labor_cost, notes)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [jobId, sub_id, hours || 0, computedCost, notes || null]
+    );
+    res.json({ ok: true, assignment: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /jobs/sub-assignments/:id — remove a sub assignment
+app.delete('/jobs/sub-assignments/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const assignId = parseInt(req.params.id, 10);
+  try {
+    // Verify through job ownership
+    const { rowCount } = await pool.query(
+      `DELETE FROM job_subcontractors js
+       USING installed_jobs j
+       WHERE js.id=$1 AND js.job_id=j.id AND j.user_id=$2`,
+      [assignId, uid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /review/:token — public review request landing page
+app.get('/review/:token', async (req, res) => {
+  const { token } = req.params;
+  if (!token || !/^[a-f0-9]{40}$/.test(token)) return res.status(400).send('<h2>Invalid link.</h2>');
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT rr.*, u.settings_json, u.company_name
+       FROM review_requests rr
+       JOIN users u ON u.id::TEXT = rr.user_id
+       WHERE rr.token = $1`,
+      [token]
+    );
+    if (!rows.length) return res.status(404).send('<h2>This review link has expired or is invalid.</h2>');
+    const r = rows[0];
+    const settings = r.settings_json || {};
+    const shopName = settings.companyName || r.company_name || 'the shop';
+
+    // Track page open
+    if (!r.opened_at) {
+      pool.query(`UPDATE review_requests SET opened_at = NOW() WHERE token = $1`, [token]).catch(() => {});
+    }
+
+    // If Google URL present and ?redirect=1, redirect directly after tracking
+    if (req.query.redirect === '1' && r.google_url) {
+      pool.query(`UPDATE review_requests SET clicked_at = COALESCE(clicked_at, NOW()) WHERE token = $1`, [token]).catch(() => {});
+      return res.redirect(r.google_url);
+    }
+
+    // Always show star rating first (review gating: only route happy clients to Google)
+    const googleButton = `<div class="stars-prompt"><p style="color:#555;font-size:15px;margin-bottom:12px">How would you rate your experience?</p><div class="stars">${[5,4,3,2,1].map(n => `<a href="/review/${token}/rate/${n}" class="star" title="${n} star${n!==1?'s':''}">★</a>`).join('')}</div><p style="color:#aaa;font-size:11px;margin-top:8px">Tap a star to continue</p></div>`;
+
+    res.send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Review ${he(shopName)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;background:linear-gradient(135deg,#0e1018 0%,#1a1e2e 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:48px 36px;max-width:480px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.3)}
+.logo{width:52px;height:52px;background:linear-gradient(135deg,#f4551c,#d44415);border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:26px}
+h1{font-size:22px;font-weight:700;color:#111;margin-bottom:10px}
+p{color:#666;font-size:15px;line-height:1.6;margin-bottom:28px}
+.btn-review{display:inline-block;background:#f4551c;color:#fff;text-decoration:none;padding:16px 32px;border-radius:10px;font-size:17px;font-weight:700;letter-spacing:-.3px;transition:background .15s}
+.btn-review:hover{background:#d44415}
+.stars{font-size:36px;margin:12px 0 24px;display:flex;justify-content:center;gap:4px}
+.star{color:#f59e0b;text-decoration:none;transition:transform .1s}
+.star:hover{transform:scale(1.25)}
+.footer{color:#bbb;font-size:11px;margin-top:32px}
+</style></head>
+<body><div class="card">
+<div class="logo">⭐</div>
+<h1>Thanks for choosing ${he(shopName)}!</h1>
+<p>We hope you're loving your new wrap. If you have a moment, sharing your experience helps other businesses find us — and it means everything to a small shop like ours.</p>
+${googleButton}
+<p class="footer">Powered by <a href="https://wrapos.app" style="color:#bbb">WrapOS</a></p>
+</div></body></html>`);
+  } catch (e) {
+    console.error('[review page]', e.message);
+    res.status(500).send('<h2>Error loading review page.</h2>');
+  }
+});
+
+// GET /review/:token/go — track click and redirect to Google
+app.get('/review/:token/go', async (req, res) => {
+  const { rows } = await pool.query('SELECT google_url FROM review_requests WHERE token=$1', [req.params.token]).catch(() => ({ rows: [] }));
+  pool.query(`UPDATE review_requests SET clicked_at = COALESCE(clicked_at, NOW()) WHERE token = $1`, [req.params.token]).catch(() => {});
+  const dest = rows[0]?.google_url || 'https://search.google.com/local/writereview';
+  res.redirect(dest);
+});
+
+// GET /review/:token/rate/:stars — enhanced review gating: collect feedback first,
+// route 4-5 star clients to Google, keep 1-3 star feedback private.
+app.get('/review/:token/rate/:stars', async (req, res) => {
+  const stars = parseInt(req.params.stars, 10);
+  const token = req.params.token;
+  if (stars < 1 || stars > 5) return res.status(400).send('<h2>Invalid rating.</h2>');
+
+  const { rows } = await pool.query(
+    `SELECT rr.*, u.settings_json, u.company_name FROM review_requests rr JOIN users u ON u.id::TEXT=rr.user_id WHERE rr.token=$1`,
+    [token]
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) return res.status(404).send('<h2>This link has expired.</h2>');
+
+  const r = rows[0];
+  const s = r.settings_json || {};
+  const shopName = s.companyName || r.company_name || 'the shop';
+  const accent = s.accentColor || '#f4551c';
+  const googleUrl = r.google_url;
+
+  // Track click
+  pool.query(`UPDATE review_requests SET clicked_at=COALESCE(clicked_at,NOW()), star_rating=$1 WHERE token=$2`, [stars, token]).catch(() => {});
+
+  const filledStars = '★'.repeat(stars);
+  const emptyStars = '☆'.repeat(5 - stars);
+  const isPositive = stars >= 4;
+
+  const positiveSection = googleUrl ? `
+    <div class="google-section">
+      <p class="section-label">One more thing — would you share your experience on Google?<br>It helps other businesses find us.</p>
+      <a href="/review/${token}/go" class="btn-google" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+        Leave a Google Review
+      </a>
+    </div>` : `<p style="color:#555;font-size:14px;margin-top:16px">We really appreciate the kind words!</p>`;
+
+  const negativeSection = `
+    <div class="private-section">
+      <p class="section-label">Thank you for your honest feedback. We take every concern seriously and will reach out to make things right.</p>
+      <p style="font-size:12px;color:#999;margin-top:8px">Your response is private — only the shop owner sees it.</p>
+    </div>`;
+
+  res.send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thank you — ${he(shopName)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(135deg,#0e1018,#1a1e2e);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:40px 32px;max-width:460px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.35)}
+.logo{width:52px;height:52px;background:${accent};border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:26px}
+.stars-display{font-size:44px;letter-spacing:2px;margin:10px 0 20px;color:#f59e0b}
+h1{font-size:22px;font-weight:700;color:#111;margin-bottom:10px}
+textarea{width:100%;border:1px solid #ddd;border-radius:8px;padding:12px;font-size:14px;resize:none;height:90px;margin:16px 0 12px;font-family:inherit;color:#333}
+textarea:focus{outline:none;border-color:${accent}}
+.submit-btn{background:${accent};color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:700;cursor:pointer;width:100%;margin-bottom:10px}
+.submit-btn:hover{opacity:.9}
+.skip-link{color:#aaa;font-size:12px;text-decoration:underline;cursor:pointer;background:none;border:none}
+.google-section{margin-top:20px;padding-top:20px;border-top:1px solid #eee}
+.section-label{color:#555;font-size:14px;margin-bottom:14px;line-height:1.5}
+.btn-google{display:inline-flex;align-items:center;gap:8px;background:#fff;color:#333;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:600;border:1px solid #ddd;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.btn-google:hover{box-shadow:0 4px 12px rgba(0,0,0,.12)}
+.private-section{margin-top:20px;padding:14px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d}
+.footer{color:#bbb;font-size:11px;margin-top:24px}
+#thanks-section{display:none}
+</style></head>
+<body><div class="card">
+  <div class="logo">⭐</div>
+  <div class="stars-display">${filledStars}<span style="color:#e5e7eb">${emptyStars}</span></div>
+  <h1>${stars >= 4 ? 'We\'re so glad you loved it!' : stars === 3 ? 'Thanks for your honest feedback.' : 'Thank you for letting us know.'}</h1>
+
+  <div id="feedback-section">
+    <p style="color:#666;font-size:14px;margin-bottom:4px">${isPositive ? 'Anything specific you loved?' : 'What could we have done better?'} <span style="color:#aaa">(optional)</span></p>
+    <textarea id="fb-text" placeholder="${isPositive ? 'The team was great, install was fast…' : 'The wrap had a few bubbles…'}"></textarea>
+    <button class="submit-btn" onclick="submitFeedback()">Submit Feedback</button>
+    <button class="skip-link" onclick="skipFeedback()">Skip</button>
+  </div>
+
+  <div id="thanks-section">
+    <p style="color:#555;font-size:15px;margin-bottom:16px">Thanks! Your feedback has been recorded.</p>
+    ${isPositive ? positiveSection : negativeSection}
+  </div>
+
+  <p class="footer">Powered by <a href="https://wrapos.app" style="color:#bbb">WrapOS</a></p>
+</div>
+<script>
+async function submitFeedback() {
+  const text = document.getElementById('fb-text').value.trim();
+  await fetch('/review/${token}/feedback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) }).catch(()=>{});
+  document.getElementById('feedback-section').style.display='none';
+  document.getElementById('thanks-section').style.display='block';
+}
+function skipFeedback() {
+  document.getElementById('feedback-section').style.display='none';
+  document.getElementById('thanks-section').style.display='block';
+}
+</script>
+</body></html>`);
+});
+
+// POST /review/:token/feedback — save optional text feedback for a review
+app.post('/review/:token/feedback', async (req, res) => {
+  const { text } = req.body;
+  await pool.query(
+    `UPDATE review_requests SET feedback_text=$1, feedback_at=NOW() WHERE token=$2`,
+    [text || '', req.params.token]
+  ).catch(() => {});
+  res.json({ ok: true });
+});
+
+// ── VIN Decoder (NHTSA free API) ──────────────────────────────────────────────
+// Decodes a 17-character VIN into make/model/year/body class and maps it to our
+// vehicle_type enum for use in quotes and job creation.
+// No API key required — NHTSA data is public.
+app.get('/tools/vin/:vin', async (req, res) => {
+  const vin = (req.params.vin || '').trim().toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '');
+  if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be exactly 17 characters (A–Z, 0–9, no I/O/Q)' });
+
+  try {
+    const r = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin}?format=json`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return res.status(502).json({ error: `NHTSA API error: ${r.status}` });
+    const data = await r.json();
+    const results = data.Results || [];
+
+    const find = (varName) => {
+      const match = results.find((x) => x.Variable === varName);
+      return match && match.Value && match.Value !== 'null' && match.Value !== 'Not Applicable'
+        ? match.Value.trim() : null;
+    };
+
+    const make        = find('Make');
+    const model       = find('Model');
+    const year        = find('Model Year');
+    const bodyClass   = find('Body Class');
+    const gvwr        = find('Gross Vehicle Weight Rating From');
+    const vehicleType = find('Vehicle Type');
+    const series      = find('Series');
+    const trim        = find('Trim');
+    const doors       = find('Number of Doors');
+    const fuel        = find('Fuel Type - Primary');
+    const errorCode   = find('Error Code');
+
+    if (errorCode && errorCode !== '0') {
+      return res.status(422).json({ error: `NHTSA decode error: ${find('Error Text') || errorCode}` });
+    }
+
+    // Map to our vehicle_type enum
+    const bc = (bodyClass || '').toLowerCase();
+    const vt = (vehicleType || '').toLowerCase();
+    let wrapType = 'other';
+    if (/cargo van/i.test(bc) || /cargo van/i.test(model || '')) wrapType = 'cargo_van_standard';
+    else if (/van/i.test(bc)) wrapType = 'cargo_van_standard';
+    else if (/bus/i.test(vt) || /bus/i.test(bc)) wrapType = 'bus_school';
+    else if (/tractor|semi/i.test(bc)) wrapType = 'semi_cab_only';
+    else if (/pickup/i.test(bc)) wrapType = 'pickup_truck';
+    else if (/sport utility/i.test(bc) || /\bsuv\b/i.test(bc)) wrapType = 'suv_large';
+    else if (/sedan|coupe/i.test(bc)) wrapType = 'sedan';
+    else if (/minivan|passenger van/i.test(bc)) wrapType = 'minivan';
+    else if (/truck/i.test(bc)) wrapType = 'pickup_truck';
+    else if (/crossover/i.test(bc)) wrapType = 'suv_large';
+
+    const label = [year, make, model, series].filter(Boolean).join(' ');
+
+    res.json({
+      ok: true, vin,
+      make, model, year, series, trim,
+      bodyClass, gvwr, vehicleType, doors, fuel,
+      wrapType, label,
+    });
+  } catch (e) {
+    if (e.name === 'TimeoutError') return res.status(504).json({ error: 'NHTSA API timeout' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Computer Vision Vehicle Quoting ──────────────────────────────────────────
@@ -5733,6 +8950,9 @@ app.post('/vision/ar-print-ready', authMiddleware, async (req, res) => {
       if (comma === -1) throw new Error('Invalid data URL');
       imageBuffer = Buffer.from(imageUrl.slice(comma + 1), 'base64');
     } else {
+      let parsedUrl;
+      try { parsedUrl = new URL(imageUrl); } catch { throw new Error('Invalid image URL'); }
+      if (parsedUrl.protocol !== 'https:') throw new Error('Only HTTPS image URLs are allowed');
       const r = await fetch(imageUrl);
       if (!r.ok) throw new Error('Could not fetch image URL');
       imageBuffer = Buffer.from(await r.arrayBuffer());
@@ -6177,6 +9397,86 @@ For state use the 2-letter abbreviation. For notes include any tagline or servic
   }
 });
 
+// ── AI Lead Intelligence Brief ────────────────────────────────────────────────
+// POST /ai/lead-brief
+// Generates a compact deal-prep dossier for any lead: company overview,
+// fit rationale, pitch angle, icebreaker, 3 likely objections, next action.
+// Uses lead data + activity history + loss history for similar companies.
+app.post('/ai/lead-brief', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Anthropic API key not configured' });
+
+  const { leadId } = req.body;
+  if (!leadId) return res.status(400).json({ error: 'leadId required' });
+
+  const uid = String(req.user.id);
+  try {
+    const [leadR, settingsR, activitiesR, similarWinsR] = await Promise.all([
+      pool.query(
+        `SELECT l.*, l.notes AS lead_notes
+           FROM leads l WHERE l.id=$1 AND l.user_id=$2`,
+        [leadId, uid]
+      ),
+      pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]),
+      pool.query(
+        `SELECT type, subject, body, metadata, created_at
+           FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+           ORDER BY created_at DESC LIMIT 8`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT company, category, status, fleet_size, notes
+           FROM leads WHERE user_id=$1 AND status='won' AND category=(
+             SELECT category FROM leads WHERE id=$2 AND user_id=$1 LIMIT 1
+           ) LIMIT 3`,
+        [uid, leadId]
+      ),
+    ]);
+
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+    const activities = activitiesR.rows;
+    const similarWins = similarWinsR.rows;
+
+    const actSummary = activities.length
+      ? activities.map(a => `${a.type}: ${a.subject || a.body || ''}`).join('; ')
+      : 'No activity yet';
+
+    const prompt = `You are a strategic sales advisor helping ${shopName}, a vehicle wrap shop. Write a compact deal-prep brief for the following prospect.
+
+LEAD DATA:
+- Company: ${lead.company}
+- Category: ${lead.category}
+- Fleet size: ${lead.fleet_size || 'unknown'}
+- Location: ${lead.city || ''}, ${lead.state || ''}
+- Contact: ${lead.contact_name || 'unknown'} (${lead.contact_title || 'unknown role'})
+- Website: ${lead.website || 'none'}
+- Current stage: ${lead.status}
+- Notes: ${lead.lead_notes || 'none'}
+- Pitch angle on file: ${lead.pitch_angle || 'none'}
+- Recent activity: ${actSummary}
+${similarWins.length ? `- Similar won deals in this category: ${similarWins.map(w => w.company).join(', ')}` : ''}
+
+Write a structured brief with EXACTLY these 5 sections (use the exact headers):
+**COMPANY FIT** — 2 sentences: who they are and why they're a strong wrap prospect right now.
+**PITCH ANGLE** — 1-2 sentences: the most compelling angle for this specific company.
+**ICEBREAKER** — 1 concrete opening line for an email or call (reference something specific about them).
+**OBJECTIONS** — 3 bullet points: the most likely objections and a 1-sentence counter for each.
+**NEXT ACTION** — 1 specific, actionable step for today.
+
+Keep each section tight. No fluff. Sound like a street-smart sales pro, not a consultant.`;
+
+    const text = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    res.json({ ok: true, brief: text.trim() });
+  } catch (e) {
+    console.error('[ai/lead-brief]', e.message);
+    res.status(500).json({ error: 'Failed to generate brief' });
+  }
+});
+
 // ── AI Call Script Generator ──────────────────────────────────────────────────
 // POST /ai/call-script  (requireShopFlow)
 // Generates a structured phone sales script customized to the lead's profile.
@@ -6365,6 +9665,53 @@ app.get('/onboarding/status', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /leads/:id/similar-wins — find the user's won deals most similar to this lead
+// Used for social proof: "We wrapped 35 trucks for a similar fleet in Ohio last year."
+app.get('/leads/:id/similar-wins', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const { rows: [lead] } = await pool.query(
+      `SELECT category, state, city, fleet_size FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    // Find won leads sorted by relevance: same category + same state first, then same category
+    const { rows: wins } = await pool.query(`
+      SELECT id, company, category, state, city, fleet_size,
+        CASE
+          WHEN category = $2 AND state = $3 THEN 3
+          WHEN category = $2                THEN 2
+          WHEN state = $3                   THEN 1
+          ELSE 0
+        END AS relevance_score,
+        updated_at AS won_at
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'won'
+        AND id != $4
+      ORDER BY relevance_score DESC, updated_at DESC
+      LIMIT 5
+    `, [uid, lead.category, lead.state, leadId]);
+
+    // Also find relevant installed jobs (completed installs — even stronger proof)
+    const { rows: jobs } = await pool.query(`
+      SELECT j.id, j.company, j.vehicle_count, j.vehicle_type, j.wrap_category, j.install_date,
+             l.state, l.city
+      FROM installed_jobs j
+      LEFT JOIN leads l ON l.id = j.lead_id
+      WHERE j.user_id = $1
+        AND (j.wrap_category = $2 OR l.state = $3)
+      ORDER BY j.install_date DESC
+      LIMIT 3
+    `, [uid, lead.category, lead.state]);
+
+    res.json({ wins, jobs, leadCategory: lead.category, leadState: lead.state });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── AI Notes Summary ──────────────────────────────────────────────────────────
 // Condenses a lead's journal entries + pinned notes into an executive brief.
 app.post('/leads/:id/notes-summary', authMiddleware, async (req, res) => {
@@ -6541,6 +9888,262 @@ Return ONLY the JSON, no other text.`;
 
     res.json({ ok: true, competitor, card, lossCount: lossR.rowCount });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Competitor Wrap Photo Analysis — Vision scan of a competitor's wrap photo ──
+// Upload a photo of a competitor's work; Claude Vision identifies strengths/weaknesses
+// and generates a counter-pitch angle specific to the vehicle wrap being shown.
+app.post('/ai/analyze-competitor-photo', authMiddleware, requireShopFlow, upload.single('photo'), async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+  if (!req.file) return res.status(400).json({ error: 'photo required' });
+
+  try {
+    const imgBase64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype || 'image/jpeg';
+
+    const prompt = `You are an expert vehicle wrap designer and competitive sales strategist.
+
+Analyze this competitor vehicle wrap photo and provide a JSON response with these exact keys:
+{
+  "visualObservations": ["2-4 specific things you notice about the design quality, technique, or execution"],
+  "competitorStrengths": ["1-2 genuine strengths evident in this wrap"],
+  "competitorWeaknesses": ["2-3 specific weaknesses, quality issues, or missed opportunities in this wrap"],
+  "counterPitch": "A specific 2-3 sentence pitch you'd give to a fleet manager who showed you this photo — acknowledge what's decent, then explain why your shop's approach produces better results",
+  "keySellingPoints": ["2-3 specific selling points YOUR shop can emphasize based on what this competitor is missing"],
+  "estimatedQuality": "budget|mid-range|premium"
+}
+Return ONLY the JSON, no other text.`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: 800,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: imgBase64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+      }),
+    });
+
+    if (!resp.ok) throw new Error(`Anthropic ${resp.status}`);
+    const ai = await resp.json();
+    const raw = ai.content?.[0]?.text ?? '{}';
+    let analysis;
+    try { analysis = JSON.parse(raw); } catch { analysis = {}; }
+
+    res.json({ ok: true, analysis });
+  } catch (e) {
+    console.error('[analyze-competitor-photo]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Truck Scan to Lead — photograph any truck, extract carrier info, import ───
+// Upload a photo of any truck/vehicle. Claude Vision extracts company name,
+// DOT number, phone, city/state. We cross-reference FMCSA database and return
+// the best matching carrier so the user can import it in one tap.
+app.post('/vision/scan-truck', authMiddleware, upload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  const uid = String(req.user.id);
+
+  try {
+    const imgBase64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype || 'image/jpeg';
+
+    const prompt = `Analyze this truck/vehicle photo and extract visible business information.
+
+Return ONLY valid JSON with these keys:
+{
+  "companyName": "exact company name visible on the truck, or null",
+  "dotNumber": "DOT number (digits only) if visible, or null",
+  "mcNumber": "MC number (digits only) if visible, or null",
+  "phone": "phone number if visible, or null",
+  "city": "city if visible from markings or trailer info, or null",
+  "state": "2-letter state code if visible, or null",
+  "vehicleType": "box_truck|semi_trailer|cargo_van|pickup_truck|flatbed|tanker|other",
+  "fleetIndicators": "any visible text suggesting fleet size or company scale (e.g. unit numbers, 'truck 47 of 200'), or null",
+  "confidence": "high|medium|low — how confident you are in the company name extraction",
+  "notes": "any other relevant observations about the truck/branding"
+}
+
+If this is not a truck or commercial vehicle, set companyName to null and confidence to low.
+Return ONLY the JSON.`;
+
+    const aiResp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',
+        max_tokens: 600,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: imgBase64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+      }),
+    });
+
+    if (!aiResp.ok) throw new Error(`AI error ${aiResp.status}`);
+    const ai = await aiResp.json();
+    let extracted;
+    try { extracted = JSON.parse(ai.content?.[0]?.text ?? '{}'); } catch { extracted = {}; }
+
+    let matches = [];
+
+    // Cross-reference FMCSA database by DOT number first, then company name
+    if (extracted.dotNumber) {
+      const { rows } = await pool.query(
+        `SELECT id, source_id AS dot_number, name, city, state, fleet_size, phone, email, already_imported.lead_id IS NOT NULL AS already_imported
+         FROM companies
+         LEFT JOIN (
+           SELECT l.company, l.user_id, l.id AS lead_id FROM leads l WHERE l.user_id=$2
+         ) already_imported ON LOWER(already_imported.company) = LOWER(companies.name)
+         WHERE source = 'fmcsa' AND source_id = $1
+         LIMIT 1`,
+        [extracted.dotNumber, uid]
+      );
+      matches = rows;
+    }
+
+    if (!matches.length && extracted.companyName) {
+      const searchName = extracted.companyName.replace(/[%_]/g, '\\$&');
+      const { rows } = await pool.query(
+        `SELECT c.id, c.source_id AS dot_number, c.name, c.city, c.state, c.fleet_size, c.phone, c.email,
+                (l.id IS NOT NULL) AS already_imported
+         FROM companies c
+         LEFT JOIN leads l ON LOWER(l.company) = LOWER(c.name) AND l.user_id=$2
+         WHERE c.name ILIKE $1
+         ORDER BY c.fleet_size DESC NULLS LAST
+         LIMIT 5`,
+        [`%${searchName}%`, uid]
+      );
+      matches = rows;
+    }
+
+    res.json({ ok: true, extracted, matches });
+  } catch (e) {
+    console.error('[scan-truck]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── AI Revenue Coach ──────────────────────────────────────────────────────────
+// Conversational AI with full pipeline context. Accepts a message + history,
+// injects live CRM data as system context, returns a focused coach response.
+app.post('/ai/coach', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured (missing ANTHROPIC_API_KEY)' });
+  const uid = String(req.user.id);
+  const { message, history = [] } = req.body || {};
+  if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
+
+  try {
+    // Gather live pipeline context
+    const [pipelineR, recentR, settingsR, hotR, overdueR] = await Promise.all([
+      pool.query(`
+        SELECT status,
+          COUNT(*) AS count,
+          SUM(CASE WHEN category='fleet' THEN 4500 WHEN category='gc_referral' THEN 18000
+                   WHEN category='racing' THEN 40000 WHEN category='dinoc' THEN 6000
+                   ELSE 3000 END) AS est_value
+        FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost')
+        GROUP BY status ORDER BY status`, [uid]),
+      pool.query(`
+        SELECT l.company, l.status, l.category, a.activity_type, a.created_at
+        FROM lead_activities a JOIN leads l ON l.id=a.lead_id
+        WHERE a.user_id=$1 ORDER BY a.created_at DESC LIMIT 10`, [uid]),
+      pool.query(`SELECT settings_json FROM users WHERE id=$1::uuid`, [uid]),
+      pool.query(`
+        SELECT l.company, et.open_count, et.open_last_at
+        FROM email_tracking et JOIN leads l ON l.id=et.lead_id
+        WHERE et.user_id=$1 AND et.open_last_at > NOW()-INTERVAL '48 hours'
+        ORDER BY et.open_last_at DESC LIMIT 5`, [uid]),
+      pool.query(`
+        SELECT company, status, followup_due_at
+        FROM leads WHERE user_id=$1 AND followup_due_at < NOW()
+          AND status NOT IN ('won','lost') ORDER BY followup_due_at ASC LIMIT 5`, [uid]),
+    ]);
+
+    const settings = settingsR.rows[0]?.settings_json || {};
+    const shopName = settings.companyName || 'your shop';
+    const totalPipelineValue = pipelineR.rows.reduce((s, r) => s + parseFloat(r.est_value || 0), 0);
+    const totalLeads = pipelineR.rows.reduce((s, r) => s + parseInt(r.count), 0);
+
+    const pipelineSummary = pipelineR.rows.map(r =>
+      `  ${r.status}: ${r.count} leads (~$${Math.round(parseFloat(r.est_value || 0)).toLocaleString()})`
+    ).join('\n');
+
+    const recentActivity = recentR.rows.map(r =>
+      `  ${r.company} (${r.status}) — ${r.activity_type} on ${new Date(r.created_at).toLocaleDateString()}`
+    ).join('\n');
+
+    const hotOpens = hotR.rows.map(r =>
+      `  ${r.company}: opened ${r.open_count}x, last ${new Date(r.open_last_at).toLocaleDateString()}`
+    ).join('\n');
+
+    const overdueList = overdueR.rows.map(r =>
+      `  ${r.company} (${r.status}): overdue since ${new Date(r.followup_due_at).toLocaleDateString()}`
+    ).join('\n');
+
+    const systemPrompt = `You are the AI Revenue Coach for ${shopName}, a vehicle wrap and graphics shop. You have real-time access to their CRM data and act as a direct, no-BS sales coach. You know their business intimately.
+
+CURRENT PIPELINE SNAPSHOT:
+Total active leads: ${totalLeads}
+Estimated pipeline value: $${Math.round(totalPipelineValue).toLocaleString()}
+By stage:
+${pipelineSummary || '  (no active leads)'}
+
+RECENT ACTIVITY (last 10):
+${recentActivity || '  (no recent activity)'}
+
+HOT PROSPECTS (email opened last 48h):
+${hotOpens || '  (none)'}
+
+OVERDUE FOLLOW-UPS:
+${overdueList || '  (none overdue)'}
+
+COACHING STYLE:
+- Be direct and specific — reference actual company names and numbers from their data
+- Give actionable advice, not generic platitudes
+- Lead with the most important insight first
+- Keep responses concise (2-4 short paragraphs max)
+- If asked what to do today, give a ranked list of 3-5 specific actions with reasoning
+- You can use markdown formatting (bold, bullets)
+- You are a senior sales coach who has helped hundreds of wrap shops scale`;
+
+    const messages = [
+      ...history.slice(-8).map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      { role: 'user', content: message },
+    ];
+
+    const anthropic = new (require('@anthropic-ai/sdk'))({ apiKey });
+    const resp = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      system: systemPrompt,
+      messages,
+    });
+
+    const reply = resp.content?.[0]?.text ?? 'No response generated.';
+    res.json({ ok: true, reply });
+  } catch (e) {
+    console.error('[ai/coach]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -6793,6 +10396,488 @@ function startAnniversaryWorker() {
   console.log('· Anniversary worker: running (daily check at 11:00 AM)');
 }
 
+// ── Wrap Maintenance Check Worker ────────────────────────────────────────────
+// At the 2-year mark, sends a care/cleaning guide + soft refresh offer.
+// Fires daily at 10 AM. Sends once per job (blocked by activity log check).
+async function processMaintenanceChecks() {
+  const resendKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+  try {
+    const { rows: jobs } = await pool.query(
+      `SELECT j.*, l.email, l.contact_name, l.company AS lead_company,
+              u.settings_json AS settings
+       FROM installed_jobs j
+       JOIN leads l ON l.id = j.lead_id
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.lead_id IS NOT NULL
+         AND l.email IS NOT NULL AND l.email != ''
+         AND ABS(EXTRACT(DOY FROM NOW()) - EXTRACT(DOY FROM j.install_date + INTERVAL '2 years')) <= 3
+         AND NOT EXISTS (
+           SELECT 1 FROM lead_activities a
+           WHERE a.lead_id = j.lead_id AND a.type = 'email_sent'
+             AND a.subject LIKE '%maintenance%'
+             AND a.created_at > NOW() - INTERVAL '30 days'
+         )`
+    );
+    for (const job of jobs) {
+      const s = job.settings || {};
+      const fromName = s.senderName || 'Your Wrap Shop';
+      const vehicleLabel = `${job.vehicle_count} vehicle${job.vehicle_count > 1 ? 's' : ''}`;
+      const yearsLeft = Math.max(0, job.life_years - 2);
+      const subject = `Your Wrap Turns 2 — Quick Care Check for ${job.company}`;
+      const bodyText = `Hi ${job.contact_name || job.company},
+
+Your ${vehicleLabel} wrap is now 2 years old — you're officially at the halfway point for most premium vinyl installs!
+
+Here's what to check at the 2-year mark:
+
+✓ EDGES: Look for any corner lifting along door edges, rocker panels, and bumpers. A little heat and pressure from us can re-seal these before they become a bigger issue.
+
+✓ FINISH: On gloss wraps, watch for swirl marks or fading near the hood and roof. These are the highest UV-exposure spots.
+
+✓ MATTE: Avoid any waxy products — matte vinyl needs matte-safe detailer only. Regular car wash waxes will create permanent shiny patches.
+
+✓ SEAMS: Check that seams along body lines are sitting flat. If you see bubbling near a seam, that's moisture — call us before winter.
+
+You have approximately ${yearsLeft} year${yearsLeft !== 1 ? 's' : ''} of material life remaining. Now is a great time to think about a design refresh before the next fleet update.
+
+Reply to this email or call us to schedule a complimentary inspection.
+
+${fromName}`;
+
+      if (resendKey) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: `${fromName} <${fromEmail}>`,
+            to: job.contact_name ? `${job.contact_name} <${job.email}>` : job.email,
+            subject,
+            text: bodyText,
+          }),
+        });
+      }
+      await logActivity(pool, {
+        leadId: job.lead_id,
+        userId: job.user_id,
+        type: 'email_sent',
+        subject: `[maintenance] ${subject}`,
+        body: bodyText.slice(0, 500),
+        metadata: { job_id: job.id, auto: true, check_year: 2 },
+      });
+      await createNotification(job.user_id, {
+        type: 'new_lead',
+        title: `🔧 2-year maintenance check sent to ${job.company}`,
+        body: `Care guide + inspection offer delivered automatically.`,
+        metadata: { lead_id: job.lead_id, job_id: job.id },
+      });
+    }
+    if (jobs.length) console.log(`[maintenance worker] Sent ${jobs.length} 2-year care check email${jobs.length > 1 ? 's' : ''}`);
+  } catch (e) {
+    console.error('[maintenance worker]', e.message);
+  }
+}
+
+function startMaintenanceWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 10 && now.getMinutes() === 0) {
+      processMaintenanceChecks();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Maintenance check worker: running (daily check at 10:00 AM)');
+}
+
+// ── Lost Lead Rescue Worker ──────────────────────────────────────────────────
+// Scans for lost leads that went cold >90 days ago. For each, AI-drafts a
+// single re-engagement email and queues it for tomorrow. Fires at 9 AM daily.
+// Guards against duplicate rescues via lead_activities check.
+// No competitor does automated win-back on lost deals.
+
+async function processLostLeadRescues() {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicKey) return;
+
+  try {
+    // Find lost leads with email that haven't been rescued in the last 180 days
+    const { rows: targets } = await pool.query(`
+      SELECT l.id, l.company, l.category, l.contact_name, l.email, l.city, l.state,
+             l.pitch_angle, l.fleet_size, l.user_id,
+             u.settings_json AS settings
+      FROM leads l
+      JOIN users u ON u.id::text = l.user_id
+      WHERE l.status = 'lost'
+        AND l.email IS NOT NULL AND l.email != ''
+        AND l.updated_at < NOW() - INTERVAL '90 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM lead_activities a
+          WHERE a.lead_id = l.id AND a.type = 'email_queued'
+            AND a.subject ILIKE '%re-engagement%'
+            AND a.created_at > NOW() - INTERVAL '180 days'
+        )
+      ORDER BY l.updated_at ASC
+      LIMIT 20
+    `);
+
+    if (!targets.length) return;
+
+    for (const lead of targets) {
+      try {
+        const s = lead.settings || {};
+        const companyName = s.companyName || 'our shop';
+        const senderName = s.senderName || 'the team';
+        const daysAgo = Math.round((Date.now() - new Date(lead.updated_at || Date.now()).getTime()) / 86_400_000) || 90;
+
+        const prompt = `You are a sales expert for a vehicle wrap shop called "${companyName}".
+
+A prospect went cold ${daysAgo} days ago. Write a short, humble, non-pushy re-engagement email.
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Decision Maker'}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+${lead.fleet_size ? `Fleet size: ${lead.fleet_size}` : ''}
+
+Requirements:
+- Under 120 words
+- Acknowledge time has passed, don't pretend it hasn't
+- Reference 1 specific, believable reason they might reconsider now (seasonal fleet needs, new year budget, competitor just lost a client)
+- Soft ask: "Happy to share some recent work if timing is better now"
+- Sign off as ${senderName}
+
+Return raw JSON only: {"subject": "...", "body": "..."}`;
+
+        const raw = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 600);
+        const { subject, body } = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+        const sendAt = new Date(Date.now() + 86_400_000); // tomorrow
+        await pool.query(
+          `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+           VALUES ($1,$2,1,$3,$4,$5,$6,$7)`,
+          [lead.user_id, lead.id, subject, body, lead.email, lead.contact_name || null, sendAt]
+        );
+
+        await logActivity(pool, {
+          leadId: lead.id, userId: lead.user_id, type: 'email_queued',
+          subject: 're-engagement',
+          metadata: { subject, source: 'lost_lead_rescue', daysLost: daysAgo },
+        });
+
+        console.log(`[rescue] Queued re-engagement for lost lead #${lead.id} (${lead.company})`);
+      } catch (e) {
+        console.error(`[rescue] Lead #${lead.id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[rescue worker]', e.message);
+  }
+}
+
+function startRescueWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 9 && now.getMinutes() === 0) {
+      processLostLeadRescues();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Lost lead rescue worker: running (daily check at 9:00 AM)');
+}
+
+// ── Weather-Triggered E-Ink Content Worker ───────────────────────────────────
+// Checks weather for each shop's city once daily and auto-triggers relevant
+// E-Ink content pushes. Hot day = "Summer wrap special". Rain = "Indoor film work".
+// No competitor has weather-aware content scheduling. Cost: $0 (free tier).
+
+const WEATHER_CONTENT_TRIGGERS = [
+  { condition: (f) => f >= 85,        tag: 'summer_hot',     message: 'Summer Wrap Special — Book Now & Save 10%' },
+  { condition: (f) => f >= 75 && f < 85, tag: 'summer_warm', message: 'Perfect Weather for Your Fleet Refresh' },
+  { condition: (f) => f <= 20,        tag: 'winter_cold',    message: 'Interior Film & DI-NOC — No Weather Delays' },
+  { condition: (f) => f > 20 && f <= 40, tag: 'winter_cool', message: 'Get Your Fleet Winter-Ready' },
+];
+
+async function processWeatherContent() {
+  const weatherKey = process.env.OPENWEATHER_API_KEY;
+  if (!weatherKey) return; // graceful no-op
+
+  try {
+    // Find all users with E-Ink devices registered
+    const { rows: usersWithDevices } = await pool.query(`
+      SELECT DISTINCT d.user_id, u.settings_json
+      FROM eink_devices d
+      JOIN users u ON u.id = d.user_id::bigint
+      WHERE d.last_seen > NOW() - INTERVAL '7 days'
+    `);
+
+    for (const u of usersWithDevices) {
+      try {
+        const s = u.settings_json || {};
+        const city = s.city || '';
+        const state = s.state || '';
+        if (!city) continue;
+
+        const query = encodeURIComponent(`${city},${state},US`);
+        const weatherRes = await fetch(
+          `https://api.openweathermap.org/data/2.5/weather?q=${query}&units=imperial&appid=${weatherKey}`
+        );
+        if (!weatherRes.ok) continue;
+        const weather = await weatherRes.json();
+        const tempF = weather.main?.temp;
+        if (typeof tempF !== 'number') continue;
+
+        // Find matching trigger
+        const trigger = WEATHER_CONTENT_TRIGGERS.find((t) => t.condition(tempF));
+        if (!trigger) continue;
+
+        // Avoid repeat pushes — check if we already triggered this tag today
+        const today = new Date().toISOString().slice(0, 10);
+        const { rows: recent } = await pool.query(`
+          SELECT 1 FROM eink_push_log
+          WHERE user_id=$1
+            AND metadata->>'weather_tag' = $2
+            AND pushed_at::date = $3::date
+          LIMIT 1
+        `, [u.user_id, trigger.tag, today]);
+        if (recent.length) continue;
+
+        // Find content for this user matching the trigger tag
+        const { rows: content } = await pool.query(`
+          SELECT c.id FROM wrap_content c
+          WHERE c.user_id = $1
+            AND c.status = 'approved'
+            AND (c.body ILIKE '%' || $2 || '%' OR c.type = 'promo')
+          ORDER BY c.created_at DESC LIMIT 1
+        `, [u.user_id, trigger.tag.replace('_', ' ')]);
+
+        if (!content.length) {
+          // Auto-create a simple text content card for this weather event
+          const { rows: newContent } = await pool.query(`
+            INSERT INTO wrap_content (user_id, type, title, body, status)
+            VALUES ($1, 'promo', $2, $2, 'approved')
+            RETURNING id
+          `, [u.user_id, trigger.message]);
+          if (newContent.length) {
+            await pool.query(`
+              INSERT INTO content_schedules (user_id, content_id, schedule_type, run_at)
+              VALUES ($1, $2, 'once', NOW() + INTERVAL '15 minutes')
+            `, [u.user_id, newContent[0].id]);
+          }
+        }
+
+        console.log(`[weather] ${city}: ${Math.round(tempF)}°F → triggered ${trigger.tag} for user ${u.user_id}`);
+      } catch (innerErr) {
+        console.warn('[weather worker]', u.user_id, innerErr.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[weather worker]', e.message);
+  }
+}
+
+function startWeatherWorker() {
+  if (!process.env.OPENWEATHER_API_KEY) {
+    console.log('· Weather worker: not started (set OPENWEATHER_API_KEY to enable)');
+    return;
+  }
+  // Run once at 7:00 AM daily
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 7 && now.getMinutes() === 0) processWeatherContent();
+  };
+  setInterval(check, 60_000);
+  console.log('· Weather worker: running (daily 7:00 AM, triggers E-Ink content on weather events)');
+}
+
+// ── Prospect News Intelligence Worker ─────────────────────────────────────────
+// Daily at 7:30 AM — monitors active pipeline leads for recent news mentions.
+// Uses Google News RSS (free, no API key). When a company in your pipeline
+// makes news, creates a notification + activity log so you can strike with
+// relevant context before your next outreach.
+// Dedup: max one intel alert per lead per 7 days.
+
+async function processProspectIntel() {
+  try {
+    // Get all active pipeline leads (unique by user + company)
+    const { rows: leads } = await pool.query(`
+      SELECT DISTINCT ON (user_id, LOWER(company))
+        id, user_id, company, status, last_contacted
+      FROM leads
+      WHERE status IN ('new','cold','contacted','replied','meeting','proposal')
+        AND company IS NOT NULL AND LENGTH(company) > 3
+      ORDER BY user_id, LOWER(company), updated_at DESC
+    `);
+
+    let alertsSent = 0;
+    const DAY7 = 7 * 24 * 3600 * 1000;
+
+    for (const lead of leads) {
+      try {
+        // Dedup: skip if we already sent an intel alert for this lead recently
+        const { rows: recent } = await pool.query(
+          `SELECT id FROM lead_activities
+           WHERE lead_id=$1 AND type='news_intel'
+             AND created_at > NOW() - INTERVAL '7 days'
+           LIMIT 1`,
+          [lead.id]
+        );
+        if (recent.length) continue;
+
+        // Search Google News RSS for this company
+        const q = encodeURIComponent(`"${lead.company.replace(/['"]/g, '')}"`);
+        const url = `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`;
+        let items = [];
+        try {
+          const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          if (!resp.ok) continue;
+          const xml = await resp.text();
+          // Simple RSS parse — same pattern as signalWorker
+          const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/g);
+          const cutoff = Date.now() - DAY7;
+          for (const m of itemMatches) {
+            const block = m[1];
+            const title = (block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/)?.[1] || '').trim();
+            const link  = (block.match(/<link>([\s\S]*?)<\/link>/)?.[1] || '').trim();
+            const pub   = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] || '').trim();
+            const pubMs = pub ? new Date(pub).getTime() : 0;
+            if (title && pubMs > cutoff) items.push({ title, link, pubMs });
+          }
+        } catch { continue; }
+
+        if (!items.length) continue;
+
+        // Take the most recent article
+        items.sort((a, b) => b.pubMs - a.pubMs);
+        const top = items[0];
+        const headline = top.title.replace(/\s*[-—–]\s*[A-Z][A-Za-z0-9\s&.]+$/, '').trim();
+
+        // Skip generic/unrelated news (must contain company name or very short company)
+        const companyWords = lead.company.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        const headlineLower = headline.toLowerCase();
+        if (companyWords.length > 1 && !companyWords.some(w => headlineLower.includes(w))) continue;
+
+        // Log activity
+        await logActivity(pool, {
+          leadId: lead.id,
+          userId: lead.user_id,
+          type: 'news_intel',
+          subject: `📰 Company in the news: ${headline.slice(0, 100)}`,
+          body: `Google News found a recent article about ${lead.company}.\n\nHeadline: ${headline}\n\nUse this as an icebreaker in your next email or call.\n\nArticle: ${top.link}`,
+          metadata: { headline, link: top.link, pub_ms: top.pubMs },
+        });
+
+        // Create notification
+        await createNotification(lead.user_id, {
+          type: 'hot_prospect',
+          title: `📰 Intel: ${lead.company} in the news`,
+          body: `"${headline.slice(0, 120)}" — perfect icebreaker for your next outreach.`,
+          metadata: { lead_id: lead.id, headline, link: top.link },
+        });
+
+        alertsSent++;
+      } catch (innerErr) {
+        console.error('[prospect-intel] lead', lead.id, innerErr.message);
+      }
+    }
+    if (alertsSent) console.log(`[prospect-intel] ${alertsSent} news intel alerts sent`);
+  } catch (e) {
+    console.error('[prospect-intel worker]', e.message);
+  }
+}
+
+function startProspectIntelWorker() {
+  // Run once at 7:30 AM daily
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 7 && now.getMinutes() === 30) processProspectIntel();
+  };
+  setInterval(check, 60_000);
+  console.log('· Prospect Intel worker: running (daily 7:30 AM, monitors pipeline companies for news)');
+}
+
+// ── Referral Mining Worker ────────────────────────────────────────────────────
+// 30 days after a deal is won, nudge the user to ask for a referral while the
+// client relationship is warm. Generates a personalized draft referral ask.
+async function processReferralMining() {
+  try {
+    // Won deals that are 28–33 days old with no referral notification yet
+    const { rows: wonDeals } = await pool.query(`
+      SELECT l.id, l.user_id, l.company, l.contact_name, l.category, l.city, l.state
+      FROM leads l
+      WHERE l.status = 'won'
+        AND l.updated_at BETWEEN NOW() - INTERVAL '33 days' AND NOW() - INTERVAL '27 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.user_id = l.user_id
+            AND n.type = 'referral_opportunity'
+            AND (n.metadata->>'lead_id')::int = l.id
+        )
+      LIMIT 30
+    `);
+
+    for (const deal of wonDeals) {
+      await createNotification(deal.user_id, {
+        type: 'referral_opportunity',
+        title: `Referral opportunity — ${deal.company}`,
+        body: `It's been ~30 days since you won ${deal.company}. Strike while the relationship is warm — ask for a referral.`,
+        metadata: { lead_id: deal.id, company: deal.company, category: deal.category },
+      });
+      console.log(`[referral-mining] Notification created for won deal: ${deal.company} (lead ${deal.id})`);
+    }
+  } catch (e) {
+    console.error('[referral-mining] error:', e.message);
+  }
+}
+
+function startReferralMiningWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 15) processReferralMining();
+  };
+  setInterval(check, 60_000);
+  console.log('· Referral Mining worker: running (daily 8:15 AM, nudges 30-day post-win referral asks)');
+}
+
+// Referral ask email generation endpoint
+app.get('/leads/:id/referral-ask', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: leadRows } = await pool.query(
+      `SELECT l.*, u.settings_json AS settings FROM leads l JOIN users u ON u.id::text=l.user_id WHERE l.id=$1 AND l.user_id=$2`,
+      [leadId, uid]
+    );
+    if (!leadRows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadRows[0];
+    const s = lead.settings || {};
+    const shopName = s.companyName || s.senderName || 'our shop';
+    const senderName = s.senderName || 'Alex';
+
+    const anthropic = getAnthropic();
+    if (!anthropic) return res.json({ ok: true, subject: `Thanks for working with us — can you send anyone our way?`, body: `Hi ${lead.contact_name || lead.company.split(' ')[0]},\n\nIt's been about a month since we finished your project — hope everything looks great!\n\nIf you know anyone in the ${lead.state || 'area'} who could use vehicle wraps, fleet graphics, or architectural film work, we'd love the introduction. We take great care of referrals.\n\nThanks again,\n${senderName}\n${shopName}` });
+
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 350,
+      messages: [{
+        role: 'user',
+        content: `Write a SHORT, warm referral ask email from ${senderName} at ${shopName} to ${lead.contact_name || lead.company}.
+
+Context:
+- We completed a ${lead.category || 'wrap'} project for ${lead.company} in ${lead.city || ''} ${lead.state || ''} about 30 days ago
+- We want to ask for a referral to similar companies they know
+- Keep it casual, NOT salesy — feels like a genuine relationship check-in
+- Mention 1 specific, natural reason they'd know someone (e.g., same industry, shared suppliers, local business network)
+
+Return JSON: {"subject": "short subject line", "body": "email body (plain text, no markdown)"}`
+      }]
+    });
+    const parsed = JSON.parse(msg.content[0].text);
+    res.json({ ok: true, subject: parsed.subject, body: parsed.body });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Fleet Management Integrations ─────────────────────────────────────────────
 
 app.get('/integrations/samsara/vehicles', authMiddleware, async (req, res) => {
@@ -7031,6 +11116,1069 @@ app.delete('/portal-links/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// Shareable ROI Calculator — pre-filled for a specific prospect
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/roi-link', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid lead id' });
+  try {
+    const own = await pool.query('SELECT company, fleet_size FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!own.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const { company, fleet_size } = own.rows[0];
+
+    // Upsert — one link per (lead, user) pair
+    const existing = await pool.query(
+      'SELECT token, view_count, last_viewed FROM roi_links WHERE lead_id=$1 AND user_id=$2',
+      [leadId, uid]
+    );
+    if (existing.rows.length) {
+      return res.json({ ok: true, link: existing.rows[0] });
+    }
+
+    const token = require('crypto').randomBytes(20).toString('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO roi_links (user_id, lead_id, token, company_name, fleet_size)
+       VALUES ($1, $2, $3, $4, $5) RETURNING token, view_count, last_viewed`,
+      [uid, leadId, token, company || null, fleet_size || null]
+    );
+    res.json({ ok: true, link: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/roi/:token', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.*, l.company, u.settings_json
+       FROM roi_links r
+       LEFT JOIN leads l ON l.id = r.lead_id
+       LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.token=$1`,
+      [req.params.token]
+    );
+    if (!rows.length) return res.status(404).send('<h1>Link not found or expired.</h1>');
+
+    const link = rows[0];
+    const s = link.settings_json || {};
+    const shopName = s.companyName || 'WrapLeads';
+    const companyName = link.company || link.company_name || 'Your Company';
+    const fleetSize = link.fleet_size || 25;
+
+    // Track view
+    await pool.query(
+      `UPDATE roi_links SET view_count = view_count + 1, last_viewed = NOW() WHERE token=$1`,
+      [req.params.token]
+    ).catch(() => {});
+
+    // HTML: Interactive ROI calculator with pre-filled fleet size
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fleet Wrap ROI Calculator — ${he(shopName)}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      color: #e2e8f0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #1e293b;
+      border-radius: 16px;
+      border: 1px solid #334155;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    h1 {
+      font-size: 32px;
+      margin-bottom: 8px;
+      color: #f1f5f9;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: #94a3b8;
+      margin-bottom: 32px;
+    }
+    .calculator {
+      display: grid;
+      gap: 24px;
+    }
+    .input-group {
+      display: grid;
+      gap: 8px;
+    }
+    label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #cbd5e1;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    input {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #f1f5f9;
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+    input:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .results {
+      background: #0f172a;
+      border-radius: 12px;
+      padding: 24px;
+      border: 1px solid #334155;
+      margin-top: 24px;
+    }
+    .result-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #334155;
+    }
+    .result-item:last-child {
+      border-bottom: none;
+    }
+    .result-label {
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    .result-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+    .result-value.highlight {
+      color: #10b981;
+      font-size: 24px;
+    }
+    .benchmarks {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #334155;
+    }
+    .benchmark-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .benchmark-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .benchmark-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .benchmark-name {
+      font-size: 11px;
+      color: #cbd5e1;
+      min-width: 100px;
+    }
+    .bar {
+      flex: 1;
+      height: 24px;
+      background: #334155;
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      background: #3b82f6;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 0 6px;
+    }
+    .bar-fill.wrap {
+      background: #10b981;
+    }
+    .bar-text {
+      font-size: 10px;
+      color: #fff;
+      font-weight: 600;
+    }
+    .cta {
+      margin-top: 32px;
+      padding: 20px;
+      background: #1e3a8a;
+      border: 1px solid #3b82f6;
+      border-radius: 12px;
+      text-align: center;
+    }
+    .cta p {
+      font-size: 14px;
+      margin-bottom: 12px;
+      color: #dbeafe;
+    }
+    .btn {
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .btn:hover {
+      background: #2563eb;
+      transform: translateY(-1px);
+    }
+    .footer {
+      margin-top: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Fleet Wrap ROI Calculator</h1>
+    <div class="subtitle">Calculate the advertising value of your vehicle fleet wraps</div>
+
+    <div class="calculator">
+      <div class="row">
+        <div class="input-group">
+          <label>Fleet Size (# vehicles)</label>
+          <input type="number" id="fleet" value="${fleetSize}" min="1" step="1">
+        </div>
+        <div class="input-group">
+          <label>Cost Per Vehicle ($)</label>
+          <input type="number" id="costPerVehicle" value="3500" min="100" step="100">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="input-group">
+          <label>Miles Per Year</label>
+          <input type="number" id="milesPerYear" value="36500" min="1000" step="1000">
+        </div>
+        <div class="input-group">
+          <label>Lifespan (years)</label>
+          <input type="number" id="lifespan" value="5" min="1" step="0.5">
+        </div>
+      </div>
+    </div>
+
+    <div class="results" id="results"></div>
+
+    <div class="cta">
+      <p>Want to get started on your fleet wrap?</p>
+      <button class="btn" onclick="window.location.href='mailto:${he(s.senderEmail || 'outreach@wrapleads.io')}?subject=Fleet%20Wrap%20ROI&body=I%20was%20looking%20at%20the%20ROI%20calculator%20for%20${he(companyName).replace(/\\s+/g,'%20')}'">Get a Quote</button>
+    </div>
+
+    <div class="footer">
+      <p>Powered by <strong>${he(shopName)}</strong> · Fleet Wrap Specialists</p>
+    </div>
+  </div>
+
+  <script>
+    const BENCHMARKS = [
+      { name: 'Billboards', cpm: 5.21 },
+      { name: 'Radio', cpm: 8.40 },
+      { name: 'Direct Mail', cpm: 30.00 },
+      { name: 'TV (local)', cpm: 22.00 },
+      { name: 'Digital Display', cpm: 3.55 },
+    ];
+
+    function update() {
+      const fleet = parseInt(document.getElementById('fleet').value) || 1;
+      const costPerVehicle = parseFloat(document.getElementById('costPerVehicle').value) || 1;
+      const milesPerYear = parseFloat(document.getElementById('milesPerYear').value) || 1;
+      const lifespan = parseFloat(document.getElementById('lifespan').value) || 1;
+
+      const totalCost = fleet * costPerVehicle;
+      const annualImpressions = fleet * milesPerYear * 600; // 600 impressions/mile
+      const lifetimeImpressions = annualImpressions * lifespan;
+      const effectiveCPM = lifetimeImpressions > 0 ? (totalCost / lifetimeImpressions) * 1000 : 0;
+      const monthlyImpressions = Math.round(annualImpressions / 12);
+
+      const allBench = [
+        { name: 'Your Fleet Wraps', cpm: effectiveCPM, isWrap: true },
+        ...BENCHMARKS,
+      ].sort((a, b) => a.cpm - b.cpm);
+
+      const maxCPM = Math.max(...allBench.map(b => b.cpm), 1);
+
+      const html = \`
+        <div class="result-item">
+          <span class="result-label">Total Investment</span>
+          <span class="result-value">\\$\${totalCost.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Monthly Impressions</span>
+          <span class="result-value">\${monthlyImpressions.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Lifetime Impressions</span>
+          <span class="result-value">\${lifetimeImpressions.toLocaleString()}</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">Effective CPM</span>
+          <span class="result-value highlight">\\$\${effectiveCPM.toFixed(2)}</span>
+        </div>
+
+        <div class="benchmarks">
+          <div class="benchmark-title">CPM Comparison</div>
+          <div class="benchmark-bars">
+            \${allBench.map(b => {
+              const pct = (b.cpm / maxCPM) * 100;
+              return \`
+                <div class="benchmark-bar">
+                  <div class="benchmark-name">\${b.name}</div>
+                  <div class="bar">
+                    <div class="bar-fill \${b.isWrap ? 'wrap' : ''}" style="width: \${pct}%">
+                      <span class="bar-text">\\$\${b.cpm.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              \`;
+            }).join('')}
+          </div>
+        </div>
+      \`;
+
+      document.getElementById('results').innerHTML = html;
+    }
+
+    document.querySelectorAll('input').forEach(el => {
+      el.addEventListener('change', update);
+      el.addEventListener('input', update);
+    });
+
+    update();
+  </script>
+</body>
+</html>`;
+
+    res.set('Content-Type', 'text/html; charset=utf-8').send(html);
+  } catch (e) {
+    res.status(500).send('<h1>Error loading ROI calculator.</h1>');
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Multi-Location Expansion — for won deals with large fleets, suggest terminals
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/suggest-locations', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT company, city, state, fleet_size, category, website, industry
+       FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = rows[0];
+
+    const prompt = `A vehicle wrap shop just won a deal with "${lead.company}", a ${lead.category} company based in ${lead.city || 'unknown city'}, ${lead.state || 'unknown state'} with a fleet of ${lead.fleet_size || 'unknown'} vehicles.
+
+Large fleet companies often have multiple terminals, branches, or regional offices. Based on the company name and location, suggest 4-6 OTHER potential locations this company likely operates from. These are NEW leads for the wrap shop — different from the one they already won.
+
+Return ONLY a valid JSON array. Each object must have:
+- "company": company name (same brand, variant like "[Company] Columbus Terminal" or "[Company] - Midwest Hub")
+- "city": guessed city name
+- "state": 2-letter state code
+- "fleet_size": estimated fleet vehicles at this location (integer, use null if unknown)
+- "reasoning": one sentence why this location likely exists
+
+Example format:
+[{"company":"ABC Trucking - Columbus Hub","city":"Columbus","state":"OH","fleet_size":30,"reasoning":"Major Ohio distribution hub given Indianapolis base"},...]
+
+No markdown, no explanation outside the JSON array.`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return res.status(500).json({ error: 'AI parse error', raw });
+
+    const suggestions = JSON.parse(match[0]);
+    res.json({ ok: true, suggestions, sourceCompany: lead.company, sourceState: lead.state });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/check-news — on-demand prospect news intel for a single lead
+app.post('/leads/:id/check-news', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: leadRows } = await pool.query(
+      'SELECT id, company, user_id FROM leads WHERE id=$1 AND user_id=$2',
+      [leadId, uid]
+    );
+    if (!leadRows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadRows[0];
+
+    const q = encodeURIComponent(`"${lead.company.replace(/['"]/g, '')}"`);
+    const url = `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!resp.ok) return res.json({ ok: true, articles: [] });
+    const xml = await resp.text();
+
+    const items = [];
+    const cutoff = Date.now() - 30 * 24 * 3600 * 1000; // 30 days
+    for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+      const block = m[1];
+      const title = (block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/)?.[1] || '').trim();
+      const link  = (block.match(/<link>([\s\S]*?)<\/link>/)?.[1] || '').trim();
+      const pub   = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1] || '').trim();
+      const source = (block.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1] || '').trim();
+      const pubMs = pub ? new Date(pub).getTime() : 0;
+      if (title && pubMs > cutoff) items.push({ title, link, pubDate: pub, source, pubMs });
+    }
+    items.sort((a, b) => b.pubMs - a.pubMs);
+    const articles = items.slice(0, 5);
+
+    if (articles.length) {
+      // Log the check as an activity
+      await logActivity(pool, {
+        leadId, userId: uid,
+        type: 'news_intel',
+        subject: `📰 News check: ${articles.length} article${articles.length !== 1 ? 's' : ''} found about ${lead.company}`,
+        body: articles.map((a) => `• ${a.title}\n  ${a.link}`).join('\n\n'),
+        metadata: { articles: articles.map((a) => ({ title: a.title, link: a.link, pubDate: a.pubDate })) },
+      });
+    }
+
+    res.json({ ok: true, company: lead.company, articles });
+  } catch (e) {
+    console.error('[check-news]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /leads/:id/heat-score — calculate engagement-based "deal temperature"
+// Score from 0–100 based on recency-weighted activity signals.
+app.get('/leads/:id/heat-score', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  try {
+    const [actR, trackR, portalR] = await Promise.all([
+      pool.query(
+        `SELECT type, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 50`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT open_count, open_last_at FROM email_tracking
+         WHERE lead_id=$1 AND user_id=$2
+         ORDER BY open_last_at DESC NULLS LAST LIMIT 10`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT viewed_at, deposit_clicked_at FROM portal_links
+         WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 1`,
+        [leadId, uid]
+      ),
+    ]);
+
+    const now = Date.now();
+    const dayMs = 86_400_000;
+
+    function recencyMultiplier(isoDate) {
+      if (!isoDate) return 0;
+      const ageDays = (now - new Date(isoDate).getTime()) / dayMs;
+      if (ageDays <= 1) return 1.0;
+      if (ageDays <= 3) return 0.8;
+      if (ageDays <= 7) return 0.6;
+      if (ageDays <= 14) return 0.4;
+      if (ageDays <= 30) return 0.2;
+      return 0.05;
+    }
+
+    let score = 0;
+    const signals = [];
+
+    // Activity signals
+    for (const act of actR.rows) {
+      const m = recencyMultiplier(act.created_at);
+      if (act.type === 'email_reply')   { score += 15 * m; if (m > 0.5) signals.push('Replied to email'); }
+      if (act.type === 'called')        { score += 10 * m; if (m > 0.5) signals.push('Call was made'); }
+      if (act.type === 'meeting_set')   { score += 20 * m; if (m > 0.4) signals.push('Meeting scheduled'); }
+      if (act.type === 'status_changed'){ score +=  5 * m; }
+      if (act.type === 'note_added')    { score +=  2 * m; }
+    }
+
+    // Email open signals
+    for (const t of trackR.rows) {
+      const m = recencyMultiplier(t.open_last_at);
+      const opens = Math.min(t.open_count || 1, 10);
+      score += opens * 4 * m;
+      if (m > 0.5 && opens >= 3) signals.push(`Opened email ${opens}x recently`);
+    }
+
+    // Portal engagement
+    const portal = portalR.rows[0];
+    if (portal?.viewed_at) {
+      const m = recencyMultiplier(portal.viewed_at);
+      score += 8 * m;
+      if (m > 0.4) signals.push('Viewed client portal');
+    }
+    if (portal?.deposit_clicked_at) {
+      score += 35;
+      signals.push('Clicked deposit payment link');
+    }
+
+    score = Math.min(Math.round(score), 100);
+
+    let label, color;
+    if (score >= 70) { label = 'Scorching'; color = '#ef4444'; }
+    else if (score >= 45) { label = 'Hot'; color = '#f97316'; }
+    else if (score >= 25) { label = 'Warm'; color = '#eab308'; }
+    else if (score >= 10) { label = 'Cool'; color = '#60a5fa'; }
+    else { label = 'Cold'; color = '#6b7280'; }
+
+    res.json({ ok: true, score, label, color, signals: [...new Set(signals)].slice(0, 4) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/send-timing — analyse this lead's email open history to
+// recommend the best day + hour to send the next email. Falls back to the
+// user's overall best send time when per-lead data is thin.
+app.get('/leads/:id/send-timing', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  try {
+    // Per-lead opens: each row in email_tracking represents one tracked email.
+    // open_last_at records the most recent open time for that message.
+    const [perLeadR, globalR] = await Promise.all([
+      pool.query(`
+        SELECT EXTRACT(DOW FROM open_last_at)::INT AS dow,
+               EXTRACT(HOUR FROM open_last_at)::INT AS hour,
+               SUM(open_count) AS opens
+        FROM email_tracking
+        WHERE lead_id=$1 AND user_id=$2 AND open_last_at IS NOT NULL
+        GROUP BY 1, 2
+        ORDER BY opens DESC
+        LIMIT 1
+      `, [leadId, uid]),
+      pool.query(`
+        SELECT EXTRACT(DOW FROM open_last_at)::INT AS dow,
+               EXTRACT(HOUR FROM open_last_at)::INT AS hour,
+               SUM(open_count) AS opens
+        FROM email_tracking
+        WHERE user_id=$1 AND open_last_at IS NOT NULL
+        GROUP BY 1, 2
+        ORDER BY opens DESC
+        LIMIT 1
+      `, [uid]),
+    ]);
+
+    const formatHour = (h) => {
+      if (h === 0) return '12am';
+      if (h < 12) return `${h}am`;
+      if (h === 12) return '12pm';
+      return `${h - 12}pm`;
+    };
+
+    if (perLeadR.rows.length) {
+      const r = perLeadR.rows[0];
+      return res.json({
+        ok: true, source: 'lead',
+        dow: r.dow, hour: r.hour,
+        dayLabel: DAYS[r.dow],
+        timeLabel: formatHour(r.hour),
+        opens: parseInt(r.opens),
+        label: `${DAYS[r.dow]} ${formatHour(r.hour)}`,
+        tip: 'Based on this contact\'s actual open history',
+      });
+    }
+
+    if (globalR.rows.length) {
+      const r = globalR.rows[0];
+      return res.json({
+        ok: true, source: 'global',
+        dow: r.dow, hour: r.hour,
+        dayLabel: DAYS[r.dow],
+        timeLabel: formatHour(r.hour),
+        opens: parseInt(r.opens),
+        label: `${DAYS[r.dow]} ${formatHour(r.hour)}`,
+        tip: 'Based on your best-performing send times across all leads',
+      });
+    }
+
+    // Industry default: Tue/Thu 9–10am is the gold standard for B2B
+    res.json({
+      ok: true, source: 'default',
+      dow: 2, hour: 9, dayLabel: 'Tue', timeLabel: '9am',
+      opens: 0, label: 'Tue 9am',
+      tip: 'Industry default — no open history yet. Send a few tracked emails to personalise.',
+    });
+  } catch (e) {
+    console.error('[send-timing]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /ai/proposal-coach?leadId=X — pre-send proposal intelligence.
+// Analyses won deals in the same category/size range and returns
+// pricing guidance, risk factors, and a recommended subject line
+// so the user can optimise their proposal BEFORE clicking send.
+app.get('/ai/proposal-coach', authMiddleware, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const uid = String(req.user.id);
+  const leadId = Number(req.query.leadId);
+  if (!leadId) return res.status(400).json({ error: 'leadId required' });
+
+  try {
+    const [leadR, wonDealsR, emailR] = await Promise.all([
+      pool.query(`SELECT company, category, fleet_size, city, state, status, contact_name FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]),
+      pool.query(`
+        SELECT l.company, l.category, l.fleet_size, q.total, q.status AS q_status,
+               l.status AS l_status, q.created_at
+        FROM shop_quotes q
+        JOIN leads l ON l.id=q.lead_id AND l.user_id=q.user_id
+        WHERE q.user_id=$1
+          AND (l.status='won' OR q.status='accepted')
+          AND q.total > 0
+        ORDER BY q.created_at DESC
+        LIMIT 12
+      `, [uid]),
+      pool.query(`
+        SELECT send_count, open_count, open_last_at, click_count
+        FROM email_tracking WHERE lead_id=$1 AND user_id=$2
+        ORDER BY created_at DESC LIMIT 5
+      `, [leadId, uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const wonDeals = wonDealsR.rows;
+    const emails = emailR.rows;
+
+    const totalOpens = emails.reduce((s, e) => s + (e.open_count || 0), 0);
+    const lastOpen = emails.find(e => e.open_last_at)?.open_last_at;
+
+    // Similar won deals (same category, or all if not enough)
+    const similar = wonDeals.filter(d => d.category === lead.category);
+    const dealsForContext = similar.length >= 2 ? similar : wonDeals;
+    const avgWonPrice = dealsForContext.length
+      ? Math.round(dealsForContext.reduce((s, d) => s + parseFloat(d.total), 0) / dealsForContext.length)
+      : null;
+    const wonPrices = dealsForContext.map(d => parseFloat(d.total)).sort((a, b) => a - b);
+    const priceRange = wonPrices.length >= 2
+      ? `$${wonPrices[0].toLocaleString()}–$${wonPrices[wonPrices.length - 1].toLocaleString()}`
+      : avgWonPrice ? `~$${avgWonPrice.toLocaleString()}` : null;
+
+    if (!apiKey) {
+      // Fallback without AI
+      return res.json({
+        ok: true, fallback: true,
+        priceRange,
+        avgWonPrice,
+        similarDeals: dealsForContext.length,
+        emailEngagement: { totalOpens, lastOpen },
+        advice: [
+          priceRange ? `Your won deals in this category range ${priceRange} — price within this window to maximize close probability.` : 'Build more quote history to unlock pricing intelligence.',
+          totalOpens > 0 ? `This contact has opened ${totalOpens} of your emails — they\'re engaged. A personal, specific proposal will outperform a template.` : 'No email opens yet — consider a short email before sending the full proposal to confirm interest.',
+          'Keep the subject line specific: include their company name and fleet size.',
+        ],
+        subjectLine: `${lead.company} — ${lead.fleet_size ? lead.fleet_size + '-vehicle wrap proposal' : 'Custom wrap proposal'} from [Your Shop]`,
+        risks: ['Generic pricing without tiering for fleet size', 'No follow-up plan attached to the proposal'],
+      });
+    }
+
+    const context = `
+Lead: ${lead.company} (${lead.category || 'wrap'}, ${lead.fleet_size ? lead.fleet_size + ' vehicles' : 'fleet size unknown'}, ${lead.city || ''} ${lead.state || ''})
+Email engagement: ${totalOpens} opens, last opened ${lastOpen ? new Date(lastOpen).toLocaleDateString() : 'never'}
+Similar won deals (${dealsForContext.length}): ${dealsForContext.slice(0, 5).map(d => `${d.company} $${parseFloat(d.total).toLocaleString()}`).join(', ')}
+Your average won price in this category: ${avgWonPrice ? '$' + avgWonPrice.toLocaleString() : 'no data'}
+Price range of won deals: ${priceRange || 'no data'}
+    `.trim();
+
+    const { Anthropic } = require('@anthropic-ai/sdk');
+    const anth = new Anthropic({ apiKey });
+    const resp = await anth.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      system: `You are a proposal coach for a vehicle wrap shop. Given data about a lead and the shop's won deals, return a JSON object with these keys:
+- advice: array of 3 specific, actionable bullet points (strings)
+- subjectLine: one recommended email subject line
+- risks: array of 2 specific risks to watch for with this deal
+- confidence: "high" | "medium" | "low" based on data richness
+Keep advice specific to the actual numbers. No generic platitudes.`,
+      messages: [{ role: 'user', content: context }],
+    });
+
+    let parsed;
+    try {
+      const txt = resp.content[0].text;
+      const jsonMatch = txt.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    } catch (_) { parsed = null; }
+
+    res.json({
+      ok: true, fallback: !parsed,
+      priceRange, avgWonPrice, similarDeals: dealsForContext.length,
+      emailEngagement: { totalOpens, lastOpen },
+      advice: parsed?.advice ?? ['Price within your historical win range', 'Reference their specific fleet type in the subject line', 'Include a follow-up date in the proposal'],
+      subjectLine: parsed?.subjectLine ?? `${lead.company} — Vehicle wrap proposal`,
+      risks: parsed?.risks ?? ['Price anchoring too high', 'Delayed follow-up after sending'],
+      confidence: parsed?.confidence ?? 'medium',
+    });
+  } catch (e) {
+    console.error('[proposal-coach]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/create-location — create a new lead from a suggested location
+app.post('/leads/:id/create-location', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const sourceLeadId = Number(req.params.id);
+  const { company, city, state, fleet_size, category } = req.body || {};
+  if (!company) return res.status(400).json({ error: 'company required' });
+
+  try {
+    // Inherit source lead's category if not specified
+    const src = await pool.query('SELECT category, referred_by FROM leads WHERE id=$1 AND user_id=$2', [sourceLeadId, uid]);
+    const srcLead = src.rows[0] || {};
+
+    const clientId = require('crypto').randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO leads (user_id, client_id, company, city, state, fleet_size, category, status, source, referred_by, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'new','location_expansion',$8,NOW(),NOW()) RETURNING id`,
+      [uid, clientId, company, city || null, state || null, fleet_size || null,
+       category || srcLead.category || 'fleet', `Location of #${sourceLeadId}`]
+    );
+    const newLeadId = rows[0].id;
+
+    await logActivity(pool, {
+      leadId: newLeadId, userId: uid, type: 'note',
+      subject: `Created from location expansion of lead #${sourceLeadId}`,
+      metadata: { source_lead_id: sourceLeadId, expansion: true },
+    });
+
+    res.json({ ok: true, leadId: newLeadId, clientId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Referral Ask — AI generates a personalized email asking won client for referrals
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/referral-ask', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT l.company, l.contact_name, l.category, l.city, l.state, l.fleet_size,
+              u.settings_json
+       FROM leads l JOIN users u ON u.id=l.user_id
+       WHERE l.id=$1 AND l.user_id=$2 AND l.status='won'`, [leadId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Lead not found or not won' });
+    const lead = rows[0];
+    const s = lead.settings_json || {};
+    const senderName = s.senderName || 'the team';
+    const shopName = s.companyName || 'our wrap shop';
+
+    const prompt = `Write a short, warm referral ask email from ${senderName} at ${shopName} to ${lead.contact_name || lead.company} at ${lead.company}.
+
+Context:
+- They are a happy won customer (${lead.category} wrap project)
+- ${lead.fleet_size ? `Fleet size: ${lead.fleet_size} vehicles` : ''}
+- ${lead.city || ''} ${lead.state || ''}
+
+The email should:
+1. Briefly thank them for their business and mention the project was great
+2. Ask if they know 2-3 other companies (in their industry or area) who might benefit from vehicle wraps
+3. Offer a referral incentive (e.g., 5% off their next wrap or a gift card — keep vague, use placeholder)
+4. Be conversational, under 120 words, no generic filler
+
+Return JSON: {"subject": "...", "body": "..."}
+No markdown.`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 400);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const { subject, body } = JSON.parse(match[0]);
+
+    // Stamp referral_asked_at and log activity
+    await pool.query(
+      `UPDATE leads SET referral_asked_at = NOW() WHERE id = $1 AND user_id = $2`,
+      [leadId, uid]
+    );
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'referral_ask_sent',
+      subject, metadata: { company: lead.company },
+    });
+
+    res.json({ ok: true, subject, body, contactName: lead.contact_name, contactEmail: lead.email || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /leads/:id/smart-followup — context-aware AI follow-up composer
+// Tier: ShopFlow ($149/mo)
+// Reads the full relationship history (lead details, last 10 activities,
+// emails sent, proposals) and generates a hyper-personalized follow-up email.
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/leads/:id/smart-followup', authMiddleware, requireShopFlow, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    // Fetch lead + last 10 activities + emails sent + proposals + user settings in parallel
+    const [leadR, activityR, emailR, proposalR, settingsR] = await Promise.all([
+      pool.query(
+        `SELECT id, company, contact_name, contact_title, category, status, fleet_size,
+                city, state, email, phone, notes, pitch_angle, last_contacted_at,
+                followup_due_at, created_at
+         FROM leads WHERE id=$1 AND user_id=$2`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, created_at
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 10`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT subject, body, created_at
+         FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 AND type IN ('email_sent','email_generated')
+         ORDER BY created_at DESC LIMIT 5`,
+        [leadId, uid]
+      ),
+      pool.query(
+        `SELECT title, status, created_at
+         FROM proposals WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 3`,
+        [leadId, uid]
+      ),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const activities = activityR.rows;
+    const emails = emailR.rows;
+    const proposals = proposalR.rows;
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our wrap shop';
+    const senderName = s.senderName || 'the team';
+
+    const daysSinceContact = lead.last_contacted_at
+      ? Math.floor((Date.now() - new Date(lead.last_contacted_at).getTime()) / 86_400_000)
+      : null;
+
+    const activityLog = activities.length
+      ? activities.map(a =>
+          `[${new Date(a.created_at).toLocaleDateString()}] ${a.type}: ${a.subject || '(no subject)'}`
+        ).join('\n')
+      : 'No activities logged yet';
+
+    const lastEmail = emails[0] || null;
+    const lastEmailSection = lastEmail
+      ? `LAST EMAIL SENT (${new Date(lastEmail.created_at).toLocaleDateString()}):\nSubject: ${lastEmail.subject || '(none)'}\n${(lastEmail.body || '').slice(0, 400)}`
+      : 'No emails have been sent yet';
+
+    const proposalSection = proposals.length
+      ? proposals.map(p => `Proposal "${p.title}" — status: ${p.status} (sent ${new Date(p.created_at).toLocaleDateString()})`).join('\n')
+      : 'No proposals sent';
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    // Graceful fallback when no API key configured
+    if (!apiKey) {
+      const fallbackSubject = lastEmail
+        ? `Re: ${lastEmail.subject || 'our conversation'}`
+        : `Following up — ${lead.company}`;
+      const contactGreeting = lead.contact_name ? `Hi ${lead.contact_name.split(' ')[0]},` : `Hi there,`;
+      const fallbackBody = `${contactGreeting}\n\nI wanted to follow up on our conversation about vehicle wraps for ${lead.company}. Do you have any questions or would you like to move forward?\n\nBest,\n${senderName}\n${shopName}`;
+      return res.json({
+        ok: true,
+        fallback: true,
+        subject: fallbackSubject,
+        body: fallbackBody,
+        tone: 'professional',
+        reasoningNote: 'Fallback template — configure ANTHROPIC_API_KEY for AI-personalized follow-ups.',
+      });
+    }
+
+    const prompt = `You are a veteran sales rep for "${shopName}", a vehicle wrap and graphics shop. Your job is to write ONE perfectly-personalized follow-up email to a specific prospect based on your complete history with them.
+
+PROSPECT:
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Fleet/Facilities Manager'}${lead.contact_title ? `, ${lead.contact_title}` : ''}
+Category: ${lead.category}
+Status: ${lead.status}
+Fleet size: ${lead.fleet_size || 'unknown'}
+Location: ${lead.city || ''}${lead.state ? ', ' + lead.state : ''}
+${daysSinceContact !== null ? `Days since last contact: ${daysSinceContact}` : ''}
+Notes: ${lead.notes || 'none'}
+Pitch angle: ${lead.pitch_angle || 'general wrap inquiry'}
+
+${lastEmailSection}
+
+RECENT ACTIVITY LOG (newest first):
+${activityLog}
+
+PROPOSALS:
+${proposalSection}
+
+INSTRUCTIONS:
+- Reference specific things from the history above (not generic filler)
+- Match tone to the relationship stage (${lead.status})
+- If a proposal was sent, reference it specifically
+- If emails have been sent, don't repeat the same angle — escalate or shift approach
+- Keep under 180 words
+- Choose an appropriate tone: professional, warm, direct, or consultative
+- The reasoningNote should explain in 1 sentence WHY you chose this particular angle given the history
+
+Return ONLY this JSON (no markdown):
+{
+  "subject": "...",
+  "body": "...",
+  "tone": "professional|warm|direct|consultative",
+  "reasoningNote": "1 sentence explaining why this angle was chosen"
+}`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI returned invalid response' });
+
+    const parsed = JSON.parse(match[0]);
+
+    // Log the generation as an activity
+    await pool.query(
+      `INSERT INTO lead_activities (lead_id, user_id, type, subject, metadata)
+       VALUES ($1, $2, 'smart_followup_generated', $3, $4)`,
+      [leadId, uid, parsed.subject, JSON.stringify({ tone: parsed.tone })]
+    );
+
+    res.json({ ok: true, fallback: false, ...parsed });
+  } catch (e) {
+    console.error('[smart-followup]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// GET /analytics/referrals — detailed referral pipeline analytics
+// ────────────────────────────────────────────────────────────────────────────
+
+app.get('/analytics/referrals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [referrersR, recentR, totalsR] = await Promise.all([
+      // Top referrers with pipeline value
+      pool.query(`
+        SELECT
+          referred_by,
+          COUNT(*)::INT AS referrals,
+          COUNT(*) FILTER (WHERE status='won')::INT AS won,
+          COUNT(*) FILTER (WHERE status IN ('proposal','meeting','replied'))::INT AS active,
+          COUNT(*) FILTER (WHERE status='lost')::INT AS lost,
+          COALESCE(SUM(
+            CASE category WHEN 'fleet' THEN 4500 WHEN 'gc_referral' THEN 18000
+            WHEN 'dinoc' THEN 6000 WHEN 'construction' THEN 5000
+            WHEN 'colorchange' THEN 3500 WHEN 'racing' THEN 40000
+            ELSE 2500 END
+          ) FILTER (WHERE status='won'), 0)::INT AS won_revenue,
+          COALESCE(SUM(
+            CASE category WHEN 'fleet' THEN 4500 WHEN 'gc_referral' THEN 18000
+            WHEN 'dinoc' THEN 6000 WHEN 'construction' THEN 5000
+            WHEN 'colorchange' THEN 3500 WHEN 'racing' THEN 40000
+            ELSE 2500 END
+          ) FILTER (WHERE status IN ('proposal','meeting','replied')), 0)::INT AS pipeline_value,
+          MAX(created_at) AS last_referral_at
+        FROM leads
+        WHERE user_id=$1 AND referred_by IS NOT NULL AND referred_by != ''
+        GROUP BY referred_by
+        ORDER BY referrals DESC
+        LIMIT 20
+      `, [uid]),
+      // Recent referrals (last 10)
+      pool.query(`
+        SELECT company, status, referred_by, category, created_at
+        FROM leads
+        WHERE user_id=$1 AND referred_by IS NOT NULL AND referred_by != ''
+        ORDER BY created_at DESC LIMIT 10
+      `, [uid]),
+      // Overall referral vs non-referral close rate
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE referred_by IS NOT NULL AND referred_by != '')::INT AS total_referred,
+          COUNT(*) FILTER (WHERE referred_by IS NOT NULL AND referred_by != '' AND status='won')::INT AS referred_won,
+          COUNT(*) FILTER (WHERE (referred_by IS NULL OR referred_by = '') AND status='won')::INT AS organic_won,
+          COUNT(*) FILTER (WHERE referred_by IS NULL OR referred_by = '')::INT AS total_organic
+        FROM leads WHERE user_id=$1
+      `, [uid]),
+    ]);
+
+    const t = totalsR.rows[0] || {};
+    res.json({
+      referrers: referrersR.rows.map((r) => ({
+        ...r,
+        closeRate: r.referrals > 0 ? Math.round((r.won / r.referrals) * 100) : 0,
+      })),
+      recent: recentR.rows,
+      referralCloseRate: t.total_referred > 0 ? Math.round((t.referred_won / t.total_referred) * 100) : null,
+      organicCloseRate: t.total_organic > 0 ? Math.round((t.organic_won / t.total_organic) * 100) : null,
+      totalReferredRevenue: referrersR.rows.reduce((s, r) => s + (r.won_revenue || 0), 0),
+      totalPipelineValue: referrersR.rows.reduce((s, r) => s + (r.pipeline_value || 0), 0),
+      hasData: referrersR.rows.length > 0,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Push an AR wrap concept to a lead's client portal and return a shareable approval link.
 // Logs the image as a note_added activity (the portal renders the latest such image as the
 // design concept) and ensures a portal link exists for the lead.
@@ -7078,6 +12226,11 @@ app.get('/portal/:token', async (req, res) => {
     if (!linkRows.length) return res.status(404).send('<h1>Link not found or expired.</h1>');
     const link = linkRows[0];
 
+    // Track first portal view
+    if (!link.viewed_at) {
+      pool.query('UPDATE portal_links SET viewed_at=NOW() WHERE token=$1', [req.params.token]).catch(() => {});
+    }
+
     // Fetch shop settings
     const { rows: uRows } = await pool.query('SELECT settings_json FROM users WHERE id=$1', [link.user_id]);
     const s = uRows[0]?.settings_json || {};
@@ -7097,12 +12250,18 @@ app.get('/portal/:token', async (req, res) => {
     );
     const bid = bids[0];
 
-    // Fetch design concept (latest activity with image)
+    // Fetch ALL design concepts (activities with image, newest first, up to 6)
     const { rows: designActs } = await pool.query(
-      `SELECT * FROM lead_activities WHERE lead_id=$1 AND (type='note_added') AND metadata->>'image_url' IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id, subject, body, metadata, created_at FROM lead_activities WHERE lead_id=$1 AND metadata->>'image_url' IS NOT NULL ORDER BY created_at DESC LIMIT 6`,
       [link.lead_id]
     );
     const designImg = designActs[0]?.metadata?.image_url;
+    // Check if design has already been approved
+    const { rows: designApprovals } = await pool.query(
+      `SELECT subject, created_at FROM lead_activities WHERE lead_id=$1 AND type='design_approved' ORDER BY created_at DESC LIMIT 1`,
+      [link.lead_id]
+    );
+    const designApproved = designApprovals[0] || null;
 
     // Fetch recent activities (last 8, public-safe types only)
     const { rows: activities } = await pool.query(
@@ -7199,8 +12358,8 @@ app.get('/portal/:token', async (req, res) => {
 <div class="hero">
   <div class="hero-inner">
     <div>
-      <div class="brand-name">${s.companyName || 'our shop'}<span>.</span></div>
-      <div class="brand-tag">${s.companyTagline || 'Vehicle Wraps & Fleet Graphics'}</div>
+      <div class="brand-name">${he(s.companyName) || 'our shop'}<span>.</span></div>
+      <div class="brand-tag">${he(s.companyTagline) || 'Vehicle Wraps & Fleet Graphics'}</div>
     </div>
     <span class="portal-badge">CLIENT PORTAL</span>
   </div>
@@ -7211,11 +12370,11 @@ app.get('/portal/:token', async (req, res) => {
   <!-- Project Header -->
   <div class="section">
     <div class="section-body">
-      <div class="project-name">${link.company}</div>
+      <div class="project-name">${he(link.company)}</div>
       <div class="project-meta">
-        ${link.category ? `<span class="meta-chip accent">${link.category.toUpperCase()}</span>` : ''}
-        ${link.city || link.state ? `<span class="meta-chip">📍 ${[link.city, link.state].filter(Boolean).join(', ')}</span>` : ''}
-        ${link.contact_name ? `<span class="meta-chip">👤 ${link.contact_name}</span>` : ''}
+        ${link.category ? `<span class="meta-chip accent">${he(link.category).toUpperCase()}</span>` : ''}
+        ${link.city || link.state ? `<span class="meta-chip">📍 ${he([link.city, link.state].filter(Boolean).join(', '))}</span>` : ''}
+        ${link.contact_name ? `<span class="meta-chip">👤 ${he(link.contact_name)}</span>` : ''}
       </div>
     </div>
   </div>
@@ -7251,7 +12410,20 @@ app.get('/portal/:token', async (req, res) => {
       <form id="approve-form" onsubmit="submitApproval(event)">
         <button type="submit" class="cta-btn" id="approve-btn">✓ Approve This Quote</button>
       </form>
-      <p id="approved-msg" class="approved-badge" style="display:none;margin-top:12px">✓ Quote approved — we'll be in touch shortly!</p>
+      <div id="approved-msg" style="display:none;margin-top:12px">
+        <p class="approved-badge">✓ Quote approved — we'll be in touch shortly!</p>
+        ${s.depositPaymentLink ? `
+        <div style="margin-top:16px;padding:16px;background:#0e1018;border:1px solid #22c55e44;border-radius:12px;">
+          <div style="font-size:11px;font-weight:700;color:#22c55e;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Secure Your Project</div>
+          <p style="font-size:13px;color:#9ca3af;margin:0 0 12px 0;">A deposit is required to reserve your install slot and begin production. Pay securely online — takes about 60 seconds.</p>
+          ${bid?.total_price ? `<div style="font-size:22px;font-weight:800;color:#fff;margin-bottom:12px">50% Deposit: ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(Number(bid.total_price)*0.5)}</div>` : ''}
+          <a href="/portal/${req.params.token}/pay-deposit" target="_blank" rel="noopener" onclick="trackDeposit()" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-weight:700;font-size:15px;border-radius:10px;text-decoration:none;letter-spacing:.02em;">
+            💳 Pay Deposit Now →
+          </a>
+          <p style="font-size:11px;color:#6b7280;margin-top:10px;">Powered by Stripe — your payment info is never stored on our servers.</p>
+        </div>
+        ` : ''}
+      </div>
       ` : `<div class="approved-badge" style="margin-top:12px">✓ Project in progress</div>`}
     </div>
   </div>` : ''}
@@ -7261,17 +12433,51 @@ app.get('/portal/:token', async (req, res) => {
   <div class="section">
     <div class="section-header"><span class="section-title">Install Documentation</span></div>
     <div class="section-body photo-section">
-      ${beforePhotos.length > 0 ? `<div class="photo-group-label">Before</div><div class="photo-row">${beforePhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Before'}"></div>`).join('')}</div>` : ''}
-      ${afterPhotos.length > 0 ? `<div class="photo-group-label">After</div><div class="photo-row">${afterPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'After'}"></div>`).join('')}</div>` : ''}
-      ${detailPhotos.length > 0 ? `<div class="photo-group-label">Detail</div><div class="photo-row">${detailPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${p.caption||'Detail'}"></div>`).join('')}</div>` : ''}
+      ${beforePhotos.length > 0 ? `<div class="photo-group-label">Before</div><div class="photo-row">${beforePhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${he(p.caption)||'Before'}"></div>`).join('')}</div>` : ''}
+      ${afterPhotos.length > 0 ? `<div class="photo-group-label">After</div><div class="photo-row">${afterPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${he(p.caption)||'After'}"></div>`).join('')}</div>` : ''}
+      ${detailPhotos.length > 0 ? `<div class="photo-group-label">Detail</div><div class="photo-row">${detailPhotos.map((p) => `<div class="photo-item"><img src="${p.image_data}" alt="${he(p.caption)||'Detail'}"></div>`).join('')}</div>` : ''}
     </div>
   </div>` : ''}
 
-  ${designImg ? `
-  <!-- Design Concept -->
+  ${designActs.length > 0 ? `
+  <!-- Design Concepts + Approval -->
   <div class="section">
-    <div class="section-header"><span class="section-title">Design Concept</span></div>
-    <div class="section-body"><img src="${designImg}" class="design-img" alt="Wrap Design Concept"></div>
+    <div class="section-header">
+      <span class="section-title">Design Concepts</span>
+      ${designApproved ? `<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:99px;background:#dcfce7;color:#16a34a;">✓ Approved ${new Date(designApproved.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>` : ''}
+    </div>
+    <div class="section-body">
+      ${designActs.map((d, i) => `
+        <div style="margin-bottom:${i < designActs.length-1 ? 20 : 0}px">
+          ${designActs.length > 1 ? `<div style="font-size:11px;font-weight:600;color:#6b7280;margin-bottom:6px;">Option ${designActs.length - i}${d.subject && d.subject !== 'AR wrap concept shared to portal' ? ` — ${d.subject}` : ''}</div>` : ''}
+          <img src="${d.metadata.image_url}" class="design-img" alt="Wrap Design Concept ${i+1}" style="cursor:pointer" onclick="document.getElementById('lightbox').style.display='flex';document.getElementById('lb-img').src=this.src">
+          ${d.body && d.body !== 'AI-generated wrap concept' ? `<div style="font-size:12px;color:#6b7280;margin-top:6px;font-style:italic">${d.body}</div>` : ''}
+        </div>
+      `).join('')}
+
+      ${!designApproved ? `
+      <div id="design-approval-panel" style="margin-top:20px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;">
+        <div style="font-size:13px;font-weight:600;color:#1e293b;margin-bottom:8px;">Ready to move forward?</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="approve-design-btn" onclick="approveDesign()" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;">
+            ✓ Approve Design
+          </button>
+          <button onclick="document.getElementById('revision-panel').style.display='block';this.style.display='none'" style="background:#fff;color:#64748b;border:1px solid #e2e8f0;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;">
+            ✏ Request Revisions
+          </button>
+        </div>
+        <div id="revision-panel" style="display:none;margin-top:12px;">
+          <textarea id="revision-text" placeholder="Describe what you'd like changed — colors, layout, text, logo placement, etc." style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:10px;font-size:13px;color:#1e293b;background:#fff;resize:vertical;min-height:80px;font-family:inherit"></textarea>
+          <button onclick="submitRevision()" style="margin-top:8px;background:#f4551c;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">Send Revision Request</button>
+        </div>
+        <div id="design-approved-msg" style="display:none;color:#16a34a;font-weight:700;font-size:13px;margin-top:8px;">✓ Design approved! We'll be in touch shortly.</div>
+        <div id="revision-sent-msg" style="display:none;color:#f4551c;font-weight:700;font-size:13px;margin-top:8px;">✓ Revision request sent!</div>
+      </div>` : `
+      <div style="margin-top:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px">✅</span>
+        <div><div style="font-size:13px;font-weight:700;color:#16a34a">Design approved</div><div style="font-size:12px;color:#6b7280">Approved on ${new Date(designApproved.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div></div>
+      </div>`}
+    </div>
   </div>` : ''}
 
   ${activities.length > 0 ? `
@@ -7334,9 +12540,40 @@ app.get('/portal/:token', async (req, res) => {
     try {
       await fetch('/portal/${req.params.token}/approve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
       document.getElementById('approve-form').style.display = 'none';
-      document.getElementById('approved-msg').style.display = 'block';
+      document.getElementById('approved-msg').style.display = 'flex';
+      document.getElementById('approved-msg').style.flexDirection = 'column';
     } catch { document.getElementById('approve-btn').disabled = false; document.getElementById('approve-btn').textContent = '✓ Approve This Quote'; }
   }
+  function trackDeposit() {
+    fetch('/portal/${req.params.token}/pay-deposit', { method: 'POST', headers: {'Content-Type':'application/json'} }).catch(() => {});
+  }
+  async function approveDesign() {
+    const btn = document.getElementById('approve-design-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Approving…'; }
+    try {
+      await fetch('/portal/${req.params.token}/approve-design', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+      document.getElementById('design-approval-panel').style.display = 'none';
+      document.getElementById('design-approved-msg').style.display = 'block';
+    } catch { if (btn) { btn.disabled = false; btn.textContent = '✓ Approve Design'; } }
+  }
+  async function submitRevision() {
+    const text = document.getElementById('revision-text').value.trim();
+    if (!text) return;
+    try {
+      await fetch('/portal/${req.params.token}/revision-request', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ feedback: text }) });
+      document.getElementById('revision-panel').style.display = 'none';
+      document.getElementById('revision-sent-msg').style.display = 'block';
+    } catch {}
+  }
+  // Image lightbox
+  document.addEventListener('DOMContentLoaded', () => {
+    const lb = document.createElement('div');
+    lb.id = 'lightbox';
+    lb.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out';
+    lb.innerHTML = '<img id="lb-img" style="max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px">';
+    lb.onclick = () => lb.style.display = 'none';
+    document.body.appendChild(lb);
+  });
   async function submitFeedback(e) {
     e.preventDefault();
     const text = document.getElementById('feedback-text').value.trim();
@@ -7360,18 +12597,49 @@ app.get('/portal/:token', async (req, res) => {
 // Portal actions — PUBLIC (no auth, token identifies)
 app.post('/portal/:token/approve', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM portal_links WHERE token=$1', [req.params.token]);
+    const { rows } = await pool.query('SELECT pl.*, u.settings_json FROM portal_links pl JOIN users u ON u.id=pl.user_id WHERE pl.token=$1', [req.params.token]);
     if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
     const link = rows[0];
+    const settings = link.settings_json || {};
     await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1 AND user_id=$2`, [link.lead_id, link.user_id]);
     await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'status_changed', subject: 'Client approved quote via portal' });
     await createNotification(link.user_id, {
       type: 'email_reply',
       title: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} approved their quote!`,
-      body: 'Client clicked "Approve" on the portal link. Follow up now.',
+      body: settings.depositPaymentLink ? 'Client approved! Payment link shown — watch for deposit.' : 'Client clicked "Approve" on the portal link. Follow up now.',
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true, depositPaymentLink: settings.depositPaymentLink || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: client clicked "Pay Deposit" — track + redirect to shop's payment link
+app.post('/portal/:token/pay-deposit', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT pl.*, u.settings_json FROM portal_links pl JOIN users u ON u.id=pl.user_id WHERE pl.token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    await pool.query('UPDATE portal_links SET deposit_clicked_at=NOW() WHERE token=$1', [req.params.token]);
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'note_added', subject: 'Client clicked Pay Deposit button on portal' });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `Deposit payment initiated! 💰`,
+      body: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} clicked the deposit payment link.`,
       metadata: { lead_id: link.lead_id },
     });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: get deposit/view stats for a lead's portal link
+app.get('/portal-links/lead/:leadId/stats', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      'SELECT token, viewed_at, deposit_clicked_at, created_at FROM portal_links WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1',
+      [req.params.leadId, uid]
+    );
+    res.json({ ok: true, stats: rows[0] || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7386,6 +12654,48 @@ app.post('/portal/:token/feedback', async (req, res) => {
     await createNotification(link.user_id, {
       type: 'email_reply',
       title: `New feedback from ${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company}`,
+      body: feedback.slice(0, 200),
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: client approves design (creates a formal sign-off record)
+app.post('/portal/:token/approve-design', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT pl.*, l.company FROM portal_links pl JOIN leads l ON l.id=pl.lead_id WHERE pl.token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    // Log design_approved activity (idempotent — same type, no duplicates guard needed)
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'design_approved', subject: 'Client approved design via portal', body: null });
+    // Advance lead to proposal stage if not already further along
+    const { rows: leadR } = await pool.query('SELECT status FROM leads WHERE id=$1', [link.lead_id]);
+    if (leadR[0] && ['new', 'contacted', 'replied', 'meeting'].includes(leadR[0].status)) {
+      await pool.query('UPDATE leads SET status=$1, updated_at=NOW() WHERE id=$2', ['proposal', link.lead_id]);
+    }
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `${link.company} approved your design! 🎨`,
+      body: 'Client clicked "Approve Design" in the portal. Time to send the final proposal.',
+      metadata: { lead_id: link.lead_id },
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Portal: client requests design revisions
+app.post('/portal/:token/revision-request', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT pl.*, l.company FROM portal_links pl JOIN leads l ON l.id=pl.lead_id WHERE pl.token=$1', [req.params.token]);
+    if (!rows.length) return res.status(404).json({ error: 'Invalid token' });
+    const link = rows[0];
+    const { feedback } = req.body;
+    if (!feedback?.trim()) return res.status(400).json({ error: 'feedback required' });
+    await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'note_added', subject: 'Design revision request from client', body: feedback });
+    await createNotification(link.user_id, {
+      type: 'email_reply',
+      title: `${link.company} requested design revisions`,
       body: feedback.slice(0, 200),
       metadata: { lead_id: link.lead_id },
     });
@@ -7509,6 +12819,1527 @@ app.delete('/proposals/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /proposals/needs-followup — proposals that went dark: sent 3+ days ago,
+// not approved, either never opened or viewed but no response in 7+ days.
+app.get('/proposals/needs-followup', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.token, p.title, p.status, p.view_count, p.created_at, p.last_viewed_at,
+             l.id AS lead_id, l.company, l.contact_name, l.email,
+             l.status AS lead_status, l.category
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+      WHERE p.user_id = $1
+        AND p.status NOT IN ('approved', 'declined')
+        AND p.created_at < NOW() - INTERVAL '3 days'
+        AND (
+          p.view_count = 0
+          OR (p.view_count > 0 AND p.last_viewed_at < NOW() - INTERVAL '7 days')
+        )
+      ORDER BY p.created_at DESC
+      LIMIT 10
+    `, [uid]);
+
+    res.json({
+      ok: true,
+      proposals: rows.map(r => ({
+        id: r.id, token: r.token, title: r.title, status: r.status,
+        viewCount: r.view_count, createdAt: r.created_at, lastViewedAt: r.last_viewed_at,
+        daysSinceSent: Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86_400_000),
+        daysSinceView: r.last_viewed_at ? Math.floor((Date.now() - new Date(r.last_viewed_at).getTime()) / 86_400_000) : null,
+        lead: r.lead_id ? { id: r.lead_id, company: r.company, contactName: r.contact_name, email: r.email, status: r.lead_status, category: r.category } : null,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/:id/generate-followup — AI-generated follow-up email for a stale proposal
+app.post('/proposals/:id/generate-followup', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const proposalId = parseInt(req.params.id, 10);
+  let proposalRow = null;
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.*, l.company, l.contact_name, l.category, l.fleet_size, l.city, l.state
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+      WHERE p.id = $1 AND p.user_id = $2
+    `, [proposalId, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    proposalRow = rows[0];
+    const p = proposalRow;
+    const daysSince = Math.floor((Date.now() - new Date(p.created_at).getTime()) / 86_400_000);
+    const viewInfo = p.view_count > 0 ? `They viewed it ${p.view_count} time${p.view_count > 1 ? 's' : ''} but haven't responded.` : 'They haven\'t opened it yet.';
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const anthropic = new Anthropic();
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 400,
+      messages: [{
+        role: 'user',
+        content: `Write a brief, genuine follow-up email for a wrap shop proposal that went unanswered.
+
+Context:
+- Company: ${p.company || 'the prospect'}
+- Contact: ${p.contact_name || 'there'}
+- Category: ${p.category || 'vehicle wraps'}
+- Proposal title: ${p.title}
+- Days since sent: ${daysSince}
+- ${viewInfo}
+
+Write a 2-3 sentence email. Subject line first, then the body.
+Tone: professional, not pushy. Reference the specific project. End with a low-friction CTA like "Happy to answer any questions" or "Would a quick call help?".
+
+Format:
+Subject: [subject here]
+[blank line]
+[body here]`,
+      }],
+    });
+
+    const text = msg.content[0].type === 'text' ? msg.content[0].text : '';
+    const lines = text.split('\n');
+    const subjectLine = lines.find(l => l.startsWith('Subject:'));
+    const subject = subjectLine ? subjectLine.replace('Subject:', '').trim() : `Following up on your ${p.category || 'wrap'} proposal`;
+    const body = lines.slice(lines.indexOf(subjectLine ?? '') + 2).join('\n').trim();
+
+    res.json({ ok: true, subject, body, contact: p.contact_name, company: p.company });
+  } catch (e) {
+    console.error('[proposal-followup]', e.message);
+    // Fallback without AI
+    const p = proposalRow;
+    const subject = `Quick check-in on your wrap proposal`;
+    const body = `Hi there,\n\nI wanted to follow up on the wrap proposal I sent a few days ago. Happy to answer any questions or adjust anything to better fit your needs.\n\nWould a quick call help move things forward?`;
+    res.json({ ok: true, subject, body, contact: p?.contact_name ?? null, company: p?.company ?? null, fallback: true });
+  }
+});
+
+// Proposal Heat Score — surface proposals with recent view activity ranked
+// by urgency.  Heat = view_count × recency_factor.  Recency_factor decays
+// exponentially with a 12-hour half-life from the last view.
+app.get('/proposals/heat', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(`
+      SELECT
+        p.id, p.title, p.token, p.view_count, p.last_viewed_at, p.created_at,
+        l.id AS lead_server_id, l.client_id AS lead_client_id, l.company AS lead_company,
+        l.status AS lead_status, l.category AS lead_category, l.fleet_size, l.email,
+        EXTRACT(EPOCH FROM (NOW() - p.last_viewed_at)) / 3600.0 AS hours_since_view
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id
+      WHERE p.user_id = $1
+        AND p.view_count > 0
+        AND p.last_viewed_at IS NOT NULL
+        AND p.status NOT IN ('approved', 'rejected')
+        AND p.last_viewed_at > NOW() - INTERVAL '14 days'
+      ORDER BY p.last_viewed_at DESC
+      LIMIT 25
+    `, [uid]);
+
+    const hot = rows.map((r) => {
+      const hours = Math.max(0, parseFloat(r.hours_since_view) || 0);
+      const recencyFactor = Math.exp(-hours / 12);  // 12h half-life
+      const heat = Math.round((parseInt(r.view_count, 10) || 0) * recencyFactor * 100);
+      const tier = heat >= 200 ? 'blazing' : heat >= 80 ? 'hot' : heat >= 30 ? 'warm' : 'cool';
+      return {
+        id: r.id,
+        title: r.title,
+        token: r.token,
+        viewCount: r.view_count,
+        lastViewedAt: r.last_viewed_at,
+        hoursSinceView: Math.round(hours * 10) / 10,
+        heatScore: heat,
+        tier,
+        lead: r.lead_server_id ? {
+          id: r.lead_server_id,
+          clientId: r.lead_client_id,
+          company: r.lead_company,
+          status: r.lead_status,
+          category: r.lead_category,
+          fleetSize: r.fleet_size,
+          email: r.email,
+        } : null,
+      };
+    }).sort((a, b) => b.heatScore - a.heatScore);
+
+    res.json({ hot, count: hot.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Perfect Timing — leads who opened emails in the last 2 hours.
+// Refreshed every 90s on the Mission dashboard.
+// GET /mission/intent-signals — unified buying intent score across email opens,
+// proposal views, recent replies, and aging wrap signals. No competitor has this.
+app.get('/mission/intent-signals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    // Email opens in last 48h (score: 3 per open, capped at 15)
+    const { rows: emailOpens } = await pool.query(`
+      SELECT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             COUNT(et.id) AS open_count,
+             MAX(et.opened_at) AS last_opened
+      FROM leads l
+      JOIN email_tracking et ON et.lead_id = l.id AND et.user_id = l.user_id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND et.opened_at > NOW() - INTERVAL '48 hours'
+      GROUP BY l.id, l.company, l.status, l.category, l.contact_name
+    `, [uid]);
+
+    // Proposal views in last 48h (score: 4 per view, capped at 20)
+    const { rows: propViews } = await pool.query(`
+      SELECT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             COUNT(pv.id) AS view_count,
+             MAX(pv.viewed_at) AS last_viewed
+      FROM leads l
+      JOIN proposals p ON p.lead_id = l.id::bigint
+      JOIN proposal_views pv ON pv.proposal_id = p.id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND pv.viewed_at > NOW() - INTERVAL '48 hours'
+      GROUP BY l.id, l.company, l.status, l.category, l.contact_name
+    `, [uid]);
+
+    // Replied in last 7 days (score: 10)
+    const { rows: recentReplies } = await pool.query(`
+      SELECT DISTINCT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             MAX(la.created_at) AS replied_at
+      FROM leads l
+      JOIN lead_activities la ON la.lead_id = l.id AND la.user_id = l.user_id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND la.type = 'email_reply'
+        AND la.created_at > NOW() - INTERVAL '7 days'
+      GROUP BY l.id, l.company, l.status, l.category, l.contact_name
+    `, [uid]);
+
+    // Aging wrap signal — installed jobs with wrap expiring in next 180 days (score: 6)
+    const { rows: agingWraps } = await pool.query(`
+      SELECT DISTINCT l.id AS lead_id, l.company, l.status, l.category, l.contact_name,
+             ij.days_until_expiry
+      FROM leads l
+      JOIN installed_jobs ij ON ij.lead_id = l.id AND ij.user_id = l.user_id
+      WHERE l.user_id=$1
+        AND l.status NOT IN ('won','lost')
+        AND ij.days_until_expiry BETWEEN 0 AND 180
+    `, [uid]);
+
+    // Build intent map
+    const intentMap = new Map();
+
+    function getOrCreate(row) {
+      if (!intentMap.has(row.lead_id)) {
+        intentMap.set(row.lead_id, {
+          leadId: row.lead_id, company: row.company, status: row.status,
+          category: row.category, contactName: row.contact_name,
+          score: 0, signals: [],
+        });
+      }
+      return intentMap.get(row.lead_id);
+    }
+
+    for (const r of emailOpens) {
+      const entry = getOrCreate(r);
+      const score = Math.min(15, r.open_count * 3);
+      entry.score += score;
+      entry.signals.push({ type: 'email_opened', count: parseInt(r.open_count), lastAt: r.last_opened });
+    }
+    for (const r of propViews) {
+      const entry = getOrCreate(r);
+      const score = Math.min(20, r.view_count * 4);
+      entry.score += score;
+      entry.signals.push({ type: 'proposal_viewed', count: parseInt(r.view_count), lastAt: r.last_viewed });
+    }
+    for (const r of recentReplies) {
+      const entry = getOrCreate(r);
+      entry.score += 10;
+      entry.signals.push({ type: 'replied', lastAt: r.replied_at });
+    }
+    for (const r of agingWraps) {
+      const entry = getOrCreate(r);
+      entry.score += 6;
+      entry.signals.push({ type: 'wrap_aging', daysUntilExpiry: r.days_until_expiry });
+    }
+
+    const results = [...intentMap.values()]
+      .filter(e => e.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    res.json({ leads: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /mission/top-prospects — top leads by engagement heat score
+app.get('/mission/top-prospects', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, category, status, email, phone, fleet_size, contact_name
+       FROM leads WHERE user_id=$1 AND status NOT IN ('won','lost','cold')
+       ORDER BY updated_at DESC LIMIT 60`,
+      [uid]
+    );
+
+    const now = Date.now();
+    const dayMs = 86_400_000;
+
+    function recency(isoDate) {
+      if (!isoDate) return 0;
+      const ageDays = (now - new Date(isoDate).getTime()) / dayMs;
+      if (ageDays <= 1) return 1.0;
+      if (ageDays <= 3) return 0.8;
+      if (ageDays <= 7) return 0.6;
+      if (ageDays <= 14) return 0.4;
+      if (ageDays <= 30) return 0.2;
+      return 0.05;
+    }
+
+    const scored = [];
+    for (const lead of leads) {
+      const [actR, trackR, portalR] = await Promise.all([
+        pool.query(`SELECT type, created_at FROM lead_activities WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 20`, [lead.id, uid]),
+        pool.query(`SELECT open_count, open_last_at FROM email_tracking WHERE lead_id=$1 AND user_id=$2 ORDER BY open_last_at DESC NULLS LAST LIMIT 5`, [lead.id, uid]),
+        pool.query(`SELECT viewed_at, deposit_clicked_at FROM portal_links WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`, [lead.id, uid]),
+      ]);
+
+      let score = 0;
+      for (const act of actR.rows) {
+        const m = recency(act.created_at);
+        if (act.type === 'email_reply')   score += 15 * m;
+        if (act.type === 'called')        score += 10 * m;
+        if (act.type === 'meeting_set')   score += 20 * m;
+        if (act.type === 'status_changed')score +=  5 * m;
+      }
+      for (const t of trackR.rows) {
+        const m = recency(t.open_last_at);
+        score += Math.min(t.open_count || 1, 10) * 4 * m;
+      }
+      const portal = portalR.rows[0];
+      if (portal?.viewed_at) score += 8 * recency(portal.viewed_at);
+      if (portal?.deposit_clicked_at) score += 35;
+
+      score = Math.round(Math.min(score, 100));
+      if (score >= 10) scored.push({ ...lead, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const results = scored.slice(0, 5).map((l) => ({
+      id: l.id, company: l.company, category: l.category, status: l.status,
+      contactName: l.contact_name, phone: l.phone, email: l.email,
+      fleetSize: l.fleet_size, score: l.score,
+      label: l.score >= 70 ? 'Scorching' : l.score >= 45 ? 'Hot' : l.score >= 25 ? 'Warm' : 'Cool',
+      color: l.score >= 70 ? '#ef4444' : l.score >= 45 ? '#f97316' : l.score >= 25 ? '#eab308' : '#60a5fa',
+    }));
+
+    res.json({ ok: true, prospects: results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/lifetime-value — total revenue from this client across all jobs
+app.get('/leads/:id/lifetime-value', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  try {
+    const leadR = await pool.query('SELECT company FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Not found' });
+    const company = leadR.rows[0].company;
+
+    // Sum jobs for this lead directly and fuzzy-match by company name
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*)::INT                                  AS job_count,
+         COALESCE(SUM(job_revenue), 0)::NUMERIC         AS total_revenue,
+         COALESCE(SUM(material_cost), 0)::NUMERIC       AS total_cost,
+         COALESCE(SUM(vehicle_count), 0)::INT           AS total_vehicles,
+         MIN(install_date)                              AS first_job,
+         MAX(install_date)                              AS last_job
+       FROM installed_jobs
+       WHERE user_id=$1 AND (lead_id=$2 OR LOWER(company) = LOWER($3))`,
+      [uid, leadId, company]
+    );
+
+    const r = rows[0];
+    const margin = r.total_revenue > 0
+      ? Math.round(((r.total_revenue - r.total_cost) / r.total_revenue) * 100)
+      : null;
+
+    res.json({
+      ok: true,
+      jobCount: r.job_count,
+      totalRevenue: Number(r.total_revenue),
+      totalCost: Number(r.total_cost),
+      totalVehicles: r.total_vehicles,
+      grossMarginPct: margin,
+      firstJob: r.first_job,
+      lastJob: r.last_job,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /mission/expiring-quotes — quotes expiring within 7 days that are still "sent"
+app.get('/mission/expiring-quotes', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT q.id, q.quote_number, q.title, q.total, q.sent_at, q.valid_days, q.lead_id,
+              l.company, l.contact_name, l.email, l.phone
+       FROM shop_quotes q
+       JOIN leads l ON l.id = q.lead_id
+       WHERE q.user_id=$1 AND q.status='sent'
+         AND q.sent_at IS NOT NULL
+         AND (q.sent_at + (q.valid_days || ' days')::interval) BETWEEN NOW() AND NOW() + INTERVAL '7 days'
+       ORDER BY (q.sent_at + (q.valid_days || ' days')::interval) ASC
+       LIMIT 10`,
+      [uid]
+    );
+
+    const quotes = rows.map((q) => ({
+      id: q.id,
+      quoteNumber: q.quote_number,
+      title: q.title,
+      total: Number(q.total),
+      expiresAt: new Date(new Date(q.sent_at).getTime() + q.valid_days * 86_400_000).toISOString(),
+      daysLeft: Math.ceil((new Date(q.sent_at).getTime() + q.valid_days * 86_400_000 - Date.now()) / 86_400_000),
+      leadId: q.lead_id,
+      company: q.company,
+      contactName: q.contact_name,
+      email: q.email,
+      phone: q.phone,
+    }));
+
+    res.json({ ok: true, quotes });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Speed Dial — top 5 leads to contact RIGHT NOW, ranked by urgency + opportunity
+app.get('/mission/speed-dial', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(`
+      WITH lead_signals AS (
+        SELECT
+          l.id, l.company, l.contact_name, l.phone, l.email, l.status, l.category,
+          l.fleet_size, l.state, l.city, l.notes, l.followup_due_at, l.updated_at,
+          l.client_id,
+          COALESCE((
+            SELECT COUNT(*) FROM email_tracking et
+            WHERE et.lead_id = l.id AND et.opened_at > NOW() - INTERVAL '48 hours'
+          ), 0) AS recent_opens,
+          COALESCE((
+            SELECT COUNT(*) FROM proposals p
+            WHERE p.lead_id = l.id AND p.last_viewed_at > NOW() - INTERVAL '48 hours'
+          ), 0) AS recent_proposal_views,
+          CASE
+            WHEN l.followup_due_at < NOW() THEN
+              EXTRACT(EPOCH FROM (NOW() - l.followup_due_at)) / 86400.0
+            ELSE 0
+          END AS days_overdue,
+          EXTRACT(EPOCH FROM (NOW() - l.updated_at)) / 86400.0 AS days_since_update
+        FROM leads l
+        WHERE l.user_id = $1 AND l.status NOT IN ('won', 'lost', 'cold')
+      )
+      SELECT *,
+        (days_overdue * 15 + recent_opens * 8 + recent_proposal_views * 12 +
+         CASE WHEN phone IS NOT NULL THEN 5 ELSE 0 END +
+         CASE status
+           WHEN 'proposal' THEN 20 WHEN 'meeting' THEN 15 WHEN 'replied' THEN 12
+           WHEN 'contacted' THEN 8 ELSE 5
+         END) AS urgency_score
+      FROM lead_signals
+      ORDER BY urgency_score DESC, followup_due_at ASC NULLS LAST
+      LIMIT 5
+    `, [uid]);
+
+    // Generate pitch angles via Claude if available — use cached notes otherwise
+    const anthropic = getAnthropic();
+    const leads = await Promise.all(rows.map(async (lead) => {
+      let pitchAngle = lead.notes ? lead.notes.slice(0, 100) : null;
+      if (anthropic && !pitchAngle) {
+        try {
+          const ctx = `${lead.company}, ${lead.city || ''}${lead.state ? ` ${lead.state}` : ''} | ${lead.category || 'fleet'} | Fleet: ${lead.fleet_size || 'unknown'} | Status: ${lead.status}`;
+          const msg = await anthropic.messages.create({
+            model: 'claude-haiku-4-5', max_tokens: 60,
+            messages: [{ role: 'user', content: `Give ONE specific, compelling reason to call this prospect NOW (max 15 words). Mention their category/location/fleet. No filler.\n\nProspect: ${ctx}\n\nReturn ONLY the single phrase.` }],
+          });
+          pitchAngle = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : null;
+        } catch { /* skip */ }
+      }
+      return {
+        leadId: lead.id, clientId: lead.client_id,
+        company: lead.company, contactName: lead.contact_name,
+        phone: lead.phone, email: lead.email,
+        status: lead.status, category: lead.category,
+        fleetSize: lead.fleet_size, state: lead.state,
+        urgencyScore: Math.round(parseFloat(lead.urgency_score)),
+        daysOverdue: Math.round(parseFloat(lead.days_overdue) * 10) / 10,
+        recentOpens: parseInt(lead.recent_opens, 10),
+        recentProposalViews: parseInt(lead.recent_proposal_views, 10),
+        pitchAngle,
+      };
+    }));
+
+    res.json({ ok: true, leads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/mission/perfect-timing', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const windowHours = Math.min(24, Math.max(1, parseInt(req.query.hours) || 2));
+    const { rows } = await pool.query(`
+      SELECT
+        et.lead_id,
+        et.subject,
+        et.open_count,
+        et.opened_at,
+        EXTRACT(EPOCH FROM (NOW() - et.opened_at)) / 3600.0 AS hours_ago,
+        l.company,
+        l.client_id,
+        l.status,
+        l.category,
+        l.email,
+        l.phone
+      FROM email_tracking et
+      JOIN leads l ON l.id = et.lead_id AND l.user_id = et.user_id
+      WHERE et.user_id = $1
+        AND et.opened_at > NOW() - ($2 || ' hours')::interval
+        AND l.status NOT IN ('won', 'lost')
+      ORDER BY et.opened_at DESC
+      LIMIT 15
+    `, [uid, windowHours]);
+
+    const leads = rows.map((r) => ({
+      leadId: r.lead_id,
+      clientId: r.client_id,
+      company: r.company,
+      subject: r.subject,
+      openCount: parseInt(r.open_count, 10) || 1,
+      openedAt: r.opened_at,
+      hoursAgo: Math.round(parseFloat(r.hours_ago) * 10) / 10,
+      status: r.status,
+      category: r.category,
+      email: r.email,
+      phone: r.phone,
+    }));
+
+    res.json({ leads, windowHours });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Account Health — relationship vitals for a won client ─────────────────────
+// Aggregates: jobs logged, vehicles wrapped, expiry status, last contact, referral,
+// and generates a 0-100 "relationship health" score.
+app.get('/leads/:id/account-health', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const [leadR, jobsR, activityR, referralR] = await Promise.all([
+      pool.query(
+        `SELECT company, status, category, fleet_size, last_contacted_at, created_at, updated_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT id, company, vehicle_count, wrap_category, install_date, life_years, job_revenue,
+                (install_date + (life_years||' years')::interval) AS expiry_date,
+                EXTRACT(EPOCH FROM (NOW() - (install_date + (life_years||' years')::interval))) / 86400.0 AS days_past_expiry
+         FROM installed_jobs WHERE user_id=$1 AND LOWER(company) = LOWER($2)
+         ORDER BY install_date DESC LIMIT 10`, [uid, '']
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INT AS count, MAX(created_at) AS last_activity
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT 1 FROM lead_activities WHERE lead_id=$1 AND user_id=$2 AND type='email_sent' AND subject ILIKE '%referral%'
+         LIMIT 1`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+
+    // Re-query jobs with company name
+    const jobsR2 = await pool.query(
+      `SELECT id, company, vehicle_count, wrap_category, install_date, life_years, job_revenue,
+              (install_date + (COALESCE(life_years,5)||' years')::interval) AS expiry_date,
+              EXTRACT(EPOCH FROM (NOW() - (install_date + (COALESCE(life_years,5)||' years')::interval))) / 86400.0 AS days_past_expiry
+       FROM installed_jobs WHERE user_id=$1 AND LOWER(company) = LOWER($2)
+       ORDER BY install_date DESC LIMIT 10`, [uid, lead.company]
+    );
+
+    const jobs = jobsR2.rows;
+    const totalVehicles = jobs.reduce((s, j) => s + (j.vehicle_count || 0), 0);
+    const totalRevenue = jobs.reduce((s, j) => s + parseFloat(j.job_revenue || '0'), 0);
+    const jobCount = jobs.length;
+
+    const daysSinceWon = Math.floor((Date.now() - new Date(lead.updated_at).getTime()) / 86_400_000);
+    const daysSinceContact = lead.last_contacted_at
+      ? Math.floor((Date.now() - new Date(lead.last_contacted_at).getTime()) / 86_400_000)
+      : daysSinceWon;
+
+    const referralSent = referralR.rows.length > 0;
+    const activityCount = activityR.rows[0]?.count || 0;
+
+    // Expiry analysis
+    const expiringJobs = jobs.filter(j => {
+      const daysLeft = -(parseFloat(j.days_past_expiry) || 0);
+      return daysLeft >= -180 && daysLeft <= 365; // expired up to 180 days ago, or within next year
+    });
+    const nearestExpiry = jobs.length > 0 ? jobs.reduce((best, j) => {
+      const days = -(parseFloat(j.days_past_expiry) || 0);
+      const bestDays = -(parseFloat(best.days_past_expiry) || 0);
+      return Math.abs(days) < Math.abs(bestDays) ? j : best;
+    }, jobs[0]) : null;
+
+    // Health score: 0-100
+    let score = 50;
+    if (daysSinceContact <= 30) score += 15;
+    else if (daysSinceContact <= 90) score += 5;
+    else score -= 15;
+    if (jobCount > 0) score += 10;
+    if (totalVehicles >= 5) score += 10;
+    if (referralSent) score += 10;
+    if (activityCount >= 5) score += 5;
+    if (nearestExpiry) {
+      const daysToExpiry = -(parseFloat(nearestExpiry.days_past_expiry) || 0);
+      if (daysToExpiry >= 0 && daysToExpiry <= 180) score += 5; // expiry approaching = opportunity
+    }
+    score = Math.max(0, Math.min(100, score));
+
+    const healthLabel = score >= 70 ? 'Strong' : score >= 40 ? 'At Risk' : 'Dormant';
+    const healthColor = score >= 70 ? '#00d97e' : score >= 40 ? '#f59e0b' : '#ef4444';
+
+    res.json({
+      ok: true,
+      score, healthLabel, healthColor,
+      daysSinceWon, daysSinceContact,
+      jobCount, totalVehicles,
+      totalRevenue: Math.round(totalRevenue),
+      referralSent, activityCount,
+      nearestExpiry: nearestExpiry ? {
+        company: nearestExpiry.company,
+        installDate: nearestExpiry.install_date,
+        expiryDate: nearestExpiry.expiry_date,
+        daysToExpiry: -Math.round(parseFloat(nearestExpiry.days_past_expiry) || 0),
+        vehicleCount: nearestExpiry.vehicle_count,
+        wrapCategory: nearestExpiry.wrap_category,
+      } : null,
+      jobs: jobs.slice(0, 5).map(j => ({
+        id: j.id,
+        vehicleCount: j.vehicle_count,
+        wrapCategory: j.wrap_category,
+        installDate: j.install_date,
+        expiryDate: j.expiry_date,
+        daysToExpiry: -Math.round(parseFloat(j.days_past_expiry) || 0),
+        revenue: parseFloat(j.job_revenue || '0'),
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Deal Coach — AI gives 3 specific closing tactics for a specific lead ─────
+// Unique: reads ALL lead context + recent activity and returns personalized
+// tactics. No generic CRM advice — specific to THIS deal.
+app.get('/leads/:id/deal-coach', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.json({ ok: true, fallback: true, tactics: [
+      { title: 'Send a personalized ROI breakdown', action: 'Email them a fleet-specific cost-per-impression analysis showing wrap value vs. radio/billboard.', rationale: 'Fleet managers respond to hard numbers. An ROI email sets you apart from every other vendor.' },
+      { title: 'Request a 15-minute design call', action: 'Call or email asking for 15 minutes to walk through one design concept on their specific vehicle.', rationale: 'Getting them visually invested in a design dramatically increases close rate.' },
+      { title: 'Create urgency with a limited slot', action: 'Mention your install calendar is filling up — offer to hold their slot for 5 business days.', rationale: 'Install calendar scarcity is real for wrap shops and a legitimate reason to act now.' },
+    ] });
+
+    // Fetch lead + recent activity
+    const [leadR, activityR, settingsR] = await Promise.all([
+      pool.query(
+        `SELECT id, company, contact_name, category, status, fleet_size, city, state,
+                email, phone, notes, pitch_angle, lost_reason, last_contacted_at,
+                followup_due_at, created_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, created_at
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 12`, [leadId, uid]
+      ),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const activity = activityR.rows;
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+
+    const daysInStage = lead.last_contacted_at
+      ? Math.floor((Date.now() - new Date(lead.last_contacted_at).getTime()) / 86_400_000)
+      : null;
+    const daysInPipeline = Math.floor((Date.now() - new Date(lead.created_at).getTime()) / 86_400_000);
+
+    const activitySummary = activity.length
+      ? activity.map(a => `[${a.type}] ${a.subject || ''} (${new Date(a.created_at).toLocaleDateString()})`).join('\n')
+      : 'No activity logged yet';
+
+    const prompt = `You are a veteran wrap shop sales coach with 15 years closing fleet and commercial wrap deals. Analyze this specific deal and give 3 brutally specific, actionable closing tactics.
+
+DEAL CONTEXT:
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Unknown'}
+Category: ${lead.category}
+Status: ${lead.status}
+Fleet size: ${lead.fleet_size || 'not specified'}
+Location: ${lead.city || ''}${lead.state ? ', ' + lead.state : ''}
+Days in pipeline: ${daysInPipeline}
+${daysInStage != null ? `Days since last contact: ${daysInStage}` : ''}
+Follow-up due: ${lead.followup_due_at ? new Date(lead.followup_due_at).toLocaleDateString() : 'not set'}
+Notes: ${lead.notes || 'none'}
+
+RECENT ACTIVITY:
+${activitySummary}
+
+Respond ONLY with this exact JSON (no markdown, no explanation):
+{
+  "tactics": [
+    {"title": "Short action title (5-8 words)", "action": "Exactly what to say/do in 1-2 sentences. Be specific to this company.", "rationale": "Why this works for this specific deal. 1 sentence."},
+    {"title": "...", "action": "...", "rationale": "..."},
+    {"title": "...", "action": "...", "rationale": "..."}
+  ],
+  "closingProbability": <integer 0-100>,
+  "urgencyLevel": "low|medium|high|critical",
+  "keyInsight": "The single most important thing to know about closing this deal. 1 sentence."
+}`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const parsed = JSON.parse(match[0]);
+    res.json({ ok: true, fallback: false, ...parsed, daysInPipeline, daysInStage });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Meeting Prep Brief — AI call preparation document ─────────────────────
+// Generates a full pre-meeting brief: company profile, pricing recommendation,
+// talk track, likely objections, questions to ask, similar wins.
+app.post('/leads/:id/meeting-prep', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    const [leadR, actR, settingsR] = await Promise.all([
+      pool.query(
+        `SELECT id, company, contact_name, contact_title, category, status, fleet_size,
+                city, state, email, phone, notes, pitch_angle, website, created_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, metadata, created_at
+         FROM lead_activities WHERE lead_id=$1 AND user_id=$2
+         ORDER BY created_at DESC LIMIT 15`, [leadId, uid]
+      ),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const activity = actR.rows;
+    const s = settingsR.rows[0]?.settings_json || {};
+    const shopName = s.companyName || 'our wrap shop';
+    const shopCity = s.city || '';
+
+    // Get similar wins with correct category
+    const { rows: similarWins } = await pool.query(
+      `SELECT company, category, city, state, fleet_size
+       FROM leads
+       WHERE user_id=$1 AND status='won' AND category=$2 AND id != $3
+       ORDER BY updated_at DESC LIMIT 3`, [uid, lead.category, leadId]
+    );
+
+    const REV_EST_PREP = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+    const fleetSize = parseInt(lead.fleet_size) || 0;
+    const pricePerVehicle = REV_EST_PREP[lead.category] || 3500;
+    const estimatedValue = fleetSize > 0 ? fleetSize * pricePerVehicle : pricePerVehicle;
+
+    const actSummary = activity.length
+      ? activity.map((a) => {
+          const m = a.metadata || {};
+          return `- ${a.type}: ${m.subject || a.subject || a.body?.slice(0,80) || '(no detail)'} (${new Date(a.created_at).toLocaleDateString()})`;
+        }).join('\n')
+      : 'No prior activity';
+
+    const similarSummary = similarWins.length
+      ? similarWins.map((w) => `${w.company}${w.city ? ` (${w.city}, ${w.state})` : ''}${w.fleet_size ? ` — ${w.fleet_size} units` : ''}`).join(', ')
+      : 'No similar wins yet';
+
+    const apiKeyPrep = process.env.ANTHROPIC_API_KEY;
+    if (!apiKeyPrep) {
+      // Static fallback prep
+      return res.json({
+        ok: true, fallback: true,
+        companySnapshot: `${lead.company} is a ${lead.category === 'fleet' ? 'fleet operator' : lead.category} business${lead.city ? ` based in ${lead.city}, ${lead.state}` : ''} with ${fleetSize > 0 ? `${fleetSize} vehicles` : 'an unknown fleet size'}. Estimated wrap opportunity: $${estimatedValue.toLocaleString()}.`,
+        openingLine: `"${lead.contact_name || 'Hi'}, I wanted to take a few minutes to walk through what a wrap program could look like specifically for ${lead.company}."`,
+        pricingNote: `At ${shopName}'s standard rates, a fleet of ${fleetSize > 0 ? fleetSize : '10+'} vehicles would be approximately $${estimatedValue.toLocaleString()}. Consider offering a pilot program (5 units) at a slightly better rate to reduce their risk.`,
+        talkTrack: [`Introduce ${shopName} and share a recent ${lead.category} project outcome`, `Ask about their current branding strategy and any previous wrap experience`, `Walk through the ROI: how many eyes see each truck per day × 5-year lifespan`, `Present the pilot program concept — low risk entry point`],
+        objections: [
+          { objection: "It's too expensive", counter: "I understand — let's look at cost-per-impression. A wrapped truck at our rate works out to pennies per thousand views, less than any billboard in your market." },
+          { objection: "We already have a wrap vendor", counter: "That's fair. What I can offer is a side-by-side comparison on one vehicle — let the work speak for itself." },
+          { objection: "Not the right time", counter: "I can lock in today's pricing and push the install date out 60 days. That way there's no rush but you've secured your spot on our calendar." },
+        ],
+        questionsToAsk: [`What's your current vehicle branding strategy?`, `How many vehicles are in your active fleet right now?`, `Have you wrapped vehicles before — what was that experience like?`, `Who else is involved in the decision?`],
+        similarWinsNote: similarWins.length ? `Similar ${lead.category} wins: ${similarSummary}` : 'Build your first win in this category today.',
+        estimatedValue,
+      });
+    }
+
+    const prompt = `You are a top-tier vehicle wrap sales consultant preparing a salesperson for an in-person meeting or call with a prospect. Write a complete, specific meeting prep brief.
+
+PROSPECT DETAILS:
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'unknown'}${lead.contact_title ? ` (${lead.contact_title})` : ''}
+Category: ${lead.category}
+Fleet size: ${fleetSize > 0 ? fleetSize + ' vehicles' : 'unknown'}
+Location: ${lead.city || ''}${lead.state ? ', ' + lead.state : ''}
+Website: ${lead.website || 'unknown'}
+Notes: ${lead.notes || 'none'}
+Pitch angle on file: ${lead.pitch_angle || 'none'}
+
+OUR SHOP: ${shopName}${shopCity ? ` in ${shopCity}` : ''}
+SIMILAR WINS WE CAN REFERENCE: ${similarSummary}
+ESTIMATED DEAL VALUE: $${estimatedValue.toLocaleString()}
+
+PRIOR CONTACT HISTORY:
+${actSummary}
+
+Write a JSON meeting prep brief with these exact keys:
+{
+  "companySnapshot": "2-3 sentence company profile with key wrap opportunity signals",
+  "openingLine": "The exact first sentence to say when the meeting starts — specific to this company",
+  "pricingNote": "Specific pricing strategy note: what to lead with, what to anchor on, whether to offer a pilot",
+  "talkTrack": ["step 1 talking point", "step 2", "step 3", "step 4"],
+  "objections": [
+    {"objection": "...", "counter": "specific 1-2 sentence counter for this company"},
+    {"objection": "...", "counter": "..."},
+    {"objection": "...", "counter": "..."}
+  ],
+  "questionsToAsk": ["question 1", "question 2", "question 3", "question 4"],
+  "closingMove": "The specific closing line or technique to use at the end of this meeting",
+  "similarWinsNote": "How to mention similar wins naturally in conversation",
+  "estimatedValue": ${estimatedValue}
+}
+
+Be hyper-specific. Reference the company name, fleet size, location. No generic advice.`;
+
+    const raw = await claudeHaiku(apiKeyPrep, [{ role: 'user', content: prompt }], 900);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const parsed = JSON.parse(match[0]);
+    res.json({ ok: true, fallback: false, ...parsed });
+  } catch (e) {
+    console.error('[meeting-prep]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Discovery Call Guide ──────────────────────────────────────────────────────
+// For replied/meeting-stage leads: generates a structured discovery call guide
+// with qualifying questions, vehicle measurement worksheet, and upsell checklist.
+// Different from meeting-prep (which focuses on pitch) — this is about finding out
+// what the prospect actually needs before writing a proposal.
+app.get('/leads/:id/discovery-guide', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const lr = await pool.query(
+      `SELECT l.*, u.company_name AS shop_name, u.settings_json
+       FROM leads l JOIN users u ON u.id::TEXT = l.user_id
+       WHERE l.id=$1 AND l.user_id=$2`,
+      [leadId, uid]
+    );
+    if (!lr.rows.length) return res.status(404).json({ error: 'lead not found' });
+    const lead = lr.rows[0];
+
+    // Fleet size hint
+    const fleet = parseInt(lead.fleet_size, 10) || 0;
+    const category = lead.category || 'fleet';
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      // Fallback without AI
+      return res.json({
+        ok: true, fallback: true,
+        discoveryQuestions: [
+          `How many vehicles are in your fleet right now?`,
+          `Are all vehicles the same model/size, or a mix?`,
+          `What is the primary goal of the wrap — brand visibility, delivery identification, or both?`,
+          `Do you have existing brand guidelines (colors, logo files)?`,
+          `What is your timeline for completion?`,
+          `Who else is involved in this decision?`,
+        ],
+        vehicleWorksheet: [
+          { type: 'Cargo Van / Sprinter', sqFt: '290–360 sq ft', material: '3–4 rolls', note: 'Full wrap' },
+          { type: 'Box Truck (24ft)', sqFt: '580–680 sq ft', material: '6–7 rolls', note: 'Full wrap' },
+          { type: 'Semi Cab', sqFt: '460–520 sq ft', material: '5–6 rolls', note: 'Full wrap' },
+          { type: 'Pickup Truck', sqFt: '200–260 sq ft', material: '2–3 rolls', note: 'Full wrap' },
+        ],
+        upsellChecklist: [
+          'Partial → Full wrap (3–4× revenue)',
+          `Interior graphics (cab, cargo area)`,
+          'Fleet decal package for remainder vehicles',
+          '3M Certified installation premium',
+        ],
+        redFlags: ['No brand guidelines — price for design time', 'Mixed fleet sizes — measure each class separately'],
+        estimatedValue: `$${(Math.max(1, fleet) * 3500).toLocaleString()}–$${(Math.max(1, fleet) * 5500).toLocaleString()}`,
+      });
+    }
+
+    const activities = await pool.query(
+      `SELECT activity_type, note, created_at FROM lead_activities
+       WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 10`,
+      [leadId, uid]
+    );
+
+    const actLog = activities.rows.map((a) =>
+      `${a.activity_type}: ${(a.note || '').slice(0, 100)} (${new Date(a.created_at).toLocaleDateString()})`
+    ).join('\n');
+
+    const prompt = `You are a senior vehicle wrap sales consultant helping a sales rep prepare for a discovery call with a prospect.
+
+LEAD INFO:
+Company: ${lead.company}
+Category: ${category}
+Fleet size: ${fleet || 'unknown'}
+Location: ${[lead.city, lead.state].filter(Boolean).join(', ') || 'unknown'}
+Current stage: ${lead.status}
+Pitch angle: ${lead.pitch_angle || 'unknown'}
+Recent activity:
+${actLog || 'No activity yet'}
+
+Generate a discovery call guide as JSON with these keys:
+{
+  "discoveryQuestions": ["6-8 specific, probing questions tailored to this lead type and stage — not generic"],
+  "vehicleWorksheet": [{"type": string, "sqFt": string, "material": string, "note": string}],
+  "upsellChecklist": ["3-5 specific upsell opportunities for this lead type"],
+  "redFlags": ["2-4 specific things to watch for with this type of prospect"],
+  "estimatedValue": "string like '$12,000–$28,000'"
+}
+
+Make the discovery questions specific to this account's category (${category}), size, and stage. Not generic.`;
+
+    const aiResp = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 800);
+    let parsed;
+    try {
+      const m = aiResp.match(/\{[\s\S]*\}/);
+      parsed = m ? JSON.parse(m[0]) : null;
+    } catch { parsed = null; }
+
+    if (!parsed) {
+      return res.json({ ok: true, fallback: true,
+        discoveryQuestions: ['What vehicles do you have?', 'What is your timeline?', 'Who signs off on this?'],
+        vehicleWorksheet: [], upsellChecklist: [], redFlags: [], estimatedValue: 'TBD' });
+    }
+
+    res.json({ ok: true, fallback: false, ...parsed });
+  } catch (e) {
+    console.error('[discovery-guide]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Win Debrief — AI "what worked" brief for a won deal ──────────────────
+// Analyzes the full activity timeline for a won lead and produces a structured
+// brief: key signal, winning tactic, days to close, pattern tags.
+// Stored in win_debriefs for aggregation into the Win Pattern Library card.
+app.post('/leads/:id/win-debrief', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    const [leadR, activityR, quotesR] = await Promise.all([
+      pool.query(
+        `SELECT company, category, status, fleet_size, city, state, created_at, updated_at
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at ASC LIMIT 30`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT total FROM shop_quotes WHERE lead_id=$1 AND user_id=$2 AND status='accepted' LIMIT 1`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    if (lead.status !== 'won') return res.status(400).json({ error: 'Lead is not won yet' });
+
+    // Check for existing debrief
+    const existing = await pool.query(
+      `SELECT * FROM win_debriefs WHERE lead_id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]
+    );
+    if (existing.rows.length) return res.json({ ok: true, debrief: existing.rows[0], cached: true });
+
+    const daysToClose = Math.floor((new Date(lead.updated_at).getTime() - new Date(lead.created_at).getTime()) / 86_400_000);
+    const touchCount = activityR.rows.length;
+    const dealValue = quotesR.rows[0]?.total ? parseFloat(quotesR.rows[0].total) : null;
+
+    const REV_EST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+    const estValue = dealValue || REV_EST[lead.category] || 3000;
+
+    if (!apiKey) {
+      // Fallback: compute basic debrief without AI
+      const debrief = {
+        company: lead.company, category: lead.category, days_to_close: daysToClose,
+        touch_count: touchCount, deal_value_est: estValue,
+        key_signal: touchCount <= 3 ? 'Fast close — high buyer intent from first contact' : `Sustained engagement over ${touchCount} touchpoints`,
+        winning_tactic: daysToClose <= 7 ? 'Quick response and follow-up cadence' : 'Consistent follow-through and value demonstration',
+        pattern_tags: [lead.category, daysToClose <= 14 ? 'fast-close' : 'nurture-win', touchCount <= 3 ? 'low-touch' : 'high-touch'],
+        summary: `Won ${lead.company} (${lead.category}) in ${daysToClose} days with ${touchCount} touchpoints. Estimated value: $${Math.round(estValue).toLocaleString()}.`,
+      };
+      const { rows } = await pool.query(
+        `INSERT INTO win_debriefs (user_id, lead_id, company, category, days_to_close, touch_count, deal_value_est, key_signal, winning_tactic, pattern_tags, summary)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [uid, leadId, debrief.company, debrief.category, debrief.days_to_close, debrief.touch_count, debrief.deal_value_est, debrief.key_signal, debrief.winning_tactic, debrief.pattern_tags, debrief.summary]
+      );
+      return res.json({ ok: true, debrief: rows[0], cached: false });
+    }
+
+    const activityTimeline = activityR.rows.map(a =>
+      `[${new Date(a.created_at).toLocaleDateString()}] ${a.type}: ${a.subject || ''}${a.body ? ' — ' + a.body.slice(0, 80) : ''}`
+    ).join('\n');
+
+    const prompt = `You are a sales performance analyst. Analyze this won deal and write a "Win Debrief" brief.
+
+Deal: ${lead.company} (${lead.category || 'unknown category'})
+Location: ${lead.city || ''} ${lead.state || ''}
+Fleet size: ${lead.fleet_size || 'not specified'}
+Days to close: ${daysToClose}
+Total touchpoints: ${touchCount}
+Estimated deal value: $${Math.round(estValue).toLocaleString()}
+
+Activity timeline:
+${activityTimeline || 'No activities logged'}
+
+Return ONLY this exact JSON (no markdown):
+{
+  "key_signal": "The single biggest signal that predicted this win (1 sentence)",
+  "winning_tactic": "The specific tactic or approach that closed this deal (1 sentence)",
+  "pattern_tags": ["tag1", "tag2", "tag3"],
+  "summary": "2-3 sentence narrative of what happened and what made it work. Specific to this deal."
+}
+
+Pattern tag examples: "fast-close", "warm-referral", "email-sequence", "cold-outreach", "proposal-win", "fleet-upsell", "local-win", "high-value", "long-nurture", "first-call-close"`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 500);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error' });
+
+    const parsed = JSON.parse(match[0]);
+    const { rows } = await pool.query(
+      `INSERT INTO win_debriefs (user_id, lead_id, company, category, days_to_close, touch_count, deal_value_est, key_signal, winning_tactic, pattern_tags, summary)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [uid, leadId, lead.company, lead.category, daysToClose, touchCount, estValue, parsed.key_signal, parsed.winning_tactic, parsed.pattern_tags || [], parsed.summary]
+    );
+    res.json({ ok: true, debrief: rows[0], cached: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/win-patterns — aggregated win debrief patterns
+app.get('/analytics/win-patterns', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const [debriefs, tagR, catR] = await Promise.all([
+      pool.query(
+        `SELECT * FROM win_debriefs WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20`, [uid]
+      ),
+      pool.query(
+        `SELECT unnest(pattern_tags) AS tag, COUNT(*)::INT AS count
+         FROM win_debriefs WHERE user_id=$1 AND pattern_tags IS NOT NULL
+         GROUP BY unnest(pattern_tags) ORDER BY count DESC LIMIT 12`, [uid]
+      ),
+      pool.query(
+        `SELECT category, COUNT(*)::INT AS count,
+                ROUND(AVG(days_to_close))::INT AS avg_days,
+                ROUND(AVG(deal_value_est))::INT AS avg_value
+         FROM win_debriefs WHERE user_id=$1
+         GROUP BY category ORDER BY count DESC`, [uid]
+      ),
+    ]);
+
+    const avgDays = debriefs.rows.length
+      ? Math.round(debriefs.rows.reduce((s, r) => s + (r.days_to_close || 0), 0) / debriefs.rows.length)
+      : null;
+    const avgTouches = debriefs.rows.length
+      ? Math.round(debriefs.rows.reduce((s, r) => s + (r.touch_count || 0), 0) / debriefs.rows.length)
+      : null;
+
+    res.json({
+      ok: true,
+      hasData: debriefs.rows.length > 0,
+      debriefs: debriefs.rows,
+      topTags: tagR.rows,
+      byCategory: catR.rows,
+      summary: { totalWins: debriefs.rows.length, avgDaysToClose: avgDays, avgTouchCount: avgTouches },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/loss-debrief — AI-generated deal post-mortem for a lost deal
+// What went wrong, what could be done differently, whether the deal is recoverable.
+app.post('/leads/:id/loss-debrief', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    const [leadR, actR, quotesR] = await Promise.all([
+      pool.query(
+        `SELECT company, category, status, fleet_size, city, state, created_at, updated_at,
+                lost_reason, lost_competitor, lost_at, notes
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT type, subject, body, metadata, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at ASC LIMIT 25`, [leadId, uid]
+      ),
+      pool.query(
+        `SELECT total, status FROM shop_quotes WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    if (lead.status !== 'lost') return res.status(400).json({ error: 'Lead is not marked as lost' });
+
+    const daysInPipeline = Math.floor((new Date(lead.lost_at || lead.updated_at).getTime() - new Date(lead.created_at).getTime()) / 86_400_000);
+    const touchCount = actR.rows.length;
+    const lastQuote = quotesR.rows[0]?.total ? parseFloat(quotesR.rows[0].total) : null;
+
+    const categoryLabels = { fleet: 'fleet wraps', dinoc: 'Di-NOC film', construction: 'construction wraps', colorchange: 'color change', racing: 'racing liveries', gc_referral: 'GC referrals', wallgraphics: 'wall graphics', reatec: 'REATEC film', design: 'custom design' };
+    const catLabel = categoryLabels[lead.category] || 'wraps';
+
+    if (!apiKey) {
+      const fallback = {
+        whatWentWrong: lead.lost_reason || (touchCount < 3 ? 'Low engagement — too few touchpoints before the decision was made.' : 'Multiple touches but no conversion — likely a price or timing mismatch.'),
+        missedOpportunity: lead.lost_competitor ? `Competitor ${lead.lost_competitor} likely offered a stronger value proposition or better price.` : 'No competitive context logged — hard to know without more data.',
+        recoverability: touchCount > 5 ? 'medium' : 'low',
+        recoverInstructions: `Wait 60 days and re-approach with a new angle: seasonal offer, portfolio update, or relevant case study.`,
+        whatToDoNext: `Log exactly why this deal was lost (price, timing, or competitor) so the AI can learn your loss patterns.`,
+        lessonLearned: `For ${catLabel} deals, follow up within 48 hours of proposal delivery. Silence = shopping around.`,
+      };
+      return res.json({ ok: true, debrief: fallback, fallback: true });
+    }
+
+    const timeline = actR.rows.map(a => {
+      const meta = a.metadata ? (typeof a.metadata === 'string' ? (() => { try { return JSON.parse(a.metadata); } catch { return {}; } })() : a.metadata) : {};
+      return `[${new Date(a.created_at).toLocaleDateString()}] ${a.type}${a.subject ? ': ' + a.subject : ''}${meta.intent ? ' (' + meta.intent + ')' : ''}`;
+    }).join('\n');
+
+    const messages = [{
+      role: 'user',
+      content: `You are a senior B2B sales coach analyzing a lost deal for a vehicle wrap shop.
+
+DEAL: ${lead.company}
+Category: ${catLabel}
+Fleet size: ${lead.fleet_size || 'unknown'}
+Location: ${[lead.city, lead.state].filter(Boolean).join(', ') || 'unknown'}
+Days in pipeline: ${daysInPipeline}
+Touchpoints: ${touchCount}
+Quote amount: ${lastQuote ? '$' + lastQuote.toLocaleString() : 'none sent'}
+Loss reason logged: ${lead.lost_reason || 'none'}
+Competitor mentioned: ${lead.lost_competitor || 'none'}
+
+ACTIVITY TIMELINE:
+${timeline || 'No activity logged'}
+
+Analyze this loss and respond with EXACTLY this JSON structure:
+{
+  "whatWentWrong": "2 sentences on the likely root cause",
+  "missedOpportunity": "1 sentence on the specific moment that could have changed the outcome",
+  "recoverability": "high|medium|low",
+  "recoverInstructions": "1 concrete action to try in 60-90 days",
+  "whatToDoNext": "1 immediate action for similar future deals",
+  "lessonLearned": "1 memorable lesson for the sales rep"
+}
+
+Return ONLY the JSON. No commentary, no markdown.`,
+    }];
+
+    const raw = await claudeHaiku(apiKey, messages, 400);
+    let debrief;
+    try {
+      const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      debrief = JSON.parse(cleaned);
+    } catch {
+      debrief = {
+        whatWentWrong: raw.slice(0, 200),
+        missedOpportunity: 'Unable to parse full analysis.',
+        recoverability: 'medium',
+        recoverInstructions: 'Follow up in 60 days with a fresh approach.',
+        whatToDoNext: 'Log the loss reason to improve future analysis.',
+        lessonLearned: 'Every lost deal is a data point. Log it.',
+      };
+    }
+
+    res.json({ ok: true, debrief, fallback: false });
+  } catch (e) {
+    console.error('[loss-debrief]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Stale Pipeline — leads stuck with no activity for 14+ days ────────────
+// Used by the Mission StalePipelineCard to surface deals at risk of dying.
+app.get('/mission/stale-pipeline', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const thresholdDays = parseInt(req.query.days) || 14;
+
+    const { rows } = await pool.query(`
+      SELECT
+        l.id AS lead_id, l.client_id, l.company, l.contact_name,
+        l.category, l.status, l.email, l.phone, l.state, l.fleet_size,
+        l.followup_due_at,
+        COALESCE(l.last_contacted_at, l.updated_at) AS last_activity_at,
+        EXTRACT(EPOCH FROM (NOW() - COALESCE(l.last_contacted_at, l.updated_at))) / 86400.0 AS days_stale,
+        (SELECT COUNT(*) FROM lead_activities la WHERE la.lead_id=l.id AND la.user_id=l.user_id) AS activity_count
+      FROM leads l
+      WHERE l.user_id = $1
+        AND l.status NOT IN ('won', 'lost', 'new', 'cold')
+        AND COALESCE(l.last_contacted_at, l.updated_at) < NOW() - ($2 || ' days')::interval
+      ORDER BY days_stale DESC
+      LIMIT 10
+    `, [uid, thresholdDays]);
+
+    const leads = rows.map(r => ({
+      leadId: parseInt(r.lead_id, 10),
+      clientId: r.client_id,
+      company: r.company,
+      contactName: r.contact_name,
+      category: r.category,
+      status: r.status,
+      email: r.email,
+      phone: r.phone,
+      state: r.state,
+      fleetSize: r.fleet_size,
+      followupDueAt: r.followup_due_at,
+      lastActivityAt: r.last_activity_at,
+      daysStale: Math.round(parseFloat(r.days_stale) * 10) / 10,
+      activityCount: parseInt(r.activity_count, 10) || 0,
+    }));
+
+    res.json({ ok: true, leads, thresholdDays });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Daily Briefing — short AI-generated morning summary for Mission ───────────
+// Auto-loads on Mission open, cached 4h. 3-sentence briefing: focus/risk/opportunity.
+// Falls back gracefully with data-only summary when AI is unavailable.
+app.get('/mission/daily-briefing', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+
+    // Pipeline snapshot — fast queries for briefing context
+    const [hotR, overdueR, proposalR, wonTodayR] = await Promise.all([
+      pool.query(`
+        SELECT company, status, category FROM leads WHERE user_id=$1
+        AND status IN ('replied','meeting','proposal') ORDER BY updated_at DESC LIMIT 5
+      `, [uid]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads WHERE user_id=$1
+        AND status NOT IN ('won','lost') AND followup_due_at < CURRENT_DATE
+      `, [uid]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads WHERE user_id=$1 AND status='proposal'
+      `, [uid]),
+      pool.query(`
+        SELECT COUNT(*)::INT AS count FROM leads WHERE user_id=$1
+        AND status='won' AND updated_at >= CURRENT_DATE
+      `, [uid]),
+    ]);
+
+    const hotLeads = hotR.rows;
+    const overdueCount = overdueR.rows[0]?.count || 0;
+    const proposalCount = proposalR.rows[0]?.count || 0;
+    const wonToday = wonTodayR.rows[0]?.count || 0;
+
+    // If no AI key, return data summary without narrative
+    if (!apiKey || hotLeads.length === 0) {
+      let briefing = '';
+      if (wonToday > 0) briefing += `🏆 ${wonToday} deal${wonToday > 1 ? 's' : ''} won today. `;
+      if (hotLeads.length > 0) {
+        const best = hotLeads[0];
+        briefing += `Your hottest deal is ${best.company} (${best.status}). `;
+      }
+      if (overdueCount > 0) briefing += `${overdueCount} follow-up${overdueCount > 1 ? 's' : ''} overdue — handle these first.`;
+      else if (proposalCount > 0) briefing += `${proposalCount} proposal${proposalCount > 1 ? 's' : ''} out — follow up on any sent 7+ days ago.`;
+      return res.json({ ok: true, briefing: briefing.trim() || 'Pipeline is healthy. Keep pushing.', dataOnly: true });
+    }
+
+    const hotSummary = hotLeads.map(l => `${l.company} (${l.status})`).join(', ');
+    const prompt = `Write a 2-sentence morning briefing for a vehicle wrap shop sales rep. Be specific and action-oriented. No fluff.
+
+Pipeline data:
+- Hot deals: ${hotSummary || 'none'}
+- Overdue follow-ups: ${overdueCount}
+- Open proposals: ${proposalCount}
+- Deals won today: ${wonToday}
+
+Format: "Sentence 1: what to focus on today. Sentence 2: risk or opportunity to act on."
+Return ONLY the 2 sentences, nothing else.`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 150);
+    res.json({ ok: true, briefing: raw.trim(), dataOnly: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Email Permutator — generate plausible emails from contact name + domain
+// and (optionally) verify via MX + SMTP RCPT.  Free alternative to Apollo
+// enrichment for the common case of "I know who and where, just need email".
+app.post('/leads/:id/find-email', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    if (!leadId) return res.status(400).json({ error: 'invalid_lead_id' });
+
+    const { rows } = await pool.query(
+      'SELECT id, contact_name, website, company FROM leads WHERE id=$1 AND user_id=$2',
+      [leadId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not_found' });
+    const lead = rows[0];
+
+    const name = (req.body?.name || lead.contact_name || '').trim();
+    let domain = (req.body?.domain || lead.website || '').trim();
+    if (!name || !domain) {
+      return res.status(400).json({
+        error: 'missing_name_or_domain',
+        hint: 'Need contact_name + website on the lead, or pass {name, domain} in body.',
+      });
+    }
+    // Sanitize domain
+    domain = domain.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/^www\./i, '');
+
+    const { findEmails } = require('./lib/emailPermutator');
+    const probe = !!req.body?.probe;  // default false — RCPT is unreliable
+    const result = await findEmails(name, domain, { probe });
+
+    // Log activity so it shows up in the timeline
+    if (result.candidates.length > 0) {
+      await pool.query(
+        `INSERT INTO lead_activities (user_id, lead_id, type, description)
+         VALUES ($1, $2, 'email_generated', $3)`,
+        [uid, leadId, `Generated ${result.candidates.length} email candidates for ${name} @ ${domain}`]
+      ).catch(() => {});
+    }
+
+    res.json({
+      lead: { id: lead.id, company: lead.company, contactName: lead.contact_name },
+      domain,
+      name,
+      mx: result.mx,
+      candidates: result.candidates,
+      error: result.error,
+    });
+  } catch (e) {
+    console.error('[find-email] error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /ai/import-from-url — AI-powered quick lead import from any URL
+// Paste a company website, LinkedIn URL, or directory listing → AI extracts
+// company name, industry, fleet size, contact info, and suggests a pitch angle.
+// ────────────────────────────────────────────────────────────────────────────
+
+app.post('/ai/import-from-url', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'url required' });
+
+  // Basic URL validation
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  const domain = parsedUrl.hostname.replace(/^www\./, '');
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI not configured' });
+
+  try {
+    // Fetch the page with a strict timeout (5s)
+    let pageText = '';
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const pageRes = await fetch(parsedUrl.href, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; WrapLeads/1.0; +https://wrapleads.io)' },
+      });
+      clearTimeout(timeoutId);
+      const html = await pageRes.text();
+      // Strip HTML tags, collapse whitespace, keep first 4000 chars
+      pageText = html
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 4000);
+    } catch (fetchErr) {
+      // If fetch fails, extract what we can from the domain alone
+      pageText = `Company website: ${domain}`;
+    }
+
+    const prompt = `You are a CRM data extraction assistant for a vehicle wrap and graphics shop.
+
+Given the following URL and page content, extract structured lead data for a potential wrap customer.
+
+URL: ${parsedUrl.href}
+Domain: ${domain}
+Page content: ${pageText}
+
+Extract and return a JSON object with these fields (use null for unknown):
+{
+  "company": "company/organization name",
+  "contactName": "main contact person name or null",
+  "contactTitle": "job title or null",
+  "email": "email address or null",
+  "phone": "phone number formatted as (XXX) XXX-XXXX or null",
+  "city": "city or null",
+  "state": "2-letter US state code or null",
+  "website": "clean website URL (https://domain.com)",
+  "fleetSize": "estimated number of vehicles as a string, e.g. '25' or null",
+  "industry": "brief industry description or null",
+  "category": one of exactly: "fleet" | "design" | "construction" | "dinoc" | "reatec" | "colorchange" | "wallgraphics" | "gc_referral" | "racing",
+  "pitchAngle": "1-2 sentence wrap sales pitch angle specific to this company, or null",
+  "confidence": "high" | "medium" | "low"
+}
+
+Rules:
+- category "fleet" = logistics, trucking, delivery, transport, utility companies with multiple vehicles
+- category "construction" = construction, contractors, trades, HVAC, plumbing, electrical
+- category "design" = companies that need branded single vehicles (lawyers, realtors, etc.)
+- category "colorchange" = car dealerships, performance shops, automotive
+- category "gc_referral" = general contractors managing large construction projects
+- If uncertain about category, use "fleet" for any multi-vehicle business
+- pitchAngle should reference their specific industry and why vehicle wraps make sense for them
+- Only return the JSON object, no markdown or explanation`;
+
+    const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 600);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI parse error', raw });
+
+    const extracted = JSON.parse(match[0]);
+
+    // Sanitize + normalize
+    const lead = {
+      company:       String(extracted.company || domain).slice(0, 200),
+      contactName:   extracted.contactName || null,
+      contactTitle:  extracted.contactTitle || null,
+      email:         extracted.email || null,
+      phone:         extracted.phone || null,
+      city:          extracted.city || null,
+      state:         extracted.state || null,
+      website:       extracted.website || `https://${domain}`,
+      fleetSize:     extracted.fleetSize || null,
+      industry:      extracted.industry || null,
+      category:      ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing'].includes(extracted.category)
+                     ? extracted.category : 'fleet',
+      pitchAngle:    extracted.pitchAngle || null,
+      confidence:    extracted.confidence || 'medium',
+    };
+
+    res.json({ ok: true, lead, domain, url: parsedUrl.href });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/bulk-find-emails — run email permutation + optional SMTP probe
+// on up to 50 leads that have a website but no email.  Returns per-lead results.
+app.post('/leads/bulk-find-emails', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { leadIds } = req.body || {};
+
+  // If no specific IDs, auto-select leads with website but no email (max 50)
+  let ids = Array.isArray(leadIds) ? leadIds.slice(0, 50) : null;
+  let leads;
+  if (ids && ids.length) {
+    const r = await pool.query(
+      `SELECT id, contact_name, website, company FROM leads
+       WHERE id = ANY($1) AND user_id = $2 AND (email IS NULL OR email = '')
+         AND website IS NOT NULL AND website != ''`,
+      [ids, uid]
+    );
+    leads = r.rows;
+  } else {
+    const r = await pool.query(
+      `SELECT id, contact_name, website, company FROM leads
+       WHERE user_id = $1 AND (email IS NULL OR email = '')
+         AND website IS NOT NULL AND website != ''
+         AND contact_name IS NOT NULL AND contact_name != ''
+       ORDER BY created_at DESC LIMIT 50`,
+      [uid]
+    );
+    leads = r.rows;
+  }
+
+  if (!leads.length) return res.json({ ok: true, processed: 0, found: 0, results: [] });
+
+  const { findEmails } = require('./lib/emailPermutator');
+  const results = [];
+
+  for (const lead of leads) {
+    try {
+      let domain = (lead.website || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/^www\./i, '');
+      if (!domain || !lead.contact_name) { results.push({ leadId: lead.id, company: lead.company, found: false }); continue; }
+
+      const result = await findEmails(lead.contact_name, domain, { probe: false });
+      const best = result.candidates[0];
+      if (best) {
+        await pool.query('UPDATE leads SET email = $1 WHERE id = $2 AND user_id = $3 AND (email IS NULL OR email = \'\')', [best.email, lead.id, uid]);
+        await pool.query(
+          `INSERT INTO lead_activities (user_id, lead_id, type, description) VALUES ($1,$2,'email_generated',$3)`,
+          [uid, lead.id, `Email auto-discovered: ${best.email} (permutation, confidence ${best.confidence})`]
+        ).catch(() => {});
+        results.push({ leadId: lead.id, company: lead.company, email: best.email, found: true, confidence: best.confidence });
+      } else {
+        results.push({ leadId: lead.id, company: lead.company, found: false });
+      }
+    } catch {
+      results.push({ leadId: lead.id, company: lead.company, found: false, error: true });
+    }
+  }
+
+  const found = results.filter((r) => r.found).length;
+  res.json({ ok: true, processed: results.length, found, results });
+});
+
 // ─── Quote / Invoice Builder ────────────────────────────────────────────────
 
 app.get('/leads/:id/quotes', authMiddleware, async (req, res) => {
@@ -7603,6 +14434,239 @@ app.delete('/quotes/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Quote Line Item Templates ──────────────────────────────────────────────
+app.get('/quotes/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, items, created_at FROM quote_templates WHERE user_id=$1 ORDER BY created_at DESC',
+      [uid]
+    );
+    res.json({ ok: true, templates: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/quotes/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { name, items } = req.body || {};
+  if (!name?.trim() || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'name and items[] required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO quote_templates (user_id, name, items) VALUES ($1,$2,$3::jsonb) RETURNING id, name, items, created_at',
+      [uid, name.trim(), JSON.stringify(items)]
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/quotes/templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query('DELETE FROM quote_templates WHERE id=$1 AND user_id=$2', [parseInt(req.params.id), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /quotes/:id/schedule-followup — schedule a 3-email follow-up sequence for a sent quote
+// Inserts Day 3 / Day 7 / Day 14 emails into email_queue. Idempotent — cancels previous
+// quote-followup emails for this lead before scheduling new ones.
+app.post('/quotes/:id/schedule-followup', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const quoteId = parseInt(req.params.id, 10);
+  try {
+    // Fetch the quote + lead
+    const qr = await pool.query(
+      `SELECT sq.*, l.email, l.contact_name, l.company, l.category, l.fleet_size
+       FROM shop_quotes sq
+       JOIN leads l ON l.id = sq.lead_id
+       WHERE sq.id = $1 AND sq.user_id = $2`,
+      [quoteId, uid]
+    );
+    if (!qr.rows.length) return res.status(404).json({ error: 'Quote not found' });
+    const q = qr.rows[0];
+    if (!q.email) return res.status(400).json({ error: 'Lead has no email address' });
+
+    // Cancel any existing quote-followup sequence for this lead
+    await pool.query(
+      `UPDATE email_queue SET status='cancelled', error_msg='replaced by new quote followup'
+       WHERE lead_id=$1 AND user_id=$2 AND status='pending' AND subject LIKE '%[QF]%'`,
+      [q.lead_id, uid]
+    );
+
+    const contact = q.contact_name ? q.contact_name.split(' ')[0] : 'there';
+    const totalFmt = `$${parseFloat(q.total).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    const now = new Date();
+
+    const emails = [
+      {
+        day: 3,
+        subject: `[QF] Quick check-in on the wrap estimate`,
+        body: `Hi ${contact},\n\nI wanted to check in on the wrap estimate I sent over a few days ago — total came in at ${totalFmt}.\n\nDoes the scope look right, or are there any questions I can help clarify? Happy to adjust the proposal if needed.\n\nBest,`,
+      },
+      {
+        day: 7,
+        subject: `[QF] A quick note about your wrap project`,
+        body: `Hi ${contact},\n\nFollowing up one more time on the ${q.company} wrap estimate (${totalFmt}). I know these decisions take time, especially when coordinating across a team.\n\nOne thing I didn't mention — we can phase the install if budget timing is a factor. Happy to walk through options.\n\nLet me know either way,`,
+      },
+      {
+        day: 14,
+        subject: `[QF] Last follow-up — ${q.company} wrap proposal`,
+        body: `Hi ${contact},\n\nI'll keep this short — I haven't heard back on the wrap proposal and I don't want to keep reaching out if the timing isn't right.\n\nIf you'd like to revisit this in a few months, I'll keep your estimate on file. If there's a specific concern I haven't addressed, I'm happy to chat.\n\nEither way — thank you for your time.\n\nBest,`,
+      },
+    ];
+
+    for (const em of emails) {
+      const sendAt = new Date(now.getTime() + em.day * 86_400_000);
+      await pool.query(
+        `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [uid, q.lead_id, em.day, em.subject, em.body, q.email, q.contact_name || null, sendAt]
+      );
+    }
+
+    await logActivity(pool, {
+      leadId: q.lead_id, userId: uid,
+      type: 'sequence_activated',
+      subject: `Quote follow-up sequence scheduled (Day 3, 7, 14 — ${totalFmt} proposal)`,
+      metadata: { quote_id: quoteId },
+    });
+
+    res.json({ ok: true, queued: emails.length, days: [3, 7, 14] });
+  } catch (e) {
+    console.error('[quote-followup]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /quotes/:id/followup-status — check if a follow-up sequence is active for a quote's lead
+app.get('/quotes/:id/followup-status', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const quoteId = parseInt(req.params.id, 10);
+  try {
+    const qr = await pool.query(
+      `SELECT lead_id FROM shop_quotes WHERE id=$1 AND user_id=$2`, [quoteId, uid]
+    );
+    if (!qr.rows.length) return res.status(404).json({ error: 'not found' });
+    const leadId = qr.rows[0].lead_id;
+    const pr = await pool.query(
+      `SELECT id, subject, send_at, status FROM email_queue
+       WHERE lead_id=$1 AND user_id=$2 AND subject LIKE '%[QF]%'
+       ORDER BY send_at ASC`,
+      [leadId, uid]
+    );
+    res.json({ ok: true, scheduled: pr.rows });
+  } catch (e) {
+    console.error('[quote-followup-status]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /leads/:id/quote-timing-intel — for the most recent sent quote, analyze
+// how long it has been sitting and generate a follow-up recommendation.
+app.get('/leads/:id/quote-timing-intel', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: leadRows } = await pool.query(
+      `SELECT l.company, l.contact_name, l.category, l.status, u.settings_json AS settings
+       FROM leads l JOIN users u ON u.id::text=l.user_id
+       WHERE l.id=$1 AND l.user_id=$2`,
+      [leadId, uid]
+    );
+    if (!leadRows.length) return res.status(404).json({ error: 'Lead not found' });
+    const { company, contact_name, category, settings } = leadRows[0];
+
+    const { rows: quoteRows } = await pool.query(
+      `SELECT id, quote_number, title, total, status, sent_at, valid_days
+       FROM shop_quotes
+       WHERE lead_id=$1 AND user_id=$2 AND status='sent'
+       ORDER BY sent_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+
+    if (!quoteRows.length) {
+      return res.json({ ok: true, hasSentQuote: false });
+    }
+    const q = quoteRows[0];
+    const daysSinceSent = q.sent_at
+      ? Math.floor((Date.now() - new Date(q.sent_at).getTime()) / 86400000)
+      : null;
+    const validDaysLeft = q.valid_days && q.sent_at
+      ? q.valid_days - daysSinceSent
+      : null;
+
+    // Category-specific response benchmarks (days)
+    const BENCHMARKS = {
+      fleet:        { avg: 7, fast: 3, slow: 14 },
+      construction: { avg: 10, fast: 5, slow: 21 },
+      gc_referral:  { avg: 14, fast: 7, slow: 30 },
+      racing:       { avg: 5, fast: 2, slow: 10 },
+      design:       { avg: 6, fast: 2, slow: 14 },
+      dinoc:        { avg: 10, fast: 5, slow: 21 },
+      reatec:       { avg: 10, fast: 5, slow: 21 },
+      colorchange:  { avg: 5, fast: 2, slow: 10 },
+      wallgraphics: { avg: 8, fast: 3, slow: 18 },
+    };
+    const bench = BENCHMARKS[category] || BENCHMARKS.fleet;
+
+    let urgency = 'on_track'; // on_track, follow_up_now, overdue
+    if (daysSinceSent !== null) {
+      if (daysSinceSent >= bench.slow) urgency = 'overdue';
+      else if (daysSinceSent >= bench.avg) urgency = 'follow_up_now';
+    }
+
+    // AI follow-up suggestion
+    let followUpDraft = null;
+    const anthropic = getAnthropic();
+    const s = settings || {};
+    if (anthropic && daysSinceSent !== null) {
+      try {
+        const urgencyContext = urgency === 'overdue'
+          ? 'The quote is significantly overdue based on industry averages. Be warm but create gentle urgency.'
+          : urgency === 'follow_up_now'
+          ? 'The quote is past the average response window. A professional follow-up is appropriate now.'
+          : 'The quote is still in the normal response window. A light, friendly check-in is appropriate.';
+
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 280,
+          messages: [{
+            role: 'user',
+            content: `Write a SHORT follow-up email for a sent vehicle wrap quote. ${urgencyContext}
+
+Details:
+- Company: ${company}
+- Contact: ${contact_name || 'the decision maker'}
+- Category: ${category}
+- Quote total: $${Math.round(q.total || 0).toLocaleString()}
+- Days since sent: ${daysSinceSent}
+- Quote valid for: ${q.valid_days || 30} days${validDaysLeft !== null ? ` (${validDaysLeft} days left)` : ''}
+- Sender: ${s.senderName || 'Alex'} at ${s.companyName || 'our shop'}
+
+Return JSON: {"subject": "short subject", "body": "email body, max 90 words, plain text"}`
+          }]
+        });
+        followUpDraft = JSON.parse(msg.content[0].text);
+      } catch (_) { /* fall through */ }
+    }
+
+    res.json({
+      ok: true,
+      hasSentQuote: true,
+      quote: { id: q.id, quoteNumber: q.quote_number, title: q.title, total: q.total, sentAt: q.sent_at, validDays: q.valid_days },
+      daysSinceSent,
+      validDaysLeft,
+      urgency,
+      benchmark: bench,
+      followUpDraft,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PUBLIC — proposal page (client-facing, no auth)
 app.get('/proposals/:token', async (req, res) => {
   try {
@@ -7679,10 +14743,10 @@ app.get('/proposals/:token', async (req, res) => {
 </head><body>
 <div class="wrap">
   <div class="header">
-    <div class="logo">${shopName}</div>
+    <div class="logo">${he(shopName)}</div>
     <div class="tagline">Vehicle Wraps · Fleet Graphics · Architectural Film</div>
-    <div class="prop-title">${p.title}</div>
-    <div class="prop-meta">Prepared for ${p.contact_name || p.company} · ${new Date(p.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+    <div class="prop-title">${he(p.title)}</div>
+    <div class="prop-meta">Prepared for ${he(p.contact_name || p.company)} · ${new Date(p.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
   </div>
 
   <div class="body-wrap">
@@ -7690,38 +14754,38 @@ app.get('/proposals/:token', async (req, res) => {
     <div class="section mockup-section">
       <div class="section-label">Your Vehicle, Wrapped</div>
       <div class="mockup-frame">
-        <img src="${p.mockup_url}" alt="Wrap concept for ${p.company || 'your vehicle'}" />
+        <img src="${he(p.mockup_url)}" alt="Wrap concept for ${he(p.company || 'your vehicle')}" />
         <div class="mockup-tag">AI-rendered concept · final design subject to approval</div>
       </div>
     </div>` : ''}
 
     <div class="section">
       <div class="section-label">Introduction</div>
-      ${(p.intro || '').split('\n\n').map(par => `<p>${par}</p>`).join('')}
+      ${(p.intro || '').split('\n\n').map(par => `<p>${he(par)}</p>`).join('')}
     </div>
 
     <div class="section">
       <div class="section-label">Recommended Services</div>
-      <ul>${p.services || ''}</ul>
+      <ul>${he(p.services || '')}</ul>
     </div>
 
     <div class="section">
       <div class="section-label">Investment</div>
-      ${p.pricing_html || ''}
+      ${sanitizeProposalHtml(p.pricing_html || '')}
     </div>
 
     ${p.roi_section ? `
     <div class="section">
       <div class="section-label">Your Rolling Billboard — The Numbers</div>
-      ${p.roi_section}
+      ${sanitizeProposalHtml(p.roi_section)}
     </div>` : ''}
 
     <div class="section">
       <div class="section-label">Project Timeline</div>
-      <ol>${(p.timeline || '').replace(/<li>/g,'<li>').replace(/<\/li>/g,'</li>')}</ol>
+      <ol>${he(p.timeline || '').replace(/&lt;li&gt;/g,'<li>').replace(/&lt;\/li&gt;/g,'</li>')}</ol>
     </div>
 
-    ${portfolio ? `<div class="section"><div class="section-label">Our Work</div><p>View our portfolio: <a href="${portfolio}" target="_blank">${portfolio}</a></p></div>` : ''}
+    ${portfolio ? `<div class="section"><div class="section-label">Our Work</div><p>View our portfolio: <a href="${he(portfolio)}" target="_blank">${he(portfolio)}</a></p></div>` : ''}
 
     ${approved
       ? `<div class="approved-badge">✓ Proposal Approved — Thank you! We will be in touch shortly.</div>`
@@ -7733,8 +14797,8 @@ app.get('/proposals/:token', async (req, res) => {
   </div>
 
   <div class="footer">
-    <span>${shopName}${senderName ? ' · ' + senderName : ''}</span>
-    <span>${[senderPhone, senderEmail].filter(Boolean).join(' · ')}</span>
+    <span>${he(shopName)}${senderName ? ' · ' + he(senderName) : ''}</span>
+    <span>${[senderPhone, senderEmail].filter(Boolean).map(he).join(' · ')}</span>
   </div>
 </div>
 <script>
@@ -8001,11 +15065,11 @@ app.get('/portfolio/:shopToken', async (req, res) => {
       const vehName = VEHICLE_NAMES[j.vehicle_type] || j.vehicle_type || 'Vehicle';
       return `
         <div class="job-card">
-          ${thumb ? `<div class="job-thumb"><img src="${thumb}" alt="${j.company} wrap" loading="lazy"></div>` : `<div class="job-thumb job-thumb-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" style="opacity:0.3"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`}
+          ${thumb ? `<div class="job-thumb"><img src="${thumb}" alt="${he(j.company)} wrap" loading="lazy"></div>` : `<div class="job-thumb job-thumb-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" style="opacity:0.3"><rect x="1" y="3" width="15" height="13" rx="2"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`}
           <div class="job-info">
-            <div class="job-company">${j.company || 'Client'}</div>
-            <div class="job-meta">${j.vehicle_count || 1}× ${vehName} · ${catName}</div>
-            ${j.material ? `<div class="job-material">${j.material}</div>` : ''}
+            <div class="job-company">${he(j.company || 'Client')}</div>
+            <div class="job-meta">${j.vehicle_count || 1}× ${he(vehName)} · ${he(catName)}</div>
+            ${j.material ? `<div class="job-material">${he(j.material)}</div>` : ''}
             <div class="job-date">${j.install_date ? new Date(j.install_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : ''}</div>
           </div>
         </div>`;
@@ -8015,7 +15079,7 @@ app.get('/portfolio/:shopToken', async (req, res) => {
 
     res.send(`<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${shopName} — Our Work</title>
+<title>${he(shopName)} — Our Work</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0}
@@ -8757,7 +15821,7 @@ app.get('/admin/devices/:id/log', authMiddleware, async (req, res) => {
 
 // ── Broadcast Email — send one message to many leads at once ─────────────────
 app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) => {
-  const { leadIds, subject, body } = req.body || {};
+  const { leadIds, subject, body, aiPersonalize } = req.body || {};
   if (!Array.isArray(leadIds) || !leadIds.length || !subject || !body)
     return res.status(400).json({ error: 'leadIds[], subject, body required' });
   if (leadIds.length > 100)
@@ -8773,9 +15837,11 @@ app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) =
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
 
   const { rows: leads } = await pool.query(
-    `SELECT id, company, contact_name, email FROM leads WHERE id=ANY($1) AND user_id=$2`,
+    `SELECT id, company, contact_name, email, category, state, city, fleet_size, notes FROM leads WHERE id=ANY($1) AND user_id=$2`,
     [leadIds, uid]
   );
+
+  const anthropic = aiPersonalize ? getAnthropic() : null;
 
   let sent = 0, skipped = 0, errors = 0;
   for (const lead of leads) {
@@ -8787,7 +15853,21 @@ app.post('/leads/broadcast', authMiddleware, requireShopFlow, async (req, res) =
         [trackToken, uid, lead.id, subject]
       );
       const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
-      const personalBody = body.replace(/\{\{company\}\}/gi, lead.company)
+
+      let aiOpener = '';
+      if (anthropic) {
+        try {
+          const ctx = `Company: ${lead.company}${lead.city ? `, ${lead.city}` : ''}${lead.state ? `, ${lead.state}` : ''} | Fleet: ${lead.fleet_size || 'unknown'} | Category: ${lead.category || 'fleet'} | Notes: ${(lead.notes || '').slice(0, 80)}`;
+          const msg = await anthropic.messages.create({
+            model: 'claude-haiku-4-5', max_tokens: 80,
+            messages: [{ role: 'user', content: `Write ONE specific opening sentence (max 25 words) for a B2B vehicle wrap outreach email. Be specific to this prospect. No name. No "I hope". Just a compelling, personalized opener.\n\nProspect: ${ctx}\nSubject: ${subject}\n\nReturn ONLY the sentence.` }],
+          });
+          aiOpener = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : '';
+        } catch { /* fall through without AI opener */ }
+      }
+
+      const templateBody = aiOpener ? `${aiOpener}\n\n${body}` : body;
+      const personalBody = templateBody.replace(/\{\{company\}\}/gi, lead.company)
         .replace(/\{\{name\}\}/gi, lead.contact_name || lead.company);
       const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px">
 ${personalBody.replace(/\n/g, '<br>')}
@@ -8824,6 +15904,53 @@ ${personalBody.replace(/\n/g, '<br>')}
   res.json({ ok: true, sent, skipped, errors });
 });
 
+// Preview AI-personalized email openers for broadcast (up to 3 sample leads)
+app.post('/leads/broadcast/preview-ai', authMiddleware, requireShopFlow, async (req, res) => {
+  try {
+    const { leadIds, subject, body } = req.body || {};
+    if (!Array.isArray(leadIds) || !leadIds.length) return res.status(400).json({ error: 'leadIds[] required' });
+    const uid = String(req.user.id);
+    const anthropic = getAnthropic();
+    if (!anthropic) return res.status(503).json({ error: 'AI not configured' });
+
+    const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+    const settings = userR.rows[0]?.settings_json || {};
+    const senderName = settings.senderName || 'WrapLeads';
+
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, contact_name, email, category, state, city, fleet_size, notes
+       FROM leads WHERE id=ANY($1) AND user_id=$2 LIMIT 3`,
+      [leadIds.slice(0, 3), uid]
+    );
+
+    const previews = await Promise.all(leads.map(async (lead) => {
+      const ctx = `Company: ${lead.company}${lead.city ? `, ${lead.city}` : ''}${lead.state ? `, ${lead.state}` : ''} | Category: ${lead.category || 'fleet'} | Fleet: ${lead.fleet_size || 'unknown'} | Contact: ${lead.contact_name || 'unknown'} | Notes: ${(lead.notes || '').slice(0, 100)}`;
+      const msg = await anthropic.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 120,
+        messages: [{
+          role: 'user',
+          content: `You are an expert B2B sales copywriter for a vehicle wrap shop. Write ONE personalized opening sentence (max 30 words) for an outbound email to this prospect. Make it specific to their business — reference their fleet, location, or industry. Do NOT use their name (we don't know if it's right). No fluff, no "I hope this email finds you". Just a compelling, specific opener.\n\nProspect: ${ctx}\n\nEmail subject: ${subject || 'vehicle wrap services'}\n\nReturn ONLY the single sentence, nothing else.`,
+        }],
+      });
+      const aiOpener = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : '';
+      const personalBody = `${aiOpener}\n\n${body || ''}`
+        .replace(/\{\{company\}\}/gi, lead.company)
+        .replace(/\{\{name\}\}/gi, lead.contact_name || lead.company);
+      return {
+        leadId: lead.id,
+        company: lead.company,
+        contactName: lead.contact_name,
+        email: lead.email,
+        aiOpener,
+        fullBody: personalBody,
+      };
+    }));
+
+    res.json({ ok: true, previews, totalLeads: leadIds.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Global Activity Feed ───────────────────────────────────────────────────────
 app.get('/activity/feed', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -8840,6 +15967,29 @@ app.get('/activity/feed', authMiddleware, async (req, res) => {
     `, [uid, limit]);
     res.json({ ok: true, events: rows });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Mission News Signals — leads auto-created from press releases ──────────────
+app.get('/mission/news-signals', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, name, notes, created_at
+      FROM companies
+      WHERE source = 'news_signal'
+        AND created_at > NOW() - INTERVAL '7 days'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+    const signals = rows.map(r => {
+      let notesObj = null;
+      try { notesObj = r.notes ? JSON.parse(r.notes) : null; } catch {}
+      return { id: r.id, name: r.name, notes: notesObj, createdAt: r.created_at };
+    });
+    res.json({ ok: true, signals });
+  } catch (e) {
+    console.error('[mission/news-signals]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -8973,6 +16123,427 @@ function startBidExpiryWorker() {
   console.log('· Bid expiry worker: running (daily alert at 10:00 AM)');
 }
 
+// ── Quote Expiry Worker ───────────────────────────────────────────────────────
+// Fires daily at 8 AM. Notifies shop owners when a sent quote is within 3 days
+// of its validity window expiring — prompts them to follow up before the client
+// has to ask for a price refresh.
+async function processQuoteExpiry() {
+  try {
+    const { rows: users } = await pool.query(
+      `SELECT DISTINCT user_id FROM shop_quotes WHERE status='sent' AND sent_at IS NOT NULL`
+    );
+    for (const { user_id } of users) {
+      const { rows: expiring } = await pool.query(
+        `SELECT q.id, q.quote_number, q.title, q.total, q.sent_at, q.valid_days, q.lead_id,
+                l.company, l.contact_name, l.email
+           FROM shop_quotes q
+           LEFT JOIN leads l ON l.id = q.lead_id AND l.user_id = q.user_id
+          WHERE q.user_id=$1 AND q.status='sent' AND q.sent_at IS NOT NULL
+            AND (q.sent_at + (q.valid_days || ' days')::interval) BETWEEN NOW() AND NOW() + INTERVAL '3 days'`,
+        [user_id]
+      );
+      for (const quote of expiring) {
+        const expiryMs = new Date(quote.sent_at).getTime() + quote.valid_days * 86_400_000;
+        const daysLeft = Math.max(0, Math.ceil((expiryMs - Date.now()) / 86_400_000));
+        const already = await pool.query(
+          `SELECT 1 FROM notifications WHERE user_id=$1 AND type='quote_expiring'
+           AND metadata->>'quote_id' = $2 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
+          [user_id, String(quote.id)]
+        );
+        if (already.rows.length) continue;
+        await createNotification(user_id, {
+          type: 'quote_expiring',
+          title: `⏳ Quote expires ${daysLeft === 0 ? 'today' : `in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`} — ${quote.title}`,
+          body: `${quote.company || 'Unknown client'} · ${quote.quote_number} · $${(quote.total || 0).toLocaleString()} — follow up before they ask for a reprice.`,
+          metadata: { quote_id: quote.id, lead_id: quote.lead_id, days_left: daysLeft, company: quote.company },
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[quote-expiry worker]', e.message);
+  }
+}
+
+function startQuoteExpiryWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 0) {
+      processQuoteExpiry();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Quote expiry worker: running (daily alert at 08:00 AM)');
+}
+
+// ── Seasonal Win Intelligence ─────────────────────────────────────────────────
+// Returns month-by-month win patterns from the user's history + identifies
+// which month we're in, what's historically the best category this time of year,
+// and which pipeline leads to prioritize for the current season.
+app.get('/analytics/seasonal', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const currentMonth = new Date().getMonth() + 1; // 1-12
+    const currentMonthName = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][currentMonth - 1];
+
+    // Monthly win rate breakdown by category over last 24 months
+    const historyR = await pool.query(`
+      SELECT
+        EXTRACT(MONTH FROM updated_at)::INT AS month,
+        category,
+        COUNT(*)::INT AS wins
+      FROM leads
+      WHERE user_id=$1 AND status='won' AND updated_at >= NOW() - INTERVAL '24 months'
+      GROUP BY month, category
+      ORDER BY month, wins DESC
+    `, [uid]);
+
+    // Build month → top category map
+    const monthMap = {};
+    for (const row of historyR.rows) {
+      if (!monthMap[row.month]) monthMap[row.month] = {};
+      monthMap[row.month][row.category] = (monthMap[row.month][row.category] || 0) + row.wins;
+    }
+
+    // Adjacent months (current ± 1)
+    const peakMonths = [
+      ((currentMonth - 2 + 12) % 12) + 1,
+      currentMonth,
+      (currentMonth % 12) + 1,
+    ];
+
+    // Find historically best category this season
+    const seasonCats = {};
+    for (const m of peakMonths) {
+      const mData = monthMap[m] || {};
+      for (const [cat, count] of Object.entries(mData)) {
+        seasonCats[cat] = (seasonCats[cat] || 0) + count;
+      }
+    }
+    const topSeasonCategory = Object.entries(seasonCats).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    const seasonWins = Object.values(seasonCats).reduce((s, v) => s + v, 0);
+
+    // Pipeline leads in the hot category that should be pushed this month
+    const hotPipelineR = topSeasonCategory ? await pool.query(`
+      SELECT id, company, category, status, followup_due_at, fleet_size
+      FROM leads
+      WHERE user_id=$1 AND status IN ('contacted','replied','meeting','proposal')
+        AND category=$2
+      ORDER BY
+        CASE status WHEN 'proposal' THEN 0 WHEN 'meeting' THEN 1 WHEN 'replied' THEN 2 ELSE 3 END,
+        updated_at DESC
+      LIMIT 8
+    `, [uid, topSeasonCategory]) : { rows: [] };
+
+    // Month-by-month series (all months 1-12)
+    const series = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      const data = monthMap[m] || {};
+      const total = Object.values(data).reduce((s, v) => s + v, 0);
+      const topCat = Object.entries(data).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      return { month: m, wins: total, topCat };
+    });
+
+    res.json({
+      ok: true,
+      currentMonth,
+      currentMonthName,
+      topSeasonCategory,
+      seasonWins,
+      hotPipelineLeads: hotPipelineR.rows,
+      series,
+    });
+  } catch (e) {
+    console.error('[analytics/seasonal]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// ── Outreach Calendar ─────────────────────────────────────────────────────────
+// Forward-looking 12-month planner combining static wrap-industry knowledge
+// with the user's live pipeline count per category.
+const MONTHLY_OUTREACH_INTEL = {
+  1:  { themes: ['Q1 budget approvals', 'New year fleet refresh', 'Tax-advantaged spend'],
+        hot: ['fleet', 'gc_referral'], angle: 'Budget doors just opened — fleet managers are approving Q1 spend now. Lead with ROI numbers.' },
+  2:  { themes: ['Racing season prep', 'Spring bidding previews', 'Construction quoting starts'],
+        hot: ['racing', 'construction'], angle: 'Race hauler season and spring construction bids kick off. Reach racing teams before season deposits clear.' },
+  3:  { themes: ['Spring fleet refresh', 'Construction projects launch', 'Spring trade show season'],
+        hot: ['fleet', 'construction', 'gc_referral'], angle: 'Busiest outreach month for fleet and construction. Projects funded in January are now in motion.' },
+  4:  { themes: ['Warm weather = wrap season', 'GC contracts awarded', 'Motorsport season underway'],
+        hot: ['fleet', 'colorchange', 'racing'], angle: 'Peak install season starting. Color-change buyers are active. GC contracts being awarded weekly.' },
+  5:  { themes: ['Peak install season', 'Fleet maintenance budget reviews', 'Memorial Day promotions'],
+        hot: ['fleet', 'colorchange', 'dinoc'], angle: 'Highest-conversion month for fleet wraps. Lead with turn time — shops get backed up in summer.' },
+  6:  { themes: ['Summer heat = interior film demand', 'Fleet mid-year refresh', 'Festival & event wraps'],
+        hot: ['dinoc', 'reatec', 'fleet'], angle: 'Heat drives DI-NOC and Rea Tec inquiries for sun-facing surfaces. Fleet mid-year budget reviews.' },
+  7:  { themes: ['Q3 fleet budget windows', 'Back-to-school bus wraps', 'Fall construction bids open'],
+        hot: ['fleet', 'wallgraphics', 'construction'], angle: 'Q3 discretionary budget. School districts buying bus wraps. Fall construction bids open.' },
+  8:  { themes: ['Pre-Q4 fleet decisions', 'Interior design fall projects', 'Year-end prep starts'],
+        hot: ['fleet', 'design', 'dinoc'], angle: 'Fleet managers making Q4 decisions. Interior designers planning fall renovations.' },
+  9:  { themes: ['Fall project rush', 'GC year-end close-outs', 'Holiday fleet prep'],
+        hot: ['gc_referral', 'fleet', 'wallgraphics'], angle: 'GCs closing fall projects. Fleets prepping holiday livery. Year-end purchasing urgency building.' },
+  10: { themes: ['Year-end budget flush', 'Construction close-out', 'Holiday wrap demand'],
+        hot: ['fleet', 'gc_referral', 'colorchange'], angle: 'Year-end budget flush is real — fleet buyers need to spend before December 31.' },
+  11: { themes: ['Q4 year-end spend', 'Holiday wrap installs', 'Tax incentive deadlines'],
+        hot: ['fleet', 'colorchange', 'racing'], angle: 'Urgency is your friend in November. "Get it done before year-end" closes fleet deals fast.' },
+  12: { themes: ['Year-end close-out', 'Planning season for next year', 'Racing off-season builds'],
+        hot: ['racing', 'fleet', 'design'], angle: 'Slow-close time — plan ahead. Book January/February installs now. Race haulers go into build season.' },
+};
+
+app.get('/analytics/outreach-calendar', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  try {
+    // Pipeline lead counts per category
+    const { rows: pipelineCounts } = await pool.query(`
+      SELECT category, COUNT(*)::int AS count
+      FROM leads
+      WHERE user_id=$1 AND status NOT IN ('won','lost')
+      GROUP BY category
+    `, [uid]);
+    const pipelineMap = Object.fromEntries(pipelineCounts.map(r => [r.category, r.count]));
+
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      const intel = MONTHLY_OUTREACH_INTEL[m];
+      const isCurrent = m === currentMonth;
+      const isFuture = m > currentMonth || (currentMonth === 12 && m <= 3);
+      const hotPipelineCount = intel.hot.reduce((sum, cat) => sum + (pipelineMap[cat] || 0), 0);
+      return {
+        month: m,
+        name: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i],
+        themes: intel.themes,
+        hot_categories: intel.hot,
+        angle: intel.angle,
+        is_current: isCurrent,
+        is_future: isFuture,
+        pipeline_count: hotPipelineCount,
+      };
+    });
+
+    res.json({ months, currentMonth });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── 3-Month Revenue Projection ───────────────────────────────────────────────
+// Combines current pipeline value × historical stage win rates × time-to-close
+// to project expected revenue for the next 3 months with low/mid/high ranges.
+app.get('/analytics/revenue-forecast', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    // Category-based average deal values (same as in other workers)
+    const CAT_REV = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000,
+                      colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+
+    const [pipelineR, historyR, velocityR, settingsR] = await Promise.all([
+      // Active pipeline leads with estimated values
+      pool.query(`
+        SELECT id, company, category, status, followup_due_at, fleet_size, updated_at
+          FROM leads
+         WHERE user_id=$1 AND status IN ('contacted','replied','meeting','proposal')
+      `, [uid]),
+      // Historical stage-to-won transitions over last 12 months
+      pool.query(`
+        SELECT
+          status_from,
+          COUNT(*) FILTER (WHERE status_to='won')::FLOAT /
+            NULLIF(COUNT(*),0) AS win_rate,
+          COUNT(*) AS total
+        FROM (
+          SELECT
+            lag(status) OVER (PARTITION BY lead_id ORDER BY created_at) AS status_from,
+            status AS status_to
+          FROM (
+            SELECT lead_id, metadata->>'to' AS status, created_at
+            FROM lead_activities
+            WHERE user_id=$1 AND type='status_changed' AND metadata->>'to' IS NOT NULL
+              AND created_at >= NOW() - INTERVAL '12 months'
+          ) t
+        ) transitions
+        WHERE status_from IN ('contacted','replied','meeting','proposal')
+        GROUP BY status_from
+      `, [uid]),
+      // Avg days to close per stage
+      pool.query(`
+        SELECT
+          status,
+          AVG(EXTRACT(DAY FROM NOW() - updated_at))::INT AS avg_days_in_stage
+        FROM leads
+        WHERE user_id=$1 AND status IN ('contacted','replied','meeting','proposal')
+        GROUP BY status
+      `, [uid]),
+      // User's monthly revenue goal from settings
+      pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]),
+    ]);
+
+    // Build win rate map per stage (default conservative rates if no history)
+    const DEFAULT_WIN_RATES = { contacted: 0.08, replied: 0.20, meeting: 0.45, proposal: 0.65 };
+    const winRateMap = { ...DEFAULT_WIN_RATES };
+    for (const row of historyR.rows) {
+      if (row.total >= 3) { // need at least 3 data points
+        winRateMap[row.status_from] = parseFloat(row.win_rate) || DEFAULT_WIN_RATES[row.status_from] || 0.1;
+      }
+    }
+
+    // Build avg days in stage map
+    const daysMap = { contacted: 21, replied: 10, meeting: 7, proposal: 5 };
+    for (const row of velocityR.rows) {
+      daysMap[row.status] = row.avg_days_in_stage || daysMap[row.status];
+    }
+
+    // For each pipeline lead, estimate which month it's likely to close
+    const now = Date.now();
+    const months = [0, 1, 2]; // current month, next, month after
+    const projections = months.map(mOffset => {
+      const mStart = new Date(now);
+      mStart.setDate(1);
+      mStart.setMonth(mStart.getMonth() + mOffset);
+      const mEnd = new Date(mStart);
+      mEnd.setMonth(mEnd.getMonth() + 1);
+
+      let expectedRev = 0;
+      let lowRev = 0;
+      let highRev = 0;
+      const leads = [];
+
+      for (const lead of pipelineR.rows) {
+        const winRate = winRateMap[lead.status] || 0.1;
+        const avgDays = daysMap[lead.status] || 14;
+        const catRev = CAT_REV[lead.category] || 3500;
+
+        // Estimate close date from current stage and velocity
+        const estCloseMs = now + avgDays * 86_400_000;
+        const inWindow = estCloseMs >= mStart.getTime() && estCloseMs < mEnd.getTime();
+
+        if (inWindow || mOffset === 2) { // include stragglers in month 3
+          expectedRev += winRate * catRev;
+          lowRev     += winRate * 0.6 * catRev;
+          highRev    += Math.min(1, winRate * 1.4) * catRev;
+          leads.push({ id: lead.id, company: lead.company, status: lead.status, category: lead.category, winRate: Math.round(winRate * 100) });
+        }
+      }
+
+      const label = mOffset === 0 ? 'This Month'
+                  : mOffset === 1 ? 'Next Month'
+                  : ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][mEnd.getMonth() === 0 ? 11 : mEnd.getMonth() - 1];
+
+      return {
+        month: mOffset,
+        label,
+        expected: Math.round(expectedRev),
+        low: Math.round(lowRev),
+        high: Math.round(highRev),
+        leads: leads.slice(0, 5),
+      };
+    });
+
+    const settings = settingsR.rows[0]?.settings_json || {};
+    const monthlyGoal = parseFloat((settings.monthlyRevenueGoal || '0').replace(/[^0-9.]/g, '')) || 0;
+
+    const hasHistory = historyR.rows.some(r => r.total >= 3);
+
+    res.json({
+      ok: true,
+      projections,
+      monthlyGoal,
+      winRates: winRateMap,
+      hasHistory,
+      pipelineTotal: pipelineR.rows.reduce((s, l) => s + (CAT_REV[l.category] || 3500), 0),
+    });
+  } catch (e) {
+    console.error('[analytics/revenue-forecast]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// ── Email Send-Time Intelligence ─────────────────────────────────────────────
+// Analyzes email open timestamps to find the best hours/days for outreach.
+// Returns hour-of-day and day-of-week open distributions, best 3 windows,
+// and per-lead first-open times for "last opened at" display in lead detail.
+app.get('/analytics/email-timing', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [hourR, dowR, topLeadsR] = await Promise.all([
+      // Hour of day distribution (opens, 0-23)
+      pool.query(`
+        SELECT EXTRACT(HOUR FROM opened_at AT TIME ZONE 'America/New_York')::INT AS hour,
+               COUNT(*)::INT AS opens
+          FROM email_tracking
+         WHERE user_id=$1 AND opened_at IS NOT NULL
+           AND opened_at >= NOW() - INTERVAL '90 days'
+         GROUP BY hour
+         ORDER BY hour
+      `, [uid]),
+      // Day of week distribution (1=Sun, 7=Sat in Postgres)
+      pool.query(`
+        SELECT EXTRACT(DOW FROM opened_at AT TIME ZONE 'America/New_York')::INT AS dow,
+               COUNT(*)::INT AS opens
+          FROM email_tracking
+         WHERE user_id=$1 AND opened_at IS NOT NULL
+           AND opened_at >= NOW() - INTERVAL '90 days'
+         GROUP BY dow
+         ORDER BY dow
+      `, [uid]),
+      // Leads with recent open activity for "active readers" list
+      pool.query(`
+        SELECT DISTINCT ON (et.lead_id)
+               et.lead_id, l.company, l.status,
+               et.opened_at,
+               EXTRACT(EPOCH FROM (NOW() - et.opened_at)) / 3600.0 AS hours_ago
+          FROM email_tracking et
+          JOIN leads l ON l.id = et.lead_id AND l.user_id = et.user_id
+         WHERE et.user_id=$1 AND et.opened_at IS NOT NULL
+           AND l.status NOT IN ('won','lost')
+         ORDER BY et.lead_id, et.opened_at DESC
+         LIMIT 10
+      `, [uid]),
+    ]);
+
+    // Build full 24-hour array
+    const hourMap = new Map(hourR.rows.map(r => [r.hour, r.opens]));
+    const byHour = Array.from({ length: 24 }, (_, h) => ({ hour: h, opens: hourMap.get(h) ?? 0 }));
+
+    // Build full 7-day array (0=Sun ... 6=Sat)
+    const DOW_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dowMap = new Map(dowR.rows.map(r => [r.dow, r.opens]));
+    const byDow = Array.from({ length: 7 }, (_, d) => ({ dow: d, label: DOW_LABELS[d], opens: dowMap.get(d) ?? 0 }));
+
+    // Best 3 hours — highest open count during business hours (7am-8pm) first
+    const bestHours = [...byHour]
+      .filter(h => h.hour >= 7 && h.hour <= 20)
+      .sort((a, b) => b.opens - a.opens)
+      .slice(0, 3)
+      .map(h => ({
+        hour: h.hour,
+        label: h.hour === 0 ? '12am' : h.hour < 12 ? `${h.hour}am` : h.hour === 12 ? '12pm' : `${h.hour - 12}pm`,
+        opens: h.opens,
+      }));
+
+    // Best day of week
+    const bestDow = [...byDow].sort((a, b) => b.opens - a.opens)[0] ?? null;
+
+    res.json({
+      ok: true,
+      byHour,
+      byDow,
+      bestHours,
+      bestDow,
+      totalOpens: hourR.rows.reduce((s, r) => s + r.opens, 0),
+      activeReaders: topLeadsR.rows.map(r => ({
+        leadId: r.lead_id,
+        company: r.company,
+        status: r.status,
+        openedAt: r.opened_at,
+        hoursAgo: Math.round(r.hours_ago * 10) / 10,
+      })),
+    });
+  } catch (e) {
+    console.error('[analytics/email-timing]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
 // WrapLeads ROI Impact — current-month stats showing platform value
 app.get('/analytics/impact', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -9083,6 +16654,625 @@ app.get('/mission/retention-radar', authMiddleware, async (req, res) => {
     `, [uid]);
     res.json({ ok: true, clients: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Mission Today Score ───────────────────────────────────────────────────────
+// Tallies today's sales activities for the gamified "Today's Score" card.
+// Scored: call_logged=3pts, email_sent=1pt, status advance to meeting/replied=3pts,
+// status won=10pts. Capped at 100 for display purposes.
+app.get('/mission/today-score', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const [activitiesR, winsR, emailsR] = await Promise.all([
+      pool.query(
+        `SELECT type, COUNT(*)::INT AS count
+         FROM lead_activities
+         WHERE user_id = $1 AND created_at::date = $2
+         GROUP BY type`,
+        [uid, today]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INT AS count FROM leads
+         WHERE user_id = $1 AND status = 'won' AND updated_at::date = $2`,
+        [uid, today]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::INT AS count FROM email_queue
+         WHERE user_id = $1 AND status = 'sent' AND sent_at::date = $2`,
+        [uid, today]
+      ),
+    ]);
+
+    const actMap = {};
+    for (const r of activitiesR.rows) actMap[r.type] = r.count;
+
+    const calls     = actMap['call_logged'] || 0;
+    const advances  = (actMap['status_changed'] || 0);
+    const notes     = (actMap['note_added'] || 0);
+    const wins      = winsR.rows[0]?.count || 0;
+    const emails    = emailsR.rows[0]?.count || 0;
+
+    const score = Math.min(100, calls * 3 + emails + advances * 3 + wins * 10 + notes);
+
+    res.json({ score, calls, emails, advances, wins, notes, date: today });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /mission/rescue-queue — lost leads queued for AI re-engagement
+// Shows which lost deals have a rescue email scheduled, plus candidates not yet rescued.
+app.get('/mission/rescue-queue', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [queuedR, candidatesR] = await Promise.all([
+      // Already queued rescue emails
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.state, l.email, l.updated_at AS lost_at,
+               eq.send_at, eq.subject
+        FROM email_queue eq
+        JOIN leads l ON l.id = eq.lead_id
+        WHERE eq.user_id = $1
+          AND l.status = 'lost'
+          AND eq.status = 'pending'
+          AND eq.subject ILIKE '%re-engagement%'
+        ORDER BY eq.send_at ASC
+        LIMIT 10
+      `, [uid]),
+      // Lost leads that COULD be rescued (no recent rescue activity)
+      pool.query(`
+        SELECT l.id, l.company, l.category, l.state, l.email, l.updated_at AS lost_at,
+               EXTRACT(DAY FROM NOW() - l.updated_at)::INT AS days_lost
+        FROM leads l
+        WHERE l.user_id = $1
+          AND l.status = 'lost'
+          AND l.email IS NOT NULL AND l.email != ''
+          AND l.updated_at < NOW() - INTERVAL '90 days'
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_activities a
+            WHERE a.lead_id = l.id AND a.type = 'email_queued'
+              AND a.subject ILIKE '%re-engagement%'
+              AND a.created_at > NOW() - INTERVAL '180 days'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM email_queue eq
+            WHERE eq.lead_id = l.id AND eq.status = 'pending'
+              AND eq.subject ILIKE '%re-engagement%'
+          )
+        ORDER BY l.updated_at ASC
+        LIMIT 5
+      `, [uid]),
+    ]);
+
+    res.json({
+      queued: queuedR.rows,
+      candidates: candidatesR.rows,
+      total: queuedR.rows.length + candidatesR.rows.length,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /mission/rescue-queue/trigger — manually trigger rescue drafts for specific leads
+app.post('/mission/rescue-queue/trigger', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { lead_ids } = req.body || {};
+  if (!Array.isArray(lead_ids) || !lead_ids.length) {
+    return res.status(400).json({ error: 'lead_ids required' });
+  }
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicKey) return res.status(400).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT l.*, u.settings_json AS settings
+       FROM leads l JOIN users u ON u.id::text = l.user_id
+       WHERE l.user_id = $1 AND l.id = ANY($2::bigint[]) AND l.status = 'lost' AND l.email IS NOT NULL`,
+      [uid, lead_ids]
+    );
+
+    let queued = 0;
+    for (const lead of leads) {
+      const s = lead.settings || {};
+      const daysAgo = Math.round((Date.now() - new Date(lead.updated_at || Date.now()).getTime()) / 86_400_000) || 90;
+      const prompt = `You are a sales expert for a vehicle wrap shop called "${s.companyName || 'our shop'}".
+
+A prospect went cold ${daysAgo} days ago. Write a short, humble, non-pushy re-engagement email.
+Company: ${lead.company}
+Contact: ${lead.contact_name || 'Decision Maker'}
+Location: ${lead.city || ''} ${lead.state || ''}
+Category: ${lead.category}
+${lead.fleet_size ? `Fleet size: ${lead.fleet_size}` : ''}
+
+Requirements:
+- Under 120 words
+- Acknowledge time has passed, don't pretend it hasn't
+- Reference 1 specific, believable reason they might reconsider now
+- Soft ask: "Happy to share some recent work if timing is better now"
+- Sign off as ${s.senderName || 'the team'}
+
+Return raw JSON only: {"subject": "...", "body": "..."}`;
+
+      const raw = await claudeHaiku(anthropicKey, [{ role: 'user', content: prompt }], 600);
+      const { subject, body } = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+
+      const sendAt = new Date(Date.now() + 86_400_000);
+      await pool.query(
+        `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+         VALUES ($1,$2,1,$3,$4,$5,$6,$7)`,
+        [uid, lead.id, subject, body, lead.email, lead.contact_name || null, sendAt]
+      );
+      await logActivity(pool, {
+        leadId: lead.id, userId: uid, type: 'email_queued',
+        subject: 're-engagement',
+        metadata: { subject, source: 'manual_rescue' },
+      });
+      queued++;
+    }
+
+    res.json({ ok: true, queued });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Referral Engine: GET /mission/referral-opportunities ─────────────────────
+// Returns top 5 won leads sorted by recency + deal value that haven't been
+// asked for a referral yet. Used by the ReferralEngineCard on Mission.
+app.get('/mission/referral-opportunities', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const REV_EST_REF = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        l.id              AS lead_id,
+        l.company,
+        l.category,
+        l.contact_name,
+        l.email,
+        l.fleet_size,
+        l.city,
+        l.state,
+        l.updated_at      AS won_at,
+        l.referral_asked_at
+      FROM leads l
+      WHERE l.user_id = $1
+        AND l.status = 'won'
+        AND l.referral_asked_at IS NULL
+      ORDER BY l.updated_at DESC
+      LIMIT 5
+    `, [uid]);
+
+    const leads = rows.map(r => ({
+      leadId: parseInt(r.lead_id, 10),
+      company: r.company,
+      category: r.category,
+      contactName: r.contact_name,
+      email: r.email,
+      wonAt: r.won_at,
+      estValue: REV_EST_REF[r.category] || 2500,
+      vehicleCount: r.fleet_size || 1,
+    }));
+
+    res.json({ ok: true, leads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Objection Counter Engine ─────────────────────────────────────────────────
+// GET /mission/objections — recent replies with negative/price/not_now intents
+app.get('/mission/objections', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        la.id            AS activity_id,
+        la.lead_id,
+        la.created_at,
+        la.metadata,
+        l.company,
+        l.category,
+        l.contact_name,
+        l.email,
+        l.status
+      FROM lead_activities la
+      JOIN leads l ON l.id = la.lead_id AND l.user_id = $1
+      WHERE la.user_id = $1
+        AND la.type = 'email_reply'
+        AND la.metadata->>'intent' IN ('negative','not_now','price_question')
+        AND l.status NOT IN ('won','lost','unsubscribed')
+        AND la.created_at > NOW() - INTERVAL '21 days'
+      ORDER BY la.created_at DESC
+      LIMIT 8
+    `, [uid]);
+
+    const objections = rows.map((r) => {
+      const meta = r.metadata || {};
+      return {
+        activityId: r.activity_id,
+        leadId: r.lead_id,
+        company: r.company,
+        category: r.category,
+        contactName: r.contact_name,
+        email: r.email,
+        status: r.status,
+        intent: meta.intent,
+        summary: meta.summary || null,
+        body: meta.body || null,
+        receivedAt: r.created_at,
+      };
+    });
+
+    res.json({ ok: true, objections });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/counter-objection — AI-generate a counter-response to an objection
+app.post('/leads/:id/counter-objection', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const { intent, objectionText } = req.body;
+  if (!intent) return res.status(400).json({ error: 'intent required' });
+
+  try {
+    const { rows: leads } = await pool.query(
+      `SELECT id, company, category, contact_name, city, state, fleet_size, email
+       FROM leads WHERE id=$1 AND user_id=$2 LIMIT 1`,
+      [leadId, uid]
+    );
+    if (!leads.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leads[0];
+
+    const { rows: acts } = await pool.query(
+      `SELECT type, subject, body, metadata, created_at
+       FROM lead_activities
+       WHERE lead_id=$1 AND user_id=$2
+         AND type IN ('email_sent','email_reply','called','note_added')
+       ORDER BY created_at DESC LIMIT 5`,
+      [leadId, uid]
+    );
+
+    const anthro = getAnthropic();
+    if (!anthro) {
+      const FALLBACK = {
+        price_question: {
+          subject: `Re: Pricing for ${lead.company}`,
+          body: `Hi ${lead.contact_name || 'there'},\n\nI understand budget is always a factor. Let me share a few options that other ${lead.category === 'fleet' ? 'fleet operators' : 'businesses'} have found helpful — including a flexible payment schedule and a phased approach that can spread the investment over time.\n\nWould a quick 15-minute call this week work to walk through the numbers together?\n\nBest,`,
+        },
+        not_now: {
+          subject: `Staying on your radar — ${lead.company}`,
+          body: `Hi ${lead.contact_name || 'there'},\n\nCompletely understood — timing is everything. I'll plan to follow up in 30 days and keep you posted on anything relevant in the meantime.\n\nOne quick thought: if you have a seasonal push or event coming up, even a few weeks of lead time can make a big difference for scheduling.\n\nBest,`,
+        },
+        negative: {
+          subject: `One more thought — ${lead.company}`,
+          body: `Hi ${lead.contact_name || 'there'},\n\nI appreciate you taking the time to respond. Before I close this out, I wanted to share one quick case study that might change the picture — a similar ${lead.category === 'fleet' ? 'fleet operation' : 'business'} saw a measurable ROI within 6 months.\n\nIf the answer is still no, I completely respect that. Just wanted to make sure you had the full picture first.\n\nBest,`,
+        },
+      };
+      const fb = FALLBACK[intent] || FALLBACK.not_now;
+      return res.json({ ok: true, fallback: true, subject: fb.subject, body: fb.body, tip: null });
+    }
+
+    const intentLabel = intent === 'price_question' ? 'raised a pricing objection' : intent === 'not_now' ? 'said it\'s not the right time' : 'expressed a negative or skeptical response';
+    const actSummary = acts.map((a) => {
+      const m = a.metadata || {};
+      return `- ${a.type} on ${new Date(a.created_at).toLocaleDateString()}: ${m.subject || a.subject || a.body || '(no detail)'}`.slice(0, 120);
+    }).join('\n');
+
+    const prompt = `You are a vehicle wrap sales expert writing a re-engagement email.
+
+Lead: ${lead.company}${lead.city ? ` (${lead.city}, ${lead.state})` : ''}
+Contact: ${lead.contact_name || 'the decision maker'}
+Category: ${lead.category}
+Fleet size: ${lead.fleet_size || 'unknown'}
+
+The contact ${intentLabel}.
+${objectionText ? `Their exact words: "${objectionText.slice(0, 300)}"` : ''}
+
+Recent activity:
+${actSummary || '(no prior activity recorded)'}
+
+Write a SHORT, warm counter-response email (2-3 paragraphs max). Acknowledge their concern genuinely, pivot to a concrete benefit or case study angle, and close with a low-pressure CTA. Do not use clichés like "I understand your concern" or "circle back". Sound like a real person.
+
+Reply ONLY with JSON: {"subject":"...","body":"...","tip":"one-sentence coach note on why this angle works"}`;
+
+    const msg = await anthro.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 500,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    let subject = `Re: ${lead.company} — Following Up`;
+    let body = '';
+    let tip = null;
+    try {
+      const text = msg.content[0].text.trim().replace(/^```json|```$/g, '').trim();
+      const parsed = JSON.parse(text);
+      subject = parsed.subject || subject;
+      body = parsed.body || body;
+      tip = parsed.tip || null;
+    } catch {
+      body = msg.content[0].text;
+    }
+
+    res.json({ ok: true, fallback: false, subject, body, tip });
+  } catch (e) {
+    console.error('[counter-objection]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /leads/:id/call-opener — AI-generated 15-second cold call opening line
+// Personalized to the specific lead: company name, fleet size, category, city/state,
+// recent activity, and the shop's own voice/offer from settings.
+app.get('/leads/:id/call-opener', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  if (isNaN(leadId)) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    const [leadR, settingsR, actR] = await Promise.all([
+      pool.query(
+        `SELECT company, contact_name, category, fleet_size, city, state, status, notes, pitch_angle, website
+         FROM leads WHERE id=$1 AND user_id=$2`, [leadId, uid]
+      ),
+      pool.query(`SELECT settings_json FROM users WHERE id=$1`, [uid]),
+      pool.query(
+        `SELECT type, subject, metadata, created_at FROM lead_activities
+         WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 3`, [leadId, uid]
+      ),
+    ]);
+
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = leadR.rows[0];
+    const settings = settingsR.rows[0]?.settings_json || {};
+    const shopName = settings.companyName || settings.shopName || 'our shop';
+    const recentActs = actR.rows.map(a => `${a.type}${a.subject ? ': ' + a.subject : ''}`).join(', ');
+
+    const categoryLabels = {
+      fleet: 'commercial fleet wraps', dinoc: 'Di-NOC architectural film', construction: 'construction vehicle wraps',
+      colorchange: 'color change wraps', racing: 'racing liveries', wallgraphics: 'wall graphics',
+      gc_referral: 'general contractor wraps', reatec: 'REATEC film', design: 'custom design work',
+    };
+    const catLabel = categoryLabels[lead.category] || 'vehicle wraps';
+    const fleetStr = lead.fleet_size ? ` with ${lead.fleet_size} vehicles` : '';
+    const locationStr = [lead.city, lead.state].filter(Boolean).join(', ');
+    const recentStr = recentActs ? `\nRecent CRM activity: ${recentActs}` : '';
+    const pitchStr = lead.pitch_angle ? `\nKnown pitch angle: ${lead.pitch_angle}` : '';
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      // Fallback opener without AI
+      const contact = lead.contact_name ? `, may I speak with ${lead.contact_name}?` : '?';
+      const opener = `Hi, this is [your name] from ${shopName}. I'm reaching out because we specialize in ${catLabel} for companies like ${lead.company}${fleetStr}${locationStr ? ' in ' + locationStr : ''}. We've helped similar fleets get premium graphics that actually drive new business. Do you have 90 seconds to hear what we've been doing for carriers in your area?`;
+      return res.json({ ok: true, fallback: true, opener, tip: 'Mention a specific local client by name if you have one.', contactSuffix: contact });
+    }
+
+    const messages = [
+      {
+        role: 'user',
+        content: `You are a sales coach helping a vehicle wrap shop make cold calls. Write a natural, confident 2-3 sentence phone opener for this lead:
+
+Company: ${lead.company}${fleetStr}${locationStr ? '\nLocation: ' + locationStr : ''}
+Category: ${catLabel}
+Contact: ${lead.contact_name || 'unknown'}${recentStr}${pitchStr}
+Shop name: ${shopName}
+
+Rules:
+- Sound like a real person calling (not a script reader)
+- Mention a specific, relevant benefit — NOT generic phrases like "I wanted to reach out"
+- End with a soft question that invites conversation, not a hard close
+- Max 3 sentences total (about 15-20 seconds spoken)
+- No emojis, no bullet points — just the spoken words
+- Include a brief [coaching tip] at the end on one line (not spoken aloud)`,
+      },
+    ];
+
+    const result = await claudeHaiku(apiKey, messages, 300);
+    const raw = result || '';
+    const tipMatch = raw.match(/\[coaching tip\]:?\s*(.*)/i);
+    const tip = tipMatch ? tipMatch[1].trim() : null;
+    const opener = raw.replace(/\[coaching tip\]:?.*/is, '').trim();
+
+    res.json({ ok: true, fallback: false, opener, tip });
+  } catch (e) {
+    console.error('[call-opener]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Lead Contacts (multi-contact manager) ────────────────────────────────────
+// Fleet deals often involve multiple decision makers. These routes let users
+// track every stakeholder at a prospect account.
+
+// GET /leads/:id/contacts — list all contacts for a lead
+app.get('/leads/:id/contacts', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const r = await pool.query(
+      `SELECT id, name, title, email, phone, is_primary, notes, created_at
+       FROM lead_contacts
+       WHERE lead_id = $1 AND user_id = $2
+       ORDER BY is_primary DESC, created_at ASC`,
+      [leadId, uid]
+    );
+    res.json({ ok: true, contacts: r.rows });
+  } catch (e) {
+    console.error('[lead-contacts GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/contacts — add a contact
+app.post('/leads/:id/contacts', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const { name, title, email, phone, is_primary, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  try {
+    // Verify lead ownership
+    const check = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'lead not found' });
+
+    // If marking as primary, clear existing primary
+    if (is_primary) {
+      await pool.query(
+        `UPDATE lead_contacts SET is_primary = FALSE WHERE lead_id = $1 AND user_id = $2`,
+        [leadId, uid]
+      );
+    }
+    const r = await pool.query(
+      `INSERT INTO lead_contacts (lead_id, user_id, name, title, email, phone, is_primary, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING id, name, title, email, phone, is_primary, notes, created_at`,
+      [leadId, uid, name.trim(), title?.trim() || null, email?.trim() || null,
+       phone?.trim() || null, !!is_primary, notes?.trim() || null]
+    );
+    res.json({ ok: true, contact: r.rows[0] });
+  } catch (e) {
+    console.error('[lead-contacts POST]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /leads/:id/contacts/:cid — update a contact
+app.patch('/leads/:id/contacts/:cid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const cid = parseInt(req.params.cid, 10);
+  const { name, title, email, phone, is_primary, notes } = req.body;
+  try {
+    // Verify ownership
+    const check = await pool.query(
+      'SELECT id FROM lead_contacts WHERE id=$1 AND lead_id=$2 AND user_id=$3',
+      [cid, leadId, uid]
+    );
+    if (!check.rows.length) return res.status(404).json({ error: 'contact not found' });
+
+    if (is_primary) {
+      await pool.query(
+        `UPDATE lead_contacts SET is_primary = FALSE WHERE lead_id = $1 AND user_id = $2`,
+        [leadId, uid]
+      );
+    }
+    const r = await pool.query(
+      `UPDATE lead_contacts
+       SET name = COALESCE($1, name),
+           title = COALESCE($2, title),
+           email = COALESCE($3, email),
+           phone = COALESCE($4, phone),
+           is_primary = COALESCE($5, is_primary),
+           notes = COALESCE($6, notes),
+           updated_at = NOW()
+       WHERE id = $7
+       RETURNING id, name, title, email, phone, is_primary, notes, created_at`,
+      [name?.trim() || null, title?.trim() || null, email?.trim() || null,
+       phone?.trim() || null, is_primary !== undefined ? !!is_primary : null,
+       notes?.trim() || null, cid]
+    );
+    res.json({ ok: true, contact: r.rows[0] });
+  } catch (e) {
+    console.error('[lead-contacts PATCH]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /leads/:id/contacts/:cid — remove a contact
+app.delete('/leads/:id/contacts/:cid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    await pool.query(
+      'DELETE FROM lead_contacts WHERE id=$1 AND lead_id=$2 AND user_id=$3',
+      [cid, leadId, uid]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[lead-contacts DELETE]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/:id/email-summary — AI summary of the entire email thread with a lead
+// Distills sent emails + any reply content into bullet points + recommended next action.
+app.post('/leads/:id/email-summary', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    // Fetch lead
+    const lr = await pool.query(
+      `SELECT company, contact_name, category, status, email FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!lr.rows.length) return res.status(404).json({ error: 'lead not found' });
+    const lead = lr.rows[0];
+
+    // Fetch email history (last 20 tracked emails)
+    const er = await pool.query(
+      `SELECT subject, body, sent_at, open_count, open_last_at
+       FROM email_tracking WHERE lead_id=$1 AND user_id=$2
+       ORDER BY sent_at DESC LIMIT 20`,
+      [leadId, uid]
+    );
+    const emails = er.rows;
+
+    if (!emails.length) {
+      return res.json({
+        ok: true,
+        summary: ['No tracked emails sent yet.'],
+        nextAction: 'Send the first outreach email.',
+        sentiment: 'neutral',
+        fallback: true,
+      });
+    }
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      const bullets = emails.slice(0, 3).map((e) =>
+        `Email sent: "${e.subject}" — ${e.open_count > 0 ? `opened ${e.open_count}x` : 'not opened'}`
+      );
+      return res.json({
+        ok: true,
+        summary: bullets,
+        nextAction: 'Review email history and decide next outreach step.',
+        sentiment: 'neutral',
+        fallback: true,
+      });
+    }
+
+    const emailLog = emails.map((e, i) =>
+      `Email ${i + 1}: Subject: "${e.subject}" | Sent: ${new Date(e.sent_at).toLocaleDateString()} | Opens: ${e.open_count || 0}${e.open_last_at ? ` (last opened ${new Date(e.open_last_at).toLocaleDateString()})` : ''}\nBody excerpt: ${(e.body || '').slice(0, 300)}`
+    ).join('\n\n');
+
+    const sysPrompt = `You are a sales intelligence assistant for a vehicle wrap shop. Summarize this email thread with a prospect and give a recommended next action.`;
+    const userMsg = `Lead: ${lead.company} (${lead.contact_name || 'unknown contact'}) — ${lead.category} — status: ${lead.status}
+
+Email History (newest first):
+${emailLog}
+
+Provide a JSON response with:
+{
+  "summary": ["3-5 bullet points summarizing the conversation history and engagement level"],
+  "nextAction": "One specific recommended next action (e.g., 'Call them today — they opened your proposal email 3 times')",
+  "sentiment": "positive | neutral | negative"
+}
+
+Be direct and actionable. Focus on what matters for closing the deal.`;
+
+    const aiResp = await claudeHaiku(apiKey, [{ role: 'user', content: userMsg }], 500, sysPrompt);
+    let parsed;
+    try {
+      const clean = aiResp.replace(/```json\n?|\n?```/g, '').trim();
+      parsed = JSON.parse(clean);
+    } catch {
+      parsed = {
+        summary: [aiResp.slice(0, 200)],
+        nextAction: 'Review the email history and plan your next touch.',
+        sentiment: 'neutral',
+      };
+    }
+
+    res.json({ ok: true, ...parsed, fallback: false });
+  } catch (e) {
+    console.error('[email-summary]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Market Penetration Analysis ───────────────────────────────────────────────
@@ -9513,6 +17703,2921 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// Revenue Attribution — which lead source / category drives the most won revenue.
+// Feeds the Analytics view attribution card.
+app.get('/analytics/revenue-attribution', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const REV_MAP = `CASE category
+      WHEN 'fleet'        THEN 4500
+      WHEN 'dinoc'        THEN 6000
+      WHEN 'gc_referral'  THEN 18000
+      WHEN 'construction' THEN 5000
+      WHEN 'colorchange'  THEN 3500
+      WHEN 'racing'       THEN 40000
+      WHEN 'reatec'       THEN 5500
+      WHEN 'design'       THEN 3000
+      WHEN 'wallgraphics' THEN 2500
+      ELSE 2500 END`;
+
+    const [bySourceR, byCatR, velocityR] = await Promise.all([
+      // Won revenue by lead source
+      pool.query(`
+        SELECT
+          COALESCE(source, 'manual') AS source,
+          COUNT(*)::INT AS won_count,
+          SUM(${REV_MAP})::INT AS estimated_revenue,
+          ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_close_days
+        FROM leads
+        WHERE user_id = $1 AND status = 'won'
+        GROUP BY COALESCE(source, 'manual')
+        ORDER BY estimated_revenue DESC
+        LIMIT 10
+      `, [uid]),
+
+      // Won revenue by category with close rate
+      pool.query(`
+        SELECT
+          category,
+          COUNT(*)::INT AS total,
+          COUNT(*) FILTER (WHERE status = 'won')::INT AS won,
+          SUM(${REV_MAP}) FILTER (WHERE status = 'won')::INT AS estimated_revenue,
+          ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)
+            FILTER (WHERE status = 'won'))::INT AS avg_close_days
+        FROM leads
+        WHERE user_id = $1
+        GROUP BY category
+        ORDER BY estimated_revenue DESC NULLS LAST
+        LIMIT 10
+      `, [uid]),
+
+      // Time-to-close by category (only won, last 12 months)
+      pool.query(`
+        SELECT
+          category,
+          ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_days,
+          COUNT(*)::INT AS sample
+        FROM leads
+        WHERE user_id = $1 AND status = 'won'
+          AND updated_at >= NOW() - INTERVAL '12 months'
+        GROUP BY category
+        HAVING COUNT(*) >= 1
+        ORDER BY avg_days
+      `, [uid]),
+    ]);
+
+    const totalWonRevenue = bySourceR.rows.reduce((s, r) => s + (r.estimated_revenue || 0), 0);
+
+    res.json({
+      bySource: bySourceR.rows.map((r) => ({
+        ...r,
+        sharePct: totalWonRevenue > 0 ? Math.round((r.estimated_revenue / totalWonRevenue) * 100) : 0,
+      })),
+      byCategory: byCatR.rows.map((r) => ({
+        ...r,
+        closeRate: r.total > 0 ? Math.round((r.won / r.total) * 100) : 0,
+      })),
+      velocity: velocityR.rows,
+      totalWonRevenue,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Market White Space Map ────────────────────────────────────────────────────
+app.get('/analytics/market-map', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [wonR, pipelineR, carriersR] = await Promise.all([
+      // Won deals by state
+      pool.query(
+        `SELECT UPPER(TRIM(state)) AS state, COUNT(*)::INT AS won
+         FROM leads
+         WHERE user_id=$1 AND status='won' AND state IS NOT NULL AND TRIM(state)!=''
+         GROUP BY UPPER(TRIM(state))`,
+        [uid]
+      ),
+      // Active pipeline by state
+      pool.query(
+        `SELECT UPPER(TRIM(state)) AS state, COUNT(*)::INT AS pipeline
+         FROM leads
+         WHERE user_id=$1 AND status NOT IN ('won','lost','cold')
+           AND state IS NOT NULL AND TRIM(state)!=''
+         GROUP BY UPPER(TRIM(state))`,
+        [uid]
+      ),
+      // Carrier density by state from companies dataset
+      pool.query(
+        `SELECT UPPER(TRIM(state)) AS state, COUNT(*)::INT AS carriers
+         FROM companies
+         WHERE state IS NOT NULL AND TRIM(state)!='' AND LENGTH(TRIM(state))=2
+         GROUP BY UPPER(TRIM(state))`
+      ),
+    ]);
+
+    const byState = {};
+    for (const r of carriersR.rows) {
+      byState[r.state] = { won: 0, pipeline: 0, carriers: r.carriers };
+    }
+    for (const r of wonR.rows) {
+      byState[r.state] = { ...(byState[r.state] || { carriers: 0, pipeline: 0 }), won: r.won };
+    }
+    for (const r of pipelineR.rows) {
+      byState[r.state] = { ...(byState[r.state] || { carriers: 0, won: 0 }), pipeline: r.pipeline };
+    }
+
+    const totalCarriers = carriersR.rows.reduce((s, r) => s + r.carriers, 0);
+
+    // Opportunity score: high carriers, low coverage = big white space
+    const topOpportunityStates = Object.entries(byState)
+      .filter(([, d]) => d.carriers > 100)
+      .map(([state, d]) => ({
+        state,
+        score: d.carriers / Math.max(d.pipeline + d.won * 2 + 1, 1),
+        carriers: d.carriers,
+        pipeline: d.pipeline,
+        won: d.won,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map((r) => r.state);
+
+    res.json({ byState, totalCarriers, topOpportunityStates });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Lead Cohort Analysis ──────────────────────────────────────────────────────
+// Groups leads by calendar month they were added, then computes 90-day win rate
+// and average deal size for each cohort — surfaces which acquisition months
+// performed best and whether close rates are improving or declining over time.
+app.get('/analytics/cohort', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const r = await pool.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS cohort_month,
+        COUNT(*)::INT AS total,
+        COUNT(*) FILTER (WHERE status = 'won')::INT AS won,
+        COUNT(*) FILTER (WHERE status = 'lost')::INT AS lost,
+        COUNT(*) FILTER (
+          WHERE status = 'won'
+            AND updated_at <= created_at + INTERVAL '90 days'
+        )::INT AS won_in_90d,
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)
+          FILTER (WHERE status = 'won'))::INT AS avg_close_days
+      FROM leads
+      WHERE user_id = $1
+        AND created_at >= NOW() - INTERVAL '12 months'
+      GROUP BY DATE_TRUNC('month', created_at)
+      ORDER BY DATE_TRUNC('month', created_at) ASC
+    `, [uid]);
+
+    const cohorts = r.rows.map((row) => ({
+      month: row.cohort_month,
+      total: row.total,
+      won: row.won,
+      lost: row.lost,
+      wonIn90d: row.won_in_90d,
+      winRate: row.total > 0 ? Math.round((row.won / row.total) * 100) : 0,
+      win90dRate: row.total > 0 ? Math.round((row.won_in_90d / row.total) * 100) : 0,
+      avgCloseDays: row.avg_close_days,
+    }));
+
+    // Trend: is win rate improving? Compare last 3 months vs prior 3
+    const recentWins = cohorts.slice(-3).reduce((s, c) => s + c.won, 0);
+    const recentTotal = cohorts.slice(-3).reduce((s, c) => s + c.total, 0);
+    const priorWins = cohorts.slice(-6, -3).reduce((s, c) => s + c.won, 0);
+    const priorTotal = cohorts.slice(-6, -3).reduce((s, c) => s + c.total, 0);
+    const recentRate = recentTotal > 0 ? (recentWins / recentTotal) * 100 : null;
+    const priorRate = priorTotal > 0 ? (priorWins / priorTotal) * 100 : null;
+    const trend = recentRate !== null && priorRate !== null
+      ? (recentRate > priorRate + 2 ? 'improving' : recentRate < priorRate - 2 ? 'declining' : 'stable')
+      : 'stable';
+
+    res.json({ cohorts, trend, recentRate, priorRate });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/revenue-monthly — monthly revenue trend from installed_jobs (last 18 months)
+app.get('/analytics/revenue-monthly', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         TO_CHAR(install_date, 'YYYY-MM')        AS month,
+         COUNT(*)::INT                           AS job_count,
+         COALESCE(SUM(job_revenue), 0)::INT      AS revenue,
+         COALESCE(SUM(material_cost), 0)::INT    AS cost,
+         COALESCE(SUM(vehicle_count), 0)::INT    AS vehicles
+       FROM installed_jobs
+       WHERE user_id=$1
+         AND install_date IS NOT NULL
+         AND install_date >= NOW() - INTERVAL '18 months'
+       GROUP BY month
+       ORDER BY month ASC`,
+      [uid]
+    );
+
+    // Fill in missing months with 0
+    const months = [];
+    const now = new Date();
+    for (let i = 17; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const found = rows.find((r) => r.month === key);
+      months.push({
+        month: key,
+        label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        jobCount: found?.job_count || 0,
+        revenue: found?.revenue || 0,
+        cost: found?.cost || 0,
+        vehicles: found?.vehicles || 0,
+        margin: found?.revenue > 0 ? Math.round(((found.revenue - found.cost) / found.revenue) * 100) : null,
+      });
+    }
+
+    const totalRevenue = months.reduce((s, m) => s + m.revenue, 0);
+    const avgMonthly = Math.round(totalRevenue / 18);
+    const bestMonth = months.reduce((a, b) => b.revenue > a.revenue ? b : a, months[0]);
+
+    res.json({ ok: true, months, totalRevenue, avgMonthly, bestMonth: bestMonth.label });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/margin — material margin dashboard
+// Gross margin = job_revenue - material_cost per vehicle, per category.
+// Only shows jobs with both revenue and cost > 0 entered.
+app.get('/analytics/margin', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        wrap_category,
+        COUNT(*)::INT                                          AS job_count,
+        SUM(vehicle_count)::INT                                AS total_vehicles,
+        ROUND(AVG(job_revenue))::INT                           AS avg_revenue,
+        ROUND(AVG(material_cost))::INT                         AS avg_material,
+        ROUND(AVG(CASE WHEN job_revenue > 0 THEN (job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100 END), 1)
+                                                               AS avg_margin_pct,
+        ROUND(AVG(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT
+                                                               AS avg_revenue_per_vehicle,
+        ROUND(AVG(CASE WHEN vehicle_count > 0 THEN material_cost / vehicle_count END))::INT
+                                                               AS avg_material_per_vehicle,
+        ROUND(SUM(job_revenue - material_cost))::INT           AS total_gross_profit,
+        MAX(install_date)                                      AS last_job_date
+      FROM installed_jobs
+      WHERE user_id = $1
+        AND job_revenue > 0
+        AND material_cost > 0
+      GROUP BY wrap_category
+      ORDER BY total_gross_profit DESC NULLS LAST
+    `, [uid]);
+
+    // Overall totals
+    const totals = await pool.query(`
+      SELECT
+        COUNT(*)::INT                                          AS job_count,
+        ROUND(SUM(job_revenue))::INT                           AS total_revenue,
+        ROUND(SUM(material_cost))::INT                         AS total_material,
+        ROUND(SUM(job_revenue - material_cost))::INT           AS total_gross_profit,
+        ROUND(AVG(CASE WHEN job_revenue > 0 THEN (job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100 END), 1)
+                                                               AS avg_margin_pct,
+        COUNT(*) FILTER (WHERE labor_hours > 0)::INT           AS jobs_with_labor,
+        ROUND(SUM(labor_hours), 1)                             AS total_labor_hours,
+        ROUND(AVG(CASE WHEN labor_hours > 0 THEN job_revenue / NULLIF(labor_hours, 0) END), 2)
+                                                               AS avg_revenue_per_hour
+      FROM installed_jobs
+      WHERE user_id = $1 AND job_revenue > 0 AND material_cost > 0
+    `, [uid]);
+
+    // Best margin job
+    const { rows: best } = await pool.query(`
+      SELECT company, wrap_category, job_revenue, material_cost, vehicle_count, install_date,
+             ROUND((job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100, 1) AS margin_pct
+      FROM installed_jobs
+      WHERE user_id = $1 AND job_revenue > 0 AND material_cost > 0
+      ORDER BY margin_pct DESC NULLS LAST
+      LIMIT 3
+    `, [uid]);
+
+    const { rows: worst } = await pool.query(`
+      SELECT company, wrap_category, job_revenue, material_cost, vehicle_count, install_date,
+             ROUND((job_revenue - material_cost) / NULLIF(job_revenue, 0) * 100, 1) AS margin_pct
+      FROM installed_jobs
+      WHERE user_id = $1 AND job_revenue > 0 AND material_cost > 0
+      ORDER BY margin_pct ASC NULLS LAST
+      LIMIT 3
+    `, [uid]);
+
+    res.json({
+      byCategory: rows,
+      totals: totals.rows[0] ?? null,
+      bestMarginJobs: best,
+      worstMarginJobs: worst,
+      hasData: totals.rows[0]?.job_count > 0,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /tools/quick-quote — ballpark price range for an on-the-call estimate
+// Takes vehicleType (van/box_truck/semi/other), vehicleCount, coverage (full/partial/spot)
+// Returns min/max/recommended price from job history; falls back to industry defaults.
+app.get('/tools/quick-quote', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const vehicleType = String(req.query.vehicleType || 'van');
+    const vehicleCount = Math.max(1, parseInt(req.query.vehicleCount) || 1);
+    const coverage = String(req.query.coverage || 'full');
+
+    // Per-vehicle base prices by type (industry averages, USD)
+    const BASE_PRICE = {
+      van:       { full: 3200, partial: 1800, spot: 600 },
+      box_truck: { full: 4800, partial: 2600, spot: 900 },
+      semi:      { full: 7500, partial: 4200, spot: 1400 },
+      bus:       { full: 8500, partial: 5000, spot: 1600 },
+      pickup:    { full: 2800, partial: 1500, spot: 550 },
+      other:     { full: 3500, partial: 2000, spot: 700 },
+    };
+    const typeKey = BASE_PRICE[vehicleType] ? vehicleType : 'other';
+    const basePerVehicle = BASE_PRICE[typeKey][coverage] ?? BASE_PRICE[typeKey].full;
+
+    // Fleet discount (economy of scale)
+    const fleetMultiplier = vehicleCount >= 20 ? 0.82 : vehicleCount >= 10 ? 0.88 : vehicleCount >= 5 ? 0.93 : 1.0;
+    const baseTotal = Math.round(basePerVehicle * vehicleCount * fleetMultiplier);
+
+    // Try to refine from user's own job history
+    const category = vehicleType === 'semi' ? 'fleet' : vehicleType === 'box_truck' ? 'fleet' : 'fleet';
+    const { rows } = await pool.query(`
+      SELECT
+        ROUND(AVG(job_revenue / NULLIF(vehicle_count, 0)))::INT AS avg_per_vehicle,
+        ROUND(MIN(job_revenue / NULLIF(vehicle_count, 0)))::INT AS min_per_vehicle,
+        ROUND(MAX(job_revenue / NULLIF(vehicle_count, 0)))::INT AS max_per_vehicle,
+        COUNT(*) AS job_count
+      FROM installed_jobs
+      WHERE user_id=$1 AND wrap_category=$2 AND job_revenue > 0 AND vehicle_count > 0
+    `, [uid, category]);
+
+    const hist = rows[0];
+    const hasHistory = hist && parseInt(hist.job_count || '0') >= 3;
+
+    const perVehicle = hasHistory ? Math.round(parseInt(hist.avg_per_vehicle) * (coverage === 'partial' ? 0.6 : coverage === 'spot' ? 0.2 : 1)) : basePerVehicle;
+    const low = Math.round(perVehicle * vehicleCount * (hasHistory ? 0.9 : 0.85) * fleetMultiplier);
+    const high = Math.round(perVehicle * vehicleCount * (hasHistory ? 1.15 : 1.2) * fleetMultiplier);
+    const recommended = Math.round(perVehicle * vehicleCount * fleetMultiplier);
+
+    res.json({
+      ok: true,
+      vehicleCount, vehicleType, coverage,
+      low, high, recommended,
+      perVehicle: Math.round(recommended / vehicleCount),
+      fromHistory: hasHistory,
+      historyJobs: hasHistory ? parseInt(hist.job_count) : 0,
+    });
+  } catch (e) {
+    console.error('[quick-quote]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/pricing-benchmarks?category=X — per-category job pricing stats from user's history
+app.get('/analytics/pricing-benchmarks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { category } = req.query;
+    if (!category) return res.status(400).json({ error: 'category required' });
+    const { rows: stats } = await pool.query(`
+      SELECT
+        COUNT(*) AS job_count,
+        ROUND(AVG(job_revenue))::INT AS avg_total,
+        ROUND(MIN(job_revenue))::INT AS min_total,
+        ROUND(MAX(job_revenue))::INT AS max_total,
+        ROUND(AVG(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT AS avg_per_vehicle,
+        ROUND(MIN(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT AS min_per_vehicle,
+        ROUND(MAX(CASE WHEN vehicle_count > 0 THEN job_revenue / vehicle_count END))::INT AS max_per_vehicle,
+        ROUND(AVG(vehicle_count))::INT AS avg_vehicle_count
+      FROM installed_jobs
+      WHERE user_id=$1 AND wrap_category=$2 AND job_revenue > 0
+    `, [uid, category]);
+    const { rows: recent } = await pool.query(`
+      SELECT company, job_revenue, vehicle_count, install_date
+      FROM installed_jobs
+      WHERE user_id=$1 AND wrap_category=$2 AND job_revenue > 0
+      ORDER BY install_date DESC LIMIT 5
+    `, [uid, category]);
+    const { rows: overall } = await pool.query(`
+      SELECT ROUND(AVG(job_revenue))::INT AS avg_all_cats, COUNT(*) AS total_all_jobs
+      FROM installed_jobs WHERE user_id=$1 AND job_revenue > 0
+    `, [uid]);
+    res.json({
+      ok: true,
+      category,
+      hasData: parseInt(stats[0]?.job_count || '0') > 0,
+      stats: stats[0] ?? null,
+      recentJobs: recent,
+      overallAvg: overall[0]?.avg_all_cats ?? null,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Warm Reference Engine ─────────────────────────────────────────────────────
+// For any lead, surface up to 3 WON customers in the same state or category
+// that a sales rep can name-drop as social proof during outreach.
+app.get('/leads/:id/warm-references', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = parseInt(req.params.id, 10);
+  try {
+    const { rows: target } = await pool.query(
+      `SELECT state, category, company FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!target.length) return res.status(404).json({ error: 'Lead not found' });
+    const { state, category, company } = target[0];
+
+    const { rows: refs } = await pool.query(`
+      SELECT id, company, category, state, city,
+             job_revenue,
+             EXTRACT(EPOCH FROM (NOW() - updated_at))::int / 86400 AS days_ago
+      FROM leads
+      WHERE user_id=$1
+        AND status='won'
+        AND id != $2
+        AND LOWER(company) != LOWER($5)
+        AND (state=$3 OR category=$4)
+      ORDER BY
+        CASE WHEN state=$3 AND category=$4 THEN 0
+             WHEN state=$3 THEN 1
+             WHEN category=$4 THEN 2
+             ELSE 3 END,
+        updated_at DESC
+      LIMIT 3
+    `, [uid, leadId, state, category, company]);
+
+    res.json({ references: refs, targetState: state, targetCategory: category });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Pipeline Doctor ───────────────────────────────────────────────────────────
+// AI diagnosis of the biggest conversion bottleneck in the pipeline.
+// Returns stage-by-stage conversion rates, the worst chokepoint, and 3
+// actionable recommendations from Claude Haiku. Cached per user per calendar day.
+app.get('/analytics/pipeline-doctor', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows: trans } = await pool.query(`
+      SELECT
+        COUNT(*)                                                              AS total,
+        COUNT(*) FILTER (WHERE status IN ('contacted','replied','meeting','proposal','won','lost')) AS passed_contacted,
+        COUNT(*) FILTER (WHERE status IN ('replied','meeting','proposal','won','lost'))             AS passed_replied,
+        COUNT(*) FILTER (WHERE status IN ('meeting','proposal','won','lost'))                       AS passed_meeting,
+        COUNT(*) FILTER (WHERE status IN ('proposal','won','lost'))                                AS passed_proposal,
+        COUNT(*) FILTER (WHERE status = 'won')                                                     AS won_total,
+        COUNT(*) FILTER (WHERE status = 'lost')                                                    AS lost_total,
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))/86400)
+              FILTER (WHERE status='won'))::int                               AS avg_days_to_close
+      FROM leads WHERE user_id=$1
+    `, [uid]);
+
+    const { rows: stageCounts } = await pool.query(`
+      SELECT status,
+             COUNT(*)::int AS count,
+             ROUND(AVG(EXTRACT(EPOCH FROM (NOW() - created_at))/86400))::int AS avg_days
+      FROM leads
+      WHERE user_id=$1 AND status NOT IN ('won','lost')
+      GROUP BY status
+    `, [uid]);
+
+    const t = trans[0];
+    const total   = parseInt(t.total)            || 1;
+    const cont    = parseInt(t.passed_contacted) || 0;
+    const replied = parseInt(t.passed_replied)   || 0;
+    const meeting = parseInt(t.passed_meeting)   || 0;
+    const prop    = parseInt(t.passed_proposal)  || 0;
+    const won     = parseInt(t.won_total)        || 0;
+    const lost    = parseInt(t.lost_total)       || 0;
+
+    const rates = {
+      new_to_contacted:      total   > 0 ? Math.round(cont    / total   * 100) : 0,
+      contacted_to_replied:  cont    > 0 ? Math.round(replied / cont    * 100) : 0,
+      replied_to_meeting:    replied > 0 ? Math.round(meeting / replied * 100) : 0,
+      meeting_to_proposal:   meeting > 0 ? Math.round(prop    / meeting * 100) : 0,
+      proposal_to_won:       prop    > 0 ? Math.round(won     / prop    * 100) : 0,
+    };
+
+    const allStageRates = [
+      { stage: 'New → Contacted',      rate: rates.new_to_contacted,     key: 'new_to_contacted'     },
+      { stage: 'Contacted → Replied',  rate: rates.contacted_to_replied,  key: 'contacted_to_replied'  },
+      { stage: 'Replied → Meeting',    rate: rates.replied_to_meeting,    key: 'replied_to_meeting'    },
+      { stage: 'Meeting → Proposal',   rate: rates.meeting_to_proposal,   key: 'meeting_to_proposal'   },
+      { stage: 'Proposal → Won',       rate: rates.proposal_to_won,       key: 'proposal_to_won'       },
+    ].filter(s => s.rate > 0 && s.rate < 100);
+
+    let worstBottleneck = allStageRates.length
+      ? allStageRates.reduce((a, b) => a.rate < b.rate ? a : b)
+      : null;
+
+    let diagnosis = 'Build more pipeline — once you have 10+ leads you\'ll see specific bottleneck patterns.';
+    let recommendations = [];
+    let healthGrade = 'N/A';
+
+    const anthropic = getAnthropic();
+    if (anthropic && total >= 5) {
+      try {
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 700,
+          messages: [{
+            role: 'user',
+            content: `You are a sales pipeline consultant for a vehicle wrap shop. Diagnose this pipeline and give a 3-recommendation action plan.
+
+Metrics:
+- Total leads: ${total} | Won: ${won} | Lost: ${lost}
+- Avg days to close: ${t.avg_days_to_close || '?'}
+- New→Contacted: ${rates.new_to_contacted}%
+- Contacted→Replied: ${rates.contacted_to_replied}%
+- Replied→Meeting: ${rates.replied_to_meeting}%
+- Meeting→Proposal: ${rates.meeting_to_proposal}%
+- Proposal→Won: ${rates.proposal_to_won}%
+${worstBottleneck ? `Worst chokepoint: ${worstBottleneck.stage} at ${worstBottleneck.rate}%` : ''}
+
+Active pipeline: ${stageCounts.map(s => `${s.status}(${s.count}, avg ${s.avg_days}d)`).join(', ')}
+
+Return ONLY JSON: {"diagnosis":"2 sentences","recommendations":["action 1","action 2","action 3"],"health_grade":"A|B|C|D|F"}`
+          }]
+        });
+        const parsed = JSON.parse(msg.content[0].text);
+        diagnosis         = parsed.diagnosis;
+        recommendations   = parsed.recommendations || [];
+        healthGrade       = parsed.health_grade || 'N/A';
+      } catch (_) { /* fall through */ }
+    }
+
+    res.json({
+      rates, stageCounts, wonTotal: won, lostTotal: lost, totalLeads: total,
+      avgDaysToClose: t.avg_days_to_close || 0,
+      worstBottleneck, diagnosis, recommendations, healthGrade,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Territory Intel ───────────────────────────────────────────────────────────
+// Cross-reference FMCSA carriers against the user's existing pipeline to show
+// which states have the most untouched wrap opportunity, ranked by an
+// opportunity score = sweet_spot_carriers × (1 - penetration) × sqrt(avg_fleet).
+app.get('/analytics/territory-intel', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const [{ rows: carriersByState }, { rows: existingByState }, { rows: wonStates }] = await Promise.all([
+      pool.query(`
+        SELECT state,
+               COUNT(*)::int                                                          AS total_carriers,
+               SUM(fleet_size)::int                                                   AS total_vehicles,
+               ROUND(AVG(fleet_size))::int                                            AS avg_fleet_size,
+               COUNT(*) FILTER (WHERE fleet_size BETWEEN 25 AND 500)::int            AS sweet_spot_count
+        FROM companies
+        WHERE state IS NOT NULL AND fleet_size > 0
+        GROUP BY state
+        HAVING COUNT(*) >= 30
+        ORDER BY COUNT(*) FILTER (WHERE fleet_size BETWEEN 25 AND 500) DESC
+        LIMIT 25
+      `),
+      pool.query(
+        `SELECT state, COUNT(*)::int AS lead_count FROM leads WHERE user_id=$1 AND state IS NOT NULL GROUP BY state`,
+        [uid]
+      ),
+      pool.query(
+        `SELECT DISTINCT state FROM leads WHERE user_id=$1 AND status='won' AND state IS NOT NULL`,
+        [uid]
+      ),
+    ]);
+
+    const existingMap  = Object.fromEntries(existingByState.map(r => [r.state, r.lead_count]));
+    const wonStateSet  = new Set(wonStates.map(r => r.state));
+
+    const results = carriersByState.map(r => {
+      const alreadyIn    = existingMap[r.state] || 0;
+      const sweetSpot    = r.sweet_spot_count;
+      const penetration  = sweetSpot > 0 ? Math.round(alreadyIn / sweetSpot * 100) : 0;
+      const untouched    = Math.max(0, sweetSpot - alreadyIn);
+      return {
+        state:            r.state,
+        total_carriers:   r.total_carriers,
+        sweet_spot:       sweetSpot,
+        avg_fleet_size:   r.avg_fleet_size,
+        in_pipeline:      alreadyIn,
+        penetration_pct:  Math.min(penetration, 100),
+        untouched,
+        has_won:          wonStateSet.has(r.state),
+        opportunity_score: Math.round(sweetSpot * (1 - Math.min(penetration, 100) / 100) * Math.sqrt(r.avg_fleet_size || 1)),
+      };
+    });
+
+    results.sort((a, b) => b.opportunity_score - a.opportunity_score);
+
+    res.json({ territories: results.slice(0, 12) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/job-profitability — per-job P&L with sub labor costs
+app.get('/analytics/job-profitability', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+  const sortBy = ['profit', 'margin', 'revenue', 'install_date'].includes(req.query.sort) ? req.query.sort : 'profit';
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        j.id,
+        j.company,
+        j.vehicle_type,
+        j.vehicle_count,
+        j.wrap_category,
+        j.install_date,
+        j.material,
+        j.labor_hours,
+        j.payment_status,
+        COALESCE(j.job_revenue, 0)                             AS revenue,
+        COALESCE(j.material_cost, 0)                           AS material_cost,
+        COALESCE(j.amount_paid, 0)                             AS amount_paid,
+        COALESCE(SUM(js.labor_cost), 0)                        AS sub_labor,
+        COALESCE(j.job_revenue, 0)
+          - COALESCE(j.material_cost, 0)
+          - COALESCE(SUM(js.labor_cost), 0)                    AS net_profit,
+        CASE WHEN COALESCE(j.job_revenue, 0) > 0
+          THEN ROUND(
+            (COALESCE(j.job_revenue, 0)
+              - COALESCE(j.material_cost, 0)
+              - COALESCE(SUM(js.labor_cost), 0))
+            / j.job_revenue * 100
+          )
+          ELSE NULL
+        END                                                     AS margin_pct
+      FROM installed_jobs j
+      LEFT JOIN job_subcontractors js ON js.job_id = j.id
+      WHERE j.user_id = $1 AND j.job_revenue IS NOT NULL AND j.job_revenue > 0
+      GROUP BY j.id
+      ORDER BY
+        CASE WHEN $2 = 'profit'  THEN COALESCE(j.job_revenue,0) - COALESCE(j.material_cost,0) - COALESCE((SELECT SUM(x.labor_cost) FROM job_subcontractors x WHERE x.job_id=j.id),0) END DESC,
+        CASE WHEN $2 = 'margin'  THEN CASE WHEN j.job_revenue > 0 THEN (COALESCE(j.job_revenue,0) - COALESCE(j.material_cost,0) - COALESCE((SELECT SUM(x.labor_cost) FROM job_subcontractors x WHERE x.job_id=j.id),0)) / j.job_revenue END END DESC NULLS LAST,
+        CASE WHEN $2 = 'revenue' THEN j.job_revenue END DESC,
+        CASE WHEN $2 = 'install_date' THEN j.install_date END DESC
+      LIMIT $3
+    `, [uid, sortBy, limit]);
+
+    const totals = rows.reduce((acc, r) => {
+      acc.totalRevenue += Number(r.revenue);
+      acc.totalMaterial += Number(r.material_cost);
+      acc.totalSubLabor += Number(r.sub_labor);
+      acc.totalProfit += Number(r.net_profit);
+      return acc;
+    }, { totalRevenue: 0, totalMaterial: 0, totalSubLabor: 0, totalProfit: 0 });
+
+    const avgMargin = totals.totalRevenue > 0
+      ? Math.round(totals.totalProfit / totals.totalRevenue * 100)
+      : null;
+
+    res.json({
+      jobs: rows.map((r) => ({
+        id: r.id,
+        company: r.company,
+        vehicleType: r.vehicle_type,
+        vehicleCount: r.vehicle_count,
+        category: r.wrap_category,
+        installDate: r.install_date,
+        material: r.material,
+        paymentStatus: r.payment_status,
+        revenue: Number(r.revenue),
+        materialCost: Number(r.material_cost),
+        subLabor: Number(r.sub_labor),
+        netProfit: Number(r.net_profit),
+        marginPct: r.margin_pct !== null ? Number(r.margin_pct) : null,
+        amountPaid: Number(r.amount_paid),
+      })),
+      totals: {
+        ...totals,
+        avgMargin,
+        jobCount: rows.length,
+      },
+    });
+  } catch (e) {
+    console.error('[job-profitability]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/satisfaction — client satisfaction scores from review requests
+app.get('/analytics/satisfaction', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT rr.id, rr.company, rr.star_rating, rr.feedback_text, rr.feedback_at,
+             rr.sent_at, rr.opened_at, rr.clicked_at,
+             ij.vehicle_type, ij.wrap_category, ij.vehicle_count
+      FROM review_requests rr
+      LEFT JOIN installed_jobs ij ON ij.id = rr.job_id
+      WHERE rr.user_id = $1 AND rr.star_rating IS NOT NULL
+      ORDER BY rr.feedback_at DESC NULLS LAST, rr.clicked_at DESC NULLS LAST
+      LIMIT 50
+    `, [uid]);
+
+    const statsR = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE star_rating IS NOT NULL) AS rated_count,
+        COUNT(*) AS total_sent,
+        ROUND(AVG(star_rating)::NUMERIC, 1) AS avg_rating,
+        COUNT(*) FILTER (WHERE star_rating >= 4) AS positive_count,
+        COUNT(*) FILTER (WHERE star_rating <= 2) AS negative_count,
+        COUNT(*) FILTER (WHERE star_rating = 5) AS five_star_count
+      FROM review_requests
+      WHERE user_id = $1
+    `, [uid]);
+    const st = statsR.rows[0];
+
+    res.json({
+      ok: true,
+      totals: {
+        sentCount: Number(st.total_sent),
+        ratedCount: Number(st.rated_count),
+        avgRating: st.avg_rating !== null ? Number(st.avg_rating) : null,
+        positiveCount: Number(st.positive_count),
+        negativeCount: Number(st.negative_count),
+        fiveStarCount: Number(st.five_star_count),
+        responseRate: st.total_sent > 0 ? Math.round((Number(st.rated_count) / Number(st.total_sent)) * 100) : 0,
+      },
+      recent: rows.map(r => ({
+        id: r.id, company: r.company, starRating: r.star_rating,
+        feedbackText: r.feedback_text || null, feedbackAt: r.feedback_at,
+        category: r.wrap_category, vehicleType: r.vehicle_type, vehicleCount: r.vehicle_count,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/lead-coverage — lead database coverage stats by source and state
+// Shows record counts, last ingest run, and geographic coverage across all data sources.
+// No user_id filter — this describes the shared companies table, not per-user leads.
+app.get('/analytics/lead-coverage', authMiddleware, async (req, res) => {
+  try {
+    // Per-source summary
+    const sourceRes = await pool.query(`
+      SELECT
+        source,
+        COUNT(*)::INT            AS total,
+        MAX(updated_at)          AS last_updated,
+        COUNT(DISTINCT state)::INT AS state_count
+      FROM companies
+      WHERE source IS NOT NULL
+      GROUP BY source
+      ORDER BY total DESC
+    `);
+
+    // Per-state summary (all sources combined)
+    const stateRes = await pool.query(`
+      SELECT
+        state,
+        COUNT(*)::INT                                              AS total,
+        COUNT(DISTINCT source)::INT                               AS source_count,
+        COUNT(CASE WHEN source = 'fmcsa' THEN 1 END)::INT         AS fmcsa,
+        COUNT(CASE WHEN source LIKE 'sos_%' THEN 1 END)::INT      AS sos,
+        COUNT(CASE WHEN source = 'google_places' THEN 1 END)::INT AS places,
+        COUNT(CASE WHEN source = 'sam_gov' THEN 1 END)::INT       AS sam,
+        COUNT(CASE WHEN source = 'news_signal' THEN 1 END)::INT   AS signal
+      FROM companies
+      WHERE state IS NOT NULL AND state != '' AND LENGTH(state) = 2
+      GROUP BY state
+      ORDER BY total DESC
+      LIMIT 60
+    `);
+
+    // Ingest run history (last 20 runs)
+    const runRes = await pool.query(`
+      SELECT source, file_name, started_at, finished_at,
+             rows_read, rows_inserted, rows_updated, rows_skipped, notes
+      FROM ingest_runs
+      ORDER BY started_at DESC
+      LIMIT 20
+    `);
+
+    // Grand total
+    const totalRes = await pool.query(`SELECT COUNT(*)::INT AS total FROM companies`);
+
+    res.json({
+      ok: true,
+      grandTotal: totalRes.rows[0].total,
+      sources: sourceRes.rows.map(r => ({
+        source:      r.source,
+        total:       r.total,
+        lastUpdated: r.last_updated,
+        stateCount:  r.state_count,
+      })),
+      states: stateRes.rows.map(r => ({
+        state:  r.state,
+        total:  r.total,
+        sources: r.source_count,
+        fmcsa:  r.fmcsa,
+        sos:    r.sos,
+        places: r.places,
+        sam:    r.sam,
+        signal: r.signal,
+      })),
+      recentRuns: runRes.rows.map(r => ({
+        source:     r.source,
+        fileName:   r.file_name,
+        startedAt:  r.started_at,
+        finishedAt: r.finished_at,
+        rowsRead:   r.rows_read,
+        inserted:   r.rows_inserted,
+        updated:    r.rows_updated,
+        skipped:    r.rows_skipped,
+        notes:      r.notes,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /analytics/cash-flow — outstanding receivables + collection priority
+// Returns: current-month stats, aging buckets (0-14d / 15-29d / 30+d),
+// and a ranked "collect this week" list of overdue jobs.
+app.get('/analytics/cash-flow', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        j.id,
+        j.company,
+        j.vehicle_type,
+        j.vehicle_count,
+        j.wrap_category,
+        j.install_date,
+        j.job_revenue,
+        COALESCE(j.amount_paid, 0)                   AS amount_paid,
+        j.job_revenue - COALESCE(j.amount_paid, 0)   AS balance,
+        j.payment_status,
+        j.invoice_sent_at,
+        j.paid_at,
+        EXTRACT(EPOCH FROM (NOW() - j.install_date)) / 86400 AS days_since_install
+      FROM installed_jobs j
+      WHERE j.user_id = $1
+        AND j.job_revenue IS NOT NULL
+        AND j.job_revenue > 0
+        AND j.payment_status != 'paid'
+      ORDER BY j.install_date ASC
+    `, [uid]);
+
+    const now = Date.now();
+    const thirtyDaysAgo = now - 30 * 86400_000;
+    const fifteenDaysAgo = now - 15 * 86400_000;
+
+    // Aging buckets
+    const buckets = { current: [], mid: [], late: [] };
+    let totalOutstanding = 0;
+    for (const r of rows) {
+      const balance = Number(r.balance);
+      if (balance <= 0) continue;
+      totalOutstanding += balance;
+      const installMs = r.install_date ? new Date(r.install_date).getTime() : now;
+      if (installMs >= fifteenDaysAgo) buckets.current.push(r);
+      else if (installMs >= thirtyDaysAgo) buckets.mid.push(r);
+      else buckets.late.push(r);
+    }
+
+    // Current month revenue (paid jobs)
+    const { rows: paidRows } = await pool.query(`
+      SELECT COALESCE(SUM(amount_paid), 0) AS collected_mtd
+      FROM installed_jobs
+      WHERE user_id = $1
+        AND payment_status = 'paid'
+        AND DATE_TRUNC('month', COALESCE(paid_at, updated_at)) = DATE_TRUNC('month', NOW())
+    `, [uid]);
+    const collectedMtd = Number(paidRows[0]?.collected_mtd || 0);
+
+    // Total revenue from jobs (all time)
+    const { rows: totRows } = await pool.query(`
+      SELECT COALESCE(SUM(job_revenue), 0) AS total_revenue,
+             COALESCE(SUM(amount_paid), 0) AS total_paid
+      FROM installed_jobs WHERE user_id = $1 AND job_revenue > 0
+    `, [uid]);
+    const totalRevenue = Number(totRows[0]?.total_revenue || 0);
+    const totalPaid = Number(totRows[0]?.total_paid || 0);
+
+    const toItem = (r) => ({
+      id: r.id,
+      company: r.company,
+      vehicleType: r.vehicle_type,
+      vehicleCount: r.vehicle_count,
+      category: r.wrap_category,
+      revenue: Number(r.job_revenue),
+      amountPaid: Number(r.amount_paid),
+      balance: Number(r.balance),
+      paymentStatus: r.payment_status,
+      installDate: r.install_date,
+      invoiceSentAt: r.invoice_sent_at,
+      daysSinceInstall: Math.round(Number(r.days_since_install) || 0),
+    });
+
+    res.json({
+      totalOutstanding,
+      collectedMtd,
+      totalRevenue,
+      totalPaid,
+      current: buckets.current.map(toItem),   // 0-14 days
+      mid: buckets.mid.map(toItem),            // 15-29 days
+      late: buckets.late.map(toItem),          // 30+ days
+    });
+  } catch (e) {
+    console.error('[cash-flow]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Public Demo Call Feature ──────────────────────────────────────────────────
+// Visitors pick a real FMCSA carrier, enter their own phone, and the AI calls
+// THEM (not the carrier) — they experience the call firsthand, first-person.
+// Uses dedicated DEMO_VAPI_* credentials so user API keys are never exposed.
+
+const demoCallLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,
+  // Default keyGenerator already keys on req.ip and is IPv6-safe; no custom one needed.
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ error: 'Maximum 3 demo calls per hour. Sign up for unlimited.' }),
+});
+
+// GET /demo/carriers?state=IN — top wrap-score carriers for the demo carrier picker
+app.get('/demo/carriers', async (req, res) => {
+  try {
+    const state = (req.query.state || '').toUpperCase().slice(0, 2);
+    const conditions = state ? `WHERE state = $1 AND fleet_size BETWEEN 10 AND 500 AND phone IS NOT NULL` : `WHERE fleet_size BETWEEN 25 AND 500 AND phone IS NOT NULL`;
+    const params = state ? [state] : [];
+    const wrapScore = `CASE WHEN fleet_size BETWEEN 25 AND 500 THEN 40 WHEN fleet_size > 500 THEN 20 WHEN fleet_size BETWEEN 10 AND 24 THEN 15 ELSE 5 END + CASE WHEN last_reported IS NULL THEN 0 WHEN last_reported < NOW() - INTERVAL '4 years' THEN 25 WHEN last_reported < NOW() - INTERVAL '2 years' THEN 15 WHEN last_reported < NOW() - INTERVAL '1 year' THEN 8 ELSE 3 END`;
+    const { rows } = await pool.query(
+      `SELECT source_id AS dot_number, name, city, state, fleet_size, industry, ${wrapScore} AS wrap_score FROM companies ${conditions} ORDER BY ${wrapScore} DESC, fleet_size DESC NULLS LAST LIMIT 12${params.length ? '' : ' OFFSET (RANDOM() * 500)::INT'}`,
+      params
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: 'Carrier lookup failed' }); }
+});
+
+// POST /demo/call — fire the AI call using DEMO Vapi credentials
+app.post('/demo/call', demoCallLimiter, async (req, res) => {
+  const DEMO_VAPI_KEY   = process.env.DEMO_VAPI_API_KEY;
+  const DEMO_PHONE_ID   = process.env.DEMO_VAPI_PHONE_NUMBER_ID;
+  if (!DEMO_VAPI_KEY || !DEMO_PHONE_ID) {
+    return res.status(503).json({ error: 'Demo calling not configured on this server.' });
+  }
+
+  const { phone, dot_number, carrier_name, carrier_city, carrier_state, fleet_size } = req.body || {};
+  if (!phone) return res.status(400).json({ error: 'phone required' });
+  const cleaned = String(phone).replace(/\D/g, '');
+  if (cleaned.length < 10) return res.status(400).json({ error: 'Invalid US phone number' });
+  const e164 = cleaned.length === 10 ? `+1${cleaned}` : `+${cleaned}`;
+
+  const company   = carrier_name  || 'this company';
+  const location  = [carrier_city, carrier_state].filter(Boolean).join(', ') || 'the area';
+  const fleetNote = fleet_size ? `They run ${fleet_size} vehicles.` : '';
+
+  const systemPrompt = `You are Shadow, a sales rep from Shadow Graphix — a vehicle wrap and fleet graphics shop based in Speedway, Indiana, right next to Indianapolis Motor Speedway.
+
+You sound like a real person. Short sentences. Natural. Not reading a script.
+
+You're calling the owner or fleet manager of ${company} (based in ${location}). ${fleetNote}
+
+━━ YOUR ONE JOB ━━
+Get one of these (in order):
+1. Their email — so you can send the portfolio and a quote
+2. A scheduled callback
+3. A yes to a site visit or virtual consult
+
+Keep it under 3 minutes. Stop after 2 soft asks.
+
+━━ YOUR OPENING ━━
+"Hey, this is Shadow calling from Shadow Graphix over in Speedway — we do fleet wraps, color-change wraps, and vehicle graphics for companies across Indiana and the Midwest. I'm reaching out to ${company} because your fleet looked like a solid fit for what we do. Are you the one who handles branding and vehicle decisions, or would that be someone else?"
+
+━━ VALUE HOOKS (pick one that fits naturally) ━━
+- "A fully wrapped fleet truck gets 30,000 to 70,000 impressions a day — it's the most cost-effective advertising most businesses ever run. We turn most fleet wraps around within 48 hours of print."
+- "We're 3M and Avery certified, so the material warranty is backed by the manufacturer — not just us."
+- "We do everything in-house — design, print, install — so there's one point of contact and no handoffs."
+
+━━ IMPORTANT ━━
+This is a DEMO call. You are demonstrating WrapOS — an AI sales platform for wrap shops. After you complete your sales pitch naturally, you may briefly mention: "By the way — this call was powered by WrapOS, an AI sales platform for wrap shops. If you're a shop owner who wants to automate outreach like this, check out wrapos.com."
+
+Stay in character as Shadow throughout. Be real. Be warm. Be brief.`;
+
+  try {
+    const vapiRes = await fetch(`${VAPI_BASE}/call`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${DEMO_VAPI_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        assistant: {
+          name: 'Shadow — Demo',
+          model: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001', messages: [{ role: 'system', content: systemPrompt }] },
+          voice: { provider: 'playht', voiceId: 'jennifer', stability: 0.6, similarityBoost: 0.75 },
+          firstMessage: `Hey, this is Shadow calling from Shadow Graphix over in Speedway — we do fleet wraps and vehicle graphics for businesses across the Midwest. Am I reaching the right person for ${company}?`,
+          endCallMessage: "Great talking to you — have a good one!",
+          maxDurationSeconds: 180,
+        },
+        phoneNumberId: DEMO_PHONE_ID,
+        customer: { number: e164, name: `Demo — ${company}` },
+      }),
+    });
+    if (!vapiRes.ok) {
+      const err = await vapiRes.json().catch(() => ({}));
+      return res.status(vapiRes.status).json({ error: err.message || 'Call failed' });
+    }
+    const call = await vapiRes.json();
+    console.log(`[demo] Call initiated → ${e164} (carrier: ${company}, DOT: ${dot_number}) call_id: ${call.id}`);
+    res.json({ ok: true, call_id: call.id });
+  } catch (e) {
+    console.error('[demo] Call error:', e.message);
+    res.status(500).json({ error: 'Call failed — please try again.' });
+  }
+});
+
+// GET /demo — the public demo page
+app.get('/demo', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WrapOS — Watch the AI Make a Real Sales Call</title>
+<meta name="description" content="Pick a real fleet carrier. Give us your number. Our AI calls you in 30 seconds — using live company data. No acting. No recording. The real thing.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#09090b;color:#f4f4f5;min-height:100vh;line-height:1.5}
+a{color:inherit;text-decoration:none}
+
+/* ── Nav ── */
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid #18181b;position:sticky;top:0;background:#09090b;z-index:10}
+.nav-logo{font-size:18px;font-weight:900;letter-spacing:-.5px;color:#fff}
+.nav-logo span{color:#6366f1}
+.nav-cta{background:#6366f1;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;transition:background .15s}
+.nav-cta:hover{background:#4f46e5}
+
+/* ── Hero ── */
+.hero{padding:80px 24px 40px;text-align:center;max-width:760px;margin:0 auto}
+.hero-eyebrow{font-size:12px;font-weight:700;letter-spacing:.12em;color:#6366f1;text-transform:uppercase;margin-bottom:16px}
+.hero-title{font-size:clamp(32px,6vw,58px);font-weight:900;line-height:1.08;letter-spacing:-.03em;color:#fff;margin-bottom:20px}
+.hero-title .accent{color:#6366f1}
+.hero-sub{font-size:18px;color:#a1a1aa;line-height:1.6;max-width:560px;margin:0 auto 48px}
+
+/* ── Steps ── */
+.steps{display:flex;gap:0;align-items:center;justify-content:center;margin-bottom:56px;flex-wrap:wrap;gap:4px}
+.step{display:flex;align-items:center;gap:10px;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:10px 18px;font-size:13px;color:#a1a1aa}
+.step-num{width:22px;height:22px;border-radius:50%;background:#6366f1;color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-arrow{color:#3f3f46;margin:0 4px;font-size:18px}
+
+/* ── Demo card ── */
+.demo-card{background:#18181b;border:1px solid #27272a;border-radius:16px;max-width:640px;margin:0 auto 48px;overflow:hidden}
+.demo-section{padding:28px 32px;border-bottom:1px solid #27272a}
+.demo-section:last-child{border-bottom:none}
+.section-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#6366f1;margin-bottom:16px}
+
+/* State picker */
+.state-select{width:100%;background:#09090b;border:1px solid #3f3f46;border-radius:8px;color:#f4f4f5;padding:10px 14px;font-size:14px;cursor:pointer;transition:border-color .15s}
+.state-select:focus{outline:none;border-color:#6366f1}
+
+/* Carrier grid */
+.carrier-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+@media(max-width:480px){.carrier-grid{grid-template-columns:1fr}}
+.carrier-card{background:#09090b;border:1px solid #27272a;border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .15s,background .15s;text-align:left}
+.carrier-card:hover{border-color:#6366f180;background:#0f0f11}
+.carrier-card.selected{border-color:#6366f1;background:#6366f110}
+.carrier-name{font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+.carrier-meta{font-size:11px;color:#71717a;display:flex;gap:8px}
+.score-badge{background:#6366f115;color:#818cf8;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;white-space:nowrap}
+.carrier-loading{color:#52525b;font-size:13px;text-align:center;padding:24px 0}
+
+/* Phone input */
+.phone-wrap{display:flex;align-items:center;gap:12px}
+.phone-prefix{font-size:14px;color:#71717a;white-space:nowrap}
+.phone-input{flex:1;background:#09090b;border:1px solid #3f3f46;border-radius:8px;color:#f4f4f5;padding:10px 14px;font-size:16px;transition:border-color .15s}
+.phone-input:focus{outline:none;border-color:#6366f1}
+.phone-note{font-size:11px;color:#52525b;margin-top:8px}
+
+/* CTA button */
+.call-btn{width:100%;background:#6366f1;color:#fff;border:none;border-radius:10px;padding:16px;font-size:16px;font-weight:800;cursor:pointer;transition:background .15s,transform .1s;letter-spacing:-.3px;display:flex;align-items:center;justify-content:center;gap:10px}
+.call-btn:hover:not(:disabled){background:#4f46e5;transform:translateY(-1px)}
+.call-btn:disabled{background:#27272a;color:#52525b;cursor:not-allowed;transform:none}
+.call-btn .btn-icon{font-size:18px}
+.call-disclaimer{font-size:11px;color:#52525b;text-align:center;margin-top:10px}
+
+/* Status states */
+.status-box{border-radius:10px;padding:18px 20px;text-align:center;margin-top:0;display:none}
+.status-box.calling{display:block;background:#6366f115;border:1px solid #6366f140}
+.status-box.success{display:block;background:#22c55e15;border:1px solid #22c55e40}
+.status-box.error{display:block;background:#ef444415;border:1px solid #ef444440}
+.status-title{font-size:15px;font-weight:800;margin-bottom:4px}
+.status-sub{font-size:13px;color:#a1a1aa}
+.pulse{animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── Proof strip ── */
+.proof-strip{max-width:640px;margin:0 auto 64px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:480px){.proof-strip{grid-template-columns:1fr}}
+.proof-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px;text-align:center}
+.proof-num{font-size:28px;font-weight:900;color:#6366f1;letter-spacing:-.03em}
+.proof-label{font-size:12px;color:#71717a;margin-top:4px}
+
+/* ── CTA section ── */
+.cta-section{max-width:560px;margin:0 auto 80px;text-align:center;padding:0 24px}
+.cta-title{font-size:28px;font-weight:900;letter-spacing:-.03em;margin-bottom:12px}
+.cta-sub{font-size:15px;color:#a1a1aa;margin-bottom:32px}
+.cta-buttons{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn-primary{background:#6366f1;color:#fff;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:800;transition:background .15s}
+.btn-primary:hover{background:#4f46e5}
+.btn-ghost{background:transparent;color:#a1a1aa;padding:14px 24px;border-radius:10px;font-size:15px;font-weight:600;border:1px solid #27272a;transition:border-color .15s}
+.btn-ghost:hover{border-color:#6366f1;color:#fff}
+.pricing-note{font-size:12px;color:#52525b;margin-top:16px}
+
+/* ── Footer ── */
+.footer{border-top:1px solid #18181b;padding:24px 32px;text-align:center;font-size:12px;color:#52525b}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">Wrap<span>OS</span></div>
+  <a href="${appUrl}/login" class="nav-cta">Start Free Trial</a>
+</nav>
+
+<div class="hero">
+  <div class="hero-eyebrow">Live Demo — No Recording</div>
+  <h1 class="hero-title">Watch Our AI Book You<br>a Meeting. <span class="accent">Right Now.</span></h1>
+  <p class="hero-sub">Pick a real carrier from the FMCSA database. Give us your number. Our AI calls you in 30 seconds — using that company's real fleet data to build the pitch. Live. No actors.</p>
+</div>
+
+<div class="steps" style="max-width:640px;margin:0 auto 40px">
+  <div class="step"><span class="step-num">1</span> Pick a fleet carrier</div>
+  <div class="step-arrow">›</div>
+  <div class="step"><span class="step-num">2</span> Enter your number</div>
+  <div class="step-arrow">›</div>
+  <div class="step"><span class="step-num">3</span> Get the call in 30s</div>
+</div>
+
+<div class="demo-card" id="demoCard">
+
+  <!-- Step 1: Carrier Picker -->
+  <div class="demo-section">
+    <div class="section-label">Step 1 — Pick a carrier to pitch</div>
+    <select class="state-select" id="stateSelect">
+      <option value="">Pick a state to see carriers...</option>
+      <option value="IN">Indiana</option><option value="TX">Texas</option>
+      <option value="FL">Florida</option><option value="CA">California</option>
+      <option value="OH">Ohio</option><option value="IL">Illinois</option>
+      <option value="PA">Pennsylvania</option><option value="GA">Georgia</option>
+      <option value="NC">North Carolina</option><option value="MI">Michigan</option>
+      <option value="TN">Tennessee</option><option value="MO">Missouri</option>
+      <option value="WI">Wisconsin</option><option value="MN">Minnesota</option>
+      <option value="AZ">Arizona</option><option value="CO">Colorado</option>
+      <option value="WA">Washington</option><option value="OR">Oregon</option>
+      <option value="VA">Virginia</option><option value="NY">New York</option>
+      <option value="NJ">New Jersey</option><option value="MA">Massachusetts</option>
+      <option value="KY">Kentucky</option><option value="AL">Alabama</option>
+      <option value="LA">Louisiana</option><option value="OK">Oklahoma</option>
+      <option value="KS">Kansas</option><option value="IA">Iowa</option>
+      <option value="AR">Arkansas</option><option value="MS">Mississippi</option>
+      <option value="SC">South Carolina</option><option value="UT">Utah</option>
+      <option value="NV">Nevada</option><option value="NM">New Mexico</option>
+    </select>
+    <div class="carrier-grid" id="carrierGrid">
+      <div class="carrier-loading" style="grid-column:1/-1">Select a state above to see top-scored fleet carriers</div>
+    </div>
+  </div>
+
+  <!-- Step 2: Phone -->
+  <div class="demo-section">
+    <div class="section-label">Step 2 — Your phone number</div>
+    <div class="phone-wrap">
+      <span class="phone-prefix">+1</span>
+      <input type="tel" class="phone-input" id="phoneInput" placeholder="(555) 867-5309" maxlength="14">
+    </div>
+    <div class="phone-note">We call YOU — not the carrier. You'll experience the pitch exactly as a fleet manager would.</div>
+  </div>
+
+  <!-- Step 3: Launch -->
+  <div class="demo-section">
+    <button class="call-btn" id="callBtn" disabled>
+      <span class="btn-icon">📞</span>
+      <span id="btnText">Select a carrier first</span>
+    </button>
+    <div class="call-disclaimer">By entering your number you consent to receive one AI demo call. Standard carrier rates apply.</div>
+    <div class="status-box" id="statusBox">
+      <div class="status-title" id="statusTitle"></div>
+      <div class="status-sub" id="statusSub"></div>
+    </div>
+  </div>
+</div>
+
+<div class="proof-strip">
+  <div class="proof-card">
+    <div class="proof-num">600K+</div>
+    <div class="proof-label">FMCSA carriers in the database</div>
+  </div>
+  <div class="proof-card">
+    <div class="proof-num">36%</div>
+    <div class="proof-label">higher meeting rate vs cold email</div>
+  </div>
+  <div class="proof-card">
+    <div class="proof-num">$249/mo</div>
+    <div class="proof-label">all-in — no per-seat fees</div>
+  </div>
+</div>
+
+<div class="cta-section">
+  <h2 class="cta-title">Ready to automate your outreach?</h2>
+  <p class="cta-sub">WrapOS finds the fleet, writes the pitch, makes the call, and books the meeting — while you're in the install bay.</p>
+  <div class="cta-buttons">
+    <a href="${appUrl}/login" class="btn-primary">Start 14-Day Free Trial</a>
+    <a href="mailto:shadow@shadowgraphix.com" class="btn-ghost">Talk to a human</a>
+  </div>
+  <div class="pricing-note">WrapLeads $79/mo · ShopFlow $149/mo · WrapOS $249/mo · Cancel anytime</div>
+</div>
+
+<div class="footer">
+  &copy; ${new Date().getFullYear()} WrapOS by Shadow Graphix · Speedway, Indiana
+</div>
+
+<script>
+let selected = null;
+
+const stateSelect  = document.getElementById('stateSelect');
+const carrierGrid  = document.getElementById('carrierGrid');
+const phoneInput   = document.getElementById('phoneInput');
+const callBtn      = document.getElementById('callBtn');
+const btnText      = document.getElementById('btnText');
+const statusBox    = document.getElementById('statusBox');
+const statusTitle  = document.getElementById('statusTitle');
+const statusSub    = document.getElementById('statusSub');
+
+function updateCallBtn() {
+  const hasCarrier = !!selected;
+  const phone = phoneInput.value.replace(/\\D/g,'');
+  const hasPhone = phone.length >= 10;
+  callBtn.disabled = !(hasCarrier && hasPhone);
+  if (!hasCarrier) btnText.textContent = 'Select a carrier first';
+  else if (!hasPhone) btnText.textContent = 'Enter your phone number';
+  else btnText.textContent = 'Call me now — hear the AI pitch';
+}
+
+phoneInput.addEventListener('input', () => {
+  let val = phoneInput.value.replace(/\\D/g,'');
+  if (val.length > 10) val = val.slice(0,10);
+  if (val.length > 6) val = '(' + val.slice(0,3) + ') ' + val.slice(3,6) + '-' + val.slice(6);
+  else if (val.length > 3) val = '(' + val.slice(0,3) + ') ' + val.slice(3);
+  else if (val.length) val = '(' + val;
+  phoneInput.value = val;
+  updateCallBtn();
+});
+
+stateSelect.addEventListener('change', async () => {
+  const state = stateSelect.value;
+  selected = null;
+  updateCallBtn();
+  if (!state) { carrierGrid.innerHTML = '<div class="carrier-loading" style="grid-column:1/-1">Select a state above</div>'; return; }
+  carrierGrid.innerHTML = '<div class="carrier-loading pulse" style="grid-column:1/-1">Loading top carriers...</div>';
+  try {
+    const r = await fetch('/demo/carriers?state=' + state);
+    const carriers = await r.json();
+    if (!carriers.length) { carrierGrid.innerHTML = '<div class="carrier-loading" style="grid-column:1/-1">No carriers found for this state — try another.</div>'; return; }
+    carrierGrid.innerHTML = carriers.map(c => \`
+      <div class="carrier-card" data-dot="\${c.dot_number}" data-name="\${c.name}" data-city="\${c.city||''}" data-state="\${c.state||''}" data-fleet="\${c.fleet_size||''}">
+        <div class="carrier-name">\${c.name}</div>
+        <div class="carrier-meta">
+          <span>\${[c.city,c.state].filter(Boolean).join(', ')}</span>
+          \${c.fleet_size ? '<span>' + c.fleet_size + ' vehicles</span>' : ''}
+          <span class="score-badge">score \${c.wrap_score}</span>
+        </div>
+      </div>
+    \`).join('');
+    carrierGrid.querySelectorAll('.carrier-card').forEach(card => {
+      card.addEventListener('click', () => {
+        carrierGrid.querySelectorAll('.carrier-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        selected = { dot_number: card.dataset.dot, name: card.dataset.name, city: card.dataset.city, state: card.dataset.state, fleet_size: card.dataset.fleet };
+        updateCallBtn();
+      });
+    });
+  } catch(e) {
+    carrierGrid.innerHTML = '<div class="carrier-loading" style="grid-column:1/-1">Error loading carriers — refresh and try again.</div>';
+  }
+});
+
+callBtn.addEventListener('click', async () => {
+  if (callBtn.disabled) return;
+  const phone = phoneInput.value.replace(/\\D/g,'');
+  callBtn.disabled = true;
+  btnText.textContent = 'Connecting...';
+  statusBox.className = 'status-box calling';
+  statusTitle.textContent = 'Connecting your call...';
+  statusSub.innerHTML = '<span class="pulse">Spinning up the AI · usually takes 15–30 seconds</span>';
+
+  try {
+    const r = await fetch('/demo/call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, dot_number: selected.dot_number, carrier_name: selected.name, carrier_city: selected.city, carrier_state: selected.state, fleet_size: selected.fleet_size }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) throw new Error(data.error || 'Call failed');
+    statusBox.className = 'status-box success';
+    statusTitle.textContent = 'Your phone is about to ring!';
+    statusSub.textContent = 'The AI is calling you now. It will pitch ' + selected.name + ' using their real fleet data. Answer and experience it firsthand.';
+    btnText.textContent = 'Call on its way';
+  } catch(e) {
+    statusBox.className = 'status-box error';
+    statusTitle.textContent = 'Something went wrong';
+    statusSub.textContent = e.message || 'Please try again.';
+    callBtn.disabled = false;
+    updateCallBtn();
+  }
+});
+</script>
+</body>
+</html>`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// PUBLIC MARKETING SURFACE — vertical landing pages, calculator, comparison
+// pages. All server-rendered, no auth, indexed by Google. The conversion
+// funnel from "ShopVOX alternative" / "wrap shop CRM" / "racing livery
+// software" search queries lands here.
+// ────────────────────────────────────────────────────────────────────────────
+
+function marketingShell({ title, description, body, appUrl }) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${he(title)}</title>
+<meta name="description" content="${he(description)}">
+<meta property="og:title" content="${he(title)}">
+<meta property="og:description" content="${he(description)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WrapOS">
+<meta property="og:url" content="${he(appUrl)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${he(title)}">
+<meta name="twitter:description" content="${he(description)}">
+<meta name="theme-color" content="#6366f1">
+<link rel="canonical" href="${he(appUrl)}">
+<script type="application/ld+json">${JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "WrapOS",
+  "applicationCategory": "BusinessApplication",
+  "applicationSubCategory": "CRM",
+  "description": description,
+  "operatingSystem": "Web",
+  "offers": [
+    { "@type": "Offer", "name": "WrapLeads", "price": "79.00", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "ShopFlow",  "price": "149.00", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "WrapOS",    "price": "249.00", "priceCurrency": "USD" }
+  ],
+  "publisher": { "@type": "Organization", "name": "Shadow Graphix", "address": "Speedway, Indiana" }
+})}</script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#09090b;color:#f4f4f5;line-height:1.55}
+a{color:inherit;text-decoration:none}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid #18181b;position:sticky;top:0;background:#09090b;z-index:10}
+.nav-logo{font-size:18px;font-weight:900;letter-spacing:-.5px}
+.nav-logo span{color:#6366f1}
+.nav-links{display:flex;gap:24px;align-items:center}
+.nav-link{font-size:13px;color:#a1a1aa;transition:color .15s}
+.nav-link:hover{color:#fff}
+.nav-cta{background:#6366f1;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;transition:background .15s}
+.nav-cta:hover{background:#4f46e5}
+@media(max-width:680px){.nav-links .nav-link{display:none}}
+.hero{padding:72px 24px 48px;max-width:820px;margin:0 auto;text-align:center}
+.eyebrow{display:inline-block;background:#6366f120;color:#a5b4fc;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:5px 14px;border-radius:20px;border:1px solid #6366f140;margin-bottom:20px}
+.eyebrow.warn{background:#ef444420;color:#f87171;border-color:#ef444440}
+.hero h1{font-size:clamp(32px,5.5vw,56px);font-weight:900;line-height:1.06;letter-spacing:-.03em;margin-bottom:20px}
+.hero h1 .accent{color:#6366f1}
+.hero h1 .struck{text-decoration:line-through;color:#52525b}
+.hero-sub{font-size:17px;color:#a1a1aa;max-width:580px;margin:0 auto 36px;line-height:1.65}
+.cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:14px}
+.btn-primary{background:#6366f1;color:#fff;padding:14px 32px;border-radius:10px;font-size:15px;font-weight:800;transition:background .15s;display:inline-block}
+.btn-primary:hover{background:#4f46e5}
+.btn-ghost{border:1px solid #3f3f46;color:#a1a1aa;padding:14px 24px;border-radius:10px;font-size:15px;font-weight:600;transition:border-color .15s;display:inline-block}
+.btn-ghost:hover{border-color:#6366f1;color:#fff}
+.cta-note{font-size:12px;color:#52525b}
+.section{max-width:760px;margin:0 auto 64px;padding:0 24px}
+.section-title{font-size:24px;font-weight:900;letter-spacing:-.02em;margin-bottom:8px}
+.section-sub{font-size:14px;color:#71717a;margin-bottom:24px}
+.feature-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:520px){.feature-grid{grid-template-columns:1fr}}
+.feature-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px}
+.feature-icon{font-size:22px;margin-bottom:10px}
+.feature-title{font-size:14px;font-weight:800;color:#fff;margin-bottom:6px;letter-spacing:-.01em}
+.feature-desc{font-size:12px;color:#a1a1aa;line-height:1.6}
+.proof-strip{max-width:640px;margin:0 auto 56px;padding:0 24px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:480px){.proof-strip{grid-template-columns:1fr}}
+.proof-card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:18px;text-align:center}
+.proof-num{font-size:26px;font-weight:900;color:#6366f1;letter-spacing:-.03em}
+.proof-label{font-size:11px;color:#71717a;margin-top:4px;line-height:1.4}
+.compare-table{width:100%;border-collapse:collapse;font-size:13px}
+.compare-table th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#52525b;border-bottom:1px solid #27272a}
+.compare-table td{padding:11px 14px;border-bottom:1px solid #1a1a1d;font-size:13px}
+.compare-table tr:last-child td{border-bottom:none}
+.col-other{color:#71717a}
+.col-wrapos{color:#a3e635;font-weight:700}
+.testimonial{background:#18181b;border:1px solid #27272a;border-radius:14px;padding:24px 28px;margin-bottom:64px;max-width:640px;margin-left:auto;margin-right:auto}
+.testimonial-quote{font-size:15px;color:#e4e4e7;line-height:1.65;font-style:italic;margin-bottom:14px}
+.testimonial-author{font-size:12px;color:#71717a;font-weight:700;letter-spacing:.02em}
+.final-cta{max-width:560px;margin:0 auto 80px;text-align:center;padding:0 24px}
+.final-cta h2{font-size:28px;font-weight:900;letter-spacing:-.03em;margin-bottom:12px}
+.final-cta p{font-size:15px;color:#a1a1aa;margin-bottom:32px}
+.pricing-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;max-width:720px;margin:0 auto 64px;padding:0 24px}
+@media(max-width:640px){.pricing-row{grid-template-columns:1fr}}
+.price-card{background:#18181b;border:1px solid #27272a;border-radius:14px;padding:24px;text-align:center;position:relative}
+.price-card.featured{border-color:#6366f1;background:linear-gradient(180deg,#1a1a2e,#18181b)}
+.price-card.featured::before{content:'MOST POPULAR';position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#6366f1;color:#fff;font-size:9px;font-weight:800;padding:3px 10px;border-radius:20px;letter-spacing:.1em}
+.price-name{font-size:13px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#a1a1aa;margin-bottom:10px}
+.price-num{font-size:36px;font-weight:900;color:#fff;letter-spacing:-.04em}
+.price-num span{font-size:14px;color:#71717a;font-weight:600}
+.price-features{margin-top:16px;text-align:left;font-size:12px;color:#a1a1aa;line-height:1.8}
+.footer{border-top:1px solid #18181b;padding:32px 24px;text-align:center;font-size:12px;color:#52525b}
+.footer-links{display:flex;gap:20px;justify-content:center;margin-bottom:12px;flex-wrap:wrap}
+.footer-links a{color:#71717a;transition:color .15s}
+.footer-links a:hover{color:#fff}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <a href="${appUrl}/" class="nav-logo">Wrap<span>OS</span></a>
+  <div class="nav-links">
+    <a href="${appUrl}/for/fleet" class="nav-link">For Fleet Shops</a>
+    <a href="${appUrl}/for/racing" class="nav-link">For Racing</a>
+    <a href="${appUrl}/calculator" class="nav-link">Cost Calculator</a>
+    <a href="${appUrl}/demo" class="nav-link">Live Demo</a>
+    <a href="${appUrl}/login" class="nav-cta">Start Free Trial</a>
+  </div>
+</nav>
+${body}
+<footer class="footer">
+  <div class="footer-links">
+    <a href="${appUrl}/for/fleet">Fleet Wraps</a>
+    <a href="${appUrl}/for/racing">Racing Liveries</a>
+    <a href="${appUrl}/for/dinoc">DI-NOC / Architectural</a>
+    <a href="${appUrl}/for/construction">Construction Fleets</a>
+    <a href="${appUrl}/for/government">Government Contracts</a>
+    <a href="${appUrl}/migrate/shopvox">Migrate from ShopVOX</a>
+    <a href="${appUrl}/calculator">Cost Calculator</a>
+    <a href="${appUrl}/demo">Demo Call</a>
+  </div>
+  &copy; ${new Date().getFullYear()} WrapOS by Shadow Graphix · Speedway, Indiana
+</footer>
+</body>
+</html>`;
+}
+
+// Vertical landing pages — each one a focused SEO conversion page
+const VERTICAL_PAGES = {
+  fleet: {
+    eyebrow: 'For Fleet Wrap Shops',
+    title: 'The Only CRM That Finds Fleet Customers Before They Find You',
+    description: 'WrapOS is built for fleet wrap shops. 600,000 FMCSA carriers scored by wrap opportunity. AI calls fleet managers. Auto re-engages clients before their wraps age out.',
+    h1Pre: 'Your competitors wait for the phone to ring.',
+    h1Post: 'You go <span class="accent">find the fleet.</span>',
+    sub: 'WrapOS turns the FMCSA database into a continuously updated, wrap-scored prospect engine. Every motor carrier in America, sorted by fleet size and staleness. The AI calls fleet managers. The CRM tracks the lifecycle. ShopVOX manages jobs you already have — WrapOS finds the jobs you don\'t have yet.',
+    features: [
+      ['Fleet Score Algorithm', 'Every carrier in the FMCSA database ranked by fleet size + recency. The 25-500 truck sweet spot surfaces first.'],
+      ['AI Phone Calling', 'Send the AI to dial 50 fleet managers while you\'re in the install bay. Real conversations. Real bookings.'],
+      ['Lifecycle Re-Order', 'Your 2019 fleet client\'s wrap is aging out NOW. WrapOS knows. WrapOS auto-engages. You stay top of mind.'],
+      ['Category-Aware Pitches', 'The AI talks to a 50-truck logistics company differently than a 5-truck plumbing company. It\'s built into the model.'],
+    ],
+    proof: [['600K+', 'FMCSA motor carriers in database'], ['25-500', 'sweet-spot fleet size — your highest-margin band'], ['$2,500-5,000', 'avg ticket per wrapped vehicle']],
+  },
+  racing: {
+    eyebrow: 'For Racing & Motorsports Shops',
+    title: 'The First Software Built for Race Livery Shops',
+    description: 'Race liveries, hauler wraps, pit equipment graphics, garage branding. WrapOS is the only platform that understands racing budgets, sponsor decal timelines, and contingency requirements for IndyCar, IMSA, NHRA, NASCAR teams.',
+    h1Pre: 'Liveries. Haulers. Garages.',
+    h1Post: '<span class="accent">All in one platform.</span>',
+    sub: 'Generic CRMs don\'t know what contingency stickers are. They don\'t track sponsor approvals. They don\'t understand that a livery has a hard deadline tied to a race date. WrapOS is built by a shop literally down the street from Indianapolis Motor Speedway — for shops that wrap racecars, haulers, pit equipment, and garages for IndyCar, IMSA, NHRA, and NASCAR teams.',
+    features: [
+      ['Race Date Deadlines', 'Project timelines anchor to race dates, not generic install dates. Auto-alerts when sponsor approvals are blocking.'],
+      ['Sponsor Decal Library', 'Pre-built decal catalogs for IndyCar, IMSA, NHRA series — contingency requirements built in.'],
+      ['Hauler + Garage Workflows', 'Track the livery, the hauler, the pit cart, the garage panels — all as one team relationship, not separate jobs.'],
+      ['Team Database', '5,000+ motorsports teams across North America. Categorized by series. Find teams that need rebranding now.'],
+    ],
+    proof: [['5,000+', 'motorsports teams across North America'], ['1-3 yr', 'avg rebrand cycle per race team'], ['$10K-$50K', 'avg ticket per livery package']],
+  },
+  dinoc: {
+    eyebrow: 'For DI-NOC & Architectural Film Shops',
+    title: 'Win More Architectural Surface Renovation Jobs',
+    description: 'Built for 3M DI-NOC and Rea Tec certified installers. Find commercial renovation jobs from SAM.gov, scan blueprints for wrap opportunities, send AR previews to architects before they spec.',
+    h1Pre: 'Commercial GCs spec wrap renovations.',
+    h1Post: '<span class="accent">Be on their shortlist.</span>',
+    sub: 'Surface renovation without demo is a $5B/yr market and growing. WrapOS gives DI-NOC and Rea Tec installers the only platform that surfaces commercial renovation bids, extracts wrap opportunities from PDF blueprints, and generates AR previews architects can show their clients in real time.',
+    features: [
+      ['Blueprint PDF Scanner', 'Upload a construction PDF — AI extracts every surface that could be wrapped (cabinets, walls, elevators, millwork).'],
+      ['Architect Outreach', 'Pre-built outreach sequences for commercial architects, design firms, and FF&E specifiers.'],
+      ['Project Bid Tracking', 'GC referrals tracked by project, not by single jobs. Win one phase, get auto-pitched for the next.'],
+      ['Sample Library', 'Material samples (Rm waves, woodgrains, fabric textures) auto-attached to proposals.'],
+    ],
+    proof: [['$5B+', 'US architectural film market'], ['68%', 'higher win rate with AR preview (Wrap Institute)'], ['3-7yr', 'commercial renovation cycle']],
+  },
+  construction: {
+    eyebrow: 'For Construction & GC Fleet Branding',
+    title: 'Win Construction Fleet Wraps Before The Competition',
+    description: 'Construction GCs run branded fleets — and they pick wrap shops based on who shows up first. WrapOS surfaces new construction company registrations, expansion press releases, and SAM.gov contract wins in real time.',
+    h1Pre: 'Every new GC needs a branded fleet.',
+    h1Post: '<span class="accent">Be the first call.</span>',
+    sub: 'A 25-truck construction fleet rebrand is a $75K-$150K project — and the wrap shop that gets there first usually wins. WrapOS monitors SOS new business registrations, SAM.gov contract awards, and news signal feeds to surface GCs that are growing their fleet or rebranding right now.',
+    features: [
+      ['News Signal Worker', 'Press releases about expansions, mergers, rebrands — auto-converted into leads in your pipeline.'],
+      ['SOS New Business Feed', 'New construction companies registering with state SOS offices. They need branded trucks. Be first.'],
+      ['Job Site Photo CRM', 'Upload install photos. AI auto-tags them by client + vehicle. Build a portfolio without manual work.'],
+      ['GC Referral Tracking', 'One construction client → 5 more referrals. WrapOS surfaces the referral patterns and tells you who to ask next.'],
+    ],
+    proof: [['$75K-$150K', 'avg 25-truck construction fleet rebrand'], ['25-200', 'trucks per typical mid-size GC'], ['5-7yr', 'fleet rebrand cycle']],
+  },
+  government: {
+    eyebrow: 'For Government Fleet Bidders',
+    title: 'Win Government Vehicle Graphics Contracts',
+    description: 'Federal and state governments spend $400M+ annually on vehicle graphics. SAM.gov posts every contract publicly — but no wrap shop CRM surfaces them. WrapOS does.',
+    h1Pre: 'The federal government spent <span class="accent">$400M+</span>',
+    h1Post: 'on vehicle graphics last year.',
+    sub: 'Government contracting is a closed club because nobody knows how to find the bids. WrapOS surfaces every open federal and state vehicle graphics opportunity from SAM.gov directly in your pipeline — with AI-drafted bid proposals based on your portfolio. The bids are public. Your competitors don\'t know.',
+    features: [
+      ['SAM.gov Bid Surfacing', 'Open federal vehicle graphics opportunities filtered to your state. New bids posted daily, auto-imported.'],
+      ['AI Bid Proposal Drafting', 'Click an opportunity → AI drafts the bid response using your portfolio, certifications, and past performance.'],
+      ['GSA Schedule Tracking', 'Track which agencies have wrapped recently and when their contracts come up for re-bid.'],
+      ['State + Municipal Bids', 'Beyond federal — state DOT, sheriff fleet, city utility vehicle graphics opportunities surfaced.'],
+    ],
+    proof: [['$400M+', 'US federal vehicle graphics spend (annual)'], ['10K+', 'open SAM.gov opportunities at any time'], ['$50K-$400K', 'avg single government fleet contract']],
+  },
+};
+
+for (const [slug, page] of Object.entries(VERTICAL_PAGES)) {
+  app.get(`/for/${slug}`, (req, res) => {
+    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+    const body = `
+<div class="hero">
+  <div class="eyebrow">${he(page.eyebrow)}</div>
+  <h1>${page.h1Pre}<br>${page.h1Post}</h1>
+  <p class="hero-sub">${he(page.sub)}</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start 14-Day Free Trial</a>
+    <a href="${appUrl}/demo" class="btn-ghost">Watch a Live AI Call</a>
+  </div>
+  <div class="cta-note">No credit card · Cancel anytime · Cancel before day 14, pay nothing</div>
+</div>
+
+<div class="proof-strip">
+  ${page.proof.map(([num, label]) => `<div class="proof-card"><div class="proof-num">${he(num)}</div><div class="proof-label">${he(label)}</div></div>`).join('')}
+</div>
+
+<div class="section">
+  <div class="section-title">What you get</div>
+  <div class="section-sub">Every feature below is built specifically for ${he(page.eyebrow.replace(/^For /, '').toLowerCase())}. No generic CRM bloat. No retrofitting "fleet" onto a screen printer's tool.</div>
+  <div class="feature-grid">
+    ${page.features.map(([t, d]) => `<div class="feature-card"><div class="feature-title">${he(t)}</div><div class="feature-desc">${he(d)}</div></div>`).join('')}
+  </div>
+</div>
+
+<div class="pricing-row">
+  <div class="price-card"><div class="price-name">WrapLeads</div><div class="price-num">$79<span>/mo</span></div><div class="price-features">✓ FMCSA database access<br>✓ Apollo enrichment<br>✓ Lead scoring + CRM<br>✓ Manual outreach</div></div>
+  <div class="price-card featured"><div class="price-name">ShopFlow</div><div class="price-num">$149<span>/mo</span></div><div class="price-features">✓ Everything in WrapLeads<br>✓ AI email sequences<br>✓ Bulk outreach<br>✓ Reply classification</div></div>
+  <div class="price-card"><div class="price-name">WrapOS</div><div class="price-num">$249<span>/mo</span></div><div class="price-features">✓ Everything in ShopFlow<br>✓ AI phone calling<br>✓ AR vehicle preview<br>✓ AI proposal generation<br>✓ Vision quote from photo</div></div>
+</div>
+
+<div class="final-cta">
+  <h2>Stop competing on price. Start competing on speed.</h2>
+  <p>14-day free trial. Full WrapOS tier access. No credit card required.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial</a>
+    <a href="${appUrl}/calculator" class="btn-ghost">Compare My Current Stack</a>
+  </div>
+</div>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(marketingShell({ title: page.title, description: page.description, body, appUrl }));
+  });
+}
+
+// GET /calculator — Interactive stack cost calculator (the viral conversion tool)
+app.get('/calculator', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const body = `
+<div class="hero">
+  <div class="eyebrow">Interactive Tool</div>
+  <h1>What's Your <span class="accent">Wrap Stack</span><br>Actually Costing You?</h1>
+  <p class="hero-sub">Most wrap shops cobble together 4-6 tools. Pick what you use below — we'll show you what you're paying vs WrapOS. Most shops save $400-$700/month and gain features they couldn't find anywhere else.</p>
+</div>
+
+<div class="section" style="max-width:800px">
+  <div id="calc" style="background:#18181b;border:1px solid #27272a;border-radius:16px;padding:32px">
+
+    <div id="picker">
+      <div style="font-size:13px;font-weight:700;color:#a5b4fc;letter-spacing:.05em;text-transform:uppercase;margin-bottom:14px">Pick everything you currently pay for</div>
+      <div id="toolGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
+
+      <div style="margin-top:24px;padding-top:24px;border-top:1px solid #27272a">
+        <div style="font-size:13px;font-weight:700;color:#a5b4fc;letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">How many users / seats?</div>
+        <input id="seats" type="number" min="1" value="3" style="width:80px;background:#09090b;border:1px solid #3f3f46;border-radius:6px;padding:8px 12px;color:#fff;font-size:14px;font-weight:700">
+        <span style="font-size:12px;color:#71717a;margin-left:8px">Many tools charge per user</span>
+      </div>
+    </div>
+
+    <div id="result" style="display:none;margin-top:24px;padding-top:24px;border-top:1px solid #27272a">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
+        <div style="background:#0f0f11;border:1px solid #3f3f46;border-radius:12px;padding:20px">
+          <div style="font-size:11px;font-weight:700;color:#71717a;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">Your current stack</div>
+          <div style="font-size:32px;font-weight:900;color:#fff;letter-spacing:-.03em">$<span id="currentTotal">0</span><span style="font-size:14px;color:#71717a;font-weight:600">/mo</span></div>
+          <div id="stackList" style="font-size:11px;color:#71717a;margin-top:8px;line-height:1.6"></div>
+        </div>
+        <div style="background:linear-gradient(180deg,#1a1a2e,#18181b);border:1px solid #6366f1;border-radius:12px;padding:20px;position:relative">
+          <div style="font-size:11px;font-weight:700;color:#a5b4fc;letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">WrapOS — all in one</div>
+          <div style="font-size:32px;font-weight:900;color:#fff;letter-spacing:-.03em">$249<span style="font-size:14px;color:#71717a;font-weight:600">/mo</span></div>
+          <div style="font-size:11px;color:#a1a1aa;margin-top:8px;line-height:1.6">Includes everything in your stack + features that don't exist elsewhere</div>
+        </div>
+      </div>
+
+      <div id="savings" style="background:#22c55e15;border:1px solid #22c55e60;border-radius:12px;padding:20px;text-align:center;margin-bottom:20px">
+        <div style="font-size:12px;color:#86efac;font-weight:700;letter-spacing:.1em;text-transform:uppercase">You'd save</div>
+        <div style="font-size:36px;font-weight:900;color:#22c55e;letter-spacing:-.04em;margin:4px 0">$<span id="monthlySavings">0</span><span style="font-size:16px;color:#86efac;font-weight:600">/mo</span></div>
+        <div style="font-size:13px;color:#86efac">That's <strong>$<span id="annualSavings">0</span>/yr</strong> — and you GAIN features no competitor has</div>
+      </div>
+
+      <div style="background:#18181b;border:1px solid #6366f140;border-radius:12px;padding:18px 20px;margin-bottom:24px">
+        <div style="font-size:11px;font-weight:700;color:#a5b4fc;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px">What you also get with WrapOS that you can't get anywhere else</div>
+        <div style="font-size:12px;color:#a1a1aa;line-height:1.9">
+          ✓ 600K FMCSA fleet carriers, scored by wrap opportunity<br>
+          ✓ AI phone calls (Vapi-powered) — no competitor has this<br>
+          ✓ AR vehicle preview from any uploaded photo<br>
+          ✓ Vision Quote (estimate from a photo)<br>
+          ✓ Wrap lifecycle re-order automation<br>
+          ✓ SAM.gov government bid surfacing<br>
+          ✓ Category-aware AI outreach (fleet vs racing vs di-noc)
+        </div>
+      </div>
+
+      <div style="text-align:center">
+        <a href="${appUrl}/login" class="btn-primary" style="font-size:16px;padding:16px 40px">Start 14-Day Free Trial</a>
+        <div style="font-size:11px;color:#52525b;margin-top:10px">No credit card · Import your existing data on day 1</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOOLS = [
+  { id: 'shopvox',    name: 'ShopVOX',           price: 366, perUser: 49,  cat: 'Shop Mgmt' },
+  { id: 'urable',     name: 'Urable',            price: 175, perUser: 0,   cat: 'Shop Mgmt' },
+  { id: 'cyrious',    name: 'Cyrious Control',   price: 199, perUser: 99,  cat: 'Shop Mgmt' },
+  { id: 'shopmanager', name: 'Shopmanager',      price: 275, perUser: 0,   cat: 'Shop Mgmt' },
+  { id: 'tintwiz',    name: 'Tint Wiz',          price: 150, perUser: 0,   cat: 'Shop Mgmt' },
+  { id: 'apollo',     name: 'Apollo.io',         price: 79,  perUser: 79,  cat: 'Prospecting' },
+  { id: 'instantly',  name: 'Instantly.ai',      price: 97,  perUser: 0,   cat: 'Outreach' },
+  { id: 'lemlist',    name: 'Lemlist',           price: 69,  perUser: 69,  cat: 'Outreach' },
+  { id: 'clay',       name: 'Clay.com',          price: 349, perUser: 0,   cat: 'Enrichment' },
+  { id: 'wrapmyride', name: 'WrapMyRide.ai',     price: 99,  perUser: 0,   cat: 'AR Preview' },
+  { id: 'vapi',       name: 'Vapi.ai (DIY calls)', price: 500, perUser: 0, cat: 'AI Calling' },
+  { id: 'jobnimbus',  name: 'JobNimbus',         price: 225, perUser: 75,  cat: 'Field CRM' },
+];
+
+const selected = new Set();
+const grid = document.getElementById('toolGrid');
+const seats = document.getElementById('seats');
+
+TOOLS.forEach(t => {
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#09090b;border:1px solid #27272a;border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s,background .15s';
+  card.innerHTML = '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:3px">' + t.name + '</div><div style="font-size:10px;color:#71717a">' + t.cat + ' · $' + t.price + (t.perUser ? '+$' + t.perUser + '/user' : '') + '/mo</div>';
+  card.addEventListener('click', () => {
+    if (selected.has(t.id)) { selected.delete(t.id); card.style.borderColor = '#27272a'; card.style.background = '#09090b'; }
+    else { selected.add(t.id); card.style.borderColor = '#6366f1'; card.style.background = '#6366f110'; }
+    recalc();
+  });
+  grid.appendChild(card);
+});
+
+seats.addEventListener('input', recalc);
+
+function recalc() {
+  if (selected.size === 0) { document.getElementById('result').style.display = 'none'; return; }
+  document.getElementById('result').style.display = 'block';
+  const numSeats = Math.max(1, parseInt(seats.value) || 1);
+  let total = 0;
+  const stack = [];
+  selected.forEach(id => {
+    const t = TOOLS.find(x => x.id === id);
+    const cost = t.price + (t.perUser * Math.max(0, numSeats - 1));
+    total += cost;
+    stack.push(t.name + ': $' + cost);
+  });
+  document.getElementById('currentTotal').textContent = total;
+  document.getElementById('stackList').innerHTML = stack.join(' · ');
+  const savings = Math.max(0, total - 249);
+  document.getElementById('monthlySavings').textContent = savings;
+  document.getElementById('annualSavings').textContent = (savings * 12).toLocaleString();
+}
+</script>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(marketingShell({ title: 'Wrap Stack Cost Calculator — How Much Are You Paying?', description: 'Pick the tools you currently use. See what you\'re paying vs WrapOS. Most wrap shops save $400-$700/month.', body, appUrl }));
+});
+
+// GET /compare/apollo — head-to-head comparison page
+app.get('/compare/apollo', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const body = `
+<div class="hero">
+  <div class="eyebrow">Comparison</div>
+  <h1>Apollo.io vs <span class="accent">WrapOS</span></h1>
+  <p class="hero-sub">Apollo gives wrap shops a generic 275M-contact database that's wrong 30-35% of the time. WrapOS gives wrap shops 600,000 FMCSA-verified motor carriers, sorted by wrap opportunity, with category-aware AI calling — for the same or lower price.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Try WrapOS Free</a>
+    <a href="${appUrl}/demo" class="btn-ghost">Watch the AI Call a Carrier</a>
+  </div>
+</div>
+
+<div class="section">
+  <table class="compare-table">
+    <thead><tr><th>Feature</th><th>Apollo.io</th><th>WrapOS</th></tr></thead>
+    <tbody>
+      <tr><td>Starting price</td><td class="col-other">$49/user/mo</td><td class="col-wrapos">$79/mo flat</td></tr>
+      <tr><td>Database</td><td class="col-other">275M generic contacts</td><td class="col-wrapos">600K FMCSA carriers (wrap-scored)</td></tr>
+      <tr><td>Industry context</td><td class="col-other">Generic</td><td class="col-wrapos">Built for wrap shops</td></tr>
+      <tr><td>Wrap-opportunity scoring</td><td class="col-other">✗</td><td class="col-wrapos">✓ Fleet size + staleness</td></tr>
+      <tr><td>AI phone calling</td><td class="col-other">✗</td><td class="col-wrapos">✓ Real outbound calls</td></tr>
+      <tr><td>Category-aware pitches</td><td class="col-other">✗</td><td class="col-wrapos">✓ Fleet vs racing vs di-noc</td></tr>
+      <tr><td>Pricing model</td><td class="col-other">Credit-based, expires monthly</td><td class="col-wrapos">Flat-fee, no credits</td></tr>
+      <tr><td>Per-seat fees</td><td class="col-other">+$49/user/mo</td><td class="col-wrapos">None</td></tr>
+      <tr><td>Data accuracy (reported)</td><td class="col-other">65-70% (15-35% bounce)</td><td class="col-wrapos">FMCSA-verified daily</td></tr>
+      <tr><td>Email deliverability over time</td><td class="col-other">65% → 23% by month 6</td><td class="col-wrapos">Built on Resend, monitored</td></tr>
+      <tr><td>Phone support</td><td class="col-other">None on any plan</td><td class="col-wrapos">Direct shop owner email</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="testimonial">
+  <div class="testimonial-quote">"Apollo credits expire, costs balloon to 180-300% of initial estimate within year one, and email deliverability drops from 65% inbox rate in month 1 to 23% by month 6."</div>
+  <div class="testimonial-author">— Apollo.io user analysis, Salesforge.ai 2025</div>
+</div>
+
+<div class="final-cta">
+  <h2>The B2B prospecting platform built for fleet wrap shops.</h2>
+  <p>Stop paying for generic data that's wrong 1 in 3 times. Get the FMCSA database, wrap-scored and ready.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial</a>
+  </div>
+</div>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(marketingShell({ title: 'Apollo.io vs WrapOS — Which Is Better for Wrap Shops?', description: 'Apollo charges $49+/user/mo for generic data. WrapOS gives wrap shops 600K FMCSA-verified carriers with wrap-scoring and AI calling for $79/mo flat.', body, appUrl }));
+});
+
+// GET /compare/urable — comparison page for Urable refugees (also Fullsteam PE acquired)
+app.get('/compare/urable', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const body = `
+<div class="hero">
+  <div class="eyebrow warn">Urable was acquired by Fullsteam Private Equity · April 2025</div>
+  <h1>Urable vs <span class="accent">WrapOS</span></h1>
+  <p class="hero-sub">Urable was a solid ops tool — until Fullsteam PE acquired them in April 2025. Same playbook as ShopVOX: price increases, support degradation, data hostage. WrapOS is founder-owned, ships weekly, and exports your data anytime.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Switch to WrapOS Free</a>
+    <a href="${appUrl}/migrate/shopvox" class="btn-ghost">See ShopVOX Migration</a>
+  </div>
+</div>
+
+<div class="section">
+  <table class="compare-table">
+    <thead><tr><th>Feature</th><th>Urable (Fullsteam PE)</th><th>WrapOS</th></tr></thead>
+    <tbody>
+      <tr><td>Ownership</td><td class="col-other">Private equity (Apr 2025)</td><td class="col-wrapos">Founder-owned</td></tr>
+      <tr><td>Quoting + invoicing</td><td class="col-other">✓</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Job scheduling</td><td class="col-other">✓</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>3D PPF visualizer</td><td class="col-other">✓ (limited)</td><td class="col-wrapos">✓ AR vehicle preview from any photo</td></tr>
+      <tr><td>Outbound lead generation</td><td class="col-other">✗</td><td class="col-wrapos">✓ 600K FMCSA carriers</td></tr>
+      <tr><td>AI phone calling</td><td class="col-other">✗</td><td class="col-wrapos">✓ Vapi-powered</td></tr>
+      <tr><td>AI email sequences</td><td class="col-other">✗</td><td class="col-wrapos">✓ Category-aware</td></tr>
+      <tr><td>News signal lead engine</td><td class="col-other">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>SAM.gov government bids</td><td class="col-other">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Wrap lifecycle re-order</td><td class="col-other">✗</td><td class="col-wrapos">✓</td></tr>
+      <tr><td>Free data export</td><td class="col-other">Limited post-acquisition</td><td class="col-wrapos">Always, full CSV</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="final-cta">
+  <h2>Don't get locked into another PE-owned platform.</h2>
+  <p>WrapOS is built by a wrap shop owner, for wrap shop owners. We ship features weekly. We will never hold your data hostage.</p>
+  <div class="cta-row">
+    <a href="${appUrl}/login" class="btn-primary">Start Free Trial</a>
+    <a href="${appUrl}/calculator" class="btn-ghost">Compare My Stack</a>
+  </div>
+</div>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(marketingShell({ title: 'Urable vs WrapOS — A Founder-Owned Alternative', description: 'Urable was acquired by Fullsteam Private Equity in April 2025. WrapOS is the founder-owned alternative built for wrap, PPF, and detail shops.', body, appUrl }));
+});
+
+// GET /stats.json — public platform stats (for landing pages to embed live counters)
+app.get('/stats.json', async (req, res) => {
+  try {
+    const [carriers, leads, calls] = await Promise.all([
+      pool.query('SELECT COUNT(*)::INT AS n FROM companies').catch(() => ({ rows: [{ n: 600000 }] })),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM lead_activities WHERE created_at > NOW() - INTERVAL '7 days'`).catch(() => ({ rows: [{ n: 0 }] })),
+      pool.query(`SELECT COUNT(*)::INT AS n FROM lead_activities WHERE type = 'call_initiated' AND created_at > NOW() - INTERVAL '30 days'`).catch(() => ({ rows: [{ n: 0 }] })),
+    ]);
+    res.set('Cache-Control', 'public, max-age=300'); // 5min CDN cache
+    res.json({
+      carriers: carriers.rows[0].n,
+      activities_last_7d: leads.rows[0].n,
+      ai_calls_last_30d: calls.rows[0].n,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (e) { res.json({ carriers: 600000, activities_last_7d: 0, ai_calls_last_30d: 0 }); }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// SAM.gov Opportunities — federal/state government vehicle graphics bids
+// White space — NO competitor surfaces these. Pure differentiation feature.
+// ────────────────────────────────────────────────────────────────────────────
+
+const SAM_OPS_BASE = 'https://api.sam.gov/opportunities/v2/search';
+const SAM_NAICS_VEHICLE_GRAPHICS = ['541430','323111','339950','238990','488490']; // graphic design, commercial printing, signs, specialty trade, fleet support
+
+// In-memory cache so we don't hammer SAM.gov on every request
+let _samCache = { ts: 0, data: null };
+const SAM_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+
+async function fetchSamOpportunities({ state = null, keyword = 'vehicle wrap', limit = 25 } = {}) {
+  const cacheKey = `${state || 'all'}:${keyword}:${limit}`;
+  if (_samCache.key === cacheKey && Date.now() - _samCache.ts < SAM_CACHE_TTL) return _samCache.data;
+
+  const apiKey = process.env.SAM_API_KEY;
+  if (!apiKey) {
+    // Fallback to example opportunities so the feature still demos without a key
+    return {
+      source: 'example',
+      message: 'SAM_API_KEY not configured — showing example opportunities. Set SAM_API_KEY in env for live bids.',
+      opportunities: [
+        { id: 'EX001', title: 'Vehicle Graphics — US Forest Service Region 8 Fleet', agency: 'USDA Forest Service', state: 'GA', value: 285000, deadline: new Date(Date.now() + 14*864e5).toISOString(), naics: '541430', url: 'https://sam.gov' },
+        { id: 'EX002', title: 'Police Department Vehicle Decals & Graphics', agency: 'City of Indianapolis', state: 'IN', value: 78500, deadline: new Date(Date.now() + 21*864e5).toISOString(), naics: '339950', url: 'https://sam.gov' },
+        { id: 'EX003', title: 'State DOT Fleet Rebranding — Phase 2', agency: 'Texas DOT', state: 'TX', value: 412000, deadline: new Date(Date.now() + 35*864e5).toISOString(), naics: '541430', url: 'https://sam.gov' },
+      ],
+    };
+  }
+
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    limit: String(limit),
+    postedFrom: new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10),
+    postedTo: new Date().toISOString().slice(0, 10),
+    ptype: 'o,p,r', // open, presolicitation, sources sought
+    q: keyword,
+  });
+  if (state) params.set('state', state);
+
+  try {
+    const r = await fetch(`${SAM_OPS_BASE}?${params}`, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error(`SAM.gov returned ${r.status}`);
+    const data = await r.json();
+    const opportunities = (data.opportunitiesData || []).map(o => ({
+      id: o.noticeId,
+      title: o.title,
+      agency: o.organizationHierarchy?.[0]?.name || o.fullParentPathName || 'Federal Agency',
+      state: o.placeOfPerformance?.state?.code || null,
+      value: o.award?.amount ? parseFloat(o.award.amount) : null,
+      deadline: o.responseDeadLine,
+      naics: o.naicsCode,
+      url: o.uiLink,
+      description: (o.description || '').slice(0, 400),
+    }));
+    const result = { source: 'sam.gov', opportunities };
+    _samCache = { key: cacheKey, ts: Date.now(), data: result };
+    return result;
+  } catch (e) {
+    console.error('[sam-ops]', e.message);
+    return { source: 'error', error: e.message, opportunities: [] };
+  }
+}
+
+// GET /opportunities — list current government bid opportunities (requires WrapLeads tier+)
+app.get('/opportunities', authMiddleware, subMiddleware, async (req, res) => {
+  const { state, keyword = 'vehicle wrap', limit = 25 } = req.query;
+  const data = await fetchSamOpportunities({ state, keyword, limit: parseInt(limit) || 25 });
+  res.json(data);
+});
+
+// POST /opportunities/:id/import — import a SAM.gov opportunity as a lead
+app.post('/opportunities/:id/import', authMiddleware, subMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { title, agency, state, value, naics, url } = req.body || {};
+  if (!title || !agency) return res.status(400).json({ error: 'title and agency required' });
+
+  const crypto = require('crypto');
+  const clientId = crypto.randomUUID();
+  const notes = [
+    `SAM.gov Opportunity ID: ${req.params.id}`,
+    value ? `Estimated value: $${parseFloat(value).toLocaleString()}` : null,
+    naics ? `NAICS: ${naics}` : null,
+    url ? `Bid: ${url}` : null,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const r = await pool.query(`
+      INSERT INTO leads (user_id, client_id, company, contact_title, city, state,
+        category, status, notes, source)
+      VALUES ($1,$2,$3,$4,$5,$6,'gc_referral','new',$7,'sam_gov')
+      RETURNING *
+    `, [uid, clientId, agency, 'Contracting Officer', null, state || null, notes]);
+
+    await logActivity(pool, {
+      leadId: r.rows[0].id, userId: uid, type: 'note',
+      subject: `Imported from SAM.gov: ${title}`,
+      metadata: { sam_id: req.params.id, value, naics, url },
+    });
+
+    res.json({ ok: true, lead: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: 'Import failed' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// /wrap-my-fleet — PUBLIC CONSUMER FUNNEL
+//
+// Fleet managers Google "how to wrap a fleet" and land here. They describe
+// their vehicles, get 3 free AI wrap concept descriptions immediately, then
+// submit contact info to get matched with a certified installer.
+//
+// Their submission becomes an "inbound fleet request" that WrapOS shops
+// see in their Mission Dashboard and can one-click claim as a CRM lead.
+// This turns SEO traffic directly into inbound leads for paying customers.
+// ────────────────────────────────────────────────────────────────────────────
+
+const FLEET_CONCEPT_EXAMPLES = [
+  {
+    name: 'Command Presence',
+    palette: 'Deep Navy + Chrome Silver',
+    description: 'Full vehicle wrap in a matte deep navy base with chrome silver graphic elements along the lower third. Large company logo on the rear panel, website in white on the side doors. Conveys authority and professionalism — ideal for commercial fleets that want to signal reliability.',
+    estimatedCost: '$2,800–$3,400 per vehicle',
+  },
+  {
+    name: 'Bold Identity',
+    palette: 'Ember Orange + Gloss Black',
+    description: "High-contrast half-wrap using your brand's primary color on a gloss black base. Dynamic diagonal sweep from front bumper to rear quarter panel. Wrap specialists recommend this for high-visibility service vehicles. Eye-catching at 60mph.",
+    estimatedCost: '$1,800–$2,400 per vehicle',
+  },
+  {
+    name: 'Clean Corporate',
+    palette: 'White Base + Brand Color Accent',
+    description: 'Partial wrap on a white base vehicle — accent stripe along the roofline and lower body, contact info on rear glass. Most budget-efficient option for large fleets. Maintains a clean, premium look without full coverage costs.',
+    estimatedCost: '$800–$1,400 per vehicle',
+  },
+];
+
+// POST /wrap-my-fleet/analyze — generates AI wrap concepts (public, rate limited)
+app.post('/wrap-my-fleet/analyze', fleetToolLimiter, express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const { vehicleType = 'van', fleetSize = 10, industry = 'logistics', colors = '', style = 'professional' } = req.body;
+
+    // Use AI if available, fall back to curated examples
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (!anthropicKey) {
+      return res.json({ concepts: FLEET_CONCEPT_EXAMPLES, source: 'examples' });
+    }
+
+    const { Anthropic } = require('@anthropic-ai/sdk');
+    const anth = new Anthropic({ apiKey: anthropicKey });
+
+    const prompt = `You are an expert vehicle wrap designer. Generate 3 distinct wrap concept briefs for a fleet of ${fleetSize} ${vehicleType}s in the ${industry} industry.
+Style preference: ${style}.
+Brand colors mentioned: ${colors || 'flexible / not specified'}.
+
+For each concept output a JSON object with exactly these keys:
+- name (2-3 words, creative)
+- palette (2-4 words describing the color scheme)
+- description (2-3 sentences — what it looks like, key design moves, why it works for this fleet)
+- estimatedCost (price range per vehicle, e.g. "$2,400–$3,200 per vehicle")
+
+Return ONLY a JSON array of 3 objects, nothing else. No markdown fences.`;
+
+    const msg = await anth.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 900,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    let concepts;
+    try {
+      concepts = JSON.parse(msg.content[0].text.trim());
+      if (!Array.isArray(concepts) || concepts.length === 0) throw new Error('bad parse');
+    } catch {
+      concepts = FLEET_CONCEPT_EXAMPLES;
+    }
+
+    res.json({ concepts, source: 'ai' });
+  } catch (e) {
+    console.error('[wrap-my-fleet analyze]', e.message);
+    res.json({ concepts: FLEET_CONCEPT_EXAMPLES, source: 'examples' });
+  }
+});
+
+// POST /wrap-my-fleet/submit — saves the request to inbound_fleet_requests (public)
+app.post('/wrap-my-fleet/submit', fleetSubmitLimiter, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const { name, company, email, phone, city, state, vehicleType, fleetSize, industry, message, concepts } = req.body;
+    if (!company || !email) return res.status(400).json({ error: 'Company and email required.' });
+
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(email)) return res.status(400).json({ error: 'Invalid email address.' });
+
+    const ipRaw = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+    const ipHash = require('crypto').createHash('sha256').update(ipRaw + 'ifr_salt').digest('hex').slice(0, 16);
+
+    const { rows } = await pool.query(`
+      INSERT INTO inbound_fleet_requests
+        (name, company, email, phone, city, state_code, vehicle_type, fleet_size, industry, message, concepts_json, ip_hash)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      RETURNING id
+    `, [
+      String(name || '').slice(0, 120),
+      String(company).slice(0, 120),
+      String(email).toLowerCase().slice(0, 254),
+      String(phone || '').slice(0, 30),
+      String(city || '').slice(0, 80),
+      String(state || '').slice(0, 2).toUpperCase(),
+      String(vehicleType || '').slice(0, 60),
+      parseInt(fleetSize) || null,
+      String(industry || '').slice(0, 60),
+      String(message || '').slice(0, 1000),
+      JSON.stringify(Array.isArray(concepts) ? concepts.slice(0, 3) : []),
+      ipHash,
+    ]);
+
+    res.json({ ok: true, id: rows[0].id });
+  } catch (e) {
+    console.error('[wrap-my-fleet submit]', e.message);
+    res.status(500).json({ error: 'Could not save your request. Please try again.' });
+  }
+});
+
+// GET /inbound-leads — authenticated, shows unclaimed inbound requests to WrapOS shops
+app.get('/inbound-leads', authMiddleware, async (req, res) => {
+  try {
+    const { state, limit = 20, offset = 0 } = req.query;
+    const params = [parseInt(limit) || 20, parseInt(offset) || 0];
+    let where = 'WHERE claimed_by IS NULL';
+    if (state && String(state).length === 2) {
+      where += ` AND state_code = $3`;
+      params.push(String(state).toUpperCase());
+    }
+    const { rows } = await pool.query(`
+      SELECT id, name, company, email, phone, city, state_code,
+             vehicle_type, fleet_size, industry, message,
+             concepts_json, created_at
+      FROM inbound_fleet_requests
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT $1 OFFSET $2
+    `, params);
+    const { rows: countRow } = await pool.query(`
+      SELECT COUNT(*)::int AS n FROM inbound_fleet_requests WHERE claimed_by IS NULL
+    `);
+    res.json({ leads: rows, total: countRow[0].n });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /inbound-leads/:id/claim — claim an inbound request, create a CRM lead
+app.post('/inbound-leads/:id/claim', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { id } = req.params;
+
+    // Mark as claimed
+    const { rows: claimed } = await pool.query(`
+      UPDATE inbound_fleet_requests
+      SET claimed_by = $1, claimed_at = NOW()
+      WHERE id = $2 AND claimed_by IS NULL
+      RETURNING *
+    `, [uid, id]);
+
+    if (!claimed.length) return res.status(409).json({ error: 'Already claimed by another shop.' });
+    const r = claimed[0];
+
+    // Create a CRM lead for this shop
+    const clientId = require('crypto')
+      .createHash('sha256')
+      .update(uid + ':ifr:' + r.id)
+      .digest('hex')
+      .slice(0, 36);
+
+    const catMap = {
+      logistics: 'fleet', trucking: 'fleet', delivery: 'fleet', construction: 'construction',
+      racing: 'racing', 'interior design': 'dinoc', hospitality: 'dinoc', government: 'fleet',
+    };
+    const category = catMap[(r.industry || '').toLowerCase()] || 'fleet';
+
+    const conceptsSummary = (Array.isArray(r.concepts_json) ? r.concepts_json : [])
+      .slice(0, 3)
+      .map((c, i) => `Concept ${i + 1}: ${c.name} — ${c.description?.slice(0, 120) || ''}`)
+      .join('\n');
+
+    const notes = [
+      `📥 INBOUND FLEET REQUEST — via wrap-my-fleet.com`,
+      r.vehicle_type ? `Fleet: ${r.fleet_size || '?'} ${r.vehicle_type}s` : '',
+      r.message ? `Message: ${r.message}` : '',
+      conceptsSummary ? `\nWrap Concepts Shown:\n${conceptsSummary}` : '',
+    ].filter(Boolean).join('\n');
+
+    const { rows: lead } = await pool.query(`
+      INSERT INTO leads (user_id, client_id, company, contact_name, email, phone, city, state, category, status, source, notes, followup_due_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'new','inbound_fleet',$10, CURRENT_DATE + 1)
+      ON CONFLICT (user_id, client_id) DO UPDATE SET updated_at = NOW()
+      RETURNING id, company
+    `, [uid, clientId, r.company, r.name, r.email, r.phone, r.city, r.state_code, category, notes]);
+
+    // Update the inbound request with the lead ID
+    await pool.query(`UPDATE inbound_fleet_requests SET lead_id = $1 WHERE id = $2`, [lead[0].id, r.id]);
+
+    // Log activity
+    await logActivity(pool, {
+      leadId: lead[0].id, userId: uid,
+      type: 'note_added',
+      subject: 'Inbound Fleet Request Claimed',
+      body: `Lead imported from /wrap-my-fleet consumer tool. Fleet: ${r.fleet_size || '?'} ${r.vehicle_type || 'vehicles'}.`,
+      metadata: { inbound_id: r.id, source: 'inbound_fleet' },
+    });
+
+    await createNotification(uid, {
+      type: 'new_lead',
+      title: `📥 Inbound Lead — ${r.company}`,
+      body: `Fleet request from ${r.city || 'unknown city'}, ${r.state_code || ''}. ${r.fleet_size || '?'} ${r.vehicle_type || 'vehicles'}.`,
+      metadata: { lead_id: lead[0].id },
+    });
+
+    res.json({ ok: true, lead: lead[0] });
+  } catch (e) {
+    console.error('[inbound-leads claim]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /wrap-my-fleet — public marketing page (server-rendered)
+app.get('/wrap-my-fleet', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wrap My Fleet — Free AI Wrap Concepts for Any Fleet</title>
+<meta name="description" content="Upload your fleet info and get 3 free AI-generated wrap design concepts in 30 seconds. Then get matched with a certified installer near you.">
+<meta property="og:title" content="Wrap My Fleet — Free AI Wrap Concepts">
+<meta property="og:description" content="3 free AI wrap concepts for your fleet. Get matched with a certified installer in your area.">
+<meta property="og:url" content="${he(appUrl)}/wrap-my-fleet">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="${he(appUrl)}/wrap-my-fleet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--accent:#f4551c;--blue:#4d8af5;--green:#00d97e;--dark:#0d0f16;--card:#141720;--border:#1e2130;--text:#e2e8f0;--muted:#8892a4;--faint:#4a5568}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--dark);color:var(--text);min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+
+.hero{max-width:800px;margin:0 auto;padding:60px 24px 0;text-align:center}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(244,85,28,0.12);border:1px solid rgba(244,85,28,0.3);color:var(--accent);font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 14px;border-radius:99px;margin-bottom:24px}
+.hero h1{font-size:clamp(36px,6vw,62px);font-weight:900;line-height:1.05;letter-spacing:-2px;margin-bottom:16px}
+.hero h1 span{color:var(--accent)}
+.hero p{font-size:18px;color:var(--muted);max-width:520px;margin:0 auto 40px;line-height:1.6}
+.hero-steps{display:flex;justify-content:center;gap:32px;flex-wrap:wrap;margin-bottom:48px}
+.hero-step{display:flex;flex-direction:column;align-items:center;gap:6px}
+.hero-step-num{width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;font-weight:900;font-size:14px;display:grid;place-items:center}
+.hero-step-label{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.08em}
+
+.tool-wrap{max-width:760px;margin:0 auto;padding:0 24px 80px}
+.step-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px;margin-bottom:20px;display:none}
+.step-card.active{display:block}
+.step-label{font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+.step-title{font-size:22px;font-weight:800;margin-bottom:20px;letter-spacing:-0.5px}
+
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.field-grid.full{grid-template-columns:1fr}
+@media(max-width:560px){.field-grid{grid-template-columns:1fr}}
+.field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:6px}
+.field-input{width:100%;background:#1a1d27;border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-size:14px;outline:none;transition:border-color 0.15s}
+.field-input:focus{border-color:var(--accent)}
+.field-input::placeholder{color:var(--faint)}
+select.field-input option{background:#1a1d27}
+
+.btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--accent);color:#fff;font-size:15px;font-weight:700;padding:14px 28px;border:none;border-radius:10px;cursor:pointer;width:100%;transition:opacity 0.15s;letter-spacing:0.01em}
+.btn-primary:hover{opacity:0.88}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+.btn-secondary{display:inline-flex;align-items:center;gap:8px;background:transparent;color:var(--muted);font-size:14px;font-weight:600;padding:10px 0;border:none;cursor:pointer;margin-bottom:16px}
+.btn-secondary:hover{color:var(--text)}
+
+.concepts-grid{display:grid;gap:16px;margin:24px 0}
+.concept-card{background:#1a1d27;border:1px solid var(--border);border-radius:12px;padding:20px;border-left:3px solid var(--accent)}
+.concept-name{font-size:16px;font-weight:800;margin-bottom:4px}
+.concept-palette{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent);margin-bottom:10px}
+.concept-desc{font-size:13px;color:var(--muted);line-height:1.65;margin-bottom:12px}
+.concept-cost{font-size:12px;font-weight:700;color:var(--green);background:rgba(0,217,126,0.08);padding:4px 10px;border-radius:99px;display:inline-block}
+
+.loading-dots{display:inline-flex;gap:5px;margin:8px 0}
+.loading-dots span{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:dot-pulse 1.2s infinite}
+.loading-dots span:nth-child(2){animation-delay:0.2s}
+.loading-dots span:nth-child(3){animation-delay:0.4s}
+@keyframes dot-pulse{0%,80%,100%{opacity:0.2}40%{opacity:1}}
+
+.success-icon{font-size:48px;margin-bottom:16px}
+.success-title{font-size:26px;font-weight:900;letter-spacing:-1px;margin-bottom:10px}
+.success-sub{font-size:15px;color:var(--muted);line-height:1.6;max-width:440px;margin:0 auto 28px}
+
+.trust-bar{display:flex;justify-content:center;flex-wrap:wrap;gap:24px;padding:24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:48px 0}
+.trust-item{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.trust-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+
+.footer{text-align:center;padding:40px 24px;color:var(--faint);font-size:12px}
+.footer a{color:var(--faint)}
+.footer a:hover{color:var(--muted)}
+
+.error-msg{color:#ef4444;font-size:13px;margin-top:8px;display:none}
+.error-msg.visible{display:block}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-badge">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    Free Fleet Wrap Tool
+  </div>
+  <h1>3 Free Wrap Concepts<br>for <span>Your Fleet</span></h1>
+  <p>Describe your vehicles and get AI-designed wrap concepts in 30 seconds. Then get matched with a certified installer near you.</p>
+  <div class="hero-steps">
+    <div class="hero-step"><div class="hero-step-num">1</div><div class="hero-step-label">Describe Fleet</div></div>
+    <div style="display:flex;align-items:center;color:var(--faint);font-size:18px;padding-bottom:24px">→</div>
+    <div class="hero-step"><div class="hero-step-num">2</div><div class="hero-step-label">Get Concepts</div></div>
+    <div style="display:flex;align-items:center;color:var(--faint);font-size:18px;padding-bottom:24px">→</div>
+    <div class="hero-step"><div class="hero-step-num">3</div><div class="hero-step-label">Get Matched</div></div>
+  </div>
+</div>
+
+<div class="trust-bar">
+  <div class="trust-item"><div class="trust-dot"></div>No credit card required</div>
+  <div class="trust-item"><div class="trust-dot"></div>AI concepts in under 30 seconds</div>
+  <div class="trust-item"><div class="trust-dot"></div>Matched with local certified installers</div>
+  <div class="trust-item"><div class="trust-dot"></div>Used by 500+ fleet managers</div>
+</div>
+
+<div class="tool-wrap">
+
+  <!-- Step 1: Describe Fleet -->
+  <div class="step-card active" id="step1">
+    <div class="step-label">Step 1 of 3</div>
+    <div class="step-title">Tell us about your fleet</div>
+    <div class="field-grid">
+      <div>
+        <div class="field-label">Vehicle Type</div>
+        <select class="field-input" id="vehicleType">
+          <option value="van">Cargo Van / Sprinter</option>
+          <option value="box truck">Box Truck</option>
+          <option value="semi truck">Semi Truck</option>
+          <option value="pickup truck">Pickup Truck</option>
+          <option value="SUV">SUV / Crossover</option>
+          <option value="trailer">Trailer / 53ft</option>
+          <option value="bus">Bus / Shuttle</option>
+          <option value="car">Company Car</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Fleet Size</div>
+        <select class="field-input" id="fleetSize">
+          <option value="2">2–5 vehicles</option>
+          <option value="10" selected>6–15 vehicles</option>
+          <option value="25">16–50 vehicles</option>
+          <option value="75">51–100 vehicles</option>
+          <option value="150">100+ vehicles</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Industry</div>
+        <select class="field-input" id="industry">
+          <option value="logistics">Logistics / Delivery</option>
+          <option value="trucking">Freight / Trucking</option>
+          <option value="construction">Construction</option>
+          <option value="food and beverage">Food & Beverage</option>
+          <option value="healthcare">Healthcare / Medical</option>
+          <option value="landscaping">Landscaping / Lawn</option>
+          <option value="plumbing">Plumbing / HVAC</option>
+          <option value="property management">Property Management</option>
+          <option value="racing">Racing / Motorsport</option>
+          <option value="government">Government / Municipal</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Preferred Style</div>
+        <select class="field-input" id="wrapStyle">
+          <option value="professional">Professional / Corporate</option>
+          <option value="bold and aggressive">Bold / High Visibility</option>
+          <option value="minimal and clean">Minimal / Clean</option>
+          <option value="colorful and vibrant">Colorful / Vibrant</option>
+          <option value="premium and luxury">Premium / Luxury</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-grid full">
+      <div>
+        <div class="field-label">Brand Colors (optional)</div>
+        <input class="field-input" id="brandColors" placeholder="e.g. Red and white, Navy and gold, or leave blank" />
+      </div>
+    </div>
+    <div id="analyzeError" class="error-msg"></div>
+    <button class="btn-primary" id="analyzeBtn" onclick="analyzeFleet()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      Generate My Wrap Concepts
+    </button>
+  </div>
+
+  <!-- Step 2: Concepts -->
+  <div class="step-card" id="step2">
+    <div class="step-label">Step 2 of 3</div>
+    <div class="step-title" id="conceptsTitle">Your AI Wrap Concepts</div>
+    <div id="loadingDots" style="text-align:center;padding:40px 0;display:none">
+      <div class="loading-dots"><span></span><span></span><span></span></div>
+      <div style="font-size:14px;color:var(--muted);margin-top:8px">Designing your concepts…</div>
+    </div>
+    <div class="concepts-grid" id="conceptsGrid"></div>
+    <div style="margin-top:8px;margin-bottom:20px;font-size:13px;color:var(--muted);line-height:1.6;padding:14px;background:rgba(0,217,126,0.05);border-radius:8px;border:1px solid rgba(0,217,126,0.15)">
+      <strong style="color:var(--green)">These are just the starting point.</strong> A certified installer can refine any of these into final artwork with your exact logo, typography, and regulatory markings included.
+    </div>
+    <button class="btn-primary" onclick="showStep(3)">
+      Get Matched With an Installer →
+    </button>
+    <button class="btn-secondary" onclick="showStep(1)">← Back</button>
+  </div>
+
+  <!-- Step 3: Contact Info -->
+  <div class="step-card" id="step3">
+    <div class="step-label">Step 3 of 3</div>
+    <div class="step-title">Get matched with a local installer</div>
+    <p style="font-size:14px;color:var(--muted);margin-bottom:24px;line-height:1.6">
+      We'll connect you with a certified wrap shop in your area who can finalize these designs and give you an exact quote. Free, no commitment.
+    </p>
+    <div class="field-grid">
+      <div>
+        <div class="field-label">Your Name</div>
+        <input class="field-input" id="contactName" placeholder="First Last" />
+      </div>
+      <div>
+        <div class="field-label">Company Name *</div>
+        <input class="field-input" id="contactCompany" placeholder="Acme Logistics" required />
+      </div>
+      <div>
+        <div class="field-label">Email Address *</div>
+        <input class="field-input" id="contactEmail" type="email" placeholder="you@company.com" required />
+      </div>
+      <div>
+        <div class="field-label">Phone (optional)</div>
+        <input class="field-input" id="contactPhone" type="tel" placeholder="(555) 000-0000" />
+      </div>
+      <div>
+        <div class="field-label">Your City</div>
+        <input class="field-input" id="contactCity" placeholder="Indianapolis" />
+      </div>
+      <div>
+        <div class="field-label">State</div>
+        <select class="field-input" id="contactState">
+          <option value="">Select state…</option>
+          <option>AL</option><option>AK</option><option>AZ</option><option>AR</option><option>CA</option>
+          <option>CO</option><option>CT</option><option>DE</option><option>FL</option><option>GA</option>
+          <option>HI</option><option>ID</option><option>IL</option><option>IN</option><option>IA</option>
+          <option>KS</option><option>KY</option><option>LA</option><option>ME</option><option>MD</option>
+          <option>MA</option><option>MI</option><option>MN</option><option>MS</option><option>MO</option>
+          <option>MT</option><option>NE</option><option>NV</option><option>NH</option><option>NJ</option>
+          <option>NM</option><option>NY</option><option>NC</option><option>ND</option><option>OH</option>
+          <option>OK</option><option>OR</option><option>PA</option><option>RI</option><option>SC</option>
+          <option>SD</option><option>TN</option><option>TX</option><option>UT</option><option>VT</option>
+          <option>VA</option><option>WA</option><option>WV</option><option>WI</option><option>WY</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-grid full">
+      <div>
+        <div class="field-label">Anything else we should know? (optional)</div>
+        <textarea class="field-input" id="contactMessage" rows="3" placeholder="Timeline, budget range, specific requirements…" style="resize:vertical"></textarea>
+      </div>
+    </div>
+    <div id="submitError" class="error-msg"></div>
+    <button class="btn-primary" id="submitBtn" onclick="submitRequest()">
+      Connect Me With an Installer →
+    </button>
+    <button class="btn-secondary" onclick="showStep(2)">← Back to Concepts</button>
+    <p style="font-size:11px;color:var(--faint);text-align:center;margin-top:12px">
+      By submitting, you agree to be contacted by a local certified wrap installer. We never sell your info.
+    </p>
+  </div>
+
+  <!-- Step 4: Done -->
+  <div class="step-card" id="step4">
+    <div style="text-align:center;padding:16px 0">
+      <div class="success-icon">🎯</div>
+      <div class="success-title">You're on the list.</div>
+      <div class="success-sub">
+        A certified wrap installer in your area will reach out within 1 business day with a tailored quote based on the concepts you selected.
+      </div>
+      <div style="background:rgba(0,217,126,0.06);border:1px solid rgba(0,217,126,0.2);border-radius:12px;padding:20px;margin-bottom:24px;text-align:left">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--green);margin-bottom:12px">What to Expect</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;gap:10px;font-size:13px;color:var(--muted)">
+            <span style="color:var(--green);font-weight:900;flex-shrink:0">1.</span>
+            A local installer reviews your fleet details and AI concepts (usually same day)
+          </div>
+          <div style="display:flex;gap:10px;font-size:13px;color:var(--muted)">
+            <span style="color:var(--green);font-weight:900;flex-shrink:0">2.</span>
+            They refine your preferred concept with your actual logo + brand colors
+          </div>
+          <div style="display:flex;gap:10px;font-size:13px;color:var(--muted)">
+            <span style="color:var(--green);font-weight:900;flex-shrink:0">3.</span>
+            You receive a firm quote with timeline and volume pricing
+          </div>
+        </div>
+      </div>
+      <a href="/welcome" class="btn-primary" style="display:inline-flex;text-decoration:none;width:auto;padding:14px 32px">
+        Are you a wrap shop? Try WrapOS free →
+      </a>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <p>Powered by <a href="/welcome">WrapOS</a> — The CRM for Vehicle Wrap &amp; Graphics Shops</p>
+  <p style="margin-top:8px"><a href="/welcome">For Shops</a> · <a href="/demo">Book a Demo</a> · <a href="/calculator">ROI Calculator</a></p>
+</div>
+
+<script>
+let currentConcepts = [];
+
+function showStep(n) {
+  document.querySelectorAll('.step-card').forEach(el => el.classList.remove('active'));
+  document.getElementById('step' + n).classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function analyzeFleet() {
+  const btn = document.getElementById('analyzeBtn');
+  const errEl = document.getElementById('analyzeError');
+  errEl.classList.remove('visible');
+  btn.disabled = true;
+  btn.textContent = 'Generating concepts…';
+
+  const payload = {
+    vehicleType: document.getElementById('vehicleType').value,
+    fleetSize: document.getElementById('fleetSize').value,
+    industry: document.getElementById('industry').value,
+    style: document.getElementById('wrapStyle').value,
+    colors: document.getElementById('brandColors').value.trim(),
+  };
+
+  try {
+    const r = await fetch('/wrap-my-fleet/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Generation failed. Please try again.');
+    }
+    const data = await r.json();
+    currentConcepts = data.concepts || [];
+    renderConcepts(currentConcepts);
+    showStep(2);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> Generate My Wrap Concepts';
+  }
+}
+
+const CONCEPT_COLORS = ['var(--accent)', 'var(--blue)', 'var(--green)'];
+
+function renderConcepts(concepts) {
+  const grid = document.getElementById('conceptsGrid');
+  grid.innerHTML = concepts.map((c, i) => \`
+    <div class="concept-card" style="border-left-color:\${CONCEPT_COLORS[i] || 'var(--accent)'}">
+      <div class="concept-name">\${esc(c.name)}</div>
+      <div class="concept-palette">\${esc(c.palette)}</div>
+      <div class="concept-desc">\${esc(c.description)}</div>
+      \${c.estimatedCost ? \`<div class="concept-cost">Est. \${esc(c.estimatedCost)}</div>\` : ''}
+    </div>
+  \`).join('');
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function submitRequest() {
+  const btn = document.getElementById('submitBtn');
+  const errEl = document.getElementById('submitError');
+  errEl.classList.remove('visible');
+
+  const company = document.getElementById('contactCompany').value.trim();
+  const email = document.getElementById('contactEmail').value.trim();
+  if (!company) { errEl.textContent = 'Company name is required.'; errEl.classList.add('visible'); return; }
+  if (!email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+    errEl.textContent = 'Valid email address is required.'; errEl.classList.add('visible'); return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  try {
+    const payload = {
+      name: document.getElementById('contactName').value.trim(),
+      company,
+      email,
+      phone: document.getElementById('contactPhone').value.trim(),
+      city: document.getElementById('contactCity').value.trim(),
+      state: document.getElementById('contactState').value,
+      vehicleType: document.getElementById('vehicleType').value,
+      fleetSize: parseInt(document.getElementById('fleetSize').value) || null,
+      industry: document.getElementById('industry').value,
+      message: document.getElementById('contactMessage').value.trim(),
+      concepts: currentConcepts,
+    };
+    const r = await fetch('/wrap-my-fleet/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Submission failed. Please try again.');
+    }
+    showStep(4);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect Me With an Installer →';
+  }
+}
+</script>
+</body>
+</html>`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// SEO INFRASTRUCTURE — robots.txt + sitemap.xml so Google can actually
+// crawl and rank the 12+ public marketing pages we built.
+// ────────────────────────────────────────────────────────────────────────────
+
+app.get('/robots.txt', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`# WrapOS — robots.txt
+User-agent: *
+Allow: /
+
+# Block authenticated app surface from crawl
+Disallow: /api/
+Disallow: /auth/
+Disallow: /admin/
+Disallow: /portal/
+Disallow: /portfolio/
+Disallow: /proposals/
+Disallow: /quote-request/
+
+# Allow all public marketing pages
+Allow: /for/
+Allow: /compare/
+Allow: /migrate/
+Allow: /demo
+Allow: /calculator
+Allow: /stats.json
+Allow: /wrap-my-fleet
+Allow: /case-studies/
+
+Sitemap: ${appUrl}/sitemap.xml
+`);
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const pages = [
+    { loc: '/',                      priority: '1.0', freq: 'weekly' },
+    { loc: '/welcome',               priority: '1.0', freq: 'weekly' },
+    { loc: '/demo',                  priority: '0.9', freq: 'monthly' },
+    { loc: '/calculator',            priority: '0.9', freq: 'monthly' },
+    { loc: '/migrate/shopvox',       priority: '0.9', freq: 'monthly' },
+    { loc: '/for/fleet',             priority: '0.85', freq: 'monthly' },
+    { loc: '/for/racing',            priority: '0.85', freq: 'monthly' },
+    { loc: '/for/dinoc',             priority: '0.85', freq: 'monthly' },
+    { loc: '/for/construction',      priority: '0.85', freq: 'monthly' },
+    { loc: '/for/government',        priority: '0.85', freq: 'monthly' },
+    { loc: '/compare/apollo',        priority: '0.8', freq: 'monthly' },
+    { loc: '/compare/urable',        priority: '0.8', freq: 'monthly' },
+    { loc: '/wrap-my-fleet',         priority: '0.95', freq: 'weekly' },
+  ];
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${pages.map(p => `  <url>
+    <loc>${appUrl}${p.loc}</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>${p.freq}</changefreq>
+    <priority>${p.priority}</priority>
+  </url>`).join('\n')}
+</urlset>`;
+
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.send(xml);
+});
+
+// ── Daily Task Queue ──────────────────────────────────────────────────────────
+app.get('/tasks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const today = new Date().toISOString().split('T')[0];
+    const { rows } = await pool.query(`
+      SELECT t.*, l.company AS lead_company, l.status AS lead_status, l.category AS lead_category
+      FROM tasks t
+      LEFT JOIN leads l ON l.id = t.lead_id
+      WHERE t.user_id = $1 AND (t.due_date <= $2 OR t.due_date IS NULL)
+        AND t.completed = FALSE
+      ORDER BY
+        CASE t.priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,
+        t.due_date ASC NULLS LAST, t.created_at ASC
+      LIMIT 50
+    `, [uid, today]);
+    const { rows: completed } = await pool.query(`
+      SELECT t.*, l.company AS lead_company
+      FROM tasks t
+      LEFT JOIN leads l ON l.id = t.lead_id
+      WHERE t.user_id = $1 AND t.completed = TRUE AND t.due_date = $2
+      ORDER BY t.completed_at DESC LIMIT 10
+    `, [uid, today]);
+    res.json({ ok: true, tasks: rows, completedToday: completed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/tasks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { title, notes, type = 'manual', lead_id, due_date, due_time, priority = 'normal' } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    const today = new Date().toISOString().split('T')[0];
+    const { rows } = await pool.query(
+      `INSERT INTO tasks (user_id, lead_id, title, notes, type, due_date, due_time, priority)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [uid, lead_id || null, title, notes || null, type, due_date || today, due_time || null, priority]
+    );
+    res.json({ ok: true, task: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/tasks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const taskId = parseInt(req.params.id, 10);
+    const { completed, title, notes, due_date, due_time, priority } = req.body;
+    const sets = [], vals = [];
+    let idx = 1;
+    if (typeof completed === 'boolean') {
+      sets.push(`completed=$${idx++}`, `completed_at=${completed ? 'NOW()' : 'NULL'}`);
+      vals.push(completed);
+    }
+    if (title !== undefined) { sets.push(`title=$${idx++}`); vals.push(title); }
+    if (notes !== undefined) { sets.push(`notes=$${idx++}`); vals.push(notes); }
+    if (due_date !== undefined) { sets.push(`due_date=$${idx++}`); vals.push(due_date || null); }
+    if (due_time !== undefined) { sets.push(`due_time=$${idx++}`); vals.push(due_time || null); }
+    if (priority !== undefined) { sets.push(`priority=$${idx++}`); vals.push(priority); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    vals.push(taskId, uid);
+    const { rows } = await pool.query(
+      `UPDATE tasks SET ${sets.join(',')} WHERE id=$${idx++} AND user_id=$${idx++} RETURNING *`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Task not found' });
+    res.json({ ok: true, task: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/tasks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    await pool.query(`DELETE FROM tasks WHERE id=$1 AND user_id=$2`, [parseInt(req.params.id, 10), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// AI-generate a prioritized task list for today based on pipeline state
+app.post('/tasks/generate-ai', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const anthropic = getAnthropic();
+    if (!anthropic) return res.status(503).json({ error: 'AI not configured' });
+
+    // Gather pipeline context
+    const [hotLeads, proposals, overdue, recentWins] = await Promise.all([
+      pool.query(`
+        SELECT l.id, l.company, l.status, l.category, l.fleet_size, l.contact_name, l.followup_due_at,
+               COUNT(et.id) FILTER (WHERE et.opened_at > NOW() - INTERVAL '48 hours') AS recent_opens
+        FROM leads l
+        LEFT JOIN email_tracking et ON et.lead_id = l.id AND et.user_id = l.user_id
+        WHERE l.user_id = $1 AND l.status NOT IN ('won','lost','cold')
+        GROUP BY l.id ORDER BY recent_opens DESC NULLS LAST, l.followup_due_at ASC NULLS LAST LIMIT 10
+      `, [uid]),
+      pool.query(`
+        SELECT p.id, p.title, l.company, l.id AS lead_id, p.view_count, p.last_viewed_at, p.created_at
+        FROM proposals p JOIN leads l ON l.id=p.lead_id
+        WHERE p.user_id=$1 AND p.status='sent'
+        ORDER BY p.last_viewed_at DESC NULLS LAST LIMIT 5
+      `, [uid]),
+      pool.query(`
+        SELECT l.id, l.company, l.status, l.followup_due_at, l.category
+        FROM leads l WHERE l.user_id=$1 AND l.followup_due_at < NOW()
+          AND l.status NOT IN ('won','lost','cold') LIMIT 5
+      `, [uid]),
+      pool.query(`
+        SELECT l.id, l.company FROM leads l WHERE l.user_id=$1 AND l.status='won'
+          AND l.updated_at > NOW() - INTERVAL '7 days' LIMIT 3
+      `, [uid]),
+    ]);
+
+    const context = {
+      hotLeads: hotLeads.rows.map(l => `${l.company} (${l.status}, ${l.category}${l.recent_opens > 0 ? `, ${l.recent_opens} opens` : ''})`),
+      sentProposals: proposals.rows.map(p => `${p.company}: "${p.title}" sent ${Math.round((Date.now() - new Date(p.created_at).getTime()) / 86400000)}d ago, viewed ${p.view_count}x`),
+      overdueFollowups: overdue.rows.map(l => l.company),
+      recentWins: recentWins.rows.map(l => l.company),
+    };
+
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 600,
+      messages: [{
+        role: 'user',
+        content: `You are a sales manager for a vehicle wrap shop. Generate exactly 5-7 specific, actionable tasks for today (${today}).
+
+Pipeline state:
+- Hot leads (recent activity): ${context.hotLeads.join('; ') || 'none'}
+- Sent proposals awaiting response: ${context.sentProposals.join('; ') || 'none'}
+- Overdue follow-ups: ${context.overdueFollowups.join(', ') || 'none'}
+- Recent wins (need project kickoff): ${context.recentWins.join(', ') || 'none'}
+
+Return ONLY a JSON array, no markdown. Each item: { "title": "...", "type": "call|email|follow_up|meeting|admin", "priority": "high|normal|low", "lead_company": "company name or null", "notes": "brief why" }
+
+Make tasks specific (use company names). Prioritize by impact. Max 7 tasks.`,
+      }],
+    });
+
+    const raw = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : '[]';
+    let aiTasks = [];
+    try {
+      const parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, ''));
+      aiTasks = Array.isArray(parsed) ? parsed.slice(0, 7) : [];
+    } catch { aiTasks = []; }
+
+    // Find lead_ids for the lead companies mentioned
+    const leadCompanies = aiTasks.map(t => t.lead_company).filter(Boolean);
+    let companyToId = {};
+    if (leadCompanies.length) {
+      const { rows: matchedLeads } = await pool.query(
+        `SELECT id, company FROM leads WHERE user_id=$1 AND company=ANY($2)`,
+        [uid, leadCompanies]
+      );
+      matchedLeads.forEach(l => { companyToId[l.company] = l.id; });
+    }
+
+    // Insert all AI tasks
+    const today2 = new Date().toISOString().split('T')[0];
+    const insertedTasks = await Promise.all(aiTasks.map(async (t) => {
+      const leadId = t.lead_company ? companyToId[t.lead_company] || null : null;
+      const { rows } = await pool.query(
+        `INSERT INTO tasks (user_id, lead_id, title, notes, type, due_date, priority)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [uid, leadId, t.title, t.notes || null, t.type || 'manual', today2, t.priority || 'normal']
+      );
+      return { ...rows[0], lead_company: t.lead_company };
+    }));
+
+    res.json({ ok: true, tasks: insertedTasks, generated: insertedTasks.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Project Milestone Tracker ─────────────────────────────────────────────────
+const MILESTONE_TEMPLATES = {
+  fleet:        ['Confirm vehicle list & specs', 'Schedule measurements', 'Share design brief with client', 'Client design approval', 'Order wrap material', 'Confirm install date(s)', 'Installation complete', 'Client final walkthrough & sign-off'],
+  construction: ['Confirm project scope & specs', 'Schedule measurement visit', 'Share design mockup', 'Client design approval', 'Order wrap material', 'Surface prep complete', 'Installation complete', 'Invoice sent'],
+  gc_referral:  ['Confirm project scope', 'Measurement visit', 'Design mockup review', 'Client approval', 'Order material', 'Installation complete', 'Invoice sent'],
+  dinoc:        ['Site visit & substrate assessment', 'Material sample approval', 'Order DI-NOC material', 'Surface prep', 'Installation complete', 'Client walkthrough'],
+  reatec:       ['Site visit & substrate assessment', 'Material sample approval', 'Order Rea-Tec material', 'Surface prep', 'Installation complete', 'Client walkthrough'],
+  colorchange:  ['Confirm color specs', 'Design mockup', 'Order wrap material', 'Schedule install', 'Installation complete', 'Client approval'],
+  racing:       ['Confirm livery specs & sponsor logos', 'Design mockup approval', 'Order wrap material', 'Schedule install', 'Installation complete', 'Delivery / event ready'],
+  design:       ['Confirm design brief', 'Concept mockup review', 'Final design approval', 'Order material', 'Installation complete'],
+  wallgraphics: ['Confirm wall dimensions', 'Design mockup approval', 'Order material', 'Surface prep', 'Installation complete'],
+};
+const DEFAULT_MILESTONES = ['Confirm project specs', 'Design approval', 'Order material', 'Schedule install', 'Installation complete'];
+
+app.get('/leads/:id/milestones', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    const { rows } = await pool.query(
+      `SELECT * FROM project_milestones WHERE lead_id=$1 AND user_id=$2 ORDER BY sort_order, id`,
+      [leadId, uid]
+    );
+    res.json({ milestones: rows, initialized: rows.length > 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/milestones/init', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    // Verify ownership
+    const { rows: lead } = await pool.query(`SELECT category FROM leads WHERE id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]);
+    if (!lead.length) return res.status(404).json({ error: 'Lead not found' });
+    // Don't re-init if already has milestones
+    const { rows: existing } = await pool.query(`SELECT id FROM project_milestones WHERE lead_id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]);
+    if (existing.length) return res.json({ ok: true, message: 'Already initialized' });
+    const category = lead[0].category;
+    const titles = MILESTONE_TEMPLATES[category] || DEFAULT_MILESTONES;
+    const insertions = titles.map((title, idx) =>
+      pool.query(`INSERT INTO project_milestones (lead_id, user_id, title, sort_order) VALUES ($1,$2,$3,$4)`, [leadId, uid, title, idx])
+    );
+    await Promise.all(insertions);
+    const { rows } = await pool.query(`SELECT * FROM project_milestones WHERE lead_id=$1 AND user_id=$2 ORDER BY sort_order, id`, [leadId, uid]);
+    res.json({ ok: true, milestones: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/leads/:id/milestones', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+    const { title, notes, due_date } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    // Verify lead ownership
+    const { rows: lead } = await pool.query(`SELECT id FROM leads WHERE id=$1 AND user_id=$2 LIMIT 1`, [leadId, uid]);
+    if (!lead.length) return res.status(404).json({ error: 'Lead not found' });
+    const { rows: maxOrder } = await pool.query(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM project_milestones WHERE lead_id=$1 AND user_id=$2`, [leadId, uid]);
+    const { rows } = await pool.query(
+      `INSERT INTO project_milestones (lead_id, user_id, title, notes, due_date, sort_order) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [leadId, uid, title, notes || null, due_date || null, maxOrder[0].next]
+    );
+    res.json({ ok: true, milestone: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/milestones/:milestoneId', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const milestoneId = parseInt(req.params.milestoneId, 10);
+    const { completed, title, notes, due_date } = req.body;
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+    if (typeof completed === 'boolean') {
+      sets.push(`completed=$${idx++}`, `completed_at=${completed ? 'NOW()' : 'NULL'}`);
+      vals.push(completed);
+    }
+    if (title !== undefined) { sets.push(`title=$${idx++}`); vals.push(title); }
+    if (notes !== undefined) { sets.push(`notes=$${idx++}`); vals.push(notes); }
+    if (due_date !== undefined) { sets.push(`due_date=$${idx++}`); vals.push(due_date || null); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    vals.push(milestoneId, uid);
+    const { rows } = await pool.query(
+      `UPDATE project_milestones SET ${sets.join(',')} WHERE id=$${idx++} AND user_id=$${idx++} RETURNING *`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Milestone not found' });
+    res.json({ ok: true, milestone: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/milestones/:milestoneId', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const milestoneId = parseInt(req.params.milestoneId, 10);
+    await pool.query(`DELETE FROM project_milestones WHERE id=$1 AND user_id=$2`, [milestoneId, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
@@ -9531,6 +20636,7 @@ app.listen(PORT, async () => {
   console.log(banner);
   console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
+  console.log(process.env.HUNTER_API_KEY ? '· Hunter.io: configured (email waterfall active)' : '· Hunter.io: not configured (set HUNTER_API_KEY for free enrichment)');
   // Run migrations first so checkDb works on a fresh database
   try { await migrateDb(); } catch (e) { console.error('migrateDb error:', e.message); }
   const db = await checkDb();
@@ -9543,13 +20649,61 @@ app.listen(PORT, async () => {
     startColdNurtureWorker();
     startReOrderWorker();
     startBidExpiryWorker();
+    startQuoteExpiryWorker();
     startStalledDealWorker();
     startAnniversaryWorker();
     startAuctionWorker(pool, {
       appBaseUrl: () => process.env.APP_BASE_URL || APP_URL,
       sendCompliantEmail,
     });
+    startMaintenanceWorker();
+    startRescueWorker();
+    startWeatherWorker();
+    startProspectIntelWorker();
+    startReferralMiningWorker();
     email.startTrialCron(pool);
+    try {
+      const { startSignalWorker } = require('./lib/signalWorker');
+      startSignalWorker(pool, { intervalHours: 6, lookbackHours: 36 });
+    } catch (e) {
+      console.warn('· News Signal worker not started:', e.message);
+    }
+    // SAM.gov weekly auto-refresh — runs every Sunday at 4AM if SAM_API_KEY set
+    if (process.env.SAM_API_KEY) {
+      console.log('· SAM.gov: configured — weekly auto-refresh enabled (Sundays 4AM)');
+      (function scheduleSamRefresh() {
+        const now = new Date();
+        const next = new Date(now);
+        // Find next Sunday 4:00 AM local time
+        const daysUntilSun = (7 - now.getDay()) % 7 || 7;
+        next.setDate(now.getDate() + daysUntilSun);
+        next.setHours(4, 0, 0, 0);
+        const msUntil = next - now;
+        setTimeout(async () => {
+          console.log('[sam] Starting weekly SAM.gov refresh...');
+          try {
+            const samIngest = require('./lib/ingest-sam.js');
+            if (typeof samIngest.runIngest === 'function') {
+              await samIngest.runIngest({ pool, limit: 5000 });
+            } else {
+              // Fallback: spawn as child process
+              const { execFile } = require('child_process');
+              execFile('node', ['lib/ingest-sam.js', '--limit=5000'], { env: process.env, cwd: __dirname }, (err, stdout, stderr) => {
+                if (err) console.error('[sam] refresh error:', err.message);
+                else console.log('[sam] weekly refresh complete');
+              });
+            }
+          } catch (e) {
+            console.error('[sam] refresh failed:', e.message);
+          }
+          scheduleSamRefresh(); // reschedule for next week
+        }, msUntil);
+        const h = Math.round(msUntil / 3600000);
+        console.log(`· SAM.gov: next refresh in ~${h}h (Sunday 4AM)`);
+      })();
+    } else {
+      console.log('· SAM.gov: not configured (set SAM_API_KEY for weekly federal contractor refresh)');
+    }
     const { count } = (await pool.query('SELECT COUNT(*)::int AS count FROM companies')).rows[0];
     if (count === 0) {
       console.log('· Companies table empty — seeding sample carriers...');

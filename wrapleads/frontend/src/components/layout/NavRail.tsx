@@ -1,10 +1,12 @@
+import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import type { AppMode } from '../../store/useAppStore';
 
-const NAV = [
+const NAV: { mode: AppMode; label: string; shortLabel: string; icon: React.ReactNode }[] = [
   {
     mode: 'mission' as AppMode,
     label: "Today's Mission",
+    shortLabel: 'Mission',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="5" />
@@ -15,6 +17,7 @@ const NAV = [
   {
     mode: 'leads' as AppMode,
     label: 'My Leads',
+    shortLabel: 'Leads',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -27,6 +30,7 @@ const NAV = [
   {
     mode: 'discover' as AppMode,
     label: 'Discover',
+    shortLabel: 'Discover',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -37,6 +41,7 @@ const NAV = [
   {
     mode: 'pipeline' as AppMode,
     label: 'Pipeline',
+    shortLabel: 'Pipeline',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <line x1="18" y1="20" x2="18" y2="10" />
@@ -48,6 +53,7 @@ const NAV = [
   {
     mode: 'bids' as AppMode,
     label: 'Bid Tracker',
+    shortLabel: 'Bids',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
@@ -58,6 +64,7 @@ const NAV = [
   {
     mode: 'jobs' as AppMode,
     label: 'Wrap Lifecycle',
+    shortLabel: 'Lifecycle',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -69,6 +76,7 @@ const NAV = [
   {
     mode: 'content' as AppMode,
     label: 'Content',
+    shortLabel: 'Content',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -80,6 +88,7 @@ const NAV = [
   {
     mode: 'analytics' as AppMode,
     label: 'Analytics',
+    shortLabel: 'Analytics',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
@@ -90,11 +99,22 @@ const NAV = [
   {
     mode: 'solar_scout' as AppMode,
     label: 'HelioScout',
+    shortLabel: 'Solar',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="4" />
         <path d="M12 2v2" /><path d="M12 20v2" /><path d="M5 5l1.5 1.5" /><path d="M17.5 17.5L19 19" />
         <path d="M2 12h2" /><path d="M20 12h2" /><path d="M5 19l1.5-1.5" /><path d="M17.5 6.5L19 5" />
+      </svg>
+    ),
+  },
+  {
+    mode: 'gov' as AppMode,
+    label: 'Gov Bids',
+    shortLabel: 'Gov Bids',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 21h18M5 21V8l7-5 7 5v13M9 21V12h6v9" />
       </svg>
     ),
   },
@@ -116,7 +136,7 @@ export default function NavRail() {
 
       {/* Primary nav */}
       <div className="nav-rail-items">
-        {NAV.map(({ mode: m, label, icon }, idx) => (
+        {NAV.map(({ mode: m, label, shortLabel, icon }, idx) => (
           <button
             key={m}
             className={`nav-item${mode === m ? ' active' : ''}`}
@@ -126,6 +146,7 @@ export default function NavRail() {
             aria-current={mode === m ? 'page' : undefined}
           >
             <span className="nav-item-icon">{icon}</span>
+            <span className="nav-item-label">{shortLabel}</span>
           </button>
         ))}
       </div>
@@ -144,6 +165,7 @@ export default function NavRail() {
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
           </span>
+          <span className="nav-item-label">Settings</span>
         </button>
       </div>
     </nav>

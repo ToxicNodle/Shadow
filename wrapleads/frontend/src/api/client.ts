@@ -130,6 +130,54 @@ export const api = {
     });
   },
 
+  // SAM.gov government opportunities
+  listOpportunities: (params: { state?: string; keyword?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.state) qs.set('state', params.state);
+    if (params.keyword) qs.set('keyword', params.keyword);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return authFetch<{ source: string; opportunities: Array<{ id: string; title: string; agency: string; state: string | null; value: number | null; deadline: string; naics: string; url: string; description?: string }>; message?: string }>('/opportunities?' + qs.toString());
+  },
+  importOpportunity: (id: string, opp: { title: string; agency: string; state?: string | null; value?: number | null; naics?: string; url?: string }) =>
+    authFetch<{ ok: boolean; lead: { id: number } }>(`/opportunities/${id}/import`, {
+      method: 'POST', body: JSON.stringify(opp),
+    }),
+
+  getInboundLeads: (params: { state?: string; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.state) qs.set('state', params.state);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.offset) qs.set('offset', String(params.offset));
+    return authFetch<{
+      leads: Array<{
+        id: number; name: string | null; company: string; email: string | null; phone: string | null;
+        city: string | null; state_code: string | null; vehicle_type: string | null; fleet_size: number | null;
+        industry: string | null; message: string | null;
+        concepts_json: Array<{ name: string; palette: string; description: string; estimatedCost?: string }>;
+        created_at: string;
+      }>;
+      total: number;
+    }>('/inbound-leads?' + qs.toString());
+  },
+
+  claimInboundLead: (id: number) =>
+    authFetch<{ ok: boolean; lead: { id: number; company: string } }>(`/inbound-leads/${id}/claim`, { method: 'POST' }),
+
+  importShopVoxCSV: (file: File) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('file', file);
+    return fetch('/leads/import-shopvox', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Import failed');
+      return data as { ok: boolean; imported: number; skipped: number; errors: number; total: number };
+    });
+  },
+
   // Lead activities
   getActivities: (serverId: number) =>
     authFetch<{ activities: import('./types').LeadActivity[] }>(`/leads/${serverId}/activities`),
@@ -141,6 +189,26 @@ export const api = {
     authFetch<{ ok: boolean; resend_id?: string }>(`/leads/${serverId}/send-email`, {
       method: 'POST', body: JSON.stringify(payload),
     }),
+  generateSmartFollowup: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      subject: string; body: string; tone: string; reasoningNote: string;
+    }>(`/leads/${leadId}/smart-followup`, { method: 'POST' }),
+
+  generateMeetingPrep: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      companySnapshot: string;
+      openingLine: string;
+      pricingNote: string;
+      talkTrack: string[];
+      objections: Array<{ objection: string; counter: string }>;
+      questionsToAsk: string[];
+      closingMove: string;
+      similarWinsNote: string;
+      estimatedValue: number;
+    }>(`/leads/${leadId}/meeting-prep`, { method: 'POST' }),
+
   getFollowupDue: () =>
     authFetch<{ leads: Lead[]; count: number }>('/leads/followup-due'),
   activateSequence: (serverId: number, tone?: string) =>
@@ -162,6 +230,30 @@ export const api = {
     authFetch<{ ok: boolean; leadId: number | null }>('/carriers/import', {
       method: 'POST', body: JSON.stringify({ companyId }),
     }),
+
+  getCallOpener: (leadId: number) =>
+    authFetch<{ ok: boolean; fallback: boolean; opener: string; tip: string | null; contactSuffix?: string }>(
+      `/leads/${leadId}/call-opener`
+    ),
+  generateLossDebrief: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      debrief: {
+        whatWentWrong: string; missedOpportunity: string;
+        recoverability: 'high' | 'medium' | 'low';
+        recoverInstructions: string; whatToDoNext: string; lessonLearned: string;
+      };
+    }>(`/leads/${leadId}/loss-debrief`, { method: 'POST', body: '{}' }),
+
+  lookupByDot: (dotNumber: string) =>
+    authFetch<{
+      ok: boolean;
+      carrier: {
+        id: number; dotNumber: string; name: string; dbaName: string | null;
+        city: string | null; state: string | null; phone: string | null; email: string | null;
+        fleetSize: number | null; wrapScore: number; alreadyInCrm: boolean;
+      };
+    }>(`/carriers/by-dot/${dotNumber.replace(/\D/g, '')}`),
 
   // Saved searches
   getSavedSearches: () => authFetch<{ searches: SavedSearch[] }>('/searches/saved'),
@@ -220,6 +312,22 @@ export const api = {
     authFetch<{ leads: import('./types').ParsedContact[]; count: number }>('/ai/parse-contacts', {
       method: 'POST', body: JSON.stringify({ text }),
     }),
+
+  // Natural language lead search
+  nlLeadSearch: (query: string) =>
+    authFetch<{
+      ok: boolean;
+      parsedIntent: {
+        states: string[] | null; minFleet: number | null; maxFleet: number | null;
+        industries: string[] | null; textQuery: string; explanation: string;
+      };
+      total: number;
+      results: Array<{
+        id: number; dot_number: string; name: string; dba_name: string | null;
+        city: string | null; state: string | null; phone: string | null; email: string | null;
+        fleet_size: number | null; wrap_score: number; already_imported: boolean;
+      }>;
+    }>('/ai/lead-search', { method: 'POST', body: JSON.stringify({ query }) }),
 
   // Analytics
   analytics: () => authFetch<PipelineAnalytics>('/leads/analytics'),
@@ -298,12 +406,118 @@ export const api = {
   // Wrap Lifecycle Tracker
   getJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs'),
   getAgingJobs: () => authFetch<{ jobs: InstalledJob[] }>('/jobs/aging'),
+  getJobsAgingMap: () => authFetch<{
+    byState: Record<string, { fresh: number; aging: number; due: number; overdue: number; vehicles: number }>;
+    totalJobs: number; dueCount: number; overdueCount: number;
+  }>('/jobs/aging-map'),
   createJob: (job: Partial<InstalledJob>) =>
     authFetch<{ job: InstalledJob }>('/jobs', { method: 'POST', body: JSON.stringify(job) }),
   updateJob: (id: number, updates: Partial<InstalledJob>) =>
     authFetch<{ job: InstalledJob }>(`/jobs/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
   deleteJob: (id: number) =>
     authFetch<{ ok: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
+  createReorderLead: (jobId: number) =>
+    authFetch<{ leadId: number; existing: boolean }>(`/jobs/${jobId}/create-reorder-lead`, { method: 'POST' }),
+
+  getOutstandingJobs: () =>
+    authFetch<{
+      ok: boolean;
+      jobs: Array<{
+        id: number; company: string; vehicleCount: number; vehicleType: string | null;
+        category: string | null; installDate: string | null; revenue: number;
+        amountPaid: number; balance: number; paymentStatus: string;
+        invoiceSentAt: string | null; leadEmail: string | null; leadContact: string | null;
+        daysSinceInstall: number;
+      }>;
+    }>('/jobs/outstanding'),
+
+  batchSendInvoices: (jobIds: number[]) =>
+    authFetch<{
+      ok: boolean; sent: number; skipped: number; failed: number;
+      results: Array<{ jobId: number; ok: boolean; company: string | null; toEmail?: string; reason?: string }>;
+    }>('/jobs/batch-send-invoices', { method: 'POST', body: JSON.stringify({ jobIds }) }),
+
+  checkLeadNews: (leadId: number) =>
+    authFetch<{
+      ok: boolean; company: string;
+      articles: Array<{ title: string; link: string; pubDate: string; source: string; pubMs: number }>;
+    }>(`/leads/${leadId}/check-news`, { method: 'POST' }),
+
+  // ── Discovery call guide ──
+  getDiscoveryGuide: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      discoveryQuestions: string[];
+      vehicleWorksheet: Array<{ type: string; sqFt: string; material: string; note: string }>;
+      upsellChecklist: string[];
+      redFlags: string[];
+      estimatedValue: string;
+    }>(`/leads/${leadId}/discovery-guide`),
+
+  // ── Multi-contact manager ──
+  getLeadContacts: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      contacts: Array<{
+        id: number; name: string; title: string | null; email: string | null;
+        phone: string | null; is_primary: boolean; notes: string | null; created_at: string;
+      }>;
+    }>(`/leads/${leadId}/contacts`),
+
+  addLeadContact: (leadId: number, data: { name: string; title?: string; email?: string; phone?: string; is_primary?: boolean; notes?: string }) =>
+    authFetch<{ ok: boolean; contact: { id: number; name: string; title: string | null; email: string | null; phone: string | null; is_primary: boolean; notes: string | null; created_at: string } }>(
+      `/leads/${leadId}/contacts`, { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  updateLeadContact: (leadId: number, cid: number, data: { name?: string; title?: string; email?: string; phone?: string; is_primary?: boolean; notes?: string }) =>
+    authFetch<{ ok: boolean; contact: { id: number; name: string; title: string | null; email: string | null; phone: string | null; is_primary: boolean; notes: string | null; created_at: string } }>(
+      `/leads/${leadId}/contacts/${cid}`, { method: 'PATCH', body: JSON.stringify(data) }
+    ),
+
+  deleteLeadContact: (leadId: number, cid: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/contacts/${cid}`, { method: 'DELETE' }),
+
+  // ── AI email thread summarizer ──
+  getEmailThreadSummary: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      summary: string[];
+      nextAction: string;
+      sentiment: 'positive' | 'neutral' | 'negative';
+    }>(`/leads/${leadId}/email-summary`, { method: 'POST' }),
+
+  // ── Quote follow-up automation ──
+  scheduleQuoteFollowup: (quoteId: number) =>
+    authFetch<{ ok: boolean; queued: number; days: number[] }>(
+      `/quotes/${quoteId}/schedule-followup`, { method: 'POST' }
+    ),
+
+  getQuoteFollowupStatus: (quoteId: number) =>
+    authFetch<{
+      ok: boolean;
+      scheduled: Array<{ id: number; subject: string; send_at: string; status: string }>;
+    }>(`/quotes/${quoteId}/followup-status`),
+
+  getCaseStudy: (jobId: number) =>
+    authFetch<{
+      caseStudy: {
+        id: number; job_id: number; token: string; headline: string; narrative: string;
+        stats_json: { vehicles: number; lifespanYears: number; installMonth: string; impressionsPerYear: number };
+        created_at: string;
+        photos: Array<{ id: number; url: string; caption: string | null }>;
+      } | null;
+    }>(`/jobs/${jobId}/case-study`),
+
+  generateCaseStudy: (jobId: number) =>
+    authFetch<{
+      ok: boolean;
+      caseStudy: {
+        id: number; job_id: number; token: string; headline: string; narrative: string;
+        stats_json: { vehicles: number; lifespanYears: number; installMonth: string; impressionsPerYear: number };
+        created_at: string;
+        photos: Array<{ id: number; url: string; caption: string | null }>;
+      };
+    }>(`/jobs/${jobId}/case-study`, { method: 'POST' }),
 
   // Computer Vision Quoting
   quoteVehicle: (file: File) => {
@@ -523,6 +737,59 @@ export const api = {
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
   getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
+
+  // Proposals needing follow-up (sent 3+ days ago, no response)
+  getProposalsNeedingFollowup: () =>
+    authFetch<{
+      ok: boolean;
+      proposals: Array<{
+        id: number; token: string; title: string; status: string;
+        viewCount: number; createdAt: string; lastViewedAt: string | null;
+        daysSinceSent: number; daysSinceView: number | null;
+        lead: { id: number; company: string; contactName: string | null; email: string | null; status: string; category: string } | null;
+      }>;
+    }>('/proposals/needs-followup'),
+
+  generateProposalFollowup: (proposalId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string; contact: string | null; company: string | null; fallback?: boolean }>(
+      `/proposals/${proposalId}/generate-followup`, { method: 'POST', body: '{}' }
+    ),
+
+  // Proposal Heat — ranked list of proposals with active engagement
+  getProposalHeat: () => authFetch<{ count: number; hot: Array<{
+    id: number; title: string; token: string; viewCount: number;
+    lastViewedAt: string; hoursSinceView: number; heatScore: number;
+    tier: 'blazing' | 'hot' | 'warm' | 'cool';
+    lead: { id: number; clientId: string; company: string; status: string; category: string; fleetSize: string | null; email: string | null } | null;
+  }> }>('/proposals/heat'),
+
+  // Perfect Timing — leads who opened emails recently
+  getPerfectTiming: (hours?: number) => authFetch<{
+    windowHours: number;
+    leads: Array<{
+      leadId: number; clientId: string; company: string; subject: string | null;
+      openCount: number; openedAt: string; hoursAgo: number;
+      status: string; category: string; email: string | null; phone: string | null;
+    }>;
+  }>(`/mission/perfect-timing${hours ? `?hours=${hours}` : ''}`),
+
+  // Email Permutator — find candidate emails from name + domain
+  findEmail: (leadId: number, opts?: { name?: string; domain?: string; probe?: boolean }) =>
+    authFetch<{
+      lead: { id: number; company: string; contactName: string };
+      domain: string;
+      name: string;
+      mx: { ok: boolean; provider?: string; records?: Array<{ exchange: string; priority: number }>; error?: string } | null;
+      candidates: Array<{ email: string; confidence: number; format: string; smtp?: string }>;
+      error?: string;
+    }>(`/leads/${leadId}/find-email`, { method: 'POST', body: JSON.stringify(opts || {}) }),
+
+  bulkFindEmails: (leadIds?: number[]) =>
+    authFetch<{
+      ok: boolean; processed: number; found: number;
+      results: Array<{ leadId: number; company: string; email?: string; found: boolean; confidence?: number; error?: boolean }>;
+    }>('/leads/bulk-find-emails', { method: 'POST', body: JSON.stringify({ leadIds: leadIds ?? [] }) }),
+
   suggestAction: (leadId: number) =>
     authFetch<{ ok: boolean; suggestion: { action: string; channel: string; urgency: string; reasoning: string } }>(`/leads/${leadId}/suggest`, { method: 'POST', body: '{}' }),
   generateSocialPost: (jobData: { company: string; vehicle_type: string; vehicle_count: number; wrap_category: string; material?: string; notes?: string }) =>
@@ -629,6 +896,31 @@ export const api = {
       };
     }>('/ai/counter-strategy', { method: 'POST', body: JSON.stringify({ competitor }) }),
 
+  analyzeCompetitorPhoto: (file: File) => {
+    const token = getToken();
+    const fd = new FormData();
+    fd.append('photo', file);
+    return fetch('/ai/analyze-competitor-photo', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Analysis failed');
+      return data as {
+        ok: boolean;
+        analysis: {
+          visualObservations: string[];
+          competitorStrengths: string[];
+          competitorWeaknesses: string[];
+          counterPitch: string;
+          keySellingPoints: string[];
+          estimatedQuality: 'budget' | 'mid-range' | 'premium';
+        };
+      };
+    });
+  },
+
   // Win/Loss capture
   captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
     authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),
@@ -663,13 +955,39 @@ export const api = {
     authFetch<{ bid: Bid }>(`/bids/${id}`, { method: 'PUT', body: JSON.stringify(updates) }),
   deleteBid: (id: number) =>
     authFetch<{ ok: boolean }>(`/bids/${id}`, { method: 'DELETE' }),
+  cloneBid: (id: number) =>
+    authFetch<{ bid: Bid }>(`/bids/${id}/clone`, { method: 'POST' }),
 
-  broadcastEmail: (leadIds: number[], subject: string, body: string) =>
+  getBidCalendarUrl: () => {
+    const token = getToken();
+    return `/bids/calendar.ics?token=${encodeURIComponent(token || '')}`;
+  },
+
+  broadcastEmail: (leadIds: number[], subject: string, body: string, aiPersonalize?: boolean) =>
     authFetch<{ ok: boolean; sent: number; skipped: number; errors: number }>(
       '/leads/broadcast',
-      { method: 'POST', body: JSON.stringify({ leadIds, subject, body }) }
+      { method: 'POST', body: JSON.stringify({ leadIds, subject, body, aiPersonalize }) }
     ),
 
+  previewAIBroadcast: (leadIds: number[], subject: string, body: string) =>
+    authFetch<{
+      ok: boolean;
+      totalLeads: number;
+      previews: Array<{
+        leadId: number; company: string; contactName: string | null;
+        email: string | null; aiOpener: string; fullBody: string;
+      }>;
+    }>('/leads/broadcast/preview-ai', { method: 'POST', body: JSON.stringify({ leadIds, subject, body }) }),
+
+  getNewsSignals: () =>
+    authFetch<{
+      ok: boolean;
+      signals: Array<{
+        id: number; name: string;
+        notes: { url: string; headline: string; published: string; category?: string } | null;
+        createdAt: string;
+      }>;
+    }>('/mission/news-signals'),
   getMissionSignals: () =>
     authFetch<{ signals: Array<{ type: string; title: string; company: string; lead_id: number; ts: string }> }>('/mission/signals'),
 
@@ -692,6 +1010,9 @@ export const api = {
       }[];
     }>('/mission/retention-radar'),
 
+  getTodayScore: () =>
+    authFetch<{ score: number; calls: number; emails: number; advances: number; wins: number; notes: number; date: string }>('/mission/today-score'),
+
   // Business card scanner
   scanBusinessCard: (file: File) => {
     const token = getToken();
@@ -705,6 +1026,40 @@ export const api = {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || 'Card scan failed');
       return data as { ok: boolean; lead: Partial<import('./types').Lead> };
+    });
+  },
+
+  scanTruck: (file: File) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('image', file);
+    return fetch('/vision/scan-truck', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }).then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Scan failed');
+      return data as {
+        ok: boolean;
+        extracted: {
+          companyName: string | null;
+          dotNumber: string | null;
+          mcNumber: string | null;
+          phone: string | null;
+          city: string | null;
+          state: string | null;
+          vehicleType: string;
+          fleetIndicators: string | null;
+          confidence: 'high' | 'medium' | 'low';
+          notes: string | null;
+        };
+        matches: Array<{
+          id: number; dot_number: string | null; name: string;
+          city: string | null; state: string | null; fleet_size: number | null;
+          phone: string | null; email: string | null; already_imported: boolean;
+        }>;
+      };
     });
   },
 
@@ -731,6 +1086,14 @@ export const api = {
       }[];
       totalUntapped: number;
     }>('/analytics/market-opportunity'),
+
+  // Revenue Attribution
+  getRevenueAttribution: () => authFetch<{
+    bySource: Array<{ source: string; won_count: number; estimated_revenue: number; avg_close_days: number | null; sharePct: number }>;
+    byCategory: Array<{ category: string; total: number; won: number; estimated_revenue: number | null; avg_close_days: number | null; closeRate: number }>;
+    velocity: Array<{ category: string; avg_days: number; sample: number }>;
+    totalWonRevenue: number;
+  }>('/analytics/revenue-attribution'),
 
   // Duplicate detection
   checkDuplicate: (q: string) =>
@@ -983,4 +1346,740 @@ export const api = {
       '/solar/integrations/hubspot/push',
       { method: 'POST', body: JSON.stringify({ state }) }
     ),
+  // Market White Space Map
+  getMarketMap: () =>
+    authFetch<{
+      byState: Record<string, { won: number; pipeline: number; carriers: number }>;
+      totalCarriers: number;
+      topOpportunityStates: string[];
+    }>('/analytics/market-map'),
+
+  // Lead Cohort Analysis
+  getCohortAnalysis: () =>
+    authFetch<{
+      cohorts: Array<{
+        month: string; total: number; won: number; lost: number;
+        wonIn90d: number; winRate: number; win90dRate: number; avgCloseDays: number | null;
+      }>;
+      trend: 'improving' | 'declining' | 'stable';
+      recentRate: number | null;
+      priorRate: number | null;
+    }>('/analytics/cohort'),
+
+  // Lost Lead Rescue Queue
+  getRescueQueue: () =>
+    authFetch<{
+      queued: Array<{ id: number; company: string; category: string; state: string; email: string; lost_at: string; send_at: string; subject: string }>;
+      candidates: Array<{ id: number; company: string; category: string; state: string; email: string; lost_at: string; days_lost: number }>;
+      total: number;
+    }>('/mission/rescue-queue'),
+
+  triggerRescue: (leadIds: number[]) =>
+    authFetch<{ ok: boolean; queued: number }>('/mission/rescue-queue/trigger', {
+      method: 'POST',
+      body: JSON.stringify({ lead_ids: leadIds }),
+    }),
+
+  // Similar won deals — social proof for cold outreach on a specific lead
+  getSimilarWins: (leadId: number) =>
+    authFetch<{
+      wins: Array<{ id: number; company: string; category: string; state: string; city: string | null; fleet_size: string | null; relevance_score: number; won_at: string }>;
+      jobs: Array<{ id: number; company: string; vehicle_count: number; vehicle_type: string; wrap_category: string; install_date: string; state: string | null; city: string | null }>;
+      leadCategory: string;
+      leadState: string;
+    }>(`/leads/${leadId}/similar-wins`),
+
+  // Client Satisfaction — review ratings + NPS
+  getSatisfaction: () =>
+    authFetch<{
+      ok: boolean;
+      totals: { sentCount: number; ratedCount: number; avgRating: number | null; positiveCount: number; negativeCount: number; fiveStarCount: number; responseRate: number };
+      recent: Array<{ id: number; company: string | null; starRating: number; feedbackText: string | null; feedbackAt: string | null; category: string | null; vehicleType: string | null; vehicleCount: number | null }>;
+    }>('/analytics/satisfaction'),
+
+  // Lead Database Coverage — record counts by source and state
+  getLeadCoverage: () =>
+    authFetch<{
+      ok: boolean;
+      grandTotal: number;
+      sources: Array<{ source: string; total: number; lastUpdated: string | null; stateCount: number }>;
+      states: Array<{ state: string; total: number; sources: number; fmcsa: number; sos: number; places: number; sam: number; signal: number }>;
+      recentRuns: Array<{ source: string; fileName: string; startedAt: string; finishedAt: string | null; rowsRead: number | null; inserted: number | null; updated: number | null; skipped: number | null; notes: string | null }>;
+    }>('/analytics/lead-coverage'),
+
+  // Job Profitability — per-job P&L including sub labor
+  getJobProfitability: (opts: { sort?: 'profit' | 'margin' | 'revenue' | 'install_date'; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.sort) qs.set('sort', opts.sort);
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    return authFetch<{
+      jobs: Array<{
+        id: number; company: string; vehicleType: string | null; vehicleCount: number | null;
+        category: string | null; installDate: string | null; material: string | null;
+        paymentStatus: string | null; revenue: number; materialCost: number; subLabor: number;
+        netProfit: number; marginPct: number | null; amountPaid: number;
+      }>;
+      totals: { totalRevenue: number; totalMaterial: number; totalSubLabor: number; totalProfit: number; avgMargin: number | null; jobCount: number };
+    }>('/analytics/job-profitability?' + qs.toString());
+  },
+
+  // Material Margin Analytics
+  getMarginAnalytics: () =>
+    authFetch<{
+      byCategory: Array<{
+        wrap_category: string; job_count: number; total_vehicles: number;
+        avg_revenue: number; avg_material: number; avg_margin_pct: number | null;
+        avg_revenue_per_vehicle: number; avg_material_per_vehicle: number;
+        total_gross_profit: number; last_job_date: string;
+      }>;
+      totals: {
+        job_count: number; total_revenue: number; total_material: number;
+        total_gross_profit: number; avg_margin_pct: number | null;
+        jobs_with_labor: number; total_labor_hours: number; avg_revenue_per_hour: number | null;
+      } | null;
+      bestMarginJobs: Array<{ company: string; wrap_category: string; job_revenue: number; material_cost: number; vehicle_count: number; install_date: string; margin_pct: number }>;
+      worstMarginJobs: Array<{ company: string; wrap_category: string; job_revenue: number; material_cost: number; vehicle_count: number; install_date: string; margin_pct: number }>;
+      hasData: boolean;
+    }>('/analytics/margin'),
+
+  // CAN-SPAM unsubscribe status for a lead's email
+  getUnsubscribeStatus: (leadId: number) =>
+    authFetch<{ unsubscribed: boolean; email: string | null; unsubscribed_at: string | null }>(
+      `/leads/${leadId}/unsubscribe-status`
+    ),
+
+  // Shareable ROI calculator link pre-filled with prospect data
+  getOrCreateRoiLink: (leadId: number) =>
+    authFetch<{ ok: boolean; link: { token: string; view_count: number; last_viewed: string | null } }>(
+      `/leads/${leadId}/roi-link`,
+      { method: 'POST' }
+    ),
+
+  // Multi-location expansion — AI suggests other terminals/branches for large fleet won deals
+  suggestLocations: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      suggestions: Array<{ company: string; city: string; state: string; fleet_size: number | null; reasoning: string }>;
+      sourceCompany: string;
+      sourceState: string | null;
+    }>(`/leads/${leadId}/suggest-locations`, { method: 'POST' }),
+
+  createLocationLead: (sourceLeadId: number, data: { company: string; city: string; state: string; fleet_size: number | null; category?: string }) =>
+    authFetch<{ ok: boolean; leadId: number; clientId: string }>(
+      `/leads/${sourceLeadId}/create-location`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  // Referral Engine — top 5 won clients that haven't been asked for a referral yet
+  getReferralOpportunities: () =>
+    authFetch<{
+      ok: boolean;
+      leads: Array<{
+        leadId: number;
+        company: string;
+        category: string;
+        contactName: string | null;
+        email: string | null;
+        wonAt: string;
+        estValue: number;
+        vehicleCount: number;
+      }>;
+    }>('/mission/referral-opportunities'),
+
+  // AI referral ask — generate personalized email requesting referrals from won client
+  generateReferralAsk: (leadId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string; contactName: string | null }>(
+      `/leads/${leadId}/referral-ask`,
+      { method: 'POST' }
+    ),
+
+  getObjections: () =>
+    authFetch<{
+      ok: boolean;
+      objections: Array<{
+        activityId: number;
+        leadId: number;
+        company: string;
+        category: string;
+        contactName: string | null;
+        email: string | null;
+        status: string;
+        intent: 'negative' | 'not_now' | 'price_question';
+        summary: string | null;
+        body: string | null;
+        receivedAt: string;
+      }>;
+    }>('/mission/objections'),
+
+  counterObjection: (leadId: number, intent: string, objectionText?: string) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      subject: string; body: string; tip: string | null;
+    }>(`/leads/${leadId}/counter-objection`, {
+      method: 'POST',
+      body: JSON.stringify({ intent, objectionText }),
+    }),
+
+  // AI-powered quick lead import from any URL
+  importFromUrl: (url: string) =>
+    authFetch<{
+      ok: boolean;
+      domain: string;
+      url: string;
+      lead: {
+        company: string; contactName: string | null; contactTitle: string | null;
+        email: string | null; phone: string | null; city: string | null; state: string | null;
+        website: string; fleetSize: string | null; industry: string | null;
+        category: string; pitchAngle: string | null; confidence: 'high' | 'medium' | 'low';
+      };
+    }>('/ai/import-from-url', { method: 'POST', body: JSON.stringify({ url }) }),
+
+  // Detailed referral pipeline analytics
+  getReferralAnalytics: () =>
+    authFetch<{
+      referrers: Array<{
+        referred_by: string; referrals: number; won: number; active: number; lost: number;
+        won_revenue: number; pipeline_value: number; closeRate: number; last_referral_at: string;
+      }>;
+      recent: Array<{ company: string; status: string; referred_by: string; category: string; created_at: string }>;
+      referralCloseRate: number | null;
+      organicCloseRate: number | null;
+      totalReferredRevenue: number;
+      totalPipelineValue: number;
+      hasData: boolean;
+    }>('/analytics/referrals'),
+
+  // Loss Analysis — breakdown of why deals are lost and who we lost them to
+  getLossAnalysis: () =>
+    authFetch<{
+      totalLost: number;
+      byReason: Array<{ reason: string; count: number; avg_days_in_pipeline: number | null; categories: string[] }>;
+      byCompetitor: Array<{ competitor: string; losses: number; categories: string[] }>;
+      trend: Array<{ month: string; losses: number; recoverable: number }>;
+      recoverableLeads: Array<{ id: number; company: string; category: string; lost_reason: string; lost_competitor: string | null; lost_at: string; contact_name: string | null; email: string }>;
+    }>('/analytics/loss-analysis'),
+
+  generateWinBackEmail: (leadId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string }>(`/leads/${leadId}/win-back-email`, { method: 'POST' }),
+
+  logWinLoss: (leadId: number, data: { factor: string; competitor?: string; notes?: string }) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify(data) }),
+
+  getSeasonalIntelligence: () =>
+    authFetch<{
+      ok: boolean;
+      currentMonth: number;
+      currentMonthName: string;
+      topSeasonCategory: string | null;
+      seasonWins: number;
+      hotPipelineLeads: Array<{ id: number; company: string; category: string; status: string; followup_due_at: string | null; fleet_size: string | null }>;
+      series: Array<{ month: number; wins: number; topCat: string | null }>;
+    }>('/analytics/seasonal'),
+
+  getEmailTiming: () =>
+    authFetch<{
+      ok: boolean;
+      byHour: Array<{ hour: number; opens: number }>;
+      byDow: Array<{ dow: number; label: string; opens: number }>;
+      bestHours: Array<{ hour: number; label: string; opens: number }>;
+      bestDow: { dow: number; label: string; opens: number } | null;
+      totalOpens: number;
+      activeReaders: Array<{ leadId: number; company: string; status: string; openedAt: string; hoursAgo: number }>;
+    }>('/analytics/email-timing'),
+
+  generateLeadBrief: (leadId: number) =>
+    authFetch<{ ok: boolean; brief: string }>('/ai/lead-brief', { method: 'POST', body: JSON.stringify({ leadId }) }),
+
+  getRevenueForecast: () =>
+    authFetch<{
+      ok: boolean;
+      projections: Array<{
+        month: number;
+        label: string;
+        expected: number;
+        low: number;
+        high: number;
+        leads: Array<{ id: number; company: string; status: string; category: string; winRate: number }>;
+      }>;
+      monthlyGoal: number;
+      winRates: Record<string, number>;
+      hasHistory: boolean;
+      pipelineTotal: number;
+    }>('/analytics/revenue-forecast'),
+
+  getWarmReferences: (leadId: number) =>
+    authFetch<{
+      references: Array<{
+        id: number;
+        company: string;
+        category: string;
+        state: string;
+        city: string;
+        job_revenue: number | null;
+        days_ago: number;
+      }>;
+      targetState: string;
+      targetCategory: string;
+    }>(`/leads/${leadId}/warm-references`),
+
+  getPipelineDoctor: () =>
+    authFetch<{
+      rates: Record<string, number>;
+      stageCounts: Array<{ status: string; count: number; avg_days: number }>;
+      wonTotal: number;
+      lostTotal: number;
+      totalLeads: number;
+      avgDaysToClose: number;
+      worstBottleneck: { stage: string; rate: number; key: string } | null;
+      diagnosis: string;
+      recommendations: string[];
+      healthGrade: string;
+    }>('/analytics/pipeline-doctor'),
+
+  getTerritoryIntel: () =>
+    authFetch<{
+      territories: Array<{
+        state: string;
+        total_carriers: number;
+        sweet_spot: number;
+        avg_fleet_size: number;
+        in_pipeline: number;
+        penetration_pct: number;
+        untouched: number;
+        has_won: boolean;
+        opportunity_score: number;
+      }>;
+    }>('/analytics/territory-intel'),
+
+  getReferralAsk: (leadId: number) =>
+    authFetch<{ ok: boolean; subject: string; body: string }>(`/leads/${leadId}/referral-ask`),
+
+  getIntentSignals: () =>
+    authFetch<{
+      leads: Array<{
+        leadId: number;
+        company: string;
+        status: string;
+        category: string;
+        contactName: string | null;
+        score: number;
+        signals: Array<{
+          type: 'email_opened' | 'proposal_viewed' | 'replied' | 'wrap_aging';
+          count?: number;
+          lastAt?: string;
+          daysUntilExpiry?: number;
+        }>;
+      }>;
+    }>('/mission/intent-signals'),
+
+  getQuoteTimingIntel: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      hasSentQuote: boolean;
+      quote?: { id: number; quoteNumber: string; title: string; total: number; sentAt: string; validDays: number };
+      daysSinceSent?: number;
+      validDaysLeft?: number;
+      urgency?: 'on_track' | 'follow_up_now' | 'overdue';
+      benchmark?: { avg: number; fast: number; slow: number };
+      followUpDraft?: { subject: string; body: string } | null;
+    }>(`/leads/${leadId}/quote-timing-intel`),
+
+  getOutreachCalendar: () =>
+    authFetch<{
+      months: Array<{
+        month: number;
+        name: string;
+        themes: string[];
+        hot_categories: string[];
+        angle: string;
+        is_current: boolean;
+        is_future: boolean;
+        pipeline_count: number;
+      }>;
+      currentMonth: number;
+    }>('/analytics/outreach-calendar'),
+
+  // Project Milestone Tracker
+  getMilestones: (leadId: number) =>
+    authFetch<{
+      milestones: Array<{
+        id: number; lead_id: number; user_id: string; title: string;
+        notes: string | null; completed: boolean; completed_at: string | null;
+        due_date: string | null; sort_order: number; created_at: string;
+      }>;
+      initialized: boolean;
+    }>(`/leads/${leadId}/milestones`),
+
+  initMilestones: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      milestones: Array<{
+        id: number; title: string; completed: boolean; sort_order: number;
+      }>;
+    }>(`/leads/${leadId}/milestones/init`, { method: 'POST' }),
+
+  createMilestone: (leadId: number, data: { title: string; notes?: string; due_date?: string }) =>
+    authFetch<{
+      ok: boolean;
+      milestone: { id: number; title: string; completed: boolean; sort_order: number };
+    }>(`/leads/${leadId}/milestones`, { method: 'POST', body: JSON.stringify(data) }),
+
+  updateMilestone: (milestoneId: number, data: { completed?: boolean; title?: string; notes?: string; due_date?: string }) =>
+    authFetch<{
+      ok: boolean;
+      milestone: { id: number; title: string; completed: boolean; completed_at: string | null; due_date: string | null };
+    }>(`/milestones/${milestoneId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  deleteMilestone: (milestoneId: number) =>
+    authFetch<{ ok: boolean }>(`/milestones/${milestoneId}`, { method: 'DELETE' }),
+
+  // Daily Task Queue
+  getTasks: () =>
+    authFetch<{
+      ok: boolean;
+      tasks: Array<{
+        id: number; user_id: string; lead_id: number | null; title: string;
+        notes: string | null; type: string; completed: boolean; completed_at: string | null;
+        due_date: string | null; due_time: string | null; priority: string;
+        created_at: string; lead_company: string | null; lead_status: string | null; lead_category: string | null;
+      }>;
+      completedToday: Array<{ id: number; title: string; lead_company: string | null; completed_at: string }>;
+    }>('/tasks'),
+
+  createTask: (data: { title: string; notes?: string; type?: string; lead_id?: number; due_date?: string; due_time?: string; priority?: string }) =>
+    authFetch<{ ok: boolean; task: { id: number; title: string; type: string; priority: string } }>('/tasks', {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+
+  updateTask: (id: number, data: { completed?: boolean; title?: string; notes?: string; due_date?: string; priority?: string }) =>
+    authFetch<{ ok: boolean; task: { id: number; completed: boolean } }>(`/tasks/${id}`, {
+      method: 'PATCH', body: JSON.stringify(data),
+    }),
+
+  deleteTask: (id: number) =>
+    authFetch<{ ok: boolean }>(`/tasks/${id}`, { method: 'DELETE' }),
+
+  generateAITasks: () =>
+    authFetch<{ ok: boolean; tasks: Array<{ id: number; title: string; type: string; priority: string; lead_company: string | null; notes: string | null }>; generated: number }>(
+      '/tasks/generate-ai', { method: 'POST' }
+    ),
+
+  // Speed Dial — top 5 leads to contact now
+  getSpeedDial: () =>
+    authFetch<{
+      ok: boolean;
+      leads: Array<{
+        leadId: number; clientId: string; company: string; contactName: string | null;
+        phone: string | null; email: string | null; status: string; category: string;
+        fleetSize: string | null; state: string | null; urgencyScore: number;
+        daysOverdue: number; recentOpens: number; recentProposalViews: number;
+        pitchAngle: string | null;
+      }>;
+    }>('/mission/speed-dial'),
+
+  // Deal Coach — AI closing tactics for a specific deal
+  getDealCoach: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      tactics: Array<{ title: string; action: string; rationale: string }>;
+      closingProbability: number;
+      urgencyLevel: 'low' | 'medium' | 'high' | 'critical';
+      keyInsight: string;
+      daysInPipeline: number;
+      daysInStage: number | null;
+    }>(`/leads/${leadId}/deal-coach`),
+
+  // Daily Briefing — AI morning summary for Mission
+  getDailyBriefing: () =>
+    authFetch<{ ok: boolean; briefing: string; dataOnly: boolean }>('/mission/daily-briefing'),
+
+  // Stale Pipeline — leads stuck with no activity for 14+ days
+  getStalePipeline: () =>
+    authFetch<{
+      ok: boolean;
+      leads: Array<{
+        leadId: number; clientId: string; company: string; contactName: string | null;
+        category: string; status: string; email: string | null; phone: string | null;
+        state: string | null; fleetSize: string | null; followupDueAt: string | null;
+        lastActivityAt: string; daysStale: number; activityCount: number;
+      }>;
+      thresholdDays: number;
+    }>('/mission/stale-pipeline'),
+
+  // Pricing Intelligence — win rate by price tier, sweet spot identification
+  getPricingIntel: (category?: string) =>
+    authFetch<{
+      ok: boolean; hasData: boolean;
+      categories: Array<{
+        category: string; wonCount: number; lostCount: number; totalDeals: number;
+        winRate: number | null; avgWonPrice: number | null; avgLostPrice: number | null;
+        priceDelta: number | null;
+        tiers: Array<{
+          label: string; minPrice: number; maxPrice: number;
+          wonCount: number; lostCount: number; winRate: number | null; isSweetSpot: boolean;
+        }> | null;
+        sweetSpotRange: { min: number; max: number } | null;
+      }>;
+      overall: {
+        wonCount: number; lostCount: number; winRate: number | null;
+        avgWonPrice: number | null; avgLostPrice: number | null;
+      } | null;
+    }>(`/analytics/pricing-intel${category ? `?category=${encodeURIComponent(category)}` : ''}`),
+
+  // Account Health — relationship vitals for a won client
+  getAccountHealth: (leadId: number) =>
+    authFetch<{
+      ok: boolean; score: number; healthLabel: string; healthColor: string;
+      daysSinceWon: number; daysSinceContact: number;
+      jobCount: number; totalVehicles: number; totalRevenue: number;
+      referralSent: boolean; activityCount: number;
+      nearestExpiry: {
+        company: string; installDate: string; expiryDate: string;
+        daysToExpiry: number; vehicleCount: number; wrapCategory: string;
+      } | null;
+      jobs: Array<{
+        id: number; vehicleCount: number; wrapCategory: string;
+        installDate: string; expiryDate: string; daysToExpiry: number; revenue: number;
+      }>;
+    }>(`/leads/${leadId}/account-health`),
+
+  // Win Debrief — AI "what worked" brief for a won deal
+  generateWinDebrief: (leadId: number) =>
+    authFetch<{
+      ok: boolean; cached: boolean;
+      debrief: {
+        id: number; company: string; category: string | null;
+        days_to_close: number | null; touch_count: number | null;
+        deal_value_est: number | null; key_signal: string | null;
+        winning_tactic: string | null; pattern_tags: string[];
+        summary: string; created_at: string;
+      };
+    }>(`/leads/${leadId}/win-debrief`, { method: 'POST' }),
+
+  // Win Pattern Library — aggregated patterns from all win debriefs (debrief system)
+  getWinPatternLibrary: () =>
+    authFetch<{
+      ok: boolean; hasData: boolean;
+      debriefs: Array<{
+        id: number; company: string; category: string | null; days_to_close: number | null;
+        touch_count: number | null; deal_value_est: number | null; key_signal: string | null;
+        winning_tactic: string | null; pattern_tags: string[]; summary: string; created_at: string;
+      }>;
+      topTags: Array<{ tag: string; count: number }>;
+      byCategory: Array<{ category: string; count: number; avg_days: number | null; avg_value: number | null }>;
+      summary: { totalWins: number; avgDaysToClose: number | null; avgTouchCount: number | null };
+    }>('/analytics/win-patterns'),
+
+  // Pricing benchmarks from job history
+  getPricingBenchmarks: (category: string) =>
+    authFetch<{
+      ok: boolean;
+      category: string;
+      hasData: boolean;
+      stats: {
+        job_count: number;
+        avg_total: number;
+        min_total: number;
+        max_total: number;
+        avg_per_vehicle: number | null;
+        min_per_vehicle: number | null;
+        max_per_vehicle: number | null;
+        avg_vehicle_count: number | null;
+      } | null;
+      recentJobs: Array<{ company: string; job_revenue: number; vehicle_count: number; install_date: string }>;
+      overallAvg: number | null;
+    }>(`/analytics/pricing-benchmarks?category=${encodeURIComponent(category)}`),
+
+  quickQuote: (vehicleType: string, vehicleCount: number, coverage: string) =>
+    authFetch<{
+      ok: boolean; vehicleCount: number; vehicleType: string; coverage: string;
+      low: number; high: number; recommended: number; perVehicle: number;
+      fromHistory: boolean; historyJobs: number;
+    }>(`/tools/quick-quote?vehicleType=${vehicleType}&vehicleCount=${vehicleCount}&coverage=${coverage}`),
+
+  // ── AI Revenue Coach ──
+  aiCoach: (message: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) =>
+    authFetch<{ ok: boolean; reply: string }>(
+      '/ai/coach',
+      { method: 'POST', body: JSON.stringify({ message, history }) }
+    ),
+
+  // ── Per-lead send timing ──
+  getLeadSendTiming: (leadId: number) =>
+    authFetch<{
+      ok: boolean; source: 'lead' | 'global' | 'default';
+      dow: number; hour: number; dayLabel: string; timeLabel: string;
+      opens: number; label: string; tip: string;
+    }>(`/leads/${leadId}/send-timing`),
+
+  // ── Pre-send Proposal Coach ──
+  getProposalCoach: (leadId: number) =>
+    authFetch<{
+      ok: boolean; fallback: boolean;
+      priceRange: string | null;
+      avgWonPrice: number | null;
+      similarDeals: number;
+      emailEngagement: { totalOpens: number; lastOpen: string | null };
+      advice: string[];
+      subjectLine: string;
+      risks: string[];
+      confidence: 'high' | 'medium' | 'low';
+    }>(`/ai/proposal-coach?leadId=${leadId}`),
+
+  // ── Google Review Automation ──
+  requestReview: (jobId: number, opts: { clientEmail?: string; clientPhone?: string; clientName?: string; googleUrl?: string }) =>
+    authFetch<{ ok: boolean; token: string; reviewUrl: string; sentVia: string[] }>(
+      `/jobs/${jobId}/review-request`,
+      { method: 'POST', body: JSON.stringify(opts) }
+    ),
+
+  getReviewRequests: (jobId: number) =>
+    authFetch<{
+      ok: boolean;
+      requests: Array<{
+        id: number; token: string; client_name: string | null; client_email: string | null;
+        client_phone: string | null; company: string; sent_via: string | null;
+        sent_at: string | null; opened_at: string | null; clicked_at: string | null; created_at: string;
+      }>;
+    }>(`/jobs/${jobId}/review-requests`),
+
+  // ── VIN Decoder (NHTSA free API) ──
+  decodeVin: (vin: string) =>
+    authFetch<{
+      ok: boolean; vin: string;
+      make: string | null; model: string | null; year: string | null;
+      series: string | null; trim: string | null;
+      bodyClass: string | null; gvwr: string | null; vehicleType: string | null;
+      doors: string | null; fuel: string | null;
+      wrapType: string; label: string;
+    }>(`/tools/vin/${vin.trim().toUpperCase()}`),
+
+  // ── Deal Heat Score ──
+  getHeatScore: (leadId: number) =>
+    authFetch<{ ok: boolean; score: number; label: string; color: string; signals: string[] }>(
+      `/leads/${leadId}/heat-score`
+    ),
+
+  // ── Portal Link Stats ──
+  getPortalLinkStats: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      stats: { token: string; viewed_at: string | null; deposit_clicked_at: string | null; created_at: string } | null;
+    }>(`/portal-links/lead/${leadId}/stats`),
+
+  // ── Mission: Top Prospects by heat score ──
+  getTopProspects: () =>
+    authFetch<{
+      ok: boolean;
+      prospects: Array<{
+        id: number; company: string; category: string; status: string;
+        contactName: string | null; phone: string | null; email: string | null;
+        fleetSize: number | null; score: number; label: string; color: string;
+      }>;
+    }>('/mission/top-prospects'),
+
+  // ── Lead Lifetime Value ──
+  getLeadLTV: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      jobCount: number; totalRevenue: number; totalCost: number;
+      totalVehicles: number; grossMarginPct: number | null;
+      firstJob: string | null; lastJob: string | null;
+    }>(`/leads/${leadId}/lifetime-value`),
+
+  // ── Mission: Expiring Quotes ──
+  getExpiringQuotes: () =>
+    authFetch<{
+      ok: boolean;
+      quotes: Array<{
+        id: number; quoteNumber: string; title: string; total: number;
+        expiresAt: string; daysLeft: number; leadId: number;
+        company: string; contactName: string | null; email: string | null; phone: string | null;
+      }>;
+    }>('/mission/expiring-quotes'),
+
+  // ── Analytics: Monthly Revenue Trend ──
+  getMonthlyRevenue: () =>
+    authFetch<{
+      ok: boolean;
+      months: Array<{ month: string; label: string; jobCount: number; revenue: number; cost: number; vehicles: number; margin: number | null }>;
+      totalRevenue: number;
+      avgMonthly: number;
+      bestMonth: string;
+    }>('/analytics/revenue-monthly'),
+
+  // ── Quote Line Item Templates ──
+  getQuoteTemplates: () =>
+    authFetch<{
+      ok: boolean;
+      templates: Array<{ id: number; name: string; items: Array<{ description: string; qty: number; unit: string; unitPrice: number; total: number }>; created_at: string }>;
+    }>('/quotes/templates'),
+  saveQuoteTemplate: (name: string, items: Array<{ description: string; qty: number; unit: string; unitPrice: number; total: number }>) =>
+    authFetch<{ ok: boolean; template: { id: number; name: string; items: unknown[]; created_at: string } }>(
+      '/quotes/templates', { method: 'POST', body: JSON.stringify({ name, items }) }
+    ),
+  deleteQuoteTemplate: (id: number) =>
+    authFetch<{ ok: boolean }>(`/quotes/templates/${id}`, { method: 'DELETE' }),
+
+  // ── Job Payment Status ──
+  updateJobPayment: (jobId: number, opts: { payment_status: string; amount_paid?: number }) =>
+    authFetch<{ ok: boolean; job: Record<string, unknown> }>(
+      `/jobs/${jobId}/payment`, { method: 'PATCH', body: JSON.stringify(opts) }
+    ),
+  getOverdueInvoices: () =>
+    authFetch<{
+      ok: boolean;
+      jobs: Array<{
+        id: number; company: string; vehicleCount: number; vehicleType: string;
+        revenue: number; amountPaid: number; balance: number;
+        installDate: string | null; paymentStatus: string; invoiceSentAt: string | null; daysOverdue: number | null;
+      }>;
+    }>('/mission/overdue-invoices'),
+
+  // ── Job Social Post Generator ──
+  generateJobSocialPost: (jobId: number) =>
+    authFetch<{ ok: boolean; posts: { instagram: string; linkedin: string; facebook: string }; jobId: number; company: string }>(
+      `/jobs/${jobId}/social-post`, { method: 'POST' }
+    ),
+
+  // ── Invoice ──
+  getInvoiceUrl: (jobId: number) => `/jobs/${jobId}/invoice`,
+  sendInvoice: (jobId: number, opts: { toEmail: string; toName?: string }) =>
+    authFetch<{ ok: boolean; invoiceNum: string }>(
+      `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }
+    ),
+
+  // ── Job Schedule ──
+  getJobSchedule: (year: number, month: number) =>
+    authFetch<{ ok: boolean; jobs: import('./types').InstalledJob[] }>(`/jobs/schedule?year=${year}&month=${month}`),
+  scheduleJob: (jobId: number, opts: { scheduled_install_date: string | null; scheduled_crew_count?: number }) =>
+    authFetch<{ ok: boolean; job: import('./types').InstalledJob }>(`/jobs/${jobId}/schedule`, { method: 'PATCH', body: JSON.stringify(opts) }),
+
+  // ── Subcontractors ──
+  getSubcontractors: () =>
+    authFetch<{ ok: boolean; subs: import('./types').Subcontractor[] }>('/subcontractors'),
+  createSubcontractor: (data: { name: string; contact?: string; specialty?: string; labor_rate?: number; notes?: string }) =>
+    authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>('/subcontractors', { method: 'POST', body: JSON.stringify(data) }),
+  updateSubcontractor: (id: number, data: Partial<{ name: string; contact: string; specialty: string; labor_rate: number; notes: string }>) =>
+    authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>(`/subcontractors/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteSubcontractor: (id: number) =>
+    authFetch<{ ok: boolean }>(`/subcontractors/${id}`, { method: 'DELETE' }),
+  getJobSubcontractors: (jobId: number) =>
+    authFetch<{ ok: boolean; assignments: import('./types').SubcontractorAssignment[] }>(`/jobs/${jobId}/subcontractors`),
+  assignSubcontractor: (jobId: number, data: { sub_id: number; hours?: number; labor_cost?: number; notes?: string }) =>
+    authFetch<{ ok: boolean; assignment: import('./types').SubcontractorAssignment }>(`/jobs/${jobId}/subcontractors`, { method: 'POST', body: JSON.stringify(data) }),
+  removeSubAssignment: (assignmentId: number) =>
+    authFetch<{ ok: boolean }>(`/jobs/sub-assignments/${assignmentId}`, { method: 'DELETE' }),
+
+  // ── Cash Flow ──
+  getCashFlow: () =>
+    authFetch<{
+      totalOutstanding: number;
+      collectedMtd: number;
+      totalRevenue: number;
+      totalPaid: number;
+      current: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
+      mid: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
+      late: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
+    }>('/analytics/cash-flow'),
 };

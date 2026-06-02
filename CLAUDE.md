@@ -26,7 +26,7 @@ The repo's single product lives in `wrapleads/` — a B2B lead-gen SaaS for vehi
 
 There is **no test runner** configured — `package.json` has no `test` script and no test files exist. Do not invent or claim test commands.
 
-CI (`.github/workflows/webpack.yml`) only does `npm install && npx webpack` on Node 18/20/22; this workflow predates the Vite setup and will fail since there is no webpack config. Don't rely on it as a signal — verify changes locally.
+CI (`.github/workflows/ci.yml`) runs on every push and PR: it installs server deps, **syntax-checks `wrapleads-server.js` with `node --check`** (the server is never bundled, so this is the only automated guard against TypeScript syntax leaking into the CommonJS file — or any parse error that would crash boot), installs frontend deps, lints (`npm run lint`), then typechecks + builds the SPA (`tsc -b && vite build`) and verifies `dist/index.html` exists. Keep all four steps green. There is still no test runner. The old `webpack.yml` workflow was removed — it predated Vite and always failed.
 
 ## Architecture
 

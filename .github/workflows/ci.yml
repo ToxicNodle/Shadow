@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "claude/**" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: wrapleads/package-lock.json
+
+      - name: Install server dependencies
+        working-directory: wrapleads
+        run: npm install
+
+      # Parses wrapleads-server.js without executing it. Catches the class of
+      # bug that broke prod silently: TypeScript syntax / generics leaking into
+      # the CommonJS server, unescaped quotes, etc. The frontend build never
+      # touched this file, so these errors shipped undetected before.
+      - name: Check server boots (syntax)
+        working-directory: wrapleads
+        run: node --check wrapleads-server.js
+
+      - name: Install frontend dependencies
+        working-directory: wrapleads/frontend
+        run: npm install
+
+      - name: Lint frontend
+        working-directory: wrapleads/frontend
+        run: npm run lint
+
+      # `tsc -b && vite build` — typechecks the SPA and produces wrapleads/dist.
+      - name: Typecheck + build frontend
+        working-directory: wrapleads/frontend
+        run: npm run build
+
+      - name: Verify dist output
+        working-directory: wrapleads
+        run: |
+          test -f dist/index.html || (echo "dist/index.html missing — build failed" && exit 1)
+          echo "Build OK — $(du -sh dist | cut -f1) written to dist/"

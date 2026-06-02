@@ -6,6 +6,8 @@ import { api } from '../../api/client';
 import FilterRow from './FilterRow';
 import CarrierTable from './CarrierTable';
 import SavedChips from './SavedChips';
+import DiscoverMapView from './DiscoverMapView';
+import DataSourcesPanel from './DataSourcesPanel';
 
 const CAT_LABEL: Record<string, string> = {
   fleet: 'Fleet Wraps', dinoc: 'DI-NOC', gc_referral: 'GC Referrals',
@@ -177,15 +179,17 @@ function ICPBanner() {
 export default function DiscoverPage() {
   const { data: stats, isLoading: statsLoading } = useCarrierStats();
   const qc = useQueryClient();
-  const { selectedCarrierIds, clearSelectedCarrierIds, showToast, setMode, pendingDiscoverSearch, setPendingDiscoverSearch } = useAppStore((s) => ({
+  const { selectedCarrierIds, clearSelectedCarrierIds, showToast, setMode, pendingDiscoverSearch, setPendingDiscoverSearch, setTruckScanOpen } = useAppStore((s) => ({
     selectedCarrierIds: s.selectedCarrierIds,
     clearSelectedCarrierIds: s.clearSelectedCarrierIds,
     showToast: s.showToast,
     setMode: s.setMode,
     pendingDiscoverSearch: s.pendingDiscoverSearch,
     setPendingDiscoverSearch: s.setPendingDiscoverSearch,
+    setTruckScanOpen: s.setTruckScanOpen,
   }));
   const [campaignLoading, setCampaignLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<'table' | 'map' | 'sources'>('table');
   const pendingSearch = useCarrierSearch();
 
   useEffect(() => {
@@ -276,9 +280,47 @@ export default function DiscoverPage() {
       <SavedChips />
       <FilterRow />
 
-      <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        <CarrierTable />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 8 }}>
+        <button
+          onClick={() => setTruckScanOpen(true)}
+          style={{
+            fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6, cursor: 'pointer',
+            border: '1px solid rgba(77,138,245,0.35)',
+            background: 'rgba(77,138,245,0.08)',
+            color: '#4d8af5',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}
+          title="Photograph any truck — AI extracts company name + DOT and imports to CRM"
+        >
+          🚛 Scan Truck
+        </button>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {([['table', '≡ Table'], ['map', '⊞ Map'], ['sources', '⬡ Sources']] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${viewMode === mode ? 'var(--accent)' : 'var(--border)'}`,
+                background: viewMode === mode ? 'var(--accent)18' : 'transparent',
+                color: viewMode === mode ? 'var(--accent)' : 'var(--text-faint)',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {viewMode === 'table' ? (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+          <CarrierTable />
+        </div>
+      ) : viewMode === 'map' ? (
+        <DiscoverMapView />
+      ) : (
+        <DataSourcesPanel />
+      )}
 
       {selectedCarrierIds.size > 0 && (
         <div className="bulk-action-bar">
@@ -307,6 +349,7 @@ export default function DiscoverPage() {
           <button className="btn" onClick={clearSelectedCarrierIds} disabled={campaignLoading}>Clear</button>
         </div>
       )}
+
     </div>
   );
 }

@@ -1,0 +1,41 @@
+name: Fix Pages canonical domain
+
+# Forces the Pages config to use helioscout.app (apex) as the canonical
+# domain instead of redirecting to www.helioscout.app.
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/fix-canonical.yml']
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Pages custom domain
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Get current Pages config
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               https://api.github.com/repos/${{ github.repository }}/pages | jq .
+
+          # Force cname to apex (no www)
+          curl -sS -X PUT \
+               -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               -H "X-GitHub-Api-Version: 2022-11-28" \
+               https://api.github.com/repos/${{ github.repository }}/pages \
+               -d '{"cname":"helioscout.app","https_enforced":true}'
+
+          echo "Updated. New config:"
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               https://api.github.com/repos/${{ github.repository }}/pages | jq .
