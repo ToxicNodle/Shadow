@@ -21,7 +21,11 @@ import ReferralEngineCard from './ReferralEngineCard';
 import DailyBriefingCard from './DailyBriefingCard';
 import ObjectionCounterCard from './ObjectionCounterCard';
 import SignalLeadsCard from './SignalLeadsCard';
+import SmsInboxCard from './SmsInboxCard';
 import DarkProposalsCard from './DarkProposalsCard';
+import FleetGrowthCard from './FleetGrowthCard';
+import MaterialInventoryCard from './MaterialInventoryCard';
+import SubPayablesCard from './SubPayablesCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -2064,8 +2068,20 @@ export default function MissionView() {
         onSetGoal={() => useAppStore.getState().setSettingsOpen(true)}
       />
 
+      {/* ── SMS Inbox — inbound replies from prospects ── */}
+      <SmsInboxCard />
+
       {/* ── Market Signals — press release auto-leads ── */}
       <SignalLeadsCard />
+
+      {/* ── Fleet Growth Alerts — FMCSA fleet size change detection ── */}
+      <FleetGrowthCard />
+
+      {/* ── Material Inventory — low-stock vinyl/film alerts ── */}
+      <MaterialInventoryCard />
+
+      {/* ── Sub Payables — unpaid subcontractor balances ── */}
+      <SubPayablesCard />
 
       {/* ── Daily Briefing — AI morning snapshot ── */}
       <DailyBriefingCard />

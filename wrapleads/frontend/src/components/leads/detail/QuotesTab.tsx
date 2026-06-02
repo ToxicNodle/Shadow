@@ -676,10 +676,12 @@ interface Props { lead: Lead; }
 export default function QuotesTab({ lead }: Props) {
   const qc = useQueryClient();
   const { updateLead } = useLeads();
+  const { setMode } = useAppStore((s) => ({ setMode: s.setMode }));
   const leadId = lead.serverId!;
   const [showBuilder, setShowBuilder] = useState(false);
   const [editQuote, setEditQuote] = useState<ShopQuote | undefined>(undefined);
   const [suggestWon, setSuggestWon] = useState(false);
+  const [convertingId, setConvertingId] = useState<number | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['quotes', leadId],
@@ -695,6 +697,22 @@ export default function QuotesTab({ lead }: Props) {
       showToast('Quote deleted');
     },
   });
+
+  async function convertToJob(quoteId: number) {
+    setConvertingId(quoteId);
+    try {
+      await api.convertQuoteToJob(quoteId);
+      qc.invalidateQueries({ queryKey: ['quotes', leadId] });
+      qc.invalidateQueries({ queryKey: ['leads'] });
+      qc.invalidateQueries({ queryKey: ['jobs'] });
+      showToast('Job created! Lead marked Won.', 'success');
+      setMode('jobs');
+    } catch (e: any) {
+      showToast(e.message || 'Convert failed', 'error');
+    } finally {
+      setConvertingId(null);
+    }
+  }
 
   const quotes = data?.quotes ?? [];
 
@@ -816,6 +834,20 @@ export default function QuotesTab({ lead }: Props) {
               {q.status === 'sent' && (
                 <QuoteFollowupButton quoteId={q.id} />
               )}
+              {/* Convert to Job — only for accepted quotes */}
+              {q.status === 'accepted' && (
+                <button
+                  className="btn"
+                  style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', background: '#10b98118', color: '#10b981', border: '1px solid #10b98130' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    convertToJob(q.id);
+                  }}
+                  disabled={convertingId === q.id}
+                >
+                  {convertingId === q.id ? 'Creating…' : '🏆 Convert to Job'}
+                </button>
+              )}
               <button
                 className="btn"
                 style={{ fontSize: 11, color: 'var(--red)', padding: '3px 8px', marginLeft: 'auto' }}
@@ -833,6 +865,27 @@ export default function QuotesTab({ lead }: Props) {
 
       <WrapPriceEstimator lead={lead} />
       <WrapROICalculator lead={lead} />
+
+      {/* Contract generator */}
+      {lead.serverId && (
+        <div style={{ marginTop: 16, padding: '14px 16px', background: 'var(--bg-input)', borderRadius: 10, border: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>Installation Contract</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                Generate a printable contract pre-filled with client + quote details, standard terms, and signature blocks.
+              </div>
+            </div>
+            <button
+              className="btn"
+              style={{ fontSize: 11, flexShrink: 0, whiteSpace: 'nowrap' }}
+              onClick={() => window.open(api.getContractUrl(lead.serverId!), '_blank')}
+            >
+              📄 Generate Contract
+            </button>
+          </div>
+        </div>
+      )}
 
       {showBuilder && (
         <QuoteBuilderModal

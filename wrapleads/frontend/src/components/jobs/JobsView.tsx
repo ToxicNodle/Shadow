@@ -639,6 +639,393 @@ interface JobModalProps {
   onClose: () => void;
 }
 
+// ── Job Expenses Tab ──────────────────────────────────────────────────────────
+
+import type { JobVehicle, JobExpense } from '../../api/types';
+
+const EXPENSE_CATS: Array<{ value: JobExpense['category']; label: string; icon: string }> = [
+  { value: 'fuel',      label: 'Fuel',       icon: '⛽' },
+  { value: 'parking',   label: 'Parking',    icon: '🅿' },
+  { value: 'shipping',  label: 'Shipping',   icon: '📦' },
+  { value: 'design',    label: 'Design',     icon: '🎨' },
+  { value: 'equipment', label: 'Equipment',  icon: '🔧' },
+  { value: 'travel',    label: 'Travel',     icon: '✈' },
+  { value: 'misc',      label: 'Misc',       icon: '💰' },
+];
+
+function JobExpensesTab({ job }: { job: InstalledJob }) {
+  const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-expenses', job.id],
+    queryFn: () => api.getJobExpenses(job.id),
+    staleTime: 30_000,
+  });
+
+  const expenses = data?.expenses ?? [];
+  const total = data?.total ?? 0;
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [cat, setCat] = useState<JobExpense['category']>('misc');
+  const [desc, setDesc] = useState('');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState('');
+  const [note, setNote] = useState('');
+
+  const addMut = useMutation({
+    mutationFn: () => api.addJobExpense(job.id, {
+      category: cat, description: desc, amount: Number(amount),
+      expense_date: date || undefined, receipt_note: note || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-expenses', job.id] });
+      setShowAdd(false); setCat('misc'); setDesc(''); setAmount(''); setDate(''); setNote('');
+      showToast('Expense added', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (eid: number) => api.deleteJobExpense(job.id, eid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-expenses', job.id] }),
+  });
+
+  const revenue = Number(job.job_revenue) || 0;
+  const materialCost = Number(job.material_cost) || 0;
+  const trueMargin = revenue > 0 ? Math.round(((revenue - materialCost - total) / revenue) * 100) : null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Summary strip */}
+      {expenses.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 14px' }}>
+          <div>
+            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Total Expenses</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#f59e0b' }}>${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          </div>
+          {trueMargin !== null && revenue > 0 && (
+            <div>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>True Margin</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: trueMargin >= 40 ? '#22c55e' : trueMargin >= 20 ? '#f59e0b' : '#ef4444' }}>{trueMargin}%</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Expense list */}
+      {isLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><span className="spinner" /></div>
+      ) : expenses.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          No expenses logged yet. Track fuel, parking, shipping, and other costs that reduce actual margin.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {expenses.map((e) => {
+            const catInfo = EXPENSE_CATS.find((c) => c.value === e.category) ?? EXPENSE_CATS[6];
+            return (
+              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-elev)', borderRadius: 6, padding: '7px 10px', border: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 14, flexShrink: 0 }}>{catInfo.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{e.description}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                    {catInfo.label}
+                    {e.expense_date ? ` · ${new Date(e.expense_date).toLocaleDateString()}` : ''}
+                    {e.receipt_note ? ` · ${e.receipt_note}` : ''}
+                  </div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#f59e0b', flexShrink: 0 }}>
+                  ${Number(e.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <button
+                  className="btn"
+                  style={{ fontSize: 10, padding: '2px 7px', color: 'var(--red)', flexShrink: 0 }}
+                  onClick={() => deleteMut.mutate(e.id)}
+                  disabled={deleteMut.isPending}
+                >✕</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add expense form */}
+      {showAdd ? (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {EXPENSE_CATS.map((c) => (
+              <button
+                key={c.value}
+                className={`btn${cat === c.value ? ' btn-primary' : ''}`}
+                style={{ fontSize: 11, padding: '3px 10px' }}
+                onClick={() => setCat(c.value)}
+              >
+                {c.icon} {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="field-row">
+            <div className="field-group" style={{ flex: 2 }}>
+              <label className="field-label">Description</label>
+              <input className="input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Fuel for 200mi delivery drive" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: '0 0 100px' }}>
+              <label className="field-label">Amount ($)</label>
+              <input className="input" type="number" min={0} step={1} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="47.50" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field-group">
+              <label className="field-label">Date (optional)</label>
+              <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Receipt / Note (optional)</label>
+              <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Receipt #4521" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12 }}
+              disabled={!desc.trim() || !amount || addMut.isPending}
+              onClick={() => addMut.mutate()}
+            >
+              {addMut.isPending ? 'Adding…' : 'Add Expense'}
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowAdd(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" style={{ fontSize: 12, alignSelf: 'flex-start' }} onClick={() => setShowAdd(true)}>
+          + Add Expense
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Vehicle Intake Tab ────────────────────────────────────────────────────────
+
+function VehicleIntakeTab({ job }: { job: InstalledJob }) {
+  const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['job-vehicles', job.id],
+    queryFn: () => api.getJobVehicles(job.id),
+    staleTime: 30_000,
+  });
+
+  const vehicles = data?.vehicles ?? [];
+  const wrappedCount = vehicles.filter((v) => v.wrapped).length;
+
+  const EMPTY_FORM = (): Partial<JobVehicle> => ({
+    vehicle_num: vehicles.length + 1,
+    year: '', make: '', model: '', color: '', vin: '', plate: '',
+    mileage: undefined, condition_notes: '',
+  });
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState<Partial<JobVehicle>>(EMPTY_FORM);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editNotes, setEditNotes] = useState('');
+
+  const addMut = useMutation({
+    mutationFn: () => api.addJobVehicle(job.id, form),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] });
+      setForm(EMPTY_FORM());
+      setShowAdd(false);
+      showToast('Vehicle added', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const toggleWrapped = useMutation({
+    mutationFn: ({ vehicleId, wrapped }: { vehicleId: number; wrapped: boolean }) =>
+      api.updateJobVehicle(job.id, vehicleId, { wrapped }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] }),
+  });
+
+  const saveNotesMut = useMutation({
+    mutationFn: (vehicleId: number) => api.updateJobVehicle(job.id, vehicleId, { condition_notes: editNotes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] });
+      setEditId(null);
+      showToast('Notes saved', 'success');
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (vehicleId: number) => api.deleteJobVehicle(job.id, vehicleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-vehicles', job.id] }),
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Progress header */}
+      {vehicles.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 14px', alignItems: 'center' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Wrap Progress</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: wrappedCount === vehicles.length ? '#10b981' : 'var(--accent)' }}>
+              {wrappedCount} / {vehicles.length} wrapped
+            </div>
+          </div>
+          <div style={{ width: 80, height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${vehicles.length > 0 ? (wrappedCount / vehicles.length) * 100 : 0}%`, background: wrappedCount === vehicles.length ? '#10b981' : 'var(--accent)', borderRadius: 4, transition: 'width .3s' }} />
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle list */}
+      {isLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><span className="spinner" /></div>
+      ) : vehicles.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          No vehicles logged yet. Add each vehicle in the fleet to track intake condition and wrap progress. This creates a legal record of pre-existing damage.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {vehicles.map((v) => (
+            <div key={v.id} style={{ background: 'var(--bg-elev)', borderRadius: 6, border: `1px solid ${v.wrapped ? '#10b98130' : 'var(--border)'}`, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
+                {/* Wrap checkbox */}
+                <button
+                  title={v.wrapped ? 'Mark as not wrapped' : 'Mark as wrapped'}
+                  style={{ width: 20, height: 20, borderRadius: 4, border: `2px solid ${v.wrapped ? '#10b981' : 'var(--text-faint)'}`, background: v.wrapped ? '#10b981' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, color: '#fff', fontSize: 12, fontWeight: 900 }}
+                  onClick={() => toggleWrapped.mutate({ vehicleId: v.id, wrapped: !v.wrapped })}
+                  disabled={toggleWrapped.isPending}
+                >
+                  {v.wrapped ? '✓' : ''}
+                </button>
+
+                {/* Vehicle info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+                    {v.vehicle_num ? `#${v.vehicle_num} ` : ''}
+                    {[v.year, v.make, v.model].filter(Boolean).join(' ') || 'Vehicle'}
+                    {v.color ? <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>{v.color}</span> : null}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 1 }}>
+                    {v.plate && <span>🏷 {v.plate}</span>}
+                    {v.vin && <span title={v.vin}>VIN: {v.vin.slice(-6)}</span>}
+                    {v.mileage && <span>{v.mileage.toLocaleString()} mi</span>}
+                    {v.wrapped_at && <span style={{ color: '#10b981' }}>Wrapped {new Date(v.wrapped_at).toLocaleDateString()}</span>}
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 10, padding: '2px 8px' }}
+                    onClick={() => { setEditId(editId === v.id ? null : v.id); setEditNotes(v.condition_notes || ''); }}
+                  >Notes</button>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 10, padding: '2px 8px', color: 'var(--red)' }}
+                    onClick={() => deleteMut.mutate(v.id)}
+                    disabled={deleteMut.isPending}
+                  >✕</button>
+                </div>
+              </div>
+
+              {/* Condition notes */}
+              {(v.condition_notes || editId === v.id) && (
+                <div style={{ padding: '0 12px 10px', borderTop: '1px solid var(--border)' }}>
+                  {editId === v.id ? (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <input
+                        className="input"
+                        value={editNotes}
+                        onChange={(e) => setEditNotes(e.target.value)}
+                        placeholder="Pre-existing damage, scratches, dents…"
+                        style={{ flex: 1, fontSize: 12 }}
+                      />
+                      <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => saveNotesMut.mutate(v.id)} disabled={saveNotesMut.isPending}>Save</button>
+                      <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setEditId(null)}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 6, fontStyle: 'italic' }}>
+                      ⚠ {v.condition_notes}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add vehicle form */}
+      {showAdd ? (
+        <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)' }}>Add Vehicle</div>
+          <div className="field-row">
+            <div className="field-group" style={{ flex: '0 0 60px' }}>
+              <label className="field-label">#</label>
+              <input className="input" type="number" min={1} value={form.vehicle_num ?? ''} onChange={(e) => setForm((f) => ({ ...f, vehicle_num: e.target.value ? Number(e.target.value) : undefined }))} style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: '0 0 70px' }}>
+              <label className="field-label">Year</label>
+              <input className="input" value={form.year ?? ''} onChange={(e) => setForm((f) => ({ ...f, year: e.target.value }))} placeholder="2022" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Make</label>
+              <input className="input" value={form.make ?? ''} onChange={(e) => setForm((f) => ({ ...f, make: e.target.value }))} placeholder="Ford" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Model</label>
+              <input className="input" value={form.model ?? ''} onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))} placeholder="Transit" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field-group">
+              <label className="field-label">Color</label>
+              <input className="input" value={form.color ?? ''} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))} placeholder="White" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Plate</label>
+              <input className="input" value={form.plate ?? ''} onChange={(e) => setForm((f) => ({ ...f, plate: e.target.value }))} placeholder="ABC1234" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group">
+              <label className="field-label">Mileage</label>
+              <input className="input" type="number" min={0} value={form.mileage ?? ''} onChange={(e) => setForm((f) => ({ ...f, mileage: e.target.value ? Number(e.target.value) : undefined }))} placeholder="47000" style={{ fontSize: 12 }} />
+            </div>
+          </div>
+          <div className="field-group">
+            <label className="field-label">VIN (optional)</label>
+            <input className="input" value={form.vin ?? ''} onChange={(e) => setForm((f) => ({ ...f, vin: e.target.value }))} placeholder="1FTMF1CB0AKA12345" style={{ fontSize: 12 }} />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Pre-Existing Damage / Condition Notes</label>
+            <input className="input" value={form.condition_notes ?? ''} onChange={(e) => setForm((f) => ({ ...f, condition_notes: e.target.value }))} placeholder="Small dent rear bumper, scratch driver door…" style={{ fontSize: 12 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => addMut.mutate()} disabled={addMut.isPending}>
+              {addMut.isPending ? 'Adding…' : 'Add Vehicle'}
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowAdd(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" style={{ fontSize: 12, alignSelf: 'flex-start' }} onClick={() => setShowAdd(true)}>
+          + Log Vehicle
+        </button>
+      )}
+
+      {vehicles.length > 0 && (
+        <div style={{ fontSize: 10, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+          Check the box when each vehicle is wrapped. Condition notes are printed on the Completion Receipt as pre-existing damage disclosure.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Subcontractor Tab ─────────────────────────────────────────────────────────
 
 function SubcontractorTab({ job }: { job: InstalledJob }) {
@@ -687,6 +1074,22 @@ function SubcontractorTab({ job }: { job: InstalledJob }) {
     },
   });
 
+  const [markPaidId, setMarkPaidId] = useState<number | null>(null);
+  const [markPaidAmount, setMarkPaidAmount] = useState('');
+
+  const markPaidMut = useMutation({
+    mutationFn: ({ id, amount, undo }: { id: number; amount?: number; undo?: boolean }) =>
+      api.markSubAssignmentPaid(id, amount, undo),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['job-subs', job.id] });
+      qc.invalidateQueries({ queryKey: ['sub-payables'] });
+      setMarkPaidId(null);
+      setMarkPaidAmount('');
+      showToast('Payment recorded', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
   const assignments = assignData?.assignments ?? [];
   const subs = subsData?.subs ?? [];
   const totalSubCost = assignments.reduce((s, a) => s + Number(a.labor_cost), 0);
@@ -725,23 +1128,69 @@ function SubcontractorTab({ job }: { job: InstalledJob }) {
       ) : assignments.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {assignments.map((a) => (
-            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-elev)', borderRadius: 6, padding: '8px 12px', border: '1px solid var(--border)' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{a.sub_name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  {a.hours ? `${a.hours}h` : ''}
-                  {a.hours && a.labor_cost ? ' · ' : ''}
-                  {a.labor_cost ? `$${Number(a.labor_cost).toLocaleString()}` : ''}
-                  {a.notes ? ` · ${a.notes}` : ''}
-                  {a.specialty ? <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{a.specialty}</span> : null}
+            <div key={a.id} style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg-elev)', borderRadius: 6, padding: '8px 12px', border: `1px solid ${a.paid_at ? '#10b98130' : 'var(--border)'}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {a.sub_name}
+                    {a.paid_at && (
+                      <span style={{ fontSize: 9, fontWeight: 700, background: '#10b98120', color: '#10b981', padding: '1px 6px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: '.05em' }}>PAID</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {a.hours ? `${a.hours}h` : ''}
+                    {a.hours && a.labor_cost ? ' · ' : ''}
+                    {a.labor_cost ? `$${Number(a.labor_cost).toLocaleString()} owed` : ''}
+                    {a.paid_amount ? ` · $${Number(a.paid_amount).toLocaleString()} paid` : ''}
+                    {a.notes ? ` · ${a.notes}` : ''}
+                    {a.specialty ? <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{a.specialty}</span> : null}
+                    {a.paid_at ? <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>on {new Date(a.paid_at).toLocaleDateString()}</span> : null}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {!a.paid_at ? (
+                    <button
+                      className="btn"
+                      style={{ fontSize: 10, color: '#10b981', padding: '2px 8px', background: '#10b98112', border: '1px solid #10b98130' }}
+                      onClick={() => { setMarkPaidId(a.id); setMarkPaidAmount(String(a.labor_cost || '')); }}
+                    >Mark Paid</button>
+                  ) : (
+                    <button
+                      className="btn"
+                      style={{ fontSize: 10, color: 'var(--text-faint)', padding: '2px 8px' }}
+                      onClick={() => markPaidMut.mutate({ id: a.id, undo: true })}
+                      disabled={markPaidMut.isPending}
+                    >Undo</button>
+                  )}
+                  <button
+                    className="btn"
+                    style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }}
+                    onClick={() => removeMut.mutate(a.id)}
+                    disabled={removeMut.isPending}
+                  >Remove</button>
                 </div>
               </div>
-              <button
-                className="btn"
-                style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }}
-                onClick={() => removeMut.mutate(a.id)}
-                disabled={removeMut.isPending}
-              >Remove</button>
+              {markPaidId === a.id && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', paddingTop: 4, borderTop: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Amount paid:</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={50}
+                    value={markPaidAmount}
+                    onChange={(e) => setMarkPaidAmount(e.target.value)}
+                    style={{ fontSize: 12, width: 100, padding: '3px 8px' }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: 11, padding: '3px 10px' }}
+                    disabled={markPaidMut.isPending}
+                    onClick={() => markPaidMut.mutate({ id: a.id, amount: markPaidAmount ? Number(markPaidAmount) : undefined })}
+                  >Confirm</button>
+                  <button className="btn" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setMarkPaidId(null)}>Cancel</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -805,6 +1254,87 @@ const VEHICLE_SQFT: Record<string, number> = {
 // Standard roll: 25" × 50' → ~1.25m² per linear ft
 // 25" = 2.083 ft wide; 50' long = 2.083 × 50 = 104.17 sq ft per roll
 const SQFT_PER_ROLL = 25 / 12 * 50; // ~104.2 sq ft
+
+// ── Material Cost Estimator ───────────────────────────────────────────────────
+// Shown in the job creation form when material_cost is empty.
+// Calls /materials/estimate with the selected vehicle_type + vehicle_count,
+// then lets the user click a suggestion to auto-fill material_cost.
+function MaterialCostEstimator({ vehicleType, vehicleCount, onApply }: {
+  vehicleType: string;
+  vehicleCount: number;
+  onApply: (cost: number) => void;
+}) {
+  const [coverage, setCoverage] = useState<'full' | 'partial' | 'spot'>('full');
+  const { data, isLoading } = useQuery({
+    queryKey: ['mat-estimate', vehicleType, vehicleCount, coverage],
+    queryFn: () => api.estimateMaterialCost({ vehicle_type: vehicleType, vehicle_count: vehicleCount, coverage }),
+    staleTime: 60_000,
+    enabled: vehicleCount >= 1,
+  });
+
+  if (isLoading) return (
+    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>Estimating material cost…</div>
+  );
+  if (!data?.suggestions?.length) return (
+    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+      Add materials to inventory (Settings → Materials) to get cost estimates here.
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--bg-base)', border: '1px solid var(--border-soft)', borderRadius: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)' }}>
+          Material Estimate · {data.totalSqftLow}–{data.totalSqftHigh} sq ft
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['full', 'partial', 'spot'] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setCoverage(c)}
+              style={{
+                fontSize: 10, padding: '2px 7px', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer',
+                background: coverage === c ? 'var(--accent)' : 'transparent',
+                color: coverage === c ? '#fff' : 'var(--text-faint)',
+              }}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {data.suggestions.slice(0, 4).map((s) => (
+          <div
+            key={s.id}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--border-soft)' }}
+          >
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500 }}>{s.name}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                {s.rollsNeededLow}–{s.rollsNeededHigh} rolls · {s.rollsInStock} in stock
+                {!s.canCoverWithStock && (
+                  <span style={{ color: '#f59e0b', marginLeft: 4 }}>⚠ need {s.shortfall} more</span>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onApply(s.costLow)}
+              style={{
+                fontSize: 11, padding: '3px 10px', border: '1px solid var(--accent)', borderRadius: 5,
+                background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              ${s.costLow.toLocaleString()}–{s.costHigh.toLocaleString()} ↗
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function MaterialPOPanel({ job }: { job: InstalledJob }) {
   const showToast = useAppStore((s) => s.showToast);
@@ -933,9 +1463,17 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
   const [sendEmail, setSendEmail] = useState('');
   const [sendName, setSendName] = useState('');
   const [sending, setSending] = useState(false);
+  const [notifyEmail, setNotifyEmail] = useState('');
+  const [notifyPhone, setNotifyPhone] = useState('');
+  const [notifyName, setNotifyName] = useState('');
+  const [notifyVia, setNotifyVia] = useState<'email' | 'sms' | 'both'>('email');
+  const [notifyMsg, setNotifyMsg] = useState('');
+  const [notifying, setNotifying] = useState(false);
 
   const token = localStorage.getItem('wl_token') ?? '';
   const invoiceUrl = `/jobs/${job.id}/invoice?token=${encodeURIComponent(token)}`;
+  const workOrderUrl = api.getWorkOrderUrl(job.id);
+  const completionReceiptUrl = api.getCompletionReceiptUrl(job.id);
 
   async function doSend() {
     if (!sendEmail.trim()) return;
@@ -952,6 +1490,28 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
     }
   }
 
+  async function doNotifyReady() {
+    const hasEmail = notifyEmail.trim();
+    const hasPhone = notifyPhone.trim();
+    if (!hasEmail && !hasPhone) { showToast('Add email or phone to send notification', 'error'); return; }
+    setNotifying(true);
+    try {
+      const r = await api.notifyJobReady(job.id, {
+        via: notifyVia,
+        toEmail: hasEmail || undefined,
+        toPhone: hasPhone || undefined,
+        toName: notifyName.trim() || undefined,
+        customMessage: notifyMsg.trim() || undefined,
+      });
+      showToast(`Pickup notification sent via ${r.sentVia.join(' + ') || notifyVia}!`, 'success');
+      setNotifyEmail(''); setNotifyPhone(''); setNotifyName(''); setNotifyMsg('');
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Failed to send', 'error');
+    } finally {
+      setNotifying(false);
+    }
+  }
+
   const revenue = Number(job.job_revenue) || 0;
   const amountPaid = Number(job.amount_paid) || 0;
   const balance = revenue - amountPaid;
@@ -965,15 +1525,35 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
             {revenue > 0 ? `$${revenue.toLocaleString()} total · $${Math.max(0, balance).toLocaleString()} balance due` : 'No revenue logged'}
           </div>
         </div>
-        <a
-          href={invoiceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="btn btn-primary"
-          style={{ fontSize: 12, textDecoration: 'none' }}
-        >
-          View Invoice →
-        </a>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <a
+            href={workOrderUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn"
+            style={{ fontSize: 12, textDecoration: 'none' }}
+          >
+            🗂 Work Order
+          </a>
+          <a
+            href={completionReceiptUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn"
+            style={{ fontSize: 12, textDecoration: 'none', color: '#10b981', border: '1px solid #10b98130', background: '#10b98112' }}
+          >
+            ✅ Completion Receipt
+          </a>
+          <a
+            href={invoiceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn-primary"
+            style={{ fontSize: 12, textDecoration: 'none' }}
+          >
+            View Invoice →
+          </a>
+        </div>
       </div>
 
       <div>
@@ -1010,6 +1590,74 @@ function InvoicePanel({ job }: { job: InstalledJob }) {
           Client receives a branded email with job summary, balance due, and a payment link (if configured in Settings → Deposit Collection).
         </div>
       </div>
+
+      {/* ── Notify Client — vehicle ready for pickup ── */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', marginBottom: 10 }}>
+          📲 Notify Client — Vehicle Ready for Pickup
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['email', 'sms', 'both'] as const).map((v) => (
+              <button
+                key={v}
+                className={`btn${notifyVia === v ? ' btn-primary' : ''}`}
+                style={{ fontSize: 11, padding: '3px 10px', fontWeight: 700 }}
+                onClick={() => setNotifyVia(v)}
+              >
+                {v === 'email' ? '✉ Email' : v === 'sms' ? '📱 SMS' : '⚡ Both'}
+              </button>
+            ))}
+          </div>
+          {(notifyVia === 'email' || notifyVia === 'both') && (
+            <input
+              className="input"
+              type="email"
+              placeholder="Client email"
+              value={notifyEmail}
+              onChange={(e) => setNotifyEmail(e.target.value)}
+              style={{ fontSize: 13 }}
+            />
+          )}
+          {(notifyVia === 'sms' || notifyVia === 'both') && (
+            <input
+              className="input"
+              type="tel"
+              placeholder="Client phone (+1XXXXXXXXXX)"
+              value={notifyPhone}
+              onChange={(e) => setNotifyPhone(e.target.value)}
+              style={{ fontSize: 13 }}
+            />
+          )}
+          <input
+            className="input"
+            type="text"
+            placeholder="Contact name (optional)"
+            value={notifyName}
+            onChange={(e) => setNotifyName(e.target.value)}
+            style={{ fontSize: 13 }}
+          />
+          <textarea
+            className="input"
+            placeholder="Custom message (optional — default includes shop address + phone)"
+            value={notifyMsg}
+            onChange={(e) => setNotifyMsg(e.target.value)}
+            rows={2}
+            style={{ fontSize: 12, resize: 'vertical' }}
+          />
+          <button
+            className="btn"
+            style={{ alignSelf: 'flex-start', fontSize: 12, background: '#10b98118', color: '#10b981', border: '1px solid #10b98130', fontWeight: 700 }}
+            disabled={notifying || (!notifyEmail.trim() && !notifyPhone.trim())}
+            onClick={doNotifyReady}
+          >
+            {notifying ? 'Sending…' : '📲 Send Pickup Notification'}
+          </button>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            Sends a branded "your vehicle is ready" message with shop address, balance due, and your custom note. Logged to job notes automatically.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1019,7 +1667,7 @@ function JobModal({ job, onClose }: JobModalProps) {
   const qc = useQueryClient();
   const showToast = useAppStore((s) => s.showToast);
   const setMode = useAppStore((s) => s.setMode);
-  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'photos' | 'social' | 'case-study' | 'review' | 'invoice' | 'subs' | 'po' | 'vehicles' | 'expenses'>('details');
   const [matCatalogOpen, setMatCatalogOpen] = useState(false);
   const [form, setForm] = useState({
     company: isNew ? '' : (job as InstalledJob).company,
@@ -1092,6 +1740,8 @@ function JobModal({ job, onClose }: JobModalProps) {
             <button className={`jobs-tab ${activeTab === 'invoice' ? 'active' : ''}`} onClick={() => setActiveTab('invoice')}>💳 Invoice</button>
             <button className={`jobs-tab ${activeTab === 'subs' ? 'active' : ''}`} onClick={() => setActiveTab('subs')}>👷 Subs</button>
             <button className={`jobs-tab ${activeTab === 'po' ? 'active' : ''}`} onClick={() => setActiveTab('po')}>📋 Material PO</button>
+            <button className={`jobs-tab ${activeTab === 'vehicles' ? 'active' : ''}`} onClick={() => setActiveTab('vehicles')}>🚛 Vehicles</button>
+            <button className={`jobs-tab ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => setActiveTab('expenses')}>💰 Expenses</button>
           </div>
         )}
         <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1109,6 +1759,10 @@ function JobModal({ job, onClose }: JobModalProps) {
           <SubcontractorTab job={job as InstalledJob} />
         ) : (!isNew && activeTab === 'po') ? (
           <MaterialPOPanel job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'vehicles') ? (
+          <VehicleIntakeTab job={job as InstalledJob} />
+        ) : (!isNew && activeTab === 'expenses') ? (
+          <JobExpensesTab job={job as InstalledJob} />
         ) : (
           <>
           <div className="field-row">
@@ -1223,6 +1877,14 @@ function JobModal({ job, onClose }: JobModalProps) {
                 <input className="input" type="number" min={0} step={50} {...f('material_cost')} placeholder="0" />
               </div>
             </div>
+            {/* ── Material Cost Estimator ── */}
+            {form.vehicle_type && form.vehicle_count && !form.material_cost && (
+              <MaterialCostEstimator
+                vehicleType={form.vehicle_type}
+                vehicleCount={Number(form.vehicle_count)}
+                onApply={(cost) => setForm((s) => ({ ...s, material_cost: String(cost) }))}
+              />
+            )}
             {form.job_revenue && form.material_cost && Number(form.job_revenue) > 0 && (
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: -4 }}>
                 Gross margin: <strong style={{ color: ((Number(form.job_revenue) - Number(form.material_cost)) / Number(form.job_revenue)) >= 0.4 ? '#22c55e' : '#f59e0b' }}>

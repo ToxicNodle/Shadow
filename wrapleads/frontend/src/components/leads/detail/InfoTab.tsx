@@ -8,6 +8,7 @@ import { useAppStore } from '../../../store/useAppStore';
 import { api } from '../../../api/client';
 import { winProbability, winProbabilityColor } from '../../../utils/scoring';
 import FindEmailPanel from './FindEmailPanel';
+import FmcsaEnrichPanel from './FmcsaEnrichPanel';
 import SimilarWinsPanel from './SimilarWinsPanel';
 import LossReasonModal from '../../modals/LossReasonModal';
 import DealCoachPanel from './DealCoachPanel';
@@ -542,6 +543,87 @@ function WrapROICalculator({ lead }: { lead: Lead }) {
               </div>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NearbyCarriersPanel({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const showToast = useAppStore((s) => s.showToast);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['nearby-carriers', lead.serverId],
+    queryFn: () => api.getNearbyCarriers(lead.serverId!),
+    enabled: open && !!lead.serverId,
+    staleTime: 5 * 60_000,
+  });
+
+  const carriers = data?.carriers ?? [];
+  if (!lead.city && !lead.state) return null;
+
+  const addMut = useMutation({
+    mutationFn: (c: { name: string; dot_number: string; fleet_size: number | null; phone: string | null; website: string | null; city: string; state: string }) =>
+      api.createLead({
+        company: c.name,
+        category: 'fleet',
+        status: 'new',
+        dotNumber: c.dot_number,
+        phone: c.phone ?? undefined,
+        website: c.website ?? undefined,
+        city: c.city,
+        state: c.state,
+        fleetSize: c.fleet_size != null ? String(c.fleet_size) : undefined,
+        notes: `Nearby FMCSA carrier — found while reviewing ${lead.company} in ${lead.city}, ${lead.state}.`,
+      }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['leads'] }); showToast('Lead added!'); },
+  });
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 12 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-dim)', fontSize: 12, fontWeight: 600 }}
+      >
+        <span style={{ fontSize: 14 }}>📍</span>
+        Nearby Carriers in {lead.city}, {lead.state}
+        <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.6 }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {isLoading && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Finding carriers...</div>}
+          {!isLoading && carriers.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+              No untouched carriers found in {lead.city} with 5+ vehicles.
+            </div>
+          )}
+          {carriers.map((c) => (
+            <div key={c.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
+              background: 'var(--bg-elev)', borderRadius: 8, marginBottom: 6,
+              border: '1px solid var(--border)',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {c.fleet_size ? `${c.fleet_size} vehicles` : 'fleet size unknown'}{c.phone ? ` · ${c.phone}` : ''}
+                </div>
+              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent)15', borderRadius: 4, padding: '2px 6px', flexShrink: 0 }}>
+                {c.wrap_score}
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 10, padding: '3px 8px', flexShrink: 0 }}
+                onClick={() => addMut.mutate(c)}
+                disabled={addMut.isPending}
+              >
+                + Add
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1553,13 +1635,46 @@ function AICoach({ lead }: { lead: Lead }) {
 
 function ProposalSection({ lead }: { lead: Lead }) {
   const [notes, setNotes] = useState('');
-  const [proposal, setProposal] = useState<{ token: string; title: string; id: number } | null>(null);
+  const [proposal, setProposal] = useState<{ token: string; title: string; id: number; status: string; expires_at?: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateSaved, setTemplateSaved] = useState(false);
+  const [showExpiryPicker, setShowExpiryPicker] = useState(false);
+  const qc = useQueryClient();
 
   const mut = useMutation({
     mutationFn: () => api.createProposal(lead.serverId!, notes),
-    onSuccess: (data) => setProposal({ token: data.proposal.token, title: data.proposal.title, id: data.proposal.id }),
+    onSuccess: (data) => setProposal({
+      token: data.proposal.token as string,
+      title: data.proposal.title as string,
+      id: data.proposal.id as number,
+      status: (data.proposal.status as string) ?? 'draft',
+    }),
   });
+
+  const fromTemplateMut = useMutation({
+    mutationFn: (templateId: number) => api.createProposalFromTemplate(lead.serverId!, templateId),
+    onSuccess: (data) => setProposal({
+      token: data.proposal.token as string,
+      title: data.proposal.title as string,
+      id: data.proposal.id as number,
+      status: (data.proposal.status as string) ?? 'draft',
+    }),
+  });
+
+  const saveTemplateMut = useMutation({
+    mutationFn: () => api.saveProposalAsTemplate(proposal!.id, templateName.trim(), lead.category || undefined),
+    onSuccess: () => { setTemplateSaved(true); setShowSaveTemplate(false); setTemplateName(''); setTimeout(() => setTemplateSaved(false), 3000); },
+  });
+
+  const { data: templatesData } = useQuery({
+    queryKey: ['proposal-templates'],
+    queryFn: () => api.getProposalTemplates(),
+    staleTime: 60_000,
+  });
+  const templates = templatesData?.templates ?? [];
 
   const { data: viewData } = useQuery({
     queryKey: ['proposal-views', proposal?.id],
@@ -1567,6 +1682,39 @@ function ProposalSection({ lead }: { lead: Lead }) {
     enabled: !!proposal?.id,
     refetchInterval: 30_000,
   });
+
+  const { data: versionsData } = useQuery({
+    queryKey: ['proposal-versions', proposal?.id],
+    queryFn: () => api.getProposalVersions(proposal!.id),
+    enabled: !!proposal?.id && showVersions,
+    staleTime: 60_000,
+  });
+
+  const statusMut = useMutation({
+    mutationFn: (status: string) => api.updateProposal(proposal!.id, { status }),
+    onSuccess: (data) => {
+      setProposal((p) => p ? { ...p, status: (data.proposal.status as string) ?? p.status } : p);
+      qc.invalidateQueries({ queryKey: ['proposal-views', proposal?.id] });
+    },
+  });
+
+  const expiryMut = useMutation({
+    mutationFn: (expires_at: string | null) => api.updateProposal(proposal!.id, { expires_at }),
+    onSuccess: (data) => {
+      setProposal((p) => p ? { ...p, expires_at: (data.proposal.expires_at as string | null) ?? null } : p);
+      setShowExpiryPicker(false);
+    },
+  });
+
+  function getExpiryInfo(expiresAt: string | null | undefined): { label: string; color: string; urgent: boolean } | null {
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    const days = Math.ceil(ms / 86_400_000);
+    if (days < 0) return { label: `Expired ${Math.abs(days)}d ago`, color: '#ef4444', urgent: true };
+    if (days === 0) return { label: 'Expires today!', color: '#f59e0b', urgent: true };
+    if (days <= 3) return { label: `Expires in ${days}d`, color: '#f59e0b', urgent: true };
+    return { label: `Expires in ${days}d`, color: 'var(--text-muted)', urgent: false };
+  }
 
   const url = proposal ? api.getProposalUrl(proposal.token) : null;
 
@@ -1577,11 +1725,42 @@ function ProposalSection({ lead }: { lead: Lead }) {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+    draft: { label: 'Draft', color: '#6b7280' },
+    sent: { label: 'Sent', color: '#3b82f6' },
+    approved: { label: 'Approved', color: '#10b981' },
+    declined: { label: 'Declined', color: '#ef4444' },
+    expired: { label: 'Expired', color: '#ef4444' },
+  };
+
   return (
     <div className="proposal-section">
       <div className="proposal-section-title">AI Proposal Writer</div>
       {!proposal ? (
         <>
+          {templates.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 6 }}>Load from saved template</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    className="btn"
+                    style={{ fontSize: 11, padding: '4px 10px' }}
+                    disabled={fromTemplateMut.isPending}
+                    onClick={() => { if (lead.serverId) fromTemplateMut.mutate(t.id); }}
+                    title={t.category ? `Category: ${t.category}` : undefined}
+                  >
+                    {t.name}
+                    {t.use_count > 0 && <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-faint)' }}>×{t.use_count}</span>}
+                  </button>
+                ))}
+              </div>
+              {fromTemplateMut.isPending && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Creating from template…</div>}
+              {fromTemplateMut.isError && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{(fromTemplateMut.error as Error).message}</div>}
+              <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0 8px', opacity: 0.4 }} />
+            </div>
+          )}
           <textarea
             className="input"
             placeholder="Any extra context for the AI? (optional — vehicle types, specific asks, budget hints…)"
@@ -1597,15 +1776,54 @@ function ProposalSection({ lead }: { lead: Lead }) {
             disabled={mut.isPending}
             onClick={() => mut.mutate()}
           >
-            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : 'Generate Full Proposal'}
+            {mut.isPending ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Writing proposal…</> : 'Generate Full Proposal (AI)'}
           </button>
         </>
       ) : (
         <div className="proposal-ready">
-          <div className="proposal-ready-title">✓ Proposal ready</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <div className="proposal-ready-title" style={{ margin: 0 }}>✓ Proposal ready</div>
+            {proposal.status && STATUS_LABELS[proposal.status] && (
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: `${STATUS_LABELS[proposal.status].color}18`, color: STATUS_LABELS[proposal.status].color }}>
+                {STATUS_LABELS[proposal.status].label}
+              </span>
+            )}
+          </div>
           {viewData && viewData.view_count > 0 && (
-            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
+            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600, marginBottom: 4 }}>
               Viewed {viewData.view_count}× · Last seen {viewData.last_viewed_ago}
+            </div>
+          )}
+          {(() => {
+            const expInfo = getExpiryInfo(proposal.expires_at);
+            return expInfo ? (
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: expInfo.color }}>
+                {expInfo.urgent ? '⚠ ' : '⏱ '}{expInfo.label}
+                <button
+                  onClick={() => setShowExpiryPicker((s) => !s)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: 'var(--text-faint)', marginLeft: 6, padding: 0 }}
+                >edit</button>
+              </div>
+            ) : null;
+          })()}
+          {showExpiryPicker && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+              <input
+                type="date"
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px', flex: 1 }}
+                defaultValue={proposal.expires_at ? proposal.expires_at.split('T')[0] : ''}
+                min={new Date().toISOString().split('T')[0]}
+                onChange={(e) => {
+                  if (e.target.value) expiryMut.mutate(new Date(e.target.value + 'T23:59:59Z').toISOString());
+                  else expiryMut.mutate(null);
+                }}
+              />
+              <button
+                className="btn"
+                style={{ fontSize: 11, padding: '4px 8px', color: '#ef4444' }}
+                onClick={() => expiryMut.mutate(null)}
+              >Clear</button>
             </div>
           )}
           <div className="proposal-ready-url">{url}</div>
@@ -1616,10 +1834,88 @@ function ProposalSection({ lead }: { lead: Lead }) {
             <button className="btn" style={{ fontSize: 12 }} onClick={() => window.open(url!, '_blank')}>
               Preview
             </button>
+            {proposal.status === 'draft' && (
+              <button className="btn" style={{ fontSize: 12, color: '#3b82f6', borderColor: '#3b82f620' }} onClick={() => statusMut.mutate('sent')} disabled={statusMut.isPending}>
+                Mark Sent
+              </button>
+            )}
+            {proposal.status === 'sent' && (
+              <button className="btn" style={{ fontSize: 12, color: '#10b981', borderColor: '#10b98120' }} onClick={() => statusMut.mutate('approved')} disabled={statusMut.isPending}>
+                Mark Approved
+              </button>
+            )}
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => setShowVersions(!showVersions)}>
+              History
+            </button>
+            <button className="btn" style={{ fontSize: 12 }} onClick={() => { setShowSaveTemplate((s) => !s); setTemplateName(proposal?.title ?? ''); }}>
+              Save as Template
+            </button>
+            {!proposal.expires_at && (
+              <button
+                className="btn"
+                style={{ fontSize: 12 }}
+                onClick={() => setShowExpiryPicker((s) => !s)}
+                title="Set a deadline — proposal auto-expires on that date"
+              >
+                Set Expiry
+              </button>
+            )}
+            {showExpiryPicker && !proposal.expires_at && (
+              <input
+                type="date"
+                className="input"
+                style={{ fontSize: 12, padding: '4px 8px' }}
+                min={new Date().toISOString().split('T')[0]}
+                onChange={(e) => {
+                  if (e.target.value) expiryMut.mutate(new Date(e.target.value + 'T23:59:59Z').toISOString());
+                }}
+              />
+            )}
             <button className="btn" style={{ fontSize: 12 }} onClick={() => setProposal(null)}>
               New
             </button>
           </div>
+
+          {showSaveTemplate && (
+            <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Save Proposal as Reusable Template</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  className="input"
+                  style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
+                  placeholder="Template name (e.g. Fleet Wrap Standard, DI-NOC Commercial)…"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                />
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                  disabled={!templateName.trim() || saveTemplateMut.isPending}
+                  onClick={() => saveTemplateMut.mutate()}
+                >
+                  {saveTemplateMut.isPending ? 'Saving…' : 'Save Template'}
+                </button>
+              </div>
+              {templateSaved && <div style={{ fontSize: 11, color: '#10b981', marginTop: 6 }}>Template saved — available next time you create a proposal.</div>}
+            </div>
+          )}
+
+          {showVersions && (
+            <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Version History</div>
+              {!versionsData?.versions?.length ? (
+                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>No previous versions — history is saved automatically when you edit.</div>
+              ) : (
+                versionsData.versions.map((v) => (
+                  <div key={v.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', minWidth: 24 }}>v{v.version_num}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-dim)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.title}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{new Date(v.saved_at).toLocaleDateString()}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2083,6 +2379,12 @@ export default function InfoTab({ lead }: Props) {
               </div>
             )}
           </div>
+          {!local.phone && lead.sourceCompanyId && lead.serverId && (
+            <FmcsaEnrichPanel
+              lead={lead}
+              onPhoneFound={(phone) => { setLocal({ ...local, phone }); patch('phone', phone); }}
+            />
+          )}
         </div>
         <div className="field-group">
           <label className="field-label">Fleet Size</label>
@@ -2264,6 +2566,7 @@ export default function InfoTab({ lead }: Props) {
       {lead.serverId && <ProspectNewsPanel lead={local} />}
       {lead.serverId && <LeadIntelBriefPanel lead={local} />}
       {lead.serverId && <CompetitiveIntelPanel lead={local} />}
+      {lead.serverId && <NearbyCarriersPanel lead={local} />}
       {lead.serverId && <CallScriptPanel lead={local} />}
       {(local.fleetSize || local.category === 'fleet') && <WrapROICalculator lead={local} />}
       {lead.serverId && local.status === 'won' && <ClientLTVCard lead={local} />}

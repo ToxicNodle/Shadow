@@ -28,11 +28,15 @@ export interface Lead {
   lost_reason?: string | null;
   lost_competitor?: string | null;
   lost_at?: string | null;
+  smsOptedOut?: boolean;
+  dotNumber?: string | null;
+  fmcsaEnrichedAt?: string | null;
+  firstContactedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply' | 'design_approved' | 'call_logged' | 'news_intel' | 'call_initiated' | 'call_completed';
+export type ActivityType = 'email_sent' | 'email_copied' | 'email_generated' | 'draft_email' | 'status_changed' | 'note_added' | 'called' | 'meeting_set' | 'sequence_activated' | 'quote_created' | 'quote_sent' | 'quote_accepted' | 'email_reply' | 'design_approved' | 'call_logged' | 'news_intel' | 'call_initiated' | 'call_completed' | 'sms_sent' | 'sms_received' | 'note';
 
 export interface LeadActivity {
   id: string;
@@ -134,6 +138,7 @@ export interface SavedSearch {
   };
   new_count: number;
   last_checked?: string;
+  alert_enabled: boolean;
 }
 
 export interface Settings {
@@ -169,6 +174,15 @@ export interface Settings {
   avgDealValue: string;
   depositPaymentLink: string;
   hunterApiKey: string;
+  autoReplyEnabled: boolean;
+  autoReplyResponseTime: string;
+  autoReplyMessage: string;
+  autoQuoteExpiryEmail: boolean;
+  autoCrossSell: boolean;
+  autoProposalNudge: boolean;
+  autoKickoffEmail: boolean;
+  autoCareEmail: boolean;
+  autoProposalThankyou: boolean;
 }
 
 export interface CarrierSearchParams {
@@ -299,6 +313,15 @@ export const DEFAULT_SETTINGS: Settings = {
   avgDealValue: '3500',
   depositPaymentLink: '',
   hunterApiKey: '',
+  autoReplyEnabled: true,
+  autoReplyResponseTime: '',
+  autoReplyMessage: '',
+  autoQuoteExpiryEmail: true,
+  autoCrossSell: true,
+  autoProposalNudge: true,
+  autoKickoffEmail: true,
+  autoCareEmail: true,
+  autoProposalThankyou: true,
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
@@ -361,6 +384,26 @@ export interface InstalledJob {
   scheduled_crew_count?: number | null;
 }
 
+// ── Material Inventory ────────────────────────────────────────────────────────
+
+export interface MaterialItem {
+  id: number;
+  user_id: string;
+  brand: string;
+  product_name: string;
+  sku?: string | null;
+  finish?: string | null;
+  roll_width_in: number;
+  roll_length_ft: number;
+  rolls_in_stock: number;
+  rolls_on_order: number;
+  unit_cost: number;
+  reorder_at: number;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── Subcontractor ─────────────────────────────────────────────────────────────
 
 export interface Subcontractor {
@@ -371,6 +414,10 @@ export interface Subcontractor {
   specialty?: string | null;
   labor_rate?: number | null;
   notes?: string | null;
+  tax_id?: string | null;
+  business_type?: 'individual' | 'business' | null;
+  email?: string | null;
+  address?: string | null;
   created_at: string;
   updated_at: string;
   job_count?: number;
@@ -387,6 +434,42 @@ export interface SubcontractorAssignment {
   hours: number;
   labor_cost: number;
   notes?: string | null;
+  paid_at?: string | null;
+  paid_amount?: number | null;
+  created_at: string;
+}
+
+// ── Job Expenses ──────────────────────────────────────────────────────────────
+
+export interface JobExpense {
+  id: number;
+  job_id: number;
+  user_id: string;
+  category: 'fuel' | 'parking' | 'shipping' | 'design' | 'equipment' | 'travel' | 'misc';
+  description: string;
+  amount: number;
+  expense_date?: string | null;
+  receipt_note?: string | null;
+  created_at: string;
+}
+
+// ── Job Vehicle Intake ────────────────────────────────────────────────────────
+
+export interface JobVehicle {
+  id: number;
+  job_id: number;
+  user_id: string;
+  vehicle_num?: number | null;
+  year?: string | null;
+  make?: string | null;
+  model?: string | null;
+  color?: string | null;
+  vin?: string | null;
+  plate?: string | null;
+  mileage?: number | null;
+  condition_notes?: string | null;
+  wrapped: boolean;
+  wrapped_at?: string | null;
   created_at: string;
 }
 
@@ -553,6 +636,25 @@ export interface QuoteLineItem {
 
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'declined' | 'invoiced';
 
+export interface SmsSequenceStep {
+  id: number;
+  step_num: number;
+  day_offset: number;
+  message: string;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  scheduled_for: string;
+  sent_at: string | null;
+  error: string | null;
+}
+
+export interface SmsSequence {
+  id: number;
+  status: 'active' | 'completed' | 'cancelled';
+  category: string | null;
+  created_at: string;
+  steps: SmsSequenceStep[];
+}
+
 export interface ShopQuote {
   id: number;
   lead_id: number;
@@ -571,4 +673,33 @@ export interface ShopQuote {
   accepted_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OmniSequenceStep {
+  id: number;
+  stepNum: number;
+  dayOffset: number;
+  channel: 'email' | 'sms';
+  subject: string | null;
+  message: string;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  scheduledFor: string;
+  sentAt: string | null;
+  error: string | null;
+}
+
+export interface OmniSequence {
+  id: number;
+  status: 'active' | 'completed' | 'cancelled';
+  category: string | null;
+  createdAt: string;
+  steps: OmniSequenceStep[];
+}
+
+export interface OmniTemplateStep {
+  stepNum: number;
+  dayOffset: number;
+  channel: 'email' | 'sms';
+  subject: string | null;
+  message: string;
 }

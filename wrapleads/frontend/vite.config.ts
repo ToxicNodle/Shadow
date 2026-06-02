@@ -57,6 +57,13 @@ export default defineConfig({
       '/tools':             API,
       '/review':            API,
       '/subcontractors':    API,
+      '/twilio':            API,
+      '/fleet':             API,
+      '/push':              API,
+      '/email-templates':  API,
+      '/materials':        API,
+      '/hook':             API,
+      '/embed.js':         API,
     },
   },
 });

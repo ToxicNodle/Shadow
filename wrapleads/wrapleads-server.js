@@ -179,6 +179,7 @@ async function migrateDb() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches (user_id)`);
+  await pool.query(`ALTER TABLE saved_searches ADD COLUMN IF NOT EXISTS alert_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS leads (
@@ -291,10 +292,32 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason TEXT`);
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_competitor TEXT`);
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS competitor_price NUMERIC(10,2)`);
   } catch (e) { console.warn('[migrate] Could not add lost_reason columns:', e.message); }
   try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_asked_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add referral_asked_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS kickoff_email_sent_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add kickoff_email_sent_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add sms_opted_out column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_searched_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add email_searched_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_enriched_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add fmcsa_enriched_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_contacted_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add first_contacted_at column:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_fleet_size_snapshot INT`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_fleet_checked_at   TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS fmcsa_fleet_grew_at      TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add fmcsa_fleet_monitor columns:', e.message); }
   // Indexes for leads (idempotent — safe to run on existing DBs)
   try {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_followup     ON leads (user_id, followup_due_at) WHERE followup_due_at IS NOT NULL`);
@@ -318,6 +341,10 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_track_token ON email_tracking(token)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_track_lead  ON email_tracking(lead_id)`);
   } catch (e) { console.warn('[migrate] Could not create email_tracking table:', e.message); }
+  try {
+    await pool.query(`ALTER TABLE email_tracking ADD COLUMN IF NOT EXISTS template_id BIGINT REFERENCES email_templates(id) ON DELETE SET NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_track_tpl ON email_tracking(template_id) WHERE template_id IS NOT NULL`);
+  } catch (e) { console.warn('[migrate] Could not add template_id to email_tracking:', e.message); }
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS lead_activities (
@@ -359,6 +386,75 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_eq_lead ON email_queue(lead_id, user_id)`);
   } catch (e) {
     console.warn('[migrate] Could not create email_queue table:', e.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sms_sequences (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        lead_id    BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        status     TEXT NOT NULL DEFAULT 'active',
+        category   TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_smsseq_lead ON sms_sequences(lead_id, user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_smsseq_status ON sms_sequences(status)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sms_sequence_steps (
+        id            BIGSERIAL PRIMARY KEY,
+        sequence_id   BIGINT NOT NULL REFERENCES sms_sequences(id) ON DELETE CASCADE,
+        step_num      INT NOT NULL,
+        day_offset    INT NOT NULL,
+        message       TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        scheduled_for TIMESTAMPTZ NOT NULL,
+        sent_at       TIMESTAMPTZ,
+        twilio_sid    TEXT,
+        error         TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_smsseq_steps_pending ON sms_sequence_steps(scheduled_for) WHERE status = 'pending'`);
+  } catch (e) {
+    console.warn('[migrate] Could not create sms_sequence tables:', e.message);
+  }
+
+  // Omni sequences — multi-channel (email + SMS) interleaved drip campaigns
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS omni_sequences (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        lead_id    BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        status     TEXT NOT NULL DEFAULT 'active',
+        category   TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_omniseq_lead ON omni_sequences(lead_id, user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_omniseq_status ON omni_sequences(status)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS omni_sequence_steps (
+        id            BIGSERIAL PRIMARY KEY,
+        sequence_id   BIGINT NOT NULL REFERENCES omni_sequences(id) ON DELETE CASCADE,
+        step_num      INT NOT NULL,
+        day_offset    INT NOT NULL,
+        channel       TEXT NOT NULL DEFAULT 'email',
+        subject       TEXT,
+        message       TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        scheduled_for TIMESTAMPTZ NOT NULL,
+        sent_at       TIMESTAMPTZ,
+        ext_id        TEXT,
+        error         TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_omniseq_steps_pending ON omni_sequence_steps(scheduled_for) WHERE status = 'pending'`);
+  } catch (e) {
+    console.warn('[migrate] Could not create omni_sequence tables:', e.message);
   }
 
   try {
@@ -604,8 +700,54 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS mockup_url TEXT`);
     await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS roi_section TEXT`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS nudge_sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE proposals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not create proposals table:', e.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS proposal_versions (
+        id          BIGSERIAL PRIMARY KEY,
+        proposal_id BIGINT NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL,
+        version_num INT  NOT NULL DEFAULT 1,
+        title       TEXT,
+        intro       TEXT,
+        services    TEXT,
+        pricing_html TEXT,
+        timeline    TEXT,
+        notes       TEXT,
+        saved_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pv_proposal ON proposal_versions(proposal_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create proposal_versions table:', e.message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS proposal_templates (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        category     TEXT,
+        intro        TEXT,
+        services     TEXT,
+        pricing_html TEXT,
+        timeline     TEXT,
+        notes        TEXT,
+        use_count    INT NOT NULL DEFAULT 0,
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ptpl_user ON proposal_templates(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create proposal_templates table:', e.message);
   }
 
   // Sprint 7: quote_requests table — inbound lead capture
@@ -660,6 +802,12 @@ async function migrateDb() {
     console.warn('[migrate] Could not create shop_quotes table:', e.message);
   }
 
+  try {
+    await pool.query(`ALTER TABLE shop_quotes ADD COLUMN IF NOT EXISTS expiry_email_sent BOOLEAN DEFAULT FALSE`);
+  } catch (e) {
+    console.warn('[migrate] Could not add expiry_email_sent column:', e.message);
+  }
+
   // User-defined quote line item templates
   try {
     await pool.query(`
@@ -674,6 +822,52 @@ async function migrateDb() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_qt_user ON quote_templates(user_id)`);
   } catch (e) {
     console.warn('[migrate] Could not create quote_templates table:', e.message);
+  }
+
+  // User-saved email outreach templates
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_templates (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        label      TEXT NOT NULL,
+        tag        TEXT NOT NULL DEFAULT 'Custom',
+        subject    TEXT NOT NULL,
+        body       TEXT NOT NULL,
+        use_count  INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_tpl_user ON email_templates(user_id, created_at DESC)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create email_templates table:', e.message);
+  }
+
+  // Material inventory — live vinyl/film stock tracking per shop
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS material_inventory (
+        id               BIGSERIAL PRIMARY KEY,
+        user_id          TEXT NOT NULL,
+        brand            TEXT NOT NULL,
+        product_name     TEXT NOT NULL,
+        sku              TEXT,
+        finish           TEXT,
+        roll_width_in    INT NOT NULL DEFAULT 60,
+        roll_length_ft   INT NOT NULL DEFAULT 25,
+        rolls_in_stock   NUMERIC(6,1) NOT NULL DEFAULT 0,
+        rolls_on_order   NUMERIC(6,1) NOT NULL DEFAULT 0,
+        unit_cost        NUMERIC(10,2) NOT NULL DEFAULT 0,
+        reorder_at       NUMERIC(6,1) NOT NULL DEFAULT 2,
+        notes            TEXT,
+        created_at       TIMESTAMPTZ DEFAULT NOW(),
+        updated_at       TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_material_inv_user ON material_inventory(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create material_inventory table:', e.message);
   }
 
   // Case studies — auto-generated from completed jobs
@@ -756,6 +950,10 @@ async function migrateDb() {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_subcontractors_user ON subcontractors(user_id)`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS tax_id TEXT`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS business_type TEXT DEFAULT 'individual'`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS email TEXT`);
+    await pool.query(`ALTER TABLE subcontractors ADD COLUMN IF NOT EXISTS address TEXT`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS job_subcontractors (
         id          BIGSERIAL PRIMARY KEY,
@@ -768,6 +966,8 @@ async function migrateDb() {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_subs_job ON job_subcontractors(job_id)`);
+    await pool.query(`ALTER TABLE job_subcontractors ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE job_subcontractors ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2)`);
   } catch (e) {
     console.warn('[migrate] Could not create subcontractors tables:', e.message);
   }
@@ -776,8 +976,56 @@ async function migrateDb() {
   try {
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_install_date DATE`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_crew_count INT DEFAULT 2`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS cross_sell_email_sent BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS care_email_sent_at TIMESTAMPTZ`);
   } catch (e) {
     console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
+  }
+
+  // Miscellaneous job expenses (fuel, shipping, design, parking, etc.)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_expenses (
+        id          BIGSERIAL PRIMARY KEY,
+        job_id      BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL,
+        category    TEXT NOT NULL DEFAULT 'misc',
+        description TEXT NOT NULL,
+        amount      NUMERIC(10,2) NOT NULL DEFAULT 0,
+        expense_date DATE DEFAULT CURRENT_DATE,
+        receipt_note TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_expenses_job ON job_expenses(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create job_expenses table:', e.message);
+  }
+
+  // Per-vehicle intake records for fleet jobs — track each vehicle individually
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_vehicles (
+        id            BIGSERIAL PRIMARY KEY,
+        job_id        BIGINT NOT NULL REFERENCES installed_jobs(id) ON DELETE CASCADE,
+        user_id       TEXT NOT NULL,
+        vehicle_num   INT,
+        year          TEXT,
+        make          TEXT,
+        model         TEXT,
+        color         TEXT,
+        vin           TEXT,
+        plate         TEXT,
+        mileage       INT,
+        condition_notes TEXT,
+        wrapped       BOOLEAN DEFAULT FALSE,
+        wrapped_at    TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_vehicles_job ON job_vehicles(job_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create job_vehicles table:', e.message);
   }
 
   // CAN-SPAM compliant unsubscribe records for outbound prospect emails
@@ -909,6 +1157,45 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create lead_contacts table:', e.message);
   }
+
+  // Outbound webhook integrations (Zapier, Make, Slack, etc.)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_webhooks (
+        id                BIGSERIAL PRIMARY KEY,
+        user_id           TEXT NOT NULL,
+        event_type        TEXT NOT NULL,
+        url               TEXT NOT NULL,
+        secret            TEXT,
+        label             TEXT,
+        enabled           BOOLEAN NOT NULL DEFAULT TRUE,
+        last_triggered_at TIMESTAMPTZ,
+        last_status_code  INT,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_webhooks_user ON user_webhooks(user_id, event_type) WHERE enabled = TRUE`);
+  } catch (e) {
+    console.warn('[migrate] Could not create user_webhooks table:', e.message);
+  }
+
+  // Web Push subscriptions — one row per browser/device per user
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        endpoint    TEXT NOT NULL UNIQUE,
+        p256dh      TEXT NOT NULL,
+        auth        TEXT NOT NULL,
+        ua          TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create push_subscriptions table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -1021,6 +1308,8 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/portal/'))        return true;
     if (p.startsWith('/portfolio/'))     return true;
     if (p.startsWith('/quote-request/')) return true;
+    if (p.startsWith('/hook/'))          return true;
+    if (p.startsWith('/embed.js'))       return true;
     if (p.startsWith('/demo'))           return true;
     if (p.startsWith('/migrate/'))       return true;
     if (p.startsWith('/for/'))           return true;
@@ -1055,12 +1344,55 @@ const fleetSubmitLimiter = rateLimit({
 // ----------------------------------------------------------------------------
 // Auth middleware
 // ----------------------------------------------------------------------------
+// Web Push — lazily initialized so missing VAPID env vars don't crash boot
+let webPush = null;
+function getWebPush() {
+  if (webPush) return webPush;
+  const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
+  const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
+  const vapidMailto  = process.env.VAPID_MAILTO || 'mailto:admin@wrapos.app';
+  if (!vapidPublic || !vapidPrivate) return null;
+  try {
+    webPush = require('web-push');
+    webPush.setVapidDetails(vapidMailto, vapidPublic, vapidPrivate);
+    return webPush;
+  } catch (e) {
+    console.warn('[web-push] Could not load module:', e.message);
+    return null;
+  }
+}
+
+async function sendPushToUser(userId, { title, body, url = '/', tag, requireInteraction = false }) {
+  const wp = getWebPush();
+  if (!wp) return;
+  try {
+    const { rows } = await pool.query('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id=$1', [String(userId)]);
+    if (!rows.length) return;
+    const payload = JSON.stringify({ title, body, url, tag, requireInteraction });
+    for (const sub of rows) {
+      wp.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload)
+        .catch(async (err) => {
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            // Subscription expired — remove it
+            await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
+          }
+        });
+    }
+  } catch (e) {
+    console.warn('[web-push] sendPushToUser error:', e.message);
+  }
+}
+
 async function createNotification(userId, { type, title, body = '', metadata = {} }) {
   try {
     await pool.query(
       `INSERT INTO notifications (user_id, type, title, body, metadata) VALUES ($1,$2,$3,$4,$5)`,
       [String(userId), type, title, body, JSON.stringify(metadata)]
     );
+    // Also fire web push for high-priority events (non-blocking)
+    if (['new_lead', 'email_reply', 'design_approved', 'hot_prospect'].includes(type)) {
+      sendPushToUser(userId, { title, body, url: '/', tag: type });
+    }
   } catch (e) {
     console.warn('[notify]', e.message);
   }
@@ -1231,6 +1563,47 @@ app.post('/unsubscribe/:token', async (req, res) => {
     await pool.query(`UPDATE email_unsubscribes SET unsubscribed_at=COALESCE(unsubscribed_at,NOW()) WHERE token=$1`, [token]);
     res.sendStatus(200);
   } catch { res.sendStatus(500); }
+});
+
+// GET /settings/unsubscribes — list all opted-out emails for this user
+app.get('/settings/unsubscribes', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT eu.id, eu.email, eu.unsubscribed_at, l.company, l.id AS lead_id
+      FROM email_unsubscribes eu
+      LEFT JOIN leads l ON l.id = eu.lead_id AND l.user_id = $1
+      WHERE eu.user_id = $1
+      ORDER BY eu.unsubscribed_at DESC
+    `, [uid]);
+    res.json({ unsubscribes: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /settings/unsubscribes/:id — remove an email from the suppression list
+app.delete('/settings/unsubscribes/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    await pool.query(`DELETE FROM email_unsubscribes WHERE id=$1 AND user_id=$2`, [id, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /settings/unsubscribes — manually suppress an email address
+app.post('/settings/unsubscribes', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { email } = req.body || {};
+  if (!email || typeof email !== 'string') return res.status(400).json({ error: 'email required' });
+  const token = require('crypto').randomBytes(16).toString('hex');
+  try {
+    await pool.query(
+      `INSERT INTO email_unsubscribes (user_id, email, token) VALUES ($1, $2, $3) ON CONFLICT (user_id, LOWER(email)) DO NOTHING`,
+      [uid, email.trim().toLowerCase(), token]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /leads/:id/unsubscribe-status — check if a lead's email is opted out (authed)
@@ -2291,7 +2664,7 @@ app.get('/carriers/by-dot/:dotNumber', authMiddleware, async (req, res) => {
 app.get('/searches/saved', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, name, filters, last_checked, new_count, created_at
+      `SELECT id, name, filters, last_checked, new_count, alert_enabled, created_at
        FROM saved_searches WHERE user_id = $1 ORDER BY created_at DESC`,
       [String(req.user.id)]
     );
@@ -2317,6 +2690,21 @@ app.delete('/searches/saved/:id', authMiddleware, async (req, res) => {
   try {
     await pool.query(`DELETE FROM saved_searches WHERE id = $1 AND user_id = $2`, [id, String(req.user.id)]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /searches/saved/:id/alert — toggle email/notification alert for new carriers matching this search
+app.patch('/searches/saved/:id/alert', authMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid id' });
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `UPDATE saved_searches SET alert_enabled = NOT alert_enabled WHERE id=$1 AND user_id=$2 RETURNING alert_enabled`,
+      [id, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, alert_enabled: rows[0].alert_enabled });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2369,6 +2757,8 @@ function leadRow(row) {
     lost_reason: row.lost_reason || null,
     lost_competitor: row.lost_competitor || null,
     lost_at: row.lost_at ? row.lost_at.toISOString() : null,
+    smsOptedOut: row.sms_opted_out || false,
+    firstContactedAt: row.first_contacted_at ? row.first_contacted_at.toISOString() : null,
   };
 }
 
@@ -2383,6 +2773,129 @@ async function logActivity(pool, { leadId, userId, type, subject = null, body = 
       [leadId, userId, type, subject, body, JSON.stringify(metadata)]
     );
   } catch { /* non-critical */ }
+}
+
+// Record the first time this lead was contacted (email, SMS, or phone call).
+// No-ops if already set — safe to call on every outbound action.
+async function markFirstContact(leadId, userId) {
+  try {
+    await pool.query(
+      `UPDATE leads SET first_contacted_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND first_contacted_at IS NULL`,
+      [leadId, userId]
+    );
+  } catch { /* non-critical */ }
+}
+
+// Fire all enabled webhooks for a user+event. Non-blocking — failures are
+// logged but never surface to the caller. HMAC-SHA256 signed for Zapier-style
+// verification: header X-WrapOS-Signature: sha256=<hex digest>
+async function fireWebhooks(userId, eventType, data) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, url, secret FROM user_webhooks WHERE user_id=$1 AND event_type=$2 AND enabled=TRUE`,
+      [String(userId), eventType]
+    );
+    if (!rows.length) return;
+    const crypto = require('crypto');
+    const payload = JSON.stringify({ event: eventType, timestamp: new Date().toISOString(), data });
+    for (const hook of rows) {
+      (async () => {
+        try {
+          const headers = { 'Content-Type': 'application/json', 'User-Agent': 'WrapOS-Webhook/1.0' };
+          if (hook.secret) {
+            headers['X-WrapOS-Signature'] = 'sha256=' + crypto.createHmac('sha256', hook.secret).update(payload).digest('hex');
+          }
+          const r = await fetch(hook.url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(8000) });
+          await pool.query(
+            `UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=$1 WHERE id=$2`,
+            [r.status, hook.id]
+          );
+        } catch (err) {
+          await pool.query(`UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=0 WHERE id=$1`, [hook.id]).catch(() => {});
+          console.warn(`[webhook] Delivery failed for hook ${hook.id}:`, err.message);
+        }
+      })();
+    }
+  } catch (err) {
+    console.warn('[webhook] fireWebhooks error:', err.message);
+  }
+}
+
+// ── Kickoff Email — sent automatically when a lead is marked Won ─────────────
+// Fire-and-forget: does not block the PUT /leads/:id response.
+async function sendKickoffEmail(uid, lead) {
+  try {
+    if (!lead.email) return;
+    const already = await pool.query(`SELECT kickoff_email_sent_at FROM leads WHERE id=$1`, [lead.id]);
+    if (already.rows[0]?.kickoff_email_sent_at) return;
+
+    const settingsRow = await pool.query(`SELECT settings_json, email AS shop_email FROM users WHERE id=$1`, [uid]);
+    const s = settingsRow.rows[0]?.settings_json || {};
+    if (s.autoKickoffEmail === false) return;
+
+    const shopName = s.companyName || s.senderName || 'us';
+    const senderName = s.senderName || 'The team';
+    const shopEmail = s.replyToEmail || settingsRow.rows[0]?.shop_email || null;
+    const contactFirst = (lead.contact_name || lead.company || 'there').split(' ')[0];
+
+    let subject = `Welcome aboard — next steps for ${lead.company}`;
+    let body;
+
+    const anthropic = getAnthropic();
+    if (anthropic) {
+      try {
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 500,
+          messages: [{
+            role: 'user',
+            content: `Write a professional welcome/project kickoff email from ${senderName} at ${shopName} to ${lead.contact_name || lead.company} at ${lead.company}.
+
+Context:
+- They just agreed to a ${lead.category || 'vehicle wrap'} project
+- This is the first email after closing the deal
+- Include: thank them, outline 3-4 concrete next steps (measurement/survey, design consultation, material approval, install date)
+- Ask for anything needed to kick off (vehicle list for fleet, preferred colors/style direction, contact for site access)
+- Keep it warm, professional, and under 150 words
+
+Return JSON: {"subject": "...", "body": "plain text email, no markdown"}`,
+          }],
+        });
+        const parsed = JSON.parse(msg.content[0].text);
+        subject = parsed.subject || subject;
+        body = parsed.body;
+      } catch (_e) { body = null; }
+    }
+
+    if (!body) {
+      body = `Hi ${contactFirst},\n\nThank you for choosing ${shopName} — we're excited to get started on your project!\n\nHere's what happens next:\n\n1. We'll reach out to schedule a vehicle survey and measurements\n2. Our designer will prepare concepts for your review\n3. You'll approve the final design and material\n4. We'll confirm the install date and coordinate access\n\nIn the meantime, it would help to have your current vehicle list (make, model, year, count) and any brand guidelines or color preferences you'd like us to follow.\n\nLooking forward to working with you.\n\nBest,\n${senderName}\n${shopName}`;
+    }
+
+    const resend = getResend();
+    if (!resend) return;
+
+    const htmlBody = body.split('\n').map((l) => l.trim() ? `<p style="margin:0 0 10px 0;color:#1e293b;font-size:15px;line-height:1.6">${l}</p>` : '').join('');
+    const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px"><div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0"><div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>${htmlBody}</div></body></html>`;
+
+    await resend.emails.send({
+      from: `${shopName} <${shopEmail || 'kickoff@wrapos.com'}>`,
+      to: lead.email,
+      subject,
+      html,
+    });
+
+    await pool.query(`UPDATE leads SET kickoff_email_sent_at = NOW() WHERE id = $1`, [lead.id]);
+    await logActivity(pool, {
+      leadId: lead.id, userId: uid, type: 'email_sent',
+      subject: `[Auto] Kickoff: ${subject}`,
+      body,
+      metadata: { auto: true, kickoff: true },
+    });
+    console.log(`[kickoff] sent to ${lead.email} for ${lead.company}`);
+  } catch (e) {
+    console.error('[kickoff] error for lead', lead.id, ':', e.message);
+  }
 }
 
 app.get('/leads', authMiddleware, async (req, res) => {
@@ -2477,10 +2990,27 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
 
-    // Log status change activity
+    // Log status change activity + fire outbound webhooks
     if (d.status && d.status !== prevStatus) {
       await logActivity(pool, { leadId: id, userId: uid, type: 'status_changed',
         metadata: { from: prevStatus, to: d.status } });
+      if (d.status === 'won' || d.status === 'lost') {
+        const row = r.rows[0];
+        fireWebhooks(uid, `lead.${d.status}`, {
+          id: row.id, company: row.company, category: row.category, status: row.status,
+          contactName: row.contact_name, email: row.email, phone: row.phone,
+          city: row.city, state: row.state, fleetSize: row.fleet_size,
+        });
+        if (d.status === 'won') {
+          sendKickoffEmail(uid, row).catch(() => {});
+        }
+      } else {
+        const row = r.rows[0];
+        fireWebhooks(uid, 'lead.advanced', {
+          id: row.id, company: row.company, category: row.category,
+          previousStatus: prevStatus, status: row.status,
+        });
+      }
     }
 
     res.json(leadRow(r.rows[0]));
@@ -2806,7 +3336,7 @@ app.post('/leads/:id/activities', authMiddleware, async (req, res) => {
 app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
-  const { subject, body, toEmail, toName } = req.body || {};
+  const { subject, body, toEmail, toName, template_id } = req.body || {};
   if (!subject || !body || !toEmail) return res.status(400).json({ error: 'subject, body, toEmail required' });
 
   const uid = String(req.user.id);
@@ -2842,10 +3372,14 @@ app.post('/leads/:id/send-email', authMiddleware, async (req, res) => {
   try {
     // Create tracking token
     const trackToken = require('crypto').randomBytes(16).toString('hex');
+    const tplId = template_id ? parseInt(template_id) : null;
     await pool.query(
-      `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
-      [trackToken, uid, id, subject]
+      `INSERT INTO email_tracking (token, user_id, lead_id, subject, template_id) VALUES ($1,$2,$3,$4,$5)`,
+      [trackToken, uid, id, subject, tplId || null]
     );
+    if (tplId) {
+      pool.query(`UPDATE email_templates SET use_count=use_count+1, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [tplId, uid]).catch(() => {});
+    }
     const baseUrl = process.env.APP_BASE_URL || APP_URL;
     const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
 
@@ -2881,6 +3415,7 @@ ${unsubFooter.html}
 
     await logActivity(pool, { leadId: id, userId: uid, type: 'email_sent',
       subject, body, metadata: { to: toEmail, toName, resend_id: data.id, track_token: trackToken } });
+    await markFirstContact(id, uid);
     await pool.query(
       `UPDATE leads SET last_contacted = CURRENT_DATE,
         followup_due_at = CURRENT_DATE + INTERVAL '3 days',
@@ -4593,6 +5128,80 @@ app.get('/bids/calendar.ics', async (req, res) => {
   res.send(ical);
 });
 
+// GET /leads/followups.ics — iCal feed of all upcoming CRM follow-up dates
+// Users can subscribe this URL in Google Calendar / Outlook / Apple Calendar.
+// Uses a token-based auth so calendar apps can subscribe without Bearer headers.
+app.get('/leads/followups.ics', async (req, res) => {
+  const token = (req.query.token || req.headers.authorization?.replace('Bearer ', ''))?.trim();
+  if (!token) return res.status(401).send('Unauthorized');
+
+  let uid;
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'wraplead_secret');
+    uid = String(decoded.id);
+  } catch {
+    return res.status(401).send('Invalid token');
+  }
+
+  const { rows } = await pool.query(
+    `SELECT id, company, contact_name, status, category, followup_due_at
+     FROM leads
+     WHERE user_id = $1
+       AND followup_due_at IS NOT NULL
+       AND followup_due_at >= CURRENT_DATE - INTERVAL '3 days'
+       AND status NOT IN ('won','lost')
+     ORDER BY followup_due_at ASC
+     LIMIT 200`,
+    [uid]
+  );
+
+  const STATUS_EMOJI = { new: '🆕', cold: '❄️', contacted: '📧', replied: '💬', meeting: '📅', proposal: '📋' };
+
+  function escapeICS(str = '') {
+    return (str || '').replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+  }
+
+  const now = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z';
+  const events = rows.map((r) => {
+    const dateStr = new Date(r.followup_due_at).toISOString().slice(0, 10).replace(/-/g, '');
+    const emoji = STATUS_EMOJI[r.status] || '📌';
+    const title = `${emoji} Follow up: ${r.company}${r.contact_name ? ` (${r.contact_name})` : ''}`;
+    const desc = `Status: ${r.status || 'unknown'} | Category: ${r.category || 'general'}`;
+    return [
+      'BEGIN:VEVENT',
+      `UID:wrapos-followup-${r.id}@wrapos.app`,
+      `DTSTAMP:${now}`,
+      `DTSTART;VALUE=DATE:${dateStr}`,
+      `DTEND;VALUE=DATE:${dateStr}`,
+      `SUMMARY:${escapeICS(title)}`,
+      `DESCRIPTION:${escapeICS(desc)}`,
+      'BEGIN:VALARM',
+      'TRIGGER:-PT1H',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${escapeICS('Follow up today: ' + r.company)}`,
+      'END:VALARM',
+      'END:VEVENT',
+    ].join('\r\n');
+  });
+
+  const ical = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//WrapOS//CRM Follow-ups//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:WrapOS CRM Follow-ups',
+    'X-WR-TIMEZONE:UTC',
+    ...events,
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="wrapos-followups.ics"');
+  res.send(ical);
+});
+
 // ============================================================================
 // GC Relationship Directory — aggregate bid stats per general contractor
 // ============================================================================
@@ -4716,20 +5325,22 @@ app.post('/leads/:id/win-loss', authMiddleware, async (req, res) => {
     const leadId = Number(req.params.id);
     const own = await pool.query('SELECT id FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]);
     if (!own.rows.length) return res.status(404).json({ error: 'Not found' });
-    const { factor = 'other', notes = '', competitor = '' } = req.body || {};
+    const { factor = 'other', notes = '', competitor = '', competitorPrice = null } = req.body || {};
+    const compPrice = competitorPrice ? parseFloat(competitorPrice) : null;
     // Persist structured loss data to the lead row itself
     await pool.query(
-      `UPDATE leads SET lost_reason=$1, lost_competitor=$2, lost_at=NOW(), updated_at=NOW() WHERE id=$3 AND user_id=$4`,
-      [factor || null, competitor || null, leadId, uid]
+      `UPDATE leads SET lost_reason=$1, lost_competitor=$2, competitor_price=$3, lost_at=NOW(), updated_at=NOW() WHERE id=$4 AND user_id=$5`,
+      [factor || null, competitor || null, compPrice, leadId, uid]
     );
     await logActivity(pool, {
       leadId, userId: uid, type: 'status_changed',
-      subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}`,
+      subject: `Win/Loss factor: ${factor}${competitor ? ` (${competitor})` : ''}${compPrice ? ` — competitor priced at $${compPrice.toLocaleString()}` : ''}`,
       body: notes,
       metadata: {
         win_loss_factor: factor,
         win_loss_notes: notes,
         ...(competitor ? { competitor } : {}),
+        ...(compPrice ? { competitor_price: compPrice } : {}),
       },
     });
     res.json({ ok: true });
@@ -4879,12 +5490,14 @@ app.get('/analytics/loss-analysis', authMiddleware, async (req, res) => {
         ORDER BY count DESC
       `, [uid]),
 
-      // Top competitors mentioned in losses
+      // Top competitors mentioned in losses, with avg competitor price
       pool.query(`
         SELECT
           lost_competitor AS competitor,
           COUNT(*)::INT AS losses,
-          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories
+          ARRAY_AGG(DISTINCT category) FILTER (WHERE category IS NOT NULL) AS categories,
+          ROUND(AVG(competitor_price) FILTER (WHERE competitor_price IS NOT NULL), 0)::INT AS avg_competitor_price,
+          COUNT(competitor_price) FILTER (WHERE competitor_price IS NOT NULL)::INT AS price_data_points
         FROM leads
         WHERE user_id=$1 AND status='lost' AND lost_competitor IS NOT NULL AND lost_competitor != ''
         GROUP BY lost_competitor
@@ -5014,15 +5627,674 @@ app.post('/leads/:id/sms', authMiddleware, async (req, res) => {
     if (!twilioResp.ok) throw new Error(twilioData.message || 'Twilio error');
 
     await logActivity(pool, {
-      leadId, userId: uid, type: 'called',
+      leadId, userId: uid, type: 'sms_sent',
       subject: 'SMS sent',
       body: message,
       metadata: { twilio_sid: twilioData.sid, to: lead.phone },
     });
+    await markFirstContact(leadId, uid);
     await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1 AND user_id=$2`, [leadId, uid]);
 
     res.json({ ok: true, sid: twilioData.sid });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Twilio inbound SMS webhook — handles replies from prospects (STOP opt-outs and messages)
+// Twilio sends application/x-www-form-urlencoded. This route must be public (no auth).
+// Shop owners configure their Twilio number's webhook URL to:
+//   https://wrapos.app/twilio/incoming-sms
+app.post('/twilio/incoming-sms', express.urlencoded({ extended: false }), async (req, res) => {
+  // Respond with empty TwiML immediately so Twilio doesn't retry
+  res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+
+  try {
+    const from = (req.body.From || '').trim();
+    const to   = (req.body.To   || '').trim();
+    const body = (req.body.Body || '').trim();
+    if (!from || !to) return;
+
+    const STOP_WORDS = ['stop','unsubscribe','cancel','end','quit','stopall','remove'];
+    const isOptOut = STOP_WORDS.includes(body.toLowerCase());
+
+    // Match `to` to a user by their Twilio fromNumber setting
+    const usersR = await pool.query(
+      `SELECT id, settings_json FROM users WHERE settings_json->>'twilioFromNumber' = $1 LIMIT 5`,
+      [to]
+    );
+    if (!usersR.rows.length) return;
+
+    for (const user of usersR.rows) {
+      const uid = String(user.id);
+
+      // Find matching lead by phone number
+      const leadR = await pool.query(
+        `SELECT id, company FROM leads WHERE user_id=$1 AND phone=$2 LIMIT 1`,
+        [uid, from]
+      );
+      const lead = leadR.rows[0];
+      if (!lead) continue;
+
+      if (isOptOut) {
+        // Mark lead as SMS opted out + cancel active sequences
+        await pool.query(
+          `UPDATE leads SET sms_opted_out=TRUE, sms_opted_out_at=NOW() WHERE id=$1 AND user_id=$2`,
+          [lead.id, uid]
+        );
+        const seqR = await pool.query(
+          `UPDATE sms_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active' RETURNING id`,
+          [lead.id, uid]
+        );
+        if (seqR.rows.length) {
+          await pool.query(
+            `UPDATE sms_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`,
+            [seqR.rows[0].id]
+          );
+        }
+        await logActivity(pool, {
+          leadId: lead.id, userId: uid, type: 'note',
+          subject: 'SMS opt-out received',
+          body: `${lead.company} replied "${body}" — SMS sequences cancelled, lead marked opted out.`,
+          metadata: { from, to, optOut: true },
+        });
+        console.log(`[twilio] Opt-out from ${from} → lead ${lead.id} (${lead.company})`);
+      } else {
+        // Log inbound message as activity
+        await logActivity(pool, {
+          leadId: lead.id, userId: uid, type: 'sms_received',
+          subject: `SMS reply from ${lead.company}`,
+          body: body,
+          metadata: { from, to, channel: 'sms' },
+        });
+        // Create notification
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, lead_id) VALUES ($1,'sms_reply',$2,$3,$4) ON CONFLICT DO NOTHING`,
+          [uid, `SMS reply from ${lead.company}`, body.slice(0, 200), lead.id]
+        ).catch(() => {});
+        console.log(`[twilio] Inbound SMS from ${from} → lead ${lead.id}: "${body.slice(0, 60)}"`);
+      }
+    }
+  } catch (e) {
+    console.error('[twilio/incoming-sms]', e.message);
+  }
+});
+
+// ── SMS Campaign sequences ────────────────────────────────────────────────────
+// Category-aware 3-touch templates. Variables: {first} {company} {shop} {sender} {portfolio}
+const SMS_TEMPLATES = {
+  fleet: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop} here. I noticed {company}'s fleet and wanted to reach out about branding your trucks. Is fleet graphics on your radar? {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop} again. Fleet wraps generate 30K-70K impressions/day per truck at a fraction of billboard cost. Worth a 5-min call?" },
+    { dayOffset: 10, msg: "Last one from {sender} at {shop}: if the timing isn't right, reply STOP. Otherwise I'd love to put a free estimate together for {company}." },
+  ],
+  construction: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop}. Saw {company}'s trucks out on a job — your fleet could be doing double-duty as moving billboards. Interested in a wrap estimate? {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop} here. Construction fleets are ideal for wraps — constant visibility across job sites. Quick call to explore?" },
+    { dayOffset: 10, msg: "{first}, last follow-up from {shop}. Reply STOP to opt out, or let me know when to connect about {company}'s fleet." },
+  ],
+  dinoc: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop}. We install DI-NOC architectural film on surfaces that can't be painted or replaced. Any commercial reno projects at {company} coming up? {portfolio}" },
+    { dayOffset: 5,  msg: "Hey {first} — {shop}. DI-NOC is popular with GCs for quick commercial refreshes. Happy to send a sample kit?" },
+    { dayOffset: 12, msg: "Final note from {shop}: reply STOP to opt out. Otherwise, let me know a good time to chat about {company}." },
+  ],
+  colorchange: [
+    { dayOffset: 0,  msg: "Hey {first}! {sender} from {shop}. We do premium color-change wraps, PPF, and custom finishes. Thought we'd be a great fit for {company}. {portfolio}" },
+    { dayOffset: 5,  msg: "Hey {first} — {shop} here. We have project slots open this month. Interested in a quote for {company}?" },
+    { dayOffset: 12, msg: "Last from {shop}: reply STOP anytime, or drop a good time to connect!" },
+  ],
+  racing: [
+    { dayOffset: 0,  msg: "Hey {first}! {sender} with {shop}. We love what {company} is doing on track — would love to talk livery design and race wrap installs for next season. {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop}. We handle full livery from concept to install. Happy to share motorsport portfolio examples?" },
+    { dayOffset: 9,  msg: "Last ping from {shop}. Reply STOP to opt out, or let's talk {company}'s next season livery." },
+  ],
+  gc_referral: [
+    { dayOffset: 0,  msg: "Hi {first}, {sender} with {shop}. We partner with GCs on architectural film, signage, and fleet wraps. Would {company} have upcoming projects that might fit? {portfolio}" },
+    { dayOffset: 4,  msg: "Hey {first} — {shop} again. We offer GC referral rates and handle the full install. Worth keeping us in your vendor network?" },
+    { dayOffset: 10, msg: "Last note from {shop}: reply STOP anytime. Otherwise, happy to connect for 10 min about {company}." },
+  ],
+};
+SMS_TEMPLATES.design = SMS_TEMPLATES.colorchange;
+SMS_TEMPLATES.reatec = SMS_TEMPLATES.dinoc;
+SMS_TEMPLATES.wallgraphics = SMS_TEMPLATES.gc_referral;
+
+// Multi-channel omni sequences — interleaved email + SMS, 4 steps over ~14 days
+// Variables: {first} {company} {shop} {sender} {portfolio}
+const OMNI_TEMPLATES = {
+  fleet: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Fleet branding for {company}',
+      message: `Hi {first},\n\n{sender} here from {shop}. I came across {company}'s fleet and wanted to reach out — we specialize in vehicle graphics for fleets your size.\n\nFleet wraps generate 30,000–70,000 impressions per truck per day at a fraction of billboard cost. Most clients see ROI within 6 months.\n\nPortfolio: {portfolio}\n\nWould a 10-minute call this week be worth your time?\n\n{sender}\n{shop}` },
+    { dayOffset: 3,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Did you see my email about fleet wraps for {company}? Even 5–10 trucks wrapped adds 300K impressions/week. Worth a quick call?" },
+    { dayOffset: 8,  channel: 'email',
+      subject: 'How fleet wraps outperform billboards — case study',
+      message: `Hi {first},\n\nOne more email on fleet branding — one of our clients with 22 trucks saved 40% vs. billboard spend while getting 2× the local impressions.\n\nI'd love to put a custom estimate together for {company}'s fleet at no charge.\n\nPortfolio: {portfolio}\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last note from {shop}: {sender} here. Fleet wrap estimate for {company} still on the table — reply STOP to opt out, or drop me a time to connect." },
+  ],
+  construction: [
+    { dayOffset: 0,  channel: 'email',
+      subject: "Your trucks are already covering the market — let's brand them",
+      message: `Hi {first},\n\n{sender} with {shop} here. {company}'s trucks are already logging miles across job sites and neighborhoods every day. Wrapping them turns every mile into a billboard impression.\n\nConstruction fleets get exceptional visibility — highways, neighborhoods, job sites.\n\nPortfolio: {portfolio}\n\nWould you be open to a quick call?\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent an email about fleet wraps for {company}'s construction trucks. Happy to put a free estimate together?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'Free fleet estimate for {company}',
+      message: `Hi {first},\n\nFollowing up on fleet graphics for {company}. We've worked with construction companies to turn service trucks into moving billboards. Happy to put a free no-obligation estimate together.\n\nPortfolio: {portfolio}\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "{first}, final note from {shop}: fleet wrap estimate for {company} still available. Reply STOP to opt out, or let's connect." },
+  ],
+  dinoc: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'DI-NOC architectural film for commercial refreshes',
+      message: `Hi {first},\n\n{sender} from {shop}. We install DI-NOC architectural film on surfaces that can't be painted or replaced — walls, columns, elevator cabs, retail fixtures.\n\nFaster than paint, lasts 7+ years, no closure time needed. Popular with GCs and commercial property managers.\n\nPortfolio: {portfolio}\n\nAny upcoming renovation projects at {company}?\n\n{sender}\n{shop}` },
+    { dayOffset: 5,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent details on DI-NOC film for {company}. Great for quick commercial refreshes. Happy to send a sample kit?" },
+    { dayOffset: 10, channel: 'email',
+      subject: 'Sample kit for {company} — 800+ patterns, no commitment',
+      message: `Hi {first},\n\nHappy to send a DI-NOC sample kit to {company} — no cost, no commitment. 800+ patterns (wood, metal, stone, solid colors). Quick install with minimal disruption.\n\nPortfolio: {portfolio}\n\nShould I drop a kit in the mail?\n\n{sender}\n{shop}` },
+    { dayOffset: 16, channel: 'sms',
+      message: "Last from {shop}: {sender} here. Reply STOP to opt out. Otherwise — sample kit for {company}? Could save your next project 30% vs. replacement." },
+  ],
+  colorchange: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Custom wraps + PPF for {company}',
+      message: `Hi {first},\n\n{sender} from {shop}. We do premium color-change wraps, PPF, and custom finishes. I thought {company} would be a great fit.\n\nPortfolio: {portfolio}\n\nInterested in a quote?\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first}! {sender} from {shop}. Sent an email about custom wraps / PPF for {company}. We have slots open this month — want a quote?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'Project slots open — {company}',
+      message: `Hi {first},\n\nFollowing up on custom wraps for {company}. We have project slots open this month and would love to fill one with a great job.\n\nHappy to do a free consultation. Portfolio: {portfolio}\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last from {shop}: custom wrap / PPF quote for {company} still open. Reply STOP to opt out, or drop your availability!" },
+  ],
+  racing: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Livery design + race wrap installs — {company}',
+      message: `Hi {first},\n\n{sender} from {shop}. We love what {company} is doing on track. We handle full livery from concept through install, and we work with teams of all sizes.\n\nPortfolio: {portfolio}\n\nWould love to chat about next season's wrap.\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent an email about livery design for {company}. We do race wraps concept-to-install. Happy to share motorsport examples?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'Motorsport portfolio + next season availability',
+      message: `Hi {first},\n\nFollowing up on livery for {company}. Our motorsport portfolio covers weekend warriors to regional series teams. Any timeline works.\n\nPortfolio: {portfolio}\n\nWhat's your production window for next season?\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last ping from {shop}: livery design for {company}'s next season still on the table — reply STOP to opt out or let's set up a call." },
+  ],
+  gc_referral: [
+    { dayOffset: 0,  channel: 'email',
+      subject: 'Vendor partnership — wraps, signage, architectural film',
+      message: `Hi {first},\n\n{sender} from {shop}. We partner with GCs on architectural film, commercial fleet wraps, and site signage. We offer referral rates and handle the full install.\n\nPortfolio: {portfolio}\n\nWould {company} have upcoming projects where we might be useful?\n\n{sender}\n{shop}` },
+    { dayOffset: 4,  channel: 'sms',
+      message: "Hey {first} — {sender} from {shop}. Sent details on GC vendor partnerships. We do wraps, signage, DI-NOC — worth keeping us in your vendor list?" },
+    { dayOffset: 9,  channel: 'email',
+      subject: 'GC referral rates + quick turnarounds — {company}',
+      message: `Hi {first},\n\nFollowing up on our vendor partnership opportunity. We offer GC referral commissions and clean installs.\n\nPortfolio: {portfolio}\n\nHappy to jump on a quick call to explain the referral structure.\n\n{sender}\n{shop}` },
+    { dayOffset: 14, channel: 'sms',
+      message: "Last note from {shop}: {sender} here. Wrap/signage vendor partnership for {company} — reply STOP to opt out, or let's connect for 10 min." },
+  ],
+};
+OMNI_TEMPLATES.design      = OMNI_TEMPLATES.colorchange;
+OMNI_TEMPLATES.reatec      = OMNI_TEMPLATES.dinoc;
+OMNI_TEMPLATES.wallgraphics = OMNI_TEMPLATES.gc_referral;
+
+// POST /leads/:id/sms-sequence — start a 3-touch SMS campaign
+app.post('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT phone, company, contact_name, category, sms_opted_out FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    if (lead.sms_opted_out) return res.status(400).json({ error: 'This lead has opted out of SMS — respect their preference' });
+    if (!lead.phone) return res.status(400).json({ error: 'No phone number on this lead — add one first' });
+    if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+      return res.status(400).json({ error: 'Twilio not configured — add credentials in Settings → SMS' });
+    }
+
+    // Cancel any existing active sequence for this lead
+    await pool.query(
+      `UPDATE sms_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active'`,
+      [leadId, uid]
+    );
+    await pool.query(
+      `UPDATE sms_sequence_steps SET status='skipped'
+       WHERE sequence_id IN (SELECT id FROM sms_sequences WHERE lead_id=$1 AND user_id=$2) AND status='pending'`,
+      [leadId, uid]
+    );
+
+    const seqR = await pool.query(
+      `INSERT INTO sms_sequences (user_id, lead_id, status, category) VALUES ($1,$2,'active',$3) RETURNING id`,
+      [uid, leadId, lead.category]
+    );
+    const seqId = seqR.rows[0].id;
+
+    const templates = SMS_TEMPLATES[lead.category] || SMS_TEMPLATES.fleet;
+    const first = (lead.contact_name || '').split(' ')[0] || '';
+    const shopToken = s.shopToken || '';
+    const portfolioUrl = shopToken ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${shopToken}` : (s.portfolioUrl || '');
+
+    function fillTemplate(msg) {
+      return msg
+        .replace(/{first}/g, first || 'there')
+        .replace(/{company}/g, lead.company || 'your company')
+        .replace(/{shop}/g, s.companyName || 'us')
+        .replace(/{sender}/g, s.senderName || 'your rep')
+        .replace(/{portfolio}/g, portfolioUrl);
+    }
+
+    const now = new Date();
+    const steps = [];
+    for (let i = 0; i < templates.length; i++) {
+      const t = templates[i];
+      let scheduledFor;
+      if (t.dayOffset === 0) {
+        // First message in 5 minutes
+        scheduledFor = new Date(now.getTime() + 5 * 60 * 1000);
+      } else {
+        scheduledFor = new Date(now.getTime() + t.dayOffset * 24 * 60 * 60 * 1000);
+        // Send at 10 AM local time — approximate by anchoring to noon UTC
+        scheduledFor.setUTCHours(17, 0, 0, 0);
+      }
+
+      const r = await pool.query(
+        `INSERT INTO sms_sequence_steps (sequence_id, step_num, day_offset, message, status, scheduled_for)
+         VALUES ($1,$2,$3,$4,'pending',$5) RETURNING id`,
+        [seqId, i + 1, t.dayOffset, fillTemplate(t.msg), scheduledFor]
+      );
+      steps.push({
+        id: r.rows[0].id, stepNum: i + 1, dayOffset: t.dayOffset,
+        message: fillTemplate(t.msg), scheduledFor, status: 'pending',
+      });
+    }
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'SMS campaign started',
+      body: `3-touch SMS sequence launched — ${templates.length} messages over ${templates[templates.length - 1].dayOffset} days.`,
+    });
+    await pool.query(`UPDATE leads SET updated_at=NOW() WHERE id=$1 AND user_id=$2`, [leadId, uid]);
+
+    res.json({ ok: true, sequenceId: seqId, steps });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/sms-sequence — get most recent sequence status
+app.get('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const seqR = await pool.query(
+      `SELECT id, status, category, created_at FROM sms_sequences
+       WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+    if (!seqR.rows.length) return res.json({ ok: true, sequence: null });
+
+    const seq = seqR.rows[0];
+    const stepsR = await pool.query(
+      `SELECT id, step_num, day_offset, message, status, scheduled_for, sent_at, error
+       FROM sms_sequence_steps WHERE sequence_id=$1 ORDER BY step_num`,
+      [seq.id]
+    );
+
+    res.json({ ok: true, sequence: { ...seq, steps: stepsR.rows } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /leads/:id/sms-sequence — cancel active sequence
+app.delete('/leads/:id/sms-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const seqR = await pool.query(
+      `UPDATE sms_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active' RETURNING id`,
+      [leadId, uid]
+    );
+    if (seqR.rows.length) {
+      await pool.query(
+        `UPDATE sms_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`,
+        [seqR.rows[0].id]
+      );
+    }
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'SMS campaign cancelled',
+      body: 'The active SMS sequence was cancelled.',
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/sms-templates — preview templates for a lead's category
+app.get('/leads/:id/sms-templates', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT company, contact_name, category FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const templates = SMS_TEMPLATES[lead.category] || SMS_TEMPLATES.fleet;
+    const first = (lead.contact_name || '').split(' ')[0] || '';
+    const shopToken = s.shopToken || '';
+    const portfolioUrl = shopToken ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${shopToken}` : (s.portfolioUrl || '');
+
+    const filled = templates.map((t, i) => ({
+      stepNum: i + 1,
+      dayOffset: t.dayOffset,
+      message: t.msg
+        .replace(/{first}/g, first || 'there')
+        .replace(/{company}/g, lead.company || 'your company')
+        .replace(/{shop}/g, s.companyName || 'us')
+        .replace(/{sender}/g, s.senderName || 'your rep')
+        .replace(/{portfolio}/g, portfolioUrl),
+    }));
+
+    res.json({ ok: true, category: lead.category, templates: filled });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Omni (multi-channel) sequences ───────────────────────────────────────────
+
+function fillOmniTemplate(msg, { first, company, shop, sender, portfolio }) {
+  return msg
+    .replace(/{first}/g, first || 'there')
+    .replace(/{company}/g, company || 'your company')
+    .replace(/{shop}/g, shop || 'us')
+    .replace(/{sender}/g, sender || 'your rep')
+    .replace(/{portfolio}/g, portfolio || '');
+}
+
+// GET /leads/:id/omni-templates — preview the 4-step campaign
+app.get('/leads/:id/omni-templates', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT company, contact_name, category, email, phone FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const s = settR.rows[0]?.settings_json || {};
+    const vars = {
+      first: (lead.contact_name || '').split(' ')[0] || '',
+      company: lead.company || '',
+      shop: s.companyName || '{shop}',
+      sender: s.senderName || '{sender}',
+      portfolio: s.shopToken
+        ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${s.shopToken}`
+        : (s.portfolioUrl || ''),
+    };
+    const tpls = OMNI_TEMPLATES[lead.category] || OMNI_TEMPLATES.fleet;
+    const steps = tpls.map((t, i) => ({
+      stepNum: i + 1,
+      dayOffset: t.dayOffset,
+      channel: t.channel,
+      subject: t.subject ? fillOmniTemplate(t.subject, vars) : null,
+      message: fillOmniTemplate(t.message, vars),
+    }));
+    res.json({ ok: true, category: lead.category, hasEmail: !!lead.email, hasPhone: !!lead.phone, steps });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /leads/:id/omni-sequence — launch 4-step email+SMS campaign
+app.post('/leads/:id/omni-sequence', authMiddleware, requireShopFlow, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const [leadR, settR] = await Promise.all([
+      pool.query('SELECT company, contact_name, category, email, phone, sms_opted_out FROM leads WHERE id=$1 AND user_id=$2', [leadId, uid]),
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]),
+    ]);
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const s = settR.rows[0]?.settings_json || {};
+    if (!lead.email && !lead.phone) {
+      return res.status(400).json({ error: 'Lead needs at least an email or phone number to start a campaign' });
+    }
+
+    // Cancel any existing active omni sequence for this lead
+    const existing = await pool.query(
+      `SELECT id FROM omni_sequences WHERE lead_id=$1 AND user_id=$2 AND status='active'`,
+      [leadId, uid]
+    );
+    for (const row of existing.rows) {
+      await pool.query(`UPDATE omni_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`, [row.id]);
+    }
+    await pool.query(`UPDATE omni_sequences SET status='cancelled' WHERE lead_id=$1 AND user_id=$2 AND status='active'`, [leadId, uid]);
+
+    const seqR = await pool.query(
+      `INSERT INTO omni_sequences (user_id, lead_id, status, category) VALUES ($1,$2,'active',$3) RETURNING id`,
+      [uid, leadId, lead.category]
+    );
+    const seqId = seqR.rows[0].id;
+
+    const vars = {
+      first: (lead.contact_name || '').split(' ')[0] || '',
+      company: lead.company || '',
+      shop: s.companyName || 'us',
+      sender: s.senderName || 'your rep',
+      portfolio: s.shopToken
+        ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${s.shopToken}`
+        : (s.portfolioUrl || ''),
+    };
+    const tpls = OMNI_TEMPLATES[lead.category] || OMNI_TEMPLATES.fleet;
+    const now = new Date();
+    const steps = [];
+
+    for (let i = 0; i < tpls.length; i++) {
+      const t = tpls[i];
+      // Skip SMS steps if no phone; skip email steps if no email
+      if (t.channel === 'sms' && !lead.phone) continue;
+      if (t.channel === 'email' && !lead.email) continue;
+
+      let scheduledFor;
+      if (t.dayOffset === 0) {
+        scheduledFor = new Date(now.getTime() + 5 * 60 * 1000);
+      } else {
+        scheduledFor = new Date(now.getTime() + t.dayOffset * 24 * 60 * 60 * 1000);
+        scheduledFor.setUTCHours(17, 0, 0, 0); // ~noon US Central
+      }
+
+      const r = await pool.query(
+        `INSERT INTO omni_sequence_steps (sequence_id, step_num, day_offset, channel, subject, message, status, scheduled_for)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7) RETURNING id`,
+        [seqId, i + 1, t.dayOffset, t.channel,
+         t.subject ? fillOmniTemplate(t.subject, vars) : null,
+         fillOmniTemplate(t.message, vars), scheduledFor]
+      );
+      steps.push({
+        id: r.rows[0].id, stepNum: i + 1, dayOffset: t.dayOffset,
+        channel: t.channel, status: 'pending', scheduledFor,
+        subject: t.subject ? fillOmniTemplate(t.subject, vars) : null,
+        message: fillOmniTemplate(t.message, vars),
+      });
+    }
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'Omni campaign started',
+      body: `4-step email+SMS campaign launched — ${steps.length} steps scheduled.`,
+    });
+    await pool.query(`UPDATE leads SET updated_at=NOW() WHERE id=$1 AND user_id=$2`, [leadId, uid]);
+    res.json({ ok: true, sequenceId: seqId, steps });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /leads/:id/omni-sequence — get active/latest campaign status
+app.get('/leads/:id/omni-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const seqR = await pool.query(
+      `SELECT id, status, category, created_at FROM omni_sequences
+       WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+    if (!seqR.rows[0]) return res.json({ ok: true, sequence: null });
+    const seq = seqR.rows[0];
+    const stepsR = await pool.query(
+      `SELECT id, step_num, day_offset, channel, subject, message, status, scheduled_for, sent_at, error
+       FROM omni_sequence_steps WHERE sequence_id=$1 ORDER BY step_num`,
+      [seq.id]
+    );
+    res.json({
+      ok: true,
+      sequence: {
+        id: seq.id, status: seq.status, category: seq.category, createdAt: seq.created_at,
+        steps: stepsR.rows.map(r => ({
+          id: r.id, stepNum: r.step_num, dayOffset: r.day_offset, channel: r.channel,
+          subject: r.subject, message: r.message, status: r.status,
+          scheduledFor: r.scheduled_for, sentAt: r.sent_at, error: r.error,
+        })),
+      },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /leads/:id/omni-sequence — cancel active campaign
+app.delete('/leads/:id/omni-sequence', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+    const seqR = await pool.query(
+      `SELECT id FROM omni_sequences WHERE lead_id=$1 AND user_id=$2 AND status='active'`,
+      [leadId, uid]
+    );
+    if (!seqR.rows[0]) return res.status(404).json({ error: 'No active campaign found' });
+    const seqId = seqR.rows[0].id;
+    await pool.query(`UPDATE omni_sequence_steps SET status='skipped' WHERE sequence_id=$1 AND status='pending'`, [seqId]);
+    await pool.query(`UPDATE omni_sequences SET status='cancelled' WHERE id=$1`, [seqId]);
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note', subject: 'Omni campaign cancelled',
+      body: 'Multi-channel campaign cancelled manually.',
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================================
+// FMCSA SAFER enrichment — fetch phone + safety data from DOT number
+// ============================================================================
+
+// POST /leads/:id/enrich-fmcsa
+// Looks up the lead's source carrier in FMCSA SAFER, patches phone + safety rating.
+// Works for any lead whose source_company_id points to a companies row with source='fmcsa'.
+// FMCSA_SAFER_API_KEY is optional — free key from https://mobile.fmcsa.dot.gov/developer/home
+app.post('/leads/:id/enrich-fmcsa', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.id);
+
+    // Load lead + its source company DOT number
+    const { rows } = await pool.query(`
+      SELECT l.id, l.phone, l.email, l.company, l.contact_name,
+             c.source_id AS dot_number, c.source AS company_source, c.phone AS company_phone
+      FROM leads l
+      LEFT JOIN companies c ON c.id = l.source_company_id
+      WHERE l.id = $1 AND l.user_id = $2
+    `, [leadId, uid]);
+
+    if (!rows[0]) return res.status(404).json({ error: 'Lead not found' });
+    const lead = rows[0];
+
+    // Must have a DOT number from an FMCSA company record
+    if (!lead.dot_number || lead.company_source !== 'fmcsa') {
+      // Also accept category='fleet' leads where dot_number was passed in body
+      const bodyDot = req.body?.dotNumber;
+      if (!bodyDot) return res.status(400).json({ error: 'Lead has no FMCSA DOT number. Only fleet leads imported from the Discover tab can be enriched this way.' });
+      lead.dot_number = String(bodyDot);
+    }
+
+    const saferKey = process.env.FMCSA_SAFER_API_KEY || 'eLxXIHPJOGBX2sLcyIHdqLZ6YlU3z0gp8sSHI0Cq';
+    const saferUrl = `https://mobile.fmcsa.dot.gov/qc/services/carriers/${lead.dot_number}?webKey=${saferKey}`;
+
+    let saferData;
+    try {
+      const resp = await fetch(saferUrl, { signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) throw new Error(`FMCSA SAFER returned HTTP ${resp.status}`);
+      saferData = await resp.json();
+    } catch (e) {
+      return res.status(502).json({ error: `FMCSA SAFER API error: ${e.message}` });
+    }
+
+    const carrier = saferData?.content?.carrier || saferData?.carrier;
+    if (!carrier) return res.status(404).json({ error: 'DOT number not found in FMCSA SAFER' });
+
+    // Extract useful fields
+    const saferPhone = carrier.telephone
+      ? carrier.telephone.replace(/\D/g, '').replace(/^1(\d{10})$/, '$1').replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3')
+      : null;
+    const safetyRating = carrier.safetyRating || carrier.carrierSafetyRating || null;
+    const operatingStatus = carrier.carrierOperation?.carrierOperationDesc || null;
+    const entityType = carrier.entityType || null;
+    const legalName = carrier.legalName || null;
+
+    // Update lead — only patch phone if currently empty
+    const updates = [];
+    const params = [];
+    let pi = 1;
+
+    if (saferPhone && (!lead.phone || lead.phone.trim() === '')) {
+      updates.push(`phone=$${pi++}`); params.push(saferPhone);
+    }
+    updates.push(`updated_at=NOW()`);
+
+    if (updates.length > 1) {
+      params.push(leadId, uid);
+      await pool.query(
+        `UPDATE leads SET ${updates.join(', ')} WHERE id=$${pi++} AND user_id=$${pi++}`,
+        params
+      );
+    }
+
+    // Also patch the companies row with any better phone data
+    if (saferPhone && lead.company_phone !== saferPhone) {
+      await pool.query(
+        `UPDATE companies SET phone=$1 WHERE source='fmcsa' AND source_id=$2`,
+        [saferPhone, lead.dot_number]
+      );
+    }
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note',
+      subject: 'FMCSA SAFER data fetched',
+      body: [
+        saferPhone ? `Phone: ${saferPhone}` : null,
+        safetyRating ? `Safety rating: ${safetyRating}` : null,
+        operatingStatus ? `Operating status: ${operatingStatus}` : null,
+        entityType ? `Entity type: ${entityType}` : null,
+        legalName && legalName !== lead.company ? `Legal name: ${legalName}` : null,
+      ].filter(Boolean).join(' · ') || 'No new data found',
+      metadata: { dot_number: lead.dot_number, safety_rating: safetyRating, operating_status: operatingStatus, source: 'fmcsa_safer' },
+    });
+
+    res.json({
+      ok: true,
+      patched: updates.length > 1,
+      phone: saferPhone,
+      safetyRating,
+      operatingStatus,
+      entityType,
+      legalName,
+      dotNumber: lead.dot_number,
+    });
+  } catch (e) {
+    console.error('[enrich-fmcsa]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ============================================================================
@@ -5644,6 +6916,529 @@ async function sendDailyDigests() {
     console.error('[digest worker]', e.message);
   }
 }
+
+function startSmsSequenceWorker() {
+  const INTERVAL_MS = 5 * 60 * 1000;
+  console.log('· SMS Sequence worker started (5-min poll)');
+
+  async function run() {
+    try {
+      const { rows: due } = await pool.query(`
+        SELECT s.id AS step_id, s.sequence_id, s.message, s.step_num,
+               seq.user_id, seq.lead_id,
+               l.phone, l.company, l.sms_opted_out,
+               u.settings_json
+        FROM sms_sequence_steps s
+        JOIN sms_sequences seq ON seq.id = s.sequence_id
+        JOIN leads l ON l.id = seq.lead_id
+        JOIN users u ON u.id::TEXT = seq.user_id
+        WHERE s.status = 'pending'
+          AND s.scheduled_for <= NOW()
+          AND seq.status = 'active'
+        ORDER BY s.scheduled_for ASC
+        LIMIT 20
+      `);
+
+      for (const step of due) {
+        const settings = step.settings_json || {};
+        if (step.sms_opted_out) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='skipped', error='Lead opted out' WHERE id=$1`, [step.step_id]);
+          await pool.query(`UPDATE sms_sequences SET status='cancelled' WHERE id=$1`, [step.sequence_id]);
+          continue;
+        }
+        if (!settings.twilioAccountSid || !settings.twilioAuthToken || !settings.twilioFromNumber) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='failed', error='Twilio not configured' WHERE id=$1`, [step.step_id]);
+          continue;
+        }
+        if (!step.phone) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='failed', error='No phone number' WHERE id=$1`, [step.step_id]);
+          continue;
+        }
+
+        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${settings.twilioAccountSid}/Messages.json`;
+        const auth = 'Basic ' + Buffer.from(`${settings.twilioAccountSid}:${settings.twilioAuthToken}`).toString('base64');
+
+        try {
+          const twilioResp = await fetch(twilioUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: auth },
+            body: new URLSearchParams({ To: step.phone, From: settings.twilioFromNumber, Body: step.message }).toString(),
+          });
+          const data = await twilioResp.json();
+          if (twilioResp.ok) {
+            await pool.query(
+              `UPDATE sms_sequence_steps SET status='sent', sent_at=NOW(), twilio_sid=$1 WHERE id=$2`,
+              [data.sid, step.step_id]
+            );
+            await logActivity(pool, {
+              leadId: step.lead_id, userId: step.user_id, type: 'called',
+              subject: `SMS sequence — step ${step.step_num}`,
+              body: step.message,
+              metadata: { twilio_sid: data.sid, sequence_step: step.step_num },
+            });
+            await pool.query(`UPDATE leads SET last_contacted=CURRENT_DATE, updated_at=NOW() WHERE id=$1`, [step.lead_id]);
+
+            const { rows: remaining } = await pool.query(
+              `SELECT COUNT(*) AS n FROM sms_sequence_steps WHERE sequence_id=$1 AND status='pending'`,
+              [step.sequence_id]
+            );
+            if (remaining[0].n === '0') {
+              await pool.query(`UPDATE sms_sequences SET status='completed' WHERE id=$1`, [step.sequence_id]);
+            }
+          } else {
+            await pool.query(`UPDATE sms_sequence_steps SET status='failed', error=$1 WHERE id=$2`, [data.message || 'Twilio error', step.step_id]);
+          }
+        } catch (e) {
+          await pool.query(`UPDATE sms_sequence_steps SET status='failed', error=$1 WHERE id=$2`, [e.message, step.step_id]);
+        }
+      }
+    } catch (e) {
+      console.warn('[smsSequence] worker error:', e.message);
+    }
+  }
+
+  setTimeout(run, 2 * 60 * 1000);
+  setInterval(run, INTERVAL_MS);
+}
+
+// Omni sequence worker — processes due steps, routes to email or SMS
+function startOmniSequenceWorker() {
+  const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  console.log('· Omni campaign worker started (email+SMS, checks every 5m)');
+
+  async function run() {
+    try {
+      const { rows: steps } = await pool.query(`
+        SELECT s.id AS step_id, s.sequence_id, s.channel, s.subject, s.message,
+               seq.user_id, seq.lead_id,
+               l.email, l.phone, l.contact_name, l.company, l.sms_opted_out
+        FROM omni_sequence_steps s
+        JOIN omni_sequences seq ON seq.id = s.sequence_id
+        JOIN leads l ON l.id = seq.lead_id
+        WHERE s.status = 'pending'
+          AND s.scheduled_for <= NOW()
+          AND seq.status = 'active'
+        ORDER BY s.scheduled_for ASC
+        LIMIT 20
+        FOR UPDATE OF s SKIP LOCKED
+      `);
+
+      for (const step of steps) {
+        try {
+          if (step.channel === 'email') {
+            const resendKey = process.env.RESEND_API_KEY;
+            if (!resendKey) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='failed', error='RESEND_API_KEY not configured' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            if (!step.email) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='No email address' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            if (await isUnsubscribed(step.user_id, step.email)) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='Unsubscribed' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+
+            const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [step.user_id]);
+            const s = userR.rows[0]?.settings_json || {};
+            const fromName = s.senderName || 'WrapLeads';
+            const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+            const baseUrl = process.env.APP_BASE_URL || process.env.APP_URL || 'https://wrapos.app';
+
+            const trackToken = require('crypto').randomBytes(16).toString('hex');
+            await pool.query(
+              `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
+              [trackToken, step.user_id, step.lead_id, step.subject || '(no subject)']
+            ).catch(() => {});
+            const pixelUrl = `${baseUrl}/track/email/${trackToken}`;
+
+            const unsubToken = await getOrCreateUnsubToken(step.user_id, step.email, step.lead_id).catch(() => null);
+            const unsubUrl = unsubToken ? `${baseUrl}/unsubscribe/${unsubToken}` : null;
+            const unsubFooter = buildUnsubFooter(unsubUrl || `${baseUrl}/unsubscribe/invalid`, fromName);
+
+            const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.7;color:#111;max-width:600px">${step.message.replace(/\n/g, '<br>')}${unsubFooter.html}</div><img src="${pixelUrl}" width="1" height="1" style="display:none" alt="">`;
+            const text = step.message + unsubFooter.text;
+
+            const resp = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: `${fromName} <${fromEmail}>`,
+                to: step.contact_name ? `${step.contact_name} <${step.email}>` : step.email,
+                subject: step.subject || `Following up — ${step.company}`,
+                html, text,
+                headers: unsubUrl ? {
+                  'List-Unsubscribe': `<${unsubUrl}>, <mailto:${fromEmail}?subject=unsubscribe>`,
+                  'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+                } : {},
+              }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(data.message || 'Resend error');
+
+            await pool.query(
+              `UPDATE omni_sequence_steps SET status='sent', sent_at=NOW(), ext_id=$1 WHERE id=$2`,
+              [data.id, step.step_id]
+            );
+            await logActivity(pool, {
+              leadId: step.lead_id, userId: step.user_id, type: 'email_sent',
+              subject: step.subject || `Following up — ${step.company}`, body: step.message,
+              metadata: { to: step.email, resend_id: data.id, omni: true, track_token: trackToken },
+            });
+            console.log(`[omni] Email sent to ${step.email} (lead ${step.lead_id})`);
+
+          } else if (step.channel === 'sms') {
+            if (step.sms_opted_out) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='Opted out' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            if (!step.phone) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='skipped', error='No phone' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [step.user_id]);
+            const s = userR.rows[0]?.settings_json || {};
+            if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+              await pool.query(`UPDATE omni_sequence_steps SET status='failed', error='Twilio not configured' WHERE id=$1`, [step.step_id]);
+              continue;
+            }
+            const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+            const body = new URLSearchParams({ From: s.twilioFromNumber, To: step.phone, Body: step.message });
+            const resp = await fetch(twilioUrl, {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64'),
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body,
+            });
+            const data = await resp.json();
+            if (!resp.ok || data.status === 'failed') throw new Error(data.message || 'Twilio error');
+
+            await pool.query(
+              `UPDATE omni_sequence_steps SET status='sent', sent_at=NOW(), ext_id=$1 WHERE id=$2`,
+              [data.sid, step.step_id]
+            );
+            await logActivity(pool, {
+              leadId: step.lead_id, userId: step.user_id, type: 'sms_sent',
+              subject: 'Omni campaign SMS sent', body: step.message,
+              metadata: { to: step.phone, twilio_sid: data.sid, omni: true },
+            });
+            console.log(`[omni] SMS sent to ${step.phone} (lead ${step.lead_id})`);
+          }
+
+          // Check if all steps are done
+          const pending = await pool.query(
+            `SELECT COUNT(*) AS n FROM omni_sequence_steps WHERE sequence_id=$1 AND status='pending'`,
+            [step.sequence_id]
+          );
+          if (parseInt(pending.rows[0].n, 10) === 0) {
+            await pool.query(`UPDATE omni_sequences SET status='completed' WHERE id=$1`, [step.sequence_id]);
+            await pool.query(
+              `UPDATE leads SET last_contacted=CURRENT_DATE, followup_due_at=CURRENT_DATE,
+               status=CASE WHEN status IN ('new','cold') THEN 'contacted' ELSE status END,
+               updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+              [step.lead_id, step.user_id]
+            );
+            console.log(`[omni] Campaign COMPLETE for lead ${step.lead_id}`);
+          }
+        } catch (e) {
+          await pool.query(`UPDATE omni_sequence_steps SET status='failed', error=$1 WHERE id=$2`, [e.message, step.step_id]);
+          console.warn(`[omni] Step ${step.step_id} failed:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[omni worker] error:', e.message);
+    }
+  }
+
+  setTimeout(run, 3 * 60 * 1000); // first run after 3 min
+  setInterval(run, INTERVAL_MS);
+}
+
+function startEmailEnrichmentWorker() {
+  const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+  const PER_USER_LIMIT = 8;           // max leads to enrich per user per run
+  console.log('· Email enrichment worker started (30-min poll, free permutation + Hunter waterfall)');
+
+  async function run() {
+    try {
+      // Find users who have leads with website but no email (cap at 20 users per run)
+      const { rows: users } = await pool.query(`
+        SELECT DISTINCT l.user_id
+        FROM leads l
+        WHERE l.email IS NULL OR l.email = ''
+          AND l.website IS NOT NULL AND l.website != ''
+          AND (l.email_searched_at IS NULL OR l.email_searched_at < NOW() - INTERVAL '7 days')
+          AND l.contact_name IS NOT NULL AND l.contact_name != ''
+        LIMIT 20
+      `);
+
+      if (!users.length) return;
+
+      const { findEmails } = require('./lib/emailPermutator');
+
+      for (const { user_id: uid } of users) {
+        try {
+          // Get user settings for Hunter.io key
+          const settR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+          const settings = settR.rows[0]?.settings_json || {};
+
+          // Pick up to PER_USER_LIMIT leads
+          const { rows: leads } = await pool.query(`
+            SELECT id, contact_name, website, company, category
+            FROM leads
+            WHERE user_id = $1
+              AND (email IS NULL OR email = '')
+              AND website IS NOT NULL AND website != ''
+              AND contact_name IS NOT NULL AND contact_name != ''
+              AND (email_searched_at IS NULL OR email_searched_at < NOW() - INTERVAL '7 days')
+            ORDER BY created_at DESC
+            LIMIT $2
+          `, [uid, PER_USER_LIMIT]);
+
+          for (const lead of leads) {
+            let foundEmail = null;
+            let source = 'permutation';
+            const domain = (lead.website || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/^www\./i, '');
+
+            if (!domain) {
+              await pool.query(`UPDATE leads SET email_searched_at=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
+              continue;
+            }
+
+            // Try Hunter.io first if configured
+            if (settings.hunterApiKey || process.env.HUNTER_API_KEY) {
+              try {
+                const hunterResult = await tryHunterEnrich(
+                  lead.contact_name.split(' ')[0],
+                  lead.contact_name.split(' ').slice(1).join(' '),
+                  domain, uid
+                );
+                if (hunterResult) { foundEmail = hunterResult.email; source = 'hunter'; }
+              } catch {}
+            }
+
+            // Fall back to email permutation
+            if (!foundEmail) {
+              try {
+                const result = await findEmails(lead.contact_name, domain, { probe: false });
+                const best = result.candidates.find((c) => c.confidence >= 0.65);
+                if (best) { foundEmail = best.email; }
+              } catch {}
+            }
+
+            if (foundEmail) {
+              await pool.query(
+                `UPDATE leads SET email=$1, email_searched_at=NOW(), updated_at=NOW()
+                 WHERE id=$2 AND user_id=$3 AND (email IS NULL OR email='')`,
+                [foundEmail, lead.id, uid]
+              );
+              await logActivity(pool, {
+                leadId: lead.id, userId: uid, type: 'email_generated',
+                subject: 'Email auto-discovered',
+                body: `${foundEmail} (${source})`,
+              });
+            } else {
+              await pool.query(`UPDATE leads SET email_searched_at=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
+            }
+
+            // Polite delay between leads
+            await new Promise((r) => setTimeout(r, 300));
+          }
+        } catch (e) {
+          console.warn(`[emailEnrich] user ${uid} error:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[emailEnrich] worker error:', e.message);
+    }
+  }
+
+  // First run after 3 minutes
+  setTimeout(run, 3 * 60 * 1000);
+  setInterval(run, INTERVAL_MS);
+}
+
+// Polls leads with source_company_id → fmcsa carrier → no phone, and auto-fills
+// phone from FMCSA SAFER API. Runs hourly with a cap of 20 leads per run.
+function startFmcsaSaferWorker() {
+  const saferKey = process.env.FMCSA_SAFER_API_KEY;
+  if (!saferKey) {
+    console.log('· FMCSA SAFER: not configured (set FMCSA_SAFER_API_KEY to auto-fill fleet phone numbers)');
+    return;
+  }
+  console.log('· FMCSA SAFER worker started (hourly, auto-fills missing phone from DOT registry)');
+
+  const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+  async function run() {
+    try {
+      // Find fleet leads with an FMCSA source company but no phone
+      const { rows: targets } = await pool.query(`
+        SELECT l.id AS lead_id, l.user_id, c.source_id AS dot_number
+        FROM leads l
+        JOIN companies c ON c.id = l.source_company_id AND c.source = 'fmcsa'
+        WHERE (l.phone IS NULL OR l.phone = '')
+          AND (l.fmcsa_enriched_at IS NULL OR l.fmcsa_enriched_at < NOW() - INTERVAL '30 days')
+        LIMIT 20
+      `);
+
+      if (!targets.length) return;
+
+      for (const t of targets) {
+        try {
+          const url = `https://mobile.fmcsa.dot.gov/qc/services/carriers/${t.dot_number}?webKey=${saferKey}`;
+          const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          // Mark attempted regardless of result
+          await pool.query(`UPDATE leads SET fmcsa_enriched_at=NOW() WHERE id=$1`, [t.lead_id]);
+          if (!resp.ok) continue;
+          const json = await resp.json();
+          const carrier = json?.content?.carrier || json?.carrier;
+          if (!carrier?.telephone) continue;
+          const phone = carrier.telephone.replace(/\D/g, '').replace(/^1(\d{10})$/, '$1').replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');
+          await pool.query(
+            `UPDATE leads SET phone=$1, updated_at=NOW() WHERE id=$2 AND (phone IS NULL OR phone='')`,
+            [phone, t.lead_id]
+          );
+          console.log(`[fmcsa-safer] Filled phone for lead ${t.lead_id}: ${phone}`);
+          // Small delay to avoid hammering the free API
+          await new Promise(r => setTimeout(r, 400));
+        } catch (e) {
+          await pool.query(`UPDATE leads SET fmcsa_enriched_at=NOW() WHERE id=$1`, [t.lead_id]).catch(() => {});
+          console.warn(`[fmcsa-safer] lead ${t.lead_id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[fmcsa-safer worker] error:', e.message);
+    }
+  }
+
+  setTimeout(run, 5 * 60 * 1000); // first run 5 min after boot
+  setInterval(run, INTERVAL_MS);
+}
+
+// Fleet Growth Monitor — re-checks FMCSA SAFER for fleet leads to detect fleet size changes.
+// Runs every Sunday at 3AM. Detects ≥15% fleet growth → logs activity + fires notification.
+// Stores snapshot so we don't alert twice for the same growth event.
+function startFleetMonitorWorker() {
+  const saferKey = process.env.FMCSA_SAFER_API_KEY;
+  if (!saferKey) {
+    console.log('· Fleet Monitor: not configured (set FMCSA_SAFER_API_KEY to enable fleet growth alerts)');
+    return;
+  }
+  console.log('· Fleet Monitor worker started (weekly, detects fleet growth ≥15% for FMCSA leads)');
+
+  async function run() {
+    try {
+      // Leads with a known DOT number, not won/lost, not checked in 6+ days
+      const { rows: targets } = await pool.query(`
+        SELECT l.id AS lead_id, l.user_id, l.company, l.fleet_size,
+               l.fmcsa_fleet_size_snapshot, l.status, l.category,
+               c.source_id AS dot_number
+        FROM leads l
+        JOIN companies c ON c.id = l.source_company_id AND c.source = 'fmcsa'
+        WHERE l.status NOT IN ('won', 'lost')
+          AND (l.fmcsa_fleet_checked_at IS NULL OR l.fmcsa_fleet_checked_at < NOW() - INTERVAL '6 days')
+        LIMIT 100
+      `);
+
+      if (!targets.length) return;
+
+      for (const t of targets) {
+        try {
+          const url = `https://mobile.fmcsa.dot.gov/qc/services/carriers/${t.dot_number}?webKey=${saferKey}`;
+          const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          await pool.query(`UPDATE leads SET fmcsa_fleet_checked_at=NOW() WHERE id=$1`, [t.lead_id]);
+          if (!resp.ok) continue;
+          const json = await resp.json();
+          const carrier = json?.content?.carrier || json?.carrier;
+          if (!carrier) continue;
+
+          const newFleetSize = parseInt(carrier.totalPowerUnits, 10) || null;
+          if (!newFleetSize) continue;
+
+          const baseline = t.fmcsa_fleet_size_snapshot || t.fleet_size;
+          const growthPct = baseline ? ((newFleetSize - baseline) / baseline) * 100 : 0;
+
+          // Update snapshot + lead fleet_size if changed
+          await pool.query(
+            `UPDATE leads SET fmcsa_fleet_size_snapshot=$1, fleet_size=$2, fmcsa_fleet_checked_at=NOW()
+             WHERE id=$3`,
+            [newFleetSize, newFleetSize, t.lead_id]
+          );
+          // Also update the companies record
+          await pool.query(
+            `UPDATE companies SET fleet_size=$1, updated_at=NOW() WHERE source='fmcsa' AND source_id=$2`,
+            [newFleetSize, t.dot_number]
+          ).catch(() => {});
+
+          if (growthPct >= 15 && baseline) {
+            const addedUnits = newFleetSize - baseline;
+            // Stamp the lead so we don't re-alert on same growth event
+            await pool.query(
+              `UPDATE leads SET fmcsa_fleet_grew_at=NOW() WHERE id=$1`,
+              [t.lead_id]
+            );
+            await logActivity(pool, {
+              leadId: t.lead_id,
+              userId: t.user_id,
+              type: 'note',
+              subject: `🚛 Fleet Growth Alert — +${addedUnits} units (+${Math.round(growthPct)}%)`,
+              body: `FMCSA SAFER data shows ${t.company}'s fleet grew from ${baseline} to ${newFleetSize} power units (+${Math.round(growthPct)}%). This is a warm re-pitch signal — they likely have new vehicles that need wrapping.`,
+              metadata: { event: 'fleet_growth', baseline, newFleetSize, growthPct: Math.round(growthPct) },
+            });
+            await createNotification(t.user_id, {
+              type: 'hot_prospect',
+              title: `Fleet growth alert: ${t.company}`,
+              body: `Fleet grew from ${baseline} → ${newFleetSize} units (+${Math.round(growthPct)}%). Time to re-pitch.`,
+              metadata: { leadId: t.lead_id, company: t.company, baseline, newFleetSize },
+            });
+            console.log(`[fleet-monitor] Fleet growth detected: ${t.company} ${baseline}→${newFleetSize} (+${Math.round(growthPct)}%)`);
+          }
+
+          await new Promise(r => setTimeout(r, 500)); // 500ms between requests
+        } catch (e) {
+          await pool.query(`UPDATE leads SET fmcsa_fleet_checked_at=NOW() WHERE id=$1`, [t.lead_id]).catch(() => {});
+          console.warn(`[fleet-monitor] lead ${t.lead_id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.warn('[fleet-monitor worker] error:', e.message);
+    }
+  }
+
+  // Schedule for Sunday 3AM; retry weekly
+  (function scheduleNext() {
+    const now = new Date();
+    const next = new Date(now);
+    const daysUntilSun = (7 - now.getDay()) % 7 || 7;
+    next.setDate(now.getDate() + daysUntilSun);
+    next.setHours(3, 0, 0, 0);
+    const ms = next - now;
+    setTimeout(async () => { await run(); scheduleNext(); }, ms);
+  })();
+}
+
+// GET /leads/fleet-growth-signals — leads with recent fleet growth (last 30 days)
+app.get('/leads/fleet-growth-signals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT l.id, l.company, l.category, l.status, l.fleet_size,
+              l.fmcsa_fleet_size_snapshot, l.fmcsa_fleet_grew_at, l.contact_name, l.state
+       FROM leads l
+       WHERE l.user_id=$1
+         AND l.fmcsa_fleet_grew_at > NOW() - INTERVAL '30 days'
+         AND l.status NOT IN ('won', 'lost')
+       ORDER BY l.fmcsa_fleet_grew_at DESC
+       LIMIT 20`,
+      [uid]
+    );
+    res.json({ ok: true, signals: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 function startDigestWorker() {
   const check = () => {
@@ -6731,6 +8526,7 @@ app.post('/calls/initiate', authMiddleware, async (req, res) => {
       subject: `AI call initiated to ${lead.company}`,
       metadata: { vapi_call_id: call.id, phone: lead.phone, status: 'initiated', research_hook: researchHook },
     });
+    await markFirstContact(lead.id, userId);
 
     res.json({ ok: true, call_id: call.id, status: call.status });
   } catch (e) {
@@ -7152,7 +8948,15 @@ app.post('/jobs', authMiddleware, async (req, res) => {
     [uid, lead_id || null, company, vehicle_type || 'other', vehicle_count || 1, wrap_category || 'fleet', material || null, install_date, life_years || 5, notes || null,
      material_cost || 0, job_revenue || 0, labor_hours || 0]
   );
-  res.json({ job: rows[0] });
+  const job = rows[0];
+  res.json({ job });
+  // Fire-and-forget: send care guide to lead email if available
+  if (job.lead_id) {
+    pool.query(`SELECT email, contact_name FROM leads WHERE id=$1`, [job.lead_id]).then(({ rows: leadRows }) => {
+      const lead = leadRows[0];
+      if (lead?.email) sendInstallCareEmail(uid, job, lead.email, lead.contact_name).catch(() => {});
+    }).catch(() => {});
+  }
 });
 
 app.put('/jobs/:id', authMiddleware, async (req, res) => {
@@ -7604,6 +9408,273 @@ app.get('/jobs/:id/case-study', authMiddleware, async (req, res) => {
   res.json({ caseStudy: rows[0] });
 });
 
+// GET /leads/:id/contract — printable HTML installation contract (browser → PDF)
+// Opens in a new tab with ?token= auth. Prefills from lead + most recent quote.
+app.get('/leads/:id/contract', invoiceAuthMiddleware, async (req, res) => {
+  try {
+    const uid   = String(req.user.id);
+    const leadId = parseInt(req.params.id, 10);
+
+    const { rows: lr } = await pool.query(
+      `SELECT l.*, u.email AS user_email, u.company_name AS user_company, u.settings_json
+       FROM leads l
+       JOIN users u ON u.id::text = l.user_id
+       WHERE l.id = $1 AND l.user_id = $2`,
+      [leadId, uid]
+    );
+    if (!lr.length) return res.status(404).send('<h2>Not found</h2>');
+    const lead = lr[0];
+    const s    = lead.settings_json || {};
+
+    // Shop info
+    const shopName  = s.companyName  || lead.user_company || 'Your Shop';
+    const shopEmail = s.senderEmail  || lead.user_email   || '';
+    const shopPhone = s.senderPhone  || '';
+    const shopRep   = s.senderName   || 'Shop Representative';
+    const shopCity  = s.city         || '';
+    const shopState = s.state        || '';
+    const accent    = s.accentColor  || '#f4551c';
+    const deposit   = s.depositPaymentLink || '';
+
+    // Latest quote
+    const { rows: qr } = await pool.query(
+      `SELECT title, total, notes, vehicle_type, vehicle_count, material, items
+       FROM shop_quotes WHERE lead_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [leadId, uid]
+    );
+    const quote = qr[0] || null;
+
+    const today        = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const contractNum  = `WOS-C-${String(leadId).padStart(5, '0')}`;
+
+    const VEHICLE_LABELS = {
+      cargo_van: 'Cargo Van', cargo_van_standard: 'Cargo Van', cargo_van_high_roof: 'High-Roof Cargo Van',
+      box_truck: 'Box Truck', box_truck_16: '16ft Box Truck', box_truck_24: '24ft Box Truck',
+      sprinter: 'Sprinter Van', pickup: 'Pickup Truck', pickup_truck: 'Pickup Truck',
+      semi_tractor: 'Semi Tractor', semi_trailer: 'Semi Trailer', semi_full: 'Semi Truck & Trailer',
+      semi_cab_only: 'Semi Cab', '53ft_trailer': '53ft Trailer', flatbed: 'Flatbed Truck',
+      bus: 'Bus', bus_school: 'School Bus', rv: 'RV / Motorhome', suv: 'SUV', suv_large: 'Large SUV',
+      passenger_car: 'Passenger Car', food_truck: 'Food Truck', boat: 'Boat', trailer: 'Utility Trailer', other: 'Vehicle',
+    };
+    const CAT_LABELS = {
+      fleet: 'Fleet Graphics', design: 'Custom Vehicle Design', construction: 'Construction Fleet Graphics',
+      dinoc: 'DI-NOC Architectural Film', reatec: 'Rea Tec Architectural Film', colorchange: 'Full Color Change Wrap',
+      wallgraphics: 'Wall Graphics', gc_referral: 'Commercial Graphics', racing: 'Motorsport Livery',
+    };
+
+    const vehicleType  = quote?.vehicle_type  ? (VEHICLE_LABELS[quote.vehicle_type]  || quote.vehicle_type)  : 'Vehicle';
+    const vehicleCount = quote?.vehicle_count || 1;
+    const wrapType     = CAT_LABELS[lead.category] || 'Vehicle Wrap';
+    const totalPrice   = quote?.total ? Number(quote.total).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '__________';
+    const depositAmt   = quote?.total ? (Number(quote.total) * 0.5).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '50%';
+    const material     = quote?.material || '3M 1080 or Avery Dennison SW900 cast vinyl';
+    const scopeNotes   = quote?.notes || lead.notes || '';
+
+    const items = (() => {
+      if (!quote?.items) return '';
+      try {
+        const arr = typeof quote.items === 'string' ? JSON.parse(quote.items) : quote.items;
+        if (!Array.isArray(arr) || !arr.length) return '';
+        return `<table style="width:100%;border-collapse:collapse;margin:12px 0 0;">
+          <thead><tr>
+            <th style="text-align:left;padding:7px 10px;background:#f1f5f9;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Description</th>
+            <th style="text-align:right;padding:7px 10px;background:#f1f5f9;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Amount</th>
+          </tr></thead>
+          <tbody>${arr.map(i => `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px;">${i.description || ''}</td><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px;text-align:right;">${Number(i.total || i.amount || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}</td></tr>`).join('')}
+          </tbody>
+        </table>`;
+      } catch { return ''; }
+    })();
+
+    const html = `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Installation Contract — ${lead.company}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;color:#1f2937;background:#fff;padding:48px;max-width:800px;margin:0 auto;font-size:14px;line-height:1.6}
+  @media print{body{padding:0}@page{margin:24mm}}
+  h1{font-size:24px;font-weight:800;letter-spacing:-.5px}
+  h2{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;margin-bottom:8px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;padding-bottom:20px;border-bottom:3px solid ${accent}}
+  .shop-name{font-size:22px;font-weight:800;color:${accent}}
+  .meta{font-size:12px;color:#6b7280;margin-top:4px}
+  .parties{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px}
+  .party-box{background:#f9fafb;border-radius:8px;padding:16px}
+  .party-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#6b7280;margin-bottom:8px}
+  .party-name{font-size:15px;font-weight:700;margin-bottom:4px}
+  .party-detail{font-size:13px;color:#4b5563}
+  .section{margin-bottom:28px}
+  .scope-box{background:#f9fafb;border-radius:8px;padding:16px;margin-top:8px}
+  .scope-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e5e7eb}
+  .scope-row:last-child{border-bottom:none}
+  .scope-key{font-size:13px;color:#6b7280}
+  .scope-val{font-size:13px;font-weight:600}
+  .price-box{background:${accent}10;border:1px solid ${accent}40;border-radius:8px;padding:16px;margin-top:8px}
+  .price-row{display:flex;justify-content:space-between;padding:5px 0}
+  .price-total{font-size:20px;font-weight:800;color:${accent}}
+  .terms{font-size:12px;color:#374151;line-height:1.7}
+  .terms h3{font-size:12px;font-weight:700;margin-top:16px;margin-bottom:4px;color:#111827}
+  .terms ol,.terms ul{padding-left:18px;margin-top:4px}
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:20px}
+  .sig-block{padding-top:12px;border-top:1px solid #374151}
+  .sig-label{font-size:11px;color:#6b7280;margin-top:4px}
+  .sig-line{height:40px;border-bottom:1px solid #374151;margin-top:20px}
+  .badge{display:inline-block;background:${accent};color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;margin-left:8px;vertical-align:middle}
+  no-print{display:block}
+  @media print{.no-print{display:none!important}}
+</style>
+</head>
+<body>
+  <div class="no-print" style="background:#f1f5f9;border-radius:8px;padding:12px 16px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#374151">
+    <span>📄 Vehicle Wrap Installation Contract — Ready to print to PDF</span>
+    <button onclick="window.print()" style="background:${accent};color:#fff;border:none;padding:7px 16px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer">Print / Save PDF</button>
+  </div>
+
+  <div class="header">
+    <div>
+      <div class="shop-name">${shopName}</div>
+      ${shopCity || shopState ? `<div class="meta">${[shopCity, shopState].filter(Boolean).join(', ')}</div>` : ''}
+      ${shopPhone ? `<div class="meta">${shopPhone}</div>` : ''}
+      ${shopEmail ? `<div class="meta">${shopEmail}</div>` : ''}
+    </div>
+    <div style="text-align:right">
+      <h1>Installation Contract</h1>
+      <div class="meta">Contract #: ${contractNum}</div>
+      <div class="meta">Date: ${today}</div>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-label">Service Provider</div>
+      <div class="party-name">${shopName}</div>
+      <div class="party-detail">${shopRep}</div>
+      ${shopPhone ? `<div class="party-detail">${shopPhone}</div>` : ''}
+      ${shopEmail ? `<div class="party-detail">${shopEmail}</div>` : ''}
+      ${shopCity || shopState ? `<div class="party-detail">${[shopCity, shopState].filter(Boolean).join(', ')}</div>` : ''}
+    </div>
+    <div class="party-box">
+      <div class="party-label">Client</div>
+      <div class="party-name">${lead.company}</div>
+      ${lead.contact_name ? `<div class="party-detail">${lead.contact_name}</div>` : ''}
+      ${lead.phone ? `<div class="party-detail">${lead.phone}</div>` : ''}
+      ${lead.email ? `<div class="party-detail">${lead.email}</div>` : ''}
+      ${lead.city || lead.state ? `<div class="party-detail">${[lead.city, lead.state].filter(Boolean).join(', ')}</div>` : ''}
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Scope of Work</h2>
+    <div class="scope-box">
+      <div class="scope-row"><span class="scope-key">Service Type</span><span class="scope-val">${wrapType}</span></div>
+      <div class="scope-row"><span class="scope-key">Vehicle Type</span><span class="scope-val">${vehicleType}</span></div>
+      <div class="scope-row"><span class="scope-key">Vehicle Count</span><span class="scope-val">${vehicleCount} unit${vehicleCount !== 1 ? 's' : ''}</span></div>
+      <div class="scope-row"><span class="scope-key">Material</span><span class="scope-val">${material}</span></div>
+      ${scopeNotes ? `<div class="scope-row"><span class="scope-key">Notes</span><span class="scope-val" style="max-width:60%;text-align:right;">${scopeNotes}</span></div>` : ''}
+    </div>
+    ${items}
+  </div>
+
+  <div class="section">
+    <h2>Pricing &amp; Payment</h2>
+    <div class="price-box">
+      <div class="price-row"><span>Project Total</span><span class="price-total">${totalPrice}</span></div>
+      <div class="price-row" style="font-size:13px;color:#6b7280"><span>50% Deposit due to schedule</span><span>${depositAmt}</span></div>
+      <div class="price-row" style="font-size:13px;color:#6b7280"><span>Balance due upon delivery/pickup</span><span>Remaining 50%</span></div>
+      ${deposit ? `<div class="price-row" style="margin-top:8px"><span style="font-size:12px">Pay deposit online:</span><span style="font-size:12px"><a href="${deposit}">${deposit}</a></span></div>` : ''}
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Terms &amp; Conditions</h2>
+    <div class="terms">
+      <h3>1. Warranty</h3>
+      <ul>
+        <li>All materials are warranted against manufacturer defects for <strong>3 years</strong> from date of installation.</li>
+        <li>Warranty covers peeling, cracking, and bubbling under normal use conditions.</li>
+        <li>Warranty is void if the vehicle is not maintained per care instructions below.</li>
+      </ul>
+      <h3>2. Care Instructions</h3>
+      <ul>
+        <li>Wait 7 days after installation before washing.</li>
+        <li>Hand-wash or touchless car wash only — no brush washes.</li>
+        <li>Do not use petroleum-based cleaners or wax on wrapped surfaces.</li>
+        <li>Store vehicle indoors or in shade when possible to maximize film lifespan.</li>
+      </ul>
+      <h3>3. Design Approval</h3>
+      <ul>
+        <li>Client must approve all artwork/proofs in writing before production begins.</li>
+        <li>Changes after production approval may incur additional charges.</li>
+        <li>${shopName} is not responsible for errors in copy/design approved by the client.</li>
+      </ul>
+      <h3>4. Pre-Existing Conditions</h3>
+      <ul>
+        <li>Client is responsible for disclosing any rust, dents, repaints, or surface irregularities.</li>
+        <li>${shopName} is not liable for wrap adhesion issues caused by non-factory paint, bondo, or surface damage discovered after wrap application.</li>
+        <li>An inspection fee may apply if significant prep work is required upon vehicle arrival.</li>
+      </ul>
+      <h3>5. Vehicle Delivery</h3>
+      <ul>
+        <li>Client is responsible for delivering the vehicle(s) on the scheduled install date.</li>
+        <li>A rescheduling fee may apply for cancellations within 48 hours of the scheduled date.</li>
+        <li>Vehicles must be clean and emptied of personal items before drop-off.</li>
+      </ul>
+      <h3>6. Cancellation</h3>
+      <ul>
+        <li>Deposits are non-refundable once production (printing) has begun.</li>
+        <li>Cancellations before production will receive a full deposit refund minus any design fees.</li>
+      </ul>
+      <h3>7. Liability Limitation</h3>
+      <ul>
+        <li>${shopName}'s total liability is limited to the amount paid by client for this project.</li>
+        <li>Client agrees to carry adequate vehicle insurance. ${shopName} is not responsible for damage during client-arranged transport to/from our facility.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Signatures</h2>
+    <p style="font-size:13px;color:#374151;margin-bottom:16px">
+      By signing below, both parties agree to the scope of work, pricing, and terms stated in this contract.
+    </p>
+    <div class="sig-grid">
+      <div>
+        <div class="sig-block">
+          <div class="sig-line"></div>
+          <div class="sig-label">Authorized signature — ${shopName}</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Printed name &amp; title</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Date</div>
+        </div>
+      </div>
+      <div>
+        <div class="sig-block">
+          <div class="sig-line"></div>
+          <div class="sig-label">Authorized signature — ${lead.company}</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Printed name &amp; title</div>
+          <div style="margin-top:12px;height:24px;border-bottom:1px solid #9ca3af"></div>
+          <div class="sig-label">Date</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:32px;padding-top:20px;border-top:1px solid #e5e7eb;font-size:11px;color:#9ca3af;text-align:center">
+    Contract generated by ${shopName} · ${today} · ${contractNum}
+  </div>
+</body></html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) {
+    console.error('[contract]', e.message);
+    res.status(500).send('<h2>Error generating contract</h2>');
+  }
+});
+
 // GET /jobs/:id/invoice — HTML invoice (browser-printable to PDF)
 // Accepts JWT as ?token= query param so the link can be opened in a new browser tab.
 function invoiceAuthMiddleware(req, res, next) {
@@ -7847,6 +9918,524 @@ app.get('/jobs/:id/invoice', invoiceAuthMiddleware, async (req, res) => {
   } catch (e) {
     console.error('[invoice]', e.message);
     res.status(500).send('<h2>Error generating invoice</h2>');
+  }
+});
+
+// GET /jobs/:id/work-order — printable HTML work order for the installer
+// Open in new tab → browser Print → Save as PDF.  Same auth pattern as invoice.
+app.get('/jobs/:id/work-order', invoiceAuthMiddleware, async (req, res) => {
+  try {
+    const uid   = String(req.user.id);
+    const jobId = parseInt(req.params.id, 10);
+
+    const jobR = await pool.query(
+      `SELECT j.*, u.company_name, u.name AS owner_name, u.email AS owner_email,
+              u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobR.rows.length) return res.status(404).send('<h2>Work order not found</h2>');
+    const job      = jobR.rows[0];
+    const settings = typeof job.settings_json === 'string' ? JSON.parse(job.settings_json) : (job.settings_json || {});
+
+    // Resolve lead contact info if linked
+    let contactName = '', contactPhone = '', contactEmail = '';
+    if (job.lead_id) {
+      const lr = await pool.query(
+        `SELECT contact_name, phone, email FROM leads WHERE id=$1 LIMIT 1`, [job.lead_id]
+      );
+      if (lr.rows.length) {
+        contactName  = lr.rows[0].contact_name || '';
+        contactPhone = lr.rows[0].phone || '';
+        contactEmail = lr.rows[0].email || '';
+      }
+    }
+
+    const shopName    = job.company_name || settings.companyName || 'Your Shop';
+    const shopPhone   = settings.phone   || '';
+    const shopAddress = [settings.street, settings.city, settings.state].filter(Boolean).join(', ');
+    const accent      = '#f4551c';
+
+    const WO_NUM      = `WO-${String(job.id).padStart(5, '0')}`;
+    const schedDate   = job.scheduled_install_date
+      ? new Date(job.scheduled_install_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+      : (job.install_date
+        ? new Date(job.install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+        : 'TBD');
+
+    const CAT_LABEL = {
+      fleet: 'Fleet Wrap', dinoc: 'DI-NOC Architectural Film', colorchange: 'Full Color Change',
+      construction: 'Construction Fleet Wrap', racing: 'Motorsport Livery', reatec: 'Rea-Tec Film',
+      design: 'Custom Design Wrap', wallgraphics: 'Wall Graphics', gc_referral: 'Commercial Graphics',
+    };
+    const catLabel = CAT_LABEL[job.wrap_category] || job.wrap_category || 'Vehicle Wrap';
+
+    const VT_LABEL = {
+      cargo_van_standard: 'Cargo Van', cargo_van_high_roof: 'High-Roof Van / Sprinter',
+      box_truck_16: '16ft Box Truck', box_truck_24: '24ft Box Truck',
+      semi_full: 'Semi + 53ft Trailer', semi_cab_only: 'Semi Cab (No Trailer)',
+      pickup_truck: 'Full-Size Pickup Truck', suv_large: 'Large SUV / Crossover',
+      sedan: 'Sedan', minivan: 'Minivan / Passenger Van',
+      bus_school: 'School / Transit Bus', flatbed: 'Flatbed Truck', other: 'Vehicle',
+    };
+    const vtLabel = VT_LABEL[job.vehicle_type] || job.vehicle_type || 'Vehicle';
+
+    const crewCount   = job.scheduled_crew_count || 2;
+    const laborHours  = Number(job.labor_hours)  || 0;
+    const materialCost= Number(job.material_cost)|| 0;
+    const revenue     = Number(job.job_revenue)  || 0;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Work Order ${WO_NUM} — ${he(job.company)}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:#111;background:#fff;padding:32px}
+  @media print{body{padding:0} .no-print{display:none} .page{padding:24px}}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid ${accent}}
+  .shop-name{font-size:22px;font-weight:900;color:${accent};letter-spacing:-0.5px}
+  .shop-meta{font-size:11px;color:#555;line-height:1.6}
+  .wo-meta{text-align:right}
+  .wo-num{font-size:18px;font-weight:800;color:#111}
+  .wo-date{font-size:11px;color:#777;margin-top:2px}
+  .badge{display:inline-block;background:${accent};color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:.06em;margin-left:6px;vertical-align:middle}
+  .section{margin-bottom:20px}
+  .section-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:${accent};margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #eee}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .field{margin-bottom:8px}
+  .field-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:2px}
+  .field-value{font-size:13px;font-weight:600;color:#111}
+  .field-value.big{font-size:16px;font-weight:900}
+  .notes-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;min-height:60px;font-size:13px;line-height:1.6;color:#333}
+  .checklist{list-style:none}
+  .checklist li{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f0f0;font-size:13px}
+  .checklist li:last-child{border-bottom:none}
+  .checkbox{width:16px;height:16px;border:2px solid #d1d5db;border-radius:3px;flex-shrink:0}
+  .sig-section{margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
+  .sig-box{border-top:2px solid #d1d5db;padding-top:6px}
+  .sig-label{font-size:10px;color:#777;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+  .material-pill{display:inline-block;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:4px;padding:3px 10px;font-size:12px;font-weight:600;margin-top:4px}
+  .financial-strip{display:flex;gap:20px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:16px}
+  .fin-item{flex:1}
+  .fin-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:2px}
+  .fin-value{font-size:15px;font-weight:800;color:#111}
+  .no-print{margin-top:24px;text-align:center}
+  .print-btn{background:${accent};color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="shop-name">${he(shopName)}</div>
+      <div class="shop-meta">
+        ${shopAddress ? `${he(shopAddress)}<br>` : ''}
+        ${shopPhone ? `${he(shopPhone)}<br>` : ''}
+      </div>
+    </div>
+    <div class="wo-meta">
+      <div class="wo-num">WORK ORDER <span style="color:${accent}">${WO_NUM}</span></div>
+      <div class="wo-date">Issued: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+      <div style="margin-top:6px">
+        <span class="badge">${he(catLabel)}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Job + Client Info -->
+  <div class="grid-2" style="margin-bottom:20px">
+    <div class="section">
+      <div class="section-title">Client Information</div>
+      <div class="field">
+        <div class="field-label">Company</div>
+        <div class="field-value big">${he(job.company)}</div>
+      </div>
+      ${contactName ? `<div class="field"><div class="field-label">Contact</div><div class="field-value">${he(contactName)}</div></div>` : ''}
+      ${contactPhone ? `<div class="field"><div class="field-label">Phone</div><div class="field-value">${he(contactPhone)}</div></div>` : ''}
+      ${contactEmail ? `<div class="field"><div class="field-label">Email</div><div class="field-value">${he(contactEmail)}</div></div>` : ''}
+    </div>
+
+    <div class="section">
+      <div class="section-title">Job Details</div>
+      <div class="field">
+        <div class="field-label">Scheduled Install Date</div>
+        <div class="field-value">${schedDate}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Vehicle Type</div>
+        <div class="field-value">${he(vtLabel)}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Vehicle Count</div>
+        <div class="field-value big">${job.vehicle_count || 1} vehicle${(job.vehicle_count || 1) > 1 ? 's' : ''}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Crew Required</div>
+        <div class="field-value">${crewCount} installer${crewCount > 1 ? 's' : ''}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Material -->
+  <div class="section">
+    <div class="section-title">Material Specification</div>
+    ${job.material
+      ? `<div class="material-pill">${he(job.material)}</div>`
+      : `<div style="color:#aaa;font-style:italic;font-size:12px">Material not specified — confirm with shop owner before ordering</div>`}
+    ${laborHours > 0 ? `<div style="margin-top:8px;font-size:12px;color:#555">Estimated labor: <strong>${laborHours}h</strong></div>` : ''}
+  </div>
+
+  <!-- Financial Summary (internal use) -->
+  ${(revenue > 0 || materialCost > 0) ? `
+  <div class="section">
+    <div class="section-title">Financial Summary (Internal)</div>
+    <div class="financial-strip">
+      ${revenue > 0 ? `<div class="fin-item"><div class="fin-label">Job Revenue</div><div class="fin-value">$${Number(revenue).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>` : ''}
+      ${materialCost > 0 ? `<div class="fin-item"><div class="fin-label">Material Cost</div><div class="fin-value">$${Number(materialCost).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>` : ''}
+      ${(revenue > 0 && materialCost > 0) ? `<div class="fin-item"><div class="fin-label">Gross Margin</div><div class="fin-value" style="color:#10b981">$${(revenue - materialCost).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>` : ''}
+    </div>
+  </div>` : ''}
+
+  <!-- Notes -->
+  <div class="section">
+    <div class="section-title">Design / Special Instructions</div>
+    <div class="notes-box">${job.notes ? he(job.notes).replace(/\n/g, '<br>') : '<span style="color:#aaa">None — see design files in WrapOS.</span>'}</div>
+  </div>
+
+  <!-- Install Checklist -->
+  <div class="section">
+    <div class="section-title">Pre-Install Checklist</div>
+    <ul class="checklist">
+      <li><div class="checkbox"></div> Vehicle cleaned, degreased, and dried</li>
+      <li><div class="checkbox"></div> Surface temperature check (65°F–95°F optimal)</li>
+      <li><div class="checkbox"></div> Panel gaps and recesses masked off</li>
+      <li><div class="checkbox"></div> Existing damage documented (photo + note)</li>
+      <li><div class="checkbox"></div> Material confirmed — sku / lot # match order</li>
+      <li><div class="checkbox"></div> Design file confirmed against client approval</li>
+      <li><div class="checkbox"></div> Heat gun, squeegee, and cutting tools on hand</li>
+      <li><div class="checkbox"></div> QC walk-around before client handoff</li>
+      <li><div class="checkbox"></div> After-photo uploaded to WrapOS job record</li>
+    </ul>
+  </div>
+
+  <!-- Signatures -->
+  <div class="sig-section">
+    <div>
+      <div class="sig-box">
+        <div class="sig-label">Installer Signature &amp; Date</div>
+      </div>
+    </div>
+    <div>
+      <div class="sig-box">
+        <div class="sig-label">Shop Owner / QC Sign-Off</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="no-print">
+    <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `inline; filename="work-order-${WO_NUM}.html"`);
+    res.send(html);
+  } catch (e) {
+    console.error('[work-order]', e.message);
+    res.status(500).send('<h2>Error generating work order</h2>');
+  }
+});
+
+// GET /jobs/:id/completion-receipt — client-facing delivery sign-off document
+app.get('/jobs/:id/completion-receipt', invoiceAuthMiddleware, async (req, res) => {
+  try {
+    const uid   = String(req.user.id);
+    const jobId = parseInt(req.params.id, 10);
+
+    const jobR = await pool.query(
+      `SELECT j.*, u.company_name, u.name AS owner_name, u.email AS owner_email,
+              u.settings_json
+       FROM installed_jobs j
+       JOIN users u ON u.id::text = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobR.rows.length) return res.status(404).send('<h2>Completion receipt not found</h2>');
+    const job      = jobR.rows[0];
+    const settings = typeof job.settings_json === 'string' ? JSON.parse(job.settings_json) : (job.settings_json || {});
+
+    let contactName = '', contactPhone = '', contactEmail = '';
+    if (job.lead_id) {
+      const lr = await pool.query(
+        `SELECT contact_name, phone, email FROM leads WHERE id=$1 LIMIT 1`, [job.lead_id]
+      );
+      if (lr.rows.length) {
+        contactName  = lr.rows[0].contact_name || '';
+        contactPhone = lr.rows[0].phone || '';
+        contactEmail = lr.rows[0].email || '';
+      }
+    }
+
+    const shopName    = job.company_name || settings.companyName || 'Your Shop';
+    const shopPhone   = settings.phone   || '';
+    const shopAddress = [settings.street, settings.city, settings.state].filter(Boolean).join(', ');
+    const accent      = '#f4551c';
+
+    const CR_NUM   = `CR-${String(job.id).padStart(5, '0')}`;
+    const today    = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const installDateDisplay = job.install_date || job.scheduled_install_date
+      ? new Date(job.install_date || job.scheduled_install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+      : 'See job record';
+
+    const CAT_LABEL = {
+      fleet: 'Fleet Wrap', dinoc: 'DI-NOC Architectural Film', colorchange: 'Full Color Change',
+      construction: 'Construction Fleet Wrap', racing: 'Motorsport Livery', reatec: 'Rea-Tec Film',
+      design: 'Custom Design Wrap', wallgraphics: 'Wall Graphics', gc_referral: 'Commercial Graphics',
+    };
+    const catLabel = CAT_LABEL[job.wrap_category] || job.wrap_category || 'Vehicle Wrap';
+
+    const VT_LABEL = {
+      cargo_van_standard: 'Cargo Van', cargo_van_high_roof: 'High-Roof Van / Sprinter',
+      box_truck_16: '16ft Box Truck', box_truck_24: '24ft Box Truck',
+      semi_full: 'Semi + 53ft Trailer', semi_cab_only: 'Semi Cab (No Trailer)',
+      pickup_truck: 'Full-Size Pickup Truck', suv_large: 'Large SUV / Crossover',
+      sedan: 'Sedan', minivan: 'Minivan / Passenger Van',
+      bus_school: 'School / Transit Bus', flatbed: 'Flatbed Truck', other: 'Vehicle',
+    };
+    const vtLabel = VT_LABEL[job.vehicle_type] || job.vehicle_type || 'Vehicle';
+
+    const revenue    = Number(job.job_revenue)  || 0;
+    const amountPaid = Number(job.amount_paid)  || 0;
+    const balance    = Math.max(0, revenue - amountPaid);
+    const isPaidFull = revenue > 0 && balance === 0;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Completion Receipt ${CR_NUM} — ${he(job.company)}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:#111;background:#fff;padding:32px}
+  @media print{body{padding:0} .no-print{display:none} .page{padding:24px}}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid ${accent}}
+  .shop-name{font-size:22px;font-weight:900;color:${accent};letter-spacing:-0.5px}
+  .shop-meta{font-size:11px;color:#555;line-height:1.6}
+  .cr-meta{text-align:right}
+  .cr-num{font-size:18px;font-weight:800;color:#111}
+  .cr-date{font-size:11px;color:#777;margin-top:2px}
+  .badge{display:inline-block;background:${accent};color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:.06em;margin-left:6px;vertical-align:middle}
+  .badge-green{background:#10b981}
+  .section{margin-bottom:20px}
+  .section-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:${accent};margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #eee}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .field{margin-bottom:8px}
+  .field-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:2px}
+  .field-value{font-size:13px;font-weight:600;color:#111}
+  .field-value.big{font-size:16px;font-weight:900}
+  .care-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+  .care-item{display:flex;align-items:flex-start;gap:6px;font-size:12px;line-height:1.5;color:#333}
+  .care-dot{width:5px;height:5px;border-radius:50%;background:${accent};flex-shrink:0;margin-top:5px}
+  .warranty-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:12px 16px}
+  .warranty-header{font-size:12px;font-weight:800;color:#065f46;margin-bottom:4px}
+  .warranty-text{font-size:11px;color:#064e3b;line-height:1.6}
+  .notes-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;min-height:56px;font-size:13px;line-height:1.6;color:#333}
+  .checklist{list-style:none}
+  .checklist li{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f0f0;font-size:13px}
+  .checklist li:last-child{border-bottom:none}
+  .checkbox{width:16px;height:16px;border:2px solid #d1d5db;border-radius:3px;flex-shrink:0}
+  .ack-box{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:12px 16px;margin-bottom:20px}
+  .ack-text{font-size:11px;color:#7c2d12;line-height:1.7}
+  .payment-strip{display:flex;gap:20px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:16px;align-items:center}
+  .pay-item{flex:1}
+  .pay-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:2px}
+  .pay-value{font-size:15px;font-weight:800;color:#111}
+  .pay-value.green{color:#10b981}
+  .pay-value.red{color:#ef4444}
+  .paid-stamp{font-size:22px;font-weight:900;color:#10b981;text-transform:uppercase;letter-spacing:.12em;border:3px solid #10b981;border-radius:6px;padding:4px 14px;display:inline-block;transform:rotate(-2deg)}
+  .sig-section{margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
+  .sig-block{margin-bottom:12px}
+  .sig-line{border-bottom:2px solid #d1d5db;margin-bottom:4px;height:36px}
+  .sig-label{font-size:10px;color:#777;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+  .no-print{margin-top:24px;text-align:center}
+  .print-btn{background:${accent};color:#fff;border:none;padding:10px 28px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="shop-name">${he(shopName)}</div>
+      <div class="shop-meta">
+        ${shopAddress ? `${he(shopAddress)}<br>` : ''}
+        ${shopPhone ? `${he(shopPhone)}<br>` : ''}
+      </div>
+    </div>
+    <div class="cr-meta">
+      <div class="cr-num">COMPLETION RECEIPT <span style="color:${accent}">${CR_NUM}</span></div>
+      <div class="cr-date">Date Issued: ${today}</div>
+      <div style="margin-top:6px">
+        <span class="badge">${he(catLabel)}</span>
+        ${isPaidFull ? '<span class="badge badge-green">PAID IN FULL</span>' : ''}
+      </div>
+    </div>
+  </div>
+
+  <!-- Client + Job Info -->
+  <div class="grid-2" style="margin-bottom:20px">
+    <div class="section">
+      <div class="section-title">Client</div>
+      <div class="field">
+        <div class="field-label">Company</div>
+        <div class="field-value big">${he(job.company)}</div>
+      </div>
+      ${contactName ? `<div class="field"><div class="field-label">Contact</div><div class="field-value">${he(contactName)}</div></div>` : ''}
+      ${contactPhone ? `<div class="field"><div class="field-label">Phone</div><div class="field-value">${he(contactPhone)}</div></div>` : ''}
+      ${contactEmail ? `<div class="field"><div class="field-label">Email</div><div class="field-value">${he(contactEmail)}</div></div>` : ''}
+    </div>
+
+    <div class="section">
+      <div class="section-title">Work Completed</div>
+      <div class="field">
+        <div class="field-label">Service</div>
+        <div class="field-value">${he(catLabel)}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Vehicle Type</div>
+        <div class="field-value">${he(vtLabel)}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Vehicle Count</div>
+        <div class="field-value big">${job.vehicle_count || 1} vehicle${(job.vehicle_count || 1) > 1 ? 's' : ''}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Install Date</div>
+        <div class="field-value">${installDateDisplay}</div>
+      </div>
+      ${job.material ? `<div class="field"><div class="field-label">Material Applied</div><div class="field-value">${he(job.material)}</div></div>` : ''}
+    </div>
+  </div>
+
+  <!-- QC Confirmation (installer-signed at delivery) -->
+  <div class="section">
+    <div class="section-title">Quality Confirmation — Verified at Delivery</div>
+    <ul class="checklist">
+      <li><div class="checkbox"></div> Wrap installed to approved design — all panels complete</li>
+      <li><div class="checkbox"></div> Edges sealed — no lifting, bubbling, or exposed adhesive</li>
+      <li><div class="checkbox"></div> Trim pieces, mirrors, and door handles addressed</li>
+      <li><div class="checkbox"></div> No visible silvering, fish-eyes, or stretch defects</li>
+      <li><div class="checkbox"></div> Vehicle surface cleaned and debris removed post-install</li>
+      <li><div class="checkbox"></div> Client walkthrough completed — no outstanding concerns noted</li>
+    </ul>
+  </div>
+
+  <!-- Pre-Existing Damage Notes -->
+  <div class="section">
+    <div class="section-title">Pre-Existing Damage / Notes</div>
+    <div class="notes-box">${job.notes ? he(job.notes).replace(/\n/g,'<br>') : '<span style="color:#aaa">None documented — vehicle delivered in standard condition.</span>'}</div>
+  </div>
+
+  <!-- Warranty -->
+  <div class="section">
+    <div class="section-title">Warranty &amp; Coverage</div>
+    <div class="warranty-box">
+      <div class="warranty-header">2-Year Material &amp; Workmanship Warranty</div>
+      <div class="warranty-text">
+        ${he(shopName)} warrants that materials and workmanship are free from defects under normal use and exposure for <strong>24 months</strong> from the installation date. Coverage includes edge lifting, delamination, and print failure under standard conditions. Coverage does not apply to damage caused by pressure washing, chemical cleaners, abrasion, improper vehicle modifications, or unreported pre-existing surface defects.
+      </div>
+    </div>
+  </div>
+
+  <!-- Care Instructions -->
+  <div class="section">
+    <div class="section-title">Care &amp; Maintenance Instructions</div>
+    <div class="care-grid">
+      <div class="care-item"><div class="care-dot"></div><span><strong>Hand wash only</strong> with mild soap and water</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>No pressure washers</strong> — forces water under edges</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>No automated brush car washes</strong> — damages surface</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>No harsh chemicals</strong> — petroleum-based, acid, or solvent</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>Park in shade</strong> when possible — prolongs color vibrancy</span></div>
+      <div class="care-item"><div class="care-dot"></div><span><strong>Report edge lifting early</strong> — small repairs prevent full replacement</span></div>
+    </div>
+  </div>
+
+  <!-- Payment Summary -->
+  ${revenue > 0 ? `
+  <div class="section">
+    <div class="section-title">Payment Summary</div>
+    <div class="payment-strip">
+      <div class="pay-item"><div class="pay-label">Job Total</div><div class="pay-value">$${revenue.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="pay-item"><div class="pay-label">Amount Paid</div><div class="pay-value green">$${amountPaid.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="pay-item"><div class="pay-label">Balance Due</div><div class="pay-value ${balance > 0 ? 'red' : 'green'}">$${balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      ${isPaidFull ? `<div style="margin-left:auto"><div class="paid-stamp">PAID</div></div>` : ''}
+    </div>
+  </div>` : ''}
+
+  <!-- Client Acknowledgment -->
+  <div class="ack-box">
+    <div class="ack-text">
+      <strong>Client Acknowledgment:</strong> By signing below, I confirm that I have inspected the vehicle(s) listed above and accept them in the condition described. I acknowledge receipt of care and maintenance instructions and understand that failure to follow care guidelines may void the warranty. Any concerns not noted above are accepted as-is. This document serves as the final delivery receipt for the wrap installation services performed by ${he(shopName)}.
+    </div>
+  </div>
+
+  <!-- Signatures -->
+  <div class="sig-section">
+    <div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Client Signature</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Printed Name</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Date</div>
+      </div>
+    </div>
+    <div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Shop Representative Signature</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line" style="padding-top:6px"><span style="font-size:12px;color:#555">${he(job.owner_name || shopName)}</span></div>
+        <div class="sig-label">Printed Name</div>
+      </div>
+      <div class="sig-block">
+        <div class="sig-line"></div>
+        <div class="sig-label">Date</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="no-print" style="margin-top:32px">
+    <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `inline; filename="completion-receipt-${CR_NUM}.html"`);
+    res.send(html);
+  } catch (e) {
+    console.error('[completion-receipt]', e.message);
+    res.status(500).send('<h2>Error generating completion receipt</h2>');
   }
 });
 
@@ -8104,6 +10693,111 @@ ${photoGrid ? `
 });
 
 // ── Google Review Automation ──────────────────────────────────────────────────
+// POST /jobs/:id/notify-ready — send "vehicle ready for pickup" notification to client
+app.post('/jobs/:id/notify-ready', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { via = 'email', toEmail, toPhone, toName, customMessage } = req.body || {};
+
+  if (!toEmail && !toPhone) return res.status(400).json({ error: 'Provide toEmail or toPhone' });
+
+  try {
+    const { rows: jobRows } = await pool.query(
+      `SELECT j.*, u.settings_json, u.company_name, u.email AS owner_email
+       FROM installed_jobs j
+       JOIN users u ON u.id::TEXT = j.user_id
+       WHERE j.id = $1 AND j.user_id = $2`,
+      [jobId, uid]
+    );
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+
+    const job      = jobRows[0];
+    const settings = typeof job.settings_json === 'string' ? JSON.parse(job.settings_json) : (job.settings_json || {});
+    const shopName = job.company_name || settings.companyName || 'Your Wrap Shop';
+    const shopPhone = settings.phone || '';
+    const shopAddr  = [settings.street, settings.city, settings.state].filter(Boolean).join(', ');
+    const senderEmail = settings.senderEmail || job.owner_email || '';
+    const accentColor = settings.accentColor || '#f4551c';
+
+    const revenue    = Number(job.job_revenue)  || 0;
+    const amountPaid = Number(job.amount_paid)  || 0;
+    const balance    = Math.max(0, revenue - amountPaid);
+
+    const defaultMsg = customMessage ||
+      `Your vehicle wrap is complete and ready for pickup! ${shopAddr ? `We're located at ${shopAddr}.` : ''} ${shopPhone ? `Call us at ${shopPhone} with any questions.` : ''}`.trim();
+
+    let sentVia = [];
+
+    // ── Email notification ──
+    if ((via === 'email' || via === 'both') && toEmail && resend) {
+      const balanceNote = balance > 0
+        ? `<p style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 14px;color:#856404;font-size:14px;margin:16px 0"><strong>Balance due at pickup:</strong> $${balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</p>`
+        : `<p style="background:#d4edda;border:1px solid #28a745;border-radius:6px;padding:10px 14px;color:#155724;font-size:14px;margin:16px 0">✓ Account paid in full — no balance due.</p>`;
+
+      await resend.emails.send({
+        from: senderEmail ? `${shopName} <${senderEmail}>` : `${shopName} <onboarding@resend.dev>`,
+        to: toEmail,
+        subject: `Your vehicle wrap is ready for pickup! — ${shopName}`,
+        html: `
+<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px">
+  <div style="background:${accentColor};border-radius:8px 8px 0 0;padding:20px 24px">
+    <div style="font-size:22px;font-weight:900;color:#fff;letter-spacing:-0.5px">${shopName}</div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:24px">
+    <h2 style="font-size:20px;font-weight:800;color:#111;margin:0 0 8px">🎉 Your wrap is complete!</h2>
+    <p style="color:#444;font-size:14px;line-height:1.6;margin:0 0 16px">
+      Hi ${toName || 'there'},<br><br>
+      Great news — your vehicle wrap job for <strong>${job.company}</strong> is finished and ready for pickup.
+    </p>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin:0 0 16px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:6px">Job Details</div>
+      <div style="font-size:13px;color:#333;line-height:1.8">
+        <strong>Vehicle count:</strong> ${job.vehicle_count || 1} vehicle${(job.vehicle_count||1)>1?'s':''}<br>
+        ${job.material ? `<strong>Material:</strong> ${job.material}<br>` : ''}
+        ${shopAddr ? `<strong>Pickup location:</strong> ${shopAddr}<br>` : ''}
+        ${shopPhone ? `<strong>Phone:</strong> ${shopPhone}` : ''}
+      </div>
+    </div>
+    ${balanceNote}
+    ${customMessage ? `<p style="font-size:14px;color:#333;line-height:1.6">${customMessage}</p>` : ''}
+    <p style="font-size:13px;color:#666;margin-top:20px;border-top:1px solid #eee;padding-top:16px">
+      Please call ahead if you need to schedule a specific pickup time. We look forward to seeing you!<br><br>
+      — ${shopName}
+    </p>
+  </div>
+</div>`,
+      }).catch((err) => console.warn('[notify-ready] email failed:', err.message));
+      sentVia.push('email');
+    }
+
+    // ── SMS notification ──
+    const twilioClient = (typeof twilio !== 'undefined' && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER)
+      ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+      : null;
+
+    if ((via === 'sms' || via === 'both') && toPhone && twilioClient) {
+      const smsBody = `${shopName}: Your vehicle wrap is ready for pickup! ${shopAddr ? shopAddr + '. ' : ''}${shopPhone ? 'Call: ' + shopPhone : ''} ${balance > 0 ? `Balance due: $${balance.toLocaleString('en-US',{minimumFractionDigits:2})}` : 'Paid in full.'}`.trim();
+      await twilioClient.messages.create({
+        body: smsBody.slice(0, 320),
+        from: process.env.TWILIO_FROM_NUMBER,
+        to: toPhone,
+      }).catch((err) => console.warn('[notify-ready] SMS failed:', err.message));
+      sentVia.push('sms');
+    }
+
+    // ── Log activity to job ──
+    await pool.query(
+      `UPDATE installed_jobs SET notes = COALESCE(notes,'') || $1 WHERE id = $2 AND user_id = $3`,
+      [`\n[${new Date().toLocaleDateString()}] Pickup notification sent via ${sentVia.join('+')||via} to ${toName||toEmail||toPhone}.`, jobId, uid]
+    );
+
+    res.json({ ok: true, sentVia });
+  } catch (e) {
+    console.error('[notify-ready]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // After a job is marked complete, shops can send a one-click review request
 // (email or SMS) to the client. The landing page thanks them and links directly
 // to their Google Business review form.
@@ -8268,6 +10962,189 @@ app.patch('/jobs/:id/schedule', authMiddleware, async (req, res) => {
 // ── Subcontractor Management ──────────────────────────────────────────────────
 
 // GET /subcontractors — list all subs for this user
+// ── Material Inventory CRUD ───────────────────────────────────────────────────
+// GET /materials — list all inventory items for this user
+app.get('/materials', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM material_inventory WHERE user_id=$1 ORDER BY brand, product_name`,
+      [uid]
+    );
+    res.json({ ok: true, materials: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /materials/low-stock — items at or below reorder threshold
+app.get('/materials/low-stock', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM material_inventory
+       WHERE user_id=$1 AND rolls_in_stock <= reorder_at
+       ORDER BY (rolls_in_stock - reorder_at) ASC, brand, product_name`,
+      [uid]
+    );
+    res.json({ ok: true, materials: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /materials — add new material to inventory
+app.post('/materials', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, rolls_on_order, unit_cost, reorder_at, notes } = req.body;
+  if (!brand?.trim() || !product_name?.trim()) return res.status(400).json({ error: 'brand and product_name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO material_inventory
+         (user_id, brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, rolls_on_order, unit_cost, reorder_at, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [uid, brand.trim(), product_name.trim(), sku || null, finish || null,
+       roll_width_in || 60, roll_length_ft || 25,
+       rolls_in_stock || 0, rolls_on_order || 0,
+       unit_cost || 0, reorder_at != null ? reorder_at : 2,
+       notes || null]
+    );
+    res.json({ ok: true, material: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /materials/:id — update an inventory item
+app.put('/materials/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const matId = parseInt(req.params.id, 10);
+  const { brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, rolls_on_order, unit_cost, reorder_at, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE material_inventory SET
+         brand          = COALESCE($3, brand),
+         product_name   = COALESCE($4, product_name),
+         sku            = $5,
+         finish         = $6,
+         roll_width_in  = COALESCE($7, roll_width_in),
+         roll_length_ft = COALESCE($8, roll_length_ft),
+         rolls_in_stock = COALESCE($9, rolls_in_stock),
+         rolls_on_order = COALESCE($10, rolls_on_order),
+         unit_cost      = COALESCE($11, unit_cost),
+         reorder_at     = COALESCE($12, reorder_at),
+         notes          = $13,
+         updated_at     = NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [matId, uid,
+       brand || null, product_name || null,
+       sku ?? null, finish ?? null,
+       roll_width_in || null, roll_length_ft || null,
+       rolls_in_stock != null ? rolls_in_stock : null,
+       rolls_on_order != null ? rolls_on_order : null,
+       unit_cost != null ? unit_cost : null,
+       reorder_at != null ? reorder_at : null,
+       notes ?? null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, material: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /materials/:id/adjust — adjust stock by delta (positive = received, negative = used)
+app.post('/materials/:id/adjust', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const matId = parseInt(req.params.id, 10);
+  const { delta, reason } = req.body;
+  if (delta == null || isNaN(Number(delta))) return res.status(400).json({ error: 'delta required' });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE material_inventory
+       SET rolls_in_stock = GREATEST(0, rolls_in_stock + $3),
+           updated_at     = NOW()
+       WHERE id=$1 AND user_id=$2 RETURNING *`,
+      [matId, uid, Number(delta)]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, material: rows[0], reason: reason || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /materials/:id — remove an inventory item
+app.delete('/materials/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const matId = parseInt(req.params.id, 10);
+  try {
+    await pool.query(`DELETE FROM material_inventory WHERE id=$1 AND user_id=$2`, [matId, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /materials/estimate — compute rolls needed + material cost for a wrap job
+// Uses VEHICLE_DIMENSIONS sq footage range and material inventory unit costs.
+// coverage: 'full' (100%), 'partial' (55%), 'spot' (22%)
+app.get('/materials/estimate', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { vehicle_type = 'other', vehicle_count = 1, coverage = 'full', material_id } = req.query;
+  const count = Math.max(1, parseInt(vehicle_count, 10) || 1);
+
+  const dim = VEHICLE_DIMENSIONS[vehicle_type] || VEHICLE_DIMENSIONS.other;
+  const coveragePct = coverage === 'partial' ? 0.55 : coverage === 'spot' ? 0.22 : 1.0;
+  const sqftPerVehicleLow  = Math.round(dim.sqft[0] * coveragePct);
+  const sqftPerVehicleHigh = Math.round(dim.sqft[1] * coveragePct);
+  const totalSqftLow  = sqftPerVehicleLow  * count;
+  const totalSqftHigh = sqftPerVehicleHigh * count;
+
+  try {
+    // Fetch inventory items for this user
+    const { rows: mats } = await pool.query(
+      `SELECT id, brand, product_name, sku, finish, roll_width_in, roll_length_ft, rolls_in_stock, unit_cost
+       FROM material_inventory WHERE user_id=$1 ORDER BY unit_cost ASC`,
+      [uid]
+    );
+
+    // For each material, compute cost and stock coverage for this job
+    const suggestions = mats.map((m) => {
+      // Roll area in sq ft
+      const rollSqft = (m.roll_width_in / 12) * m.roll_length_ft;
+      // Add 15% waste factor
+      const rollsNeededLow  = Math.ceil((totalSqftLow  * 1.15) / rollSqft);
+      const rollsNeededHigh = Math.ceil((totalSqftHigh * 1.15) / rollSqft);
+      const costLow  = Math.round(rollsNeededLow  * Number(m.unit_cost));
+      const costHigh = Math.round(rollsNeededHigh * Number(m.unit_cost));
+      const canCover = m.rolls_in_stock >= rollsNeededLow;
+
+      return {
+        id: m.id,
+        name: `${m.brand} ${m.product_name}${m.finish ? ` (${m.finish})` : ''}`,
+        sku: m.sku,
+        rollSqft: Math.round(rollSqft),
+        rollsNeededLow,
+        rollsNeededHigh,
+        rollsInStock: parseFloat(m.rolls_in_stock),
+        unitCostPerRoll: Number(m.unit_cost),
+        costLow,
+        costHigh,
+        canCoverWithStock: canCover,
+        shortfall: canCover ? 0 : rollsNeededLow - parseFloat(m.rolls_in_stock),
+      };
+    });
+
+    // If a specific material_id was requested, put it first
+    if (material_id) {
+      const idx = suggestions.findIndex((s) => s.id === parseInt(material_id, 10));
+      if (idx > 0) suggestions.unshift(suggestions.splice(idx, 1)[0]);
+    }
+
+    res.json({
+      ok: true,
+      vehicleType: vehicle_type,
+      vehicleLabel: dim.label,
+      vehicleCount: count,
+      coverage,
+      sqftPerVehicleLow,
+      sqftPerVehicleHigh,
+      totalSqftLow,
+      totalSqftHigh,
+      suggestions: suggestions.slice(0, 8), // top 8 options
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/subcontractors', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   try {
@@ -8289,13 +11166,14 @@ app.get('/subcontractors', authMiddleware, async (req, res) => {
 // POST /subcontractors — create a sub
 app.post('/subcontractors', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
-  const { name, contact, specialty, labor_rate, notes } = req.body;
+  const { name, contact, specialty, labor_rate, notes, tax_id, business_type, email, address } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO subcontractors (user_id, name, contact, specialty, labor_rate, notes)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [uid, name.trim(), contact || null, specialty || null, labor_rate || null, notes || null]
+      `INSERT INTO subcontractors (user_id, name, contact, specialty, labor_rate, notes, tax_id, business_type, email, address)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [uid, name.trim(), contact || null, specialty || null, labor_rate || null, notes || null,
+       tax_id || null, business_type || 'individual', email || null, address || null]
     );
     res.json({ ok: true, sub: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -8305,18 +11183,23 @@ app.post('/subcontractors', authMiddleware, async (req, res) => {
 app.patch('/subcontractors/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   const subId = parseInt(req.params.id, 10);
-  const { name, contact, specialty, labor_rate, notes } = req.body;
+  const { name, contact, specialty, labor_rate, notes, tax_id, business_type, email, address } = req.body;
   try {
     const { rows } = await pool.query(
       `UPDATE subcontractors SET
-         name        = COALESCE($3, name),
-         contact     = COALESCE($4, contact),
-         specialty   = COALESCE($5, specialty),
-         labor_rate  = COALESCE($6, labor_rate),
-         notes       = COALESCE($7, notes),
-         updated_at  = NOW()
+         name          = COALESCE($3, name),
+         contact       = COALESCE($4, contact),
+         specialty     = COALESCE($5, specialty),
+         labor_rate    = COALESCE($6, labor_rate),
+         notes         = COALESCE($7, notes),
+         tax_id        = COALESCE($8, tax_id),
+         business_type = COALESCE($9, business_type),
+         email         = COALESCE($10, email),
+         address       = COALESCE($11, address),
+         updated_at    = NOW()
        WHERE id=$1 AND user_id=$2 RETURNING *`,
-      [subId, uid, name || null, contact || null, specialty || null, labor_rate || null, notes || null]
+      [subId, uid, name || null, contact || null, specialty || null, labor_rate || null, notes || null,
+       tax_id || null, business_type || null, email || null, address || null]
     );
     if (!rows.length) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true, sub: rows[0] });
@@ -8389,6 +11272,182 @@ app.delete('/jobs/sub-assignments/:id', authMiddleware, async (req, res) => {
       [assignId, uid]
     );
     if (!rowCount) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /jobs/sub-assignments/:id/mark-paid — record sub payment
+app.patch('/jobs/sub-assignments/:id/mark-paid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const assignId = parseInt(req.params.id, 10);
+  const { paid_amount, undo } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE job_subcontractors js SET
+         paid_at     = CASE WHEN $1 THEN NULL ELSE NOW() END,
+         paid_amount = CASE WHEN $1 THEN NULL ELSE $2::numeric END
+       FROM installed_jobs j
+       WHERE js.id=$3 AND js.job_id=j.id AND j.user_id=$4
+       RETURNING js.*`,
+      [!!undo, paid_amount ?? null, assignId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, assignment: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /subcontractors/payables — unpaid sub assignments across all jobs
+app.get('/subcontractors/payables', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT js.id, js.job_id, js.sub_id, js.hours, js.labor_cost,
+              js.paid_at, js.paid_amount, js.notes, js.created_at,
+              s.name AS sub_name, s.specialty, s.email AS sub_email,
+              j.company AS job_company, j.install_date, j.job_revenue
+       FROM job_subcontractors js
+       JOIN subcontractors s ON s.id = js.sub_id
+       JOIN installed_jobs j ON j.id = js.job_id
+       WHERE j.user_id = $1 AND js.paid_at IS NULL AND js.labor_cost > 0
+       ORDER BY js.created_at DESC`,
+      [uid]
+    );
+    const totalOwed = rows.reduce((s, r) => s + Number(r.labor_cost), 0);
+    res.json({ ok: true, payables: rows, totalOwed });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Job Expense Routes ───────────────────────────────────────────────────────
+// Miscellaneous costs that reduce true job margin: fuel, parking, shipping, etc.
+
+// GET /jobs/:id/expenses — list expenses for a job
+app.get('/jobs/:id/expenses', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `SELECT * FROM job_expenses WHERE job_id=$1 ORDER BY expense_date ASC, created_at ASC`,
+      [jobId]
+    );
+    const total = rows.reduce((s, r) => s + Number(r.amount), 0);
+    res.json({ ok: true, expenses: rows, total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/:id/expenses — add an expense
+app.post('/jobs/:id/expenses', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { category = 'misc', description, amount, expense_date, receipt_note } = req.body || {};
+  if (!description || !amount) return res.status(400).json({ error: 'description and amount required' });
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `INSERT INTO job_expenses (job_id, user_id, category, description, amount, expense_date, receipt_note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [jobId, uid, category, description.trim(), Number(amount), expense_date || null, receipt_note || null]
+    );
+    res.json({ ok: true, expense: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /jobs/:id/expenses/:eid — remove an expense
+app.delete('/jobs/:id/expenses/:eid', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const eid   = parseInt(req.params.eid, 10);
+  try {
+    const { rowCount } = await pool.query(
+      `DELETE FROM job_expenses WHERE id=$1 AND job_id=$2 AND user_id=$3`,
+      [eid, jobId, uid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Job Vehicle Intake Routes ────────────────────────────────────────────────
+// Track each individual vehicle in a fleet job for legal protection and QC.
+
+// GET /jobs/:id/vehicles — list intake records for a job
+app.get('/jobs/:id/vehicles', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `SELECT * FROM job_vehicles WHERE job_id=$1 ORDER BY vehicle_num ASC NULLS LAST, created_at ASC`,
+      [jobId]
+    );
+    res.json({ ok: true, vehicles: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /jobs/:id/vehicles — add a vehicle intake record
+app.post('/jobs/:id/vehicles', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { vehicle_num, year, make, model, color, vin, plate, mileage, condition_notes } = req.body || {};
+  try {
+    const { rows: jobRows } = await pool.query(`SELECT id FROM installed_jobs WHERE id=$1 AND user_id=$2`, [jobId, uid]);
+    if (!jobRows.length) return res.status(404).json({ error: 'Job not found' });
+    const { rows } = await pool.query(
+      `INSERT INTO job_vehicles (job_id, user_id, vehicle_num, year, make, model, color, vin, plate, mileage, condition_notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [jobId, uid, vehicle_num || null, year || null, make || null, model || null, color || null,
+       vin ? vin.trim().toUpperCase() : null, plate ? plate.trim().toUpperCase() : null,
+       mileage || null, condition_notes || null]
+    );
+    res.json({ ok: true, vehicle: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /jobs/:id/vehicles/:vid — update a vehicle record (wrapped status, notes, etc.)
+app.patch('/jobs/:id/vehicles/:vid', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const vid   = parseInt(req.params.vid, 10);
+  const { vehicle_num, year, make, model, color, vin, plate, mileage, condition_notes, wrapped } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE job_vehicles SET
+         vehicle_num     = COALESCE($1, vehicle_num),
+         year            = COALESCE($2, year),
+         make            = COALESCE($3, make),
+         model           = COALESCE($4, model),
+         color           = COALESCE($5, color),
+         vin             = COALESCE($6, vin),
+         plate           = COALESCE($7, plate),
+         mileage         = COALESCE($8, mileage),
+         condition_notes = COALESCE($9, condition_notes),
+         wrapped         = COALESCE($10, wrapped),
+         wrapped_at      = CASE WHEN $10 = TRUE AND wrapped = FALSE THEN NOW() WHEN $10 = FALSE THEN NULL ELSE wrapped_at END
+       WHERE id=$11 AND job_id=$12 AND user_id=$13
+       RETURNING *`,
+      [vehicle_num ?? null, year ?? null, make ?? null, model ?? null, color ?? null,
+       vin ? vin.trim().toUpperCase() : null, plate ? plate.trim().toUpperCase() : null,
+       mileage ?? null, condition_notes ?? null, wrapped ?? null, vid, jobId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Vehicle not found' });
+    res.json({ ok: true, vehicle: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /jobs/:id/vehicles/:vid — remove a vehicle record
+app.delete('/jobs/:id/vehicles/:vid', authMiddleware, async (req, res) => {
+  const uid   = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const vid   = parseInt(req.params.vid, 10);
+  try {
+    const { rowCount } = await pool.query(
+      `DELETE FROM job_vehicles WHERE id=$1 AND job_id=$2 AND user_id=$3`,
+      [vid, jobId, uid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Vehicle not found' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -10159,6 +13218,217 @@ function startAnniversaryWorker() {
   console.log('· Anniversary worker: running (daily check at 11:00 AM)');
 }
 
+// ── Post-Job Cross-Sell Worker ────────────────────────────────────────────────
+// 90 days after a job is installed, emails the client suggesting a complementary
+// service they haven't purchased yet. Runs daily at 9:30 AM.
+// Cost: $0 (Resend + zero tokens — email is template-driven, not AI).
+// Respects: Resend configured, lead has email, settings.autoCrossSell !== false.
+const CROSS_SELL_MAP = {
+  fleet:       { service: 'DI-NOC architectural film', pitch: 'Many fleet clients add DI-NOC to their office reception areas and showrooms after seeing how their vehicles transformed. It replaces painting or panel replacement — and the results are striking. Would you be interested in a quote for your headquarters or facility?' },
+  colorchange: { service: 'paint protection film (PPF)', pitch: 'Your color change looks fantastic — the next step most clients take is a clear paint protection film layer to shield the finish from chips, scratches, and UV. We apply it over the wrap or on painted panels. Would you like us to put together a PPF estimate?' },
+  construction:{ service: 'reflective safety markings & equipment decals', pitch: "Construction companies often add DOT-compliant reflective tape, equipment identification decals, and safety labels to their fleets after wrapping. It improves compliance and visibility on job sites. Let me know if you'd like a quick estimate." },
+  dinoc:       { service: 'architectural wall graphics & custom wallpaper', pitch: 'We also install large-format wall graphics, custom wallpaper, and branded wall murals — perfect for reception areas, conference rooms, and workspaces. Clients often pair DI-NOC surfaces with these graphics. Interested in a concept?' },
+  wallgraphics:{ service: 'vehicle wraps for your service fleet', pitch: "Wall graphics clients often overlook the fact that their service vehicles are already on the road every day — every mile is a missed branding opportunity. We can match your office graphics to your fleet. Want a fleet estimate?" },
+  reatec:      { service: 'DI-NOC surface film for interior fixtures', pitch: 'We also install DI-NOC on furniture, fixtures, and architectural elements. It pairs beautifully with Rea Tec surfaces and eliminates expensive replacements. Would you like to see what DI-NOC could do in the same space?' },
+  racing:      { service: 'race trailer wrap & hauler graphics', pitch: "Your car looks incredible — the next piece most race teams complete is the hauler. A branded trailer wrap turns your transport into a rolling billboard at every event. Want us to put together a hauler wrap concept?" },
+  gc_referral: { service: 'fleet wraps for your own vehicles', pitch: 'On top of the work we do for your clients, have you considered branding your own service vehicles? We offer contractor fleet wraps that make your company look as sharp on the road as the work you deliver.' },
+};
+
+// ── Post-Install Care Guide Email ─────────────────────────────────────────────
+// Fires immediately when a new job is logged (fire-and-forget).
+const CARE_GUIDE = {
+  fleet: {
+    subject: (co) => `Wrap care guide for ${co} — keep your fleet looking sharp`,
+    tips: [
+      'Wait 7 days after install before washing. The adhesive needs time to fully cure.',
+      'Hand wash with mild pH-neutral soap and soft cloths or a gentle foam cannon. Automatic brushwash car washes will lift edges.',
+      'Avoid pressure washing directly at seams, edges, or corners — keep spray at least 18 inches from the vehicle.',
+      'Wax with a quality carnauba wax (avoid solvent-based products). For gloss wraps, wax every 6 months to protect print.',
+      'Remove fuel spills, bird droppings, and tree sap immediately. These are the #1 cause of premature wrap failure.',
+      'Park in a garage or shaded area when possible. UV and heat are the primary factors in vinyl lifespan.',
+    ],
+  },
+  colorchange: {
+    subject: (co) => `Color change wrap care — first 7 days are critical`,
+    tips: [
+      'Do not wash for the first 7 days. The adhesive requires a full cure under the full-body film.',
+      'Matte or satin finish? Never use wax, polish, or any shiny-finish product. Use a dedicated matte or satin detailer only.',
+      'Gloss color change: use a quality paint sealant (no silicone) — apply every 6 months.',
+      'Machine washes, brushwash tunnels, and high-pressure sprays will peel edges. Hand wash only.',
+      'Edge sealing is your most important long-term habit. Inspect door jamb edges monthly and re-seal with a heat gun if any lifting is noted.',
+      'Fuel or chemical spills: blot immediately with clean water — never scrub.',
+    ],
+  },
+  dinoc: {
+    subject: (co) => `DI-NOC architectural film care for ${co}`,
+    tips: [
+      'Wait 48 hours after install before wiping the surface — the film needs to fully bond.',
+      'Clean with a damp microfiber cloth and a mild all-purpose cleaner. Avoid acetone, alcohol-based sprays, or abrasive pads.',
+      'DI-NOC is not waterproof at edges. Avoid saturating surfaces directly at seams or near fixtures.',
+      'Direct sunlight on horizontal surfaces (countertops, desktops) can cause yellowing over 5+ years. A UV-blocking film over windows slows this.',
+      'For stone or wood pattern films: light pressure wipe only — scrubbing can abrade the surface texture pattern.',
+    ],
+  },
+  reatec: {
+    subject: (co) => `Reätec film care instructions for ${co}`,
+    tips: [
+      'Curing time is 24-48 hours. Avoid heavy cleaning during this window.',
+      'Use mild pH-neutral cleaners only. Harsh chemicals will dull the surface finish and may cause discoloration.',
+      'Do not use any solvent-based products on the film surface.',
+      'For window films: clean with standard glass cleaner and soft cloth. Avoid razor blades or scraping tools.',
+    ],
+  },
+  default: {
+    subject: (co) => `Care guide for your new wrap — ${co}`,
+    tips: [
+      'Wait 7 days after install before washing.',
+      'Hand wash with mild soap. Avoid pressure washers at seams and edges.',
+      'Remove fuel, bird droppings, and sap immediately — do not let them sit.',
+      'Park in shade when possible to extend vinyl lifespan.',
+    ],
+  },
+};
+
+async function sendInstallCareEmail(uid, job, leadEmail, contactName) {
+  try {
+    if (!leadEmail) return;
+    const settingsRow = await pool.query(`SELECT settings_json, email AS shop_email FROM users WHERE id=$1`, [uid]);
+    const s = settingsRow.rows[0]?.settings_json || {};
+    if (s.autoCareEmail === false) return;
+
+    const shopName = s.companyName || s.senderName || 'Your Wrap Shop';
+    const shopEmail = s.replyToEmail || settingsRow.rows[0]?.shop_email || null;
+    const contactFirst = (contactName || job.company || 'there').split(' ')[0];
+    const guide = CARE_GUIDE[job.wrap_category] || CARE_GUIDE.default;
+    const subject = guide.subject(job.company);
+
+    const tipsHtml = guide.tips.map((t) => `<li style="margin-bottom:8px;color:#1e293b;font-size:15px;line-height:1.6">${t}</li>`).join('');
+    const tipsTxt = guide.tips.map((t, i) => `${i + 1}. ${t}`).join('\n\n');
+    const vehicleLabel = `${job.vehicle_count} ${job.vehicle_type || 'vehicle'}${job.vehicle_count !== 1 ? 's' : ''}`;
+
+    const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px">
+<div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0">
+<div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>
+<p style="margin:0 0 12px 0;color:#1e293b;font-size:15px;line-height:1.6">Hi ${contactFirst},</p>
+<p style="margin:0 0 12px 0;color:#1e293b;font-size:15px;line-height:1.6">Your ${vehicleLabel} install is complete — here's how to keep your wrap looking great for years to come.</p>
+<div style="background:#f8fafc;border-radius:8px;padding:16px 20px;margin:16px 0">
+<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;margin-bottom:12px">CARE & MAINTENANCE GUIDE</div>
+<ul style="margin:0;padding:0 0 0 18px">${tipsHtml}</ul>
+</div>
+<p style="margin:16px 0 0;color:#64748b;font-size:13px;line-height:1.6">Questions? Reply to this email anytime — we're happy to help.</p>
+</div></body></html>`;
+
+    const resend = getResend();
+    if (!resend) return;
+
+    await resend.emails.send({
+      from: `${shopName} <${shopEmail || 'care@wrapos.com'}>`,
+      to: leadEmail,
+      subject,
+      html,
+      text: `Hi ${contactFirst},\n\nYour ${vehicleLabel} install is complete! Here's your care guide:\n\n${tipsTxt}\n\nQuestions? Reply anytime.\n\n${shopName}`,
+    });
+
+    await pool.query(`UPDATE installed_jobs SET care_email_sent_at = NOW() WHERE id = $1`, [job.id]);
+    if (job.lead_id) {
+      await logActivity(pool, {
+        leadId: job.lead_id, userId: uid, type: 'email_sent',
+        subject: `[Auto] Care guide: ${subject}`,
+        metadata: { job_id: job.id, auto: true, care: true },
+      });
+    }
+    console.log(`[care-guide] sent to ${leadEmail} for job ${job.id} (${job.company})`);
+  } catch (e) {
+    console.error('[care-guide] error for job', job?.id, ':', e.message);
+  }
+}
+
+async function processCrossSells() {
+  try {
+    if (!resend) return;
+    const { rows: jobs } = await pool.query(`
+      SELECT j.id, j.user_id, j.company, j.wrap_category, j.install_date,
+             j.vehicle_count, j.vehicle_type, j.cross_sell_email_sent,
+             l.email, l.contact_name, l.id AS lead_id,
+             u.settings_json
+        FROM installed_jobs j
+        LEFT JOIN leads l ON l.id = j.lead_id
+        JOIN users u ON u.id::text = j.user_id
+       WHERE j.install_date BETWEEN NOW() - INTERVAL '93 days' AND NOW() - INTERVAL '88 days'
+         AND j.cross_sell_email_sent = FALSE
+         AND l.email IS NOT NULL AND l.email <> ''
+    `);
+
+    for (const job of jobs) {
+      const s = job.settings_json || {};
+      if (s.autoCrossSell === false) continue;
+
+      const shopName = s.companyName || 'our shop';
+      const senderName = s.senderName || shopName;
+      const shopPhone = s.phone || s.senderPhone || '';
+      const template = CROSS_SELL_MAP[job.wrap_category] || CROSS_SELL_MAP.fleet;
+      const clientName = job.contact_name || 'there';
+
+      try {
+        await resend.emails.send({
+          from: s.resendFrom || process.env.RESEND_FROM || 'noreply@wrapleads.io',
+          to: [job.email],
+          subject: `Quick question about your recent wrap — ${job.company}`,
+          html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="max-width:520px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.08);">
+  <div style="background:#1a1a2e;padding:24px 32px;">
+    <div style="color:#f4551c;font-size:22px;font-weight:800;letter-spacing:-.02em;">${shopName}</div>
+  </div>
+  <div style="padding:28px 32px;">
+    <p style="margin:0 0 16px;font-size:16px;color:#111;font-weight:600;">Hi ${clientName},</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">
+      It's been about 90 days since we completed your ${job.vehicle_count > 1 ? `${job.vehicle_count}-vehicle` : ''} wrap — hope you're getting great results out on the road!
+    </p>
+    <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">
+      ${template.pitch}
+    </p>
+    <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+      Reply to this email or${shopPhone ? ` call us at ${shopPhone}` : ' reach out'} — no pressure, just happy to talk through options.
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;font-weight:600;">— ${senderName}<br><span style="font-weight:400;color:#6b7280;">${shopName}</span></p>
+  </div>
+</div>
+</body></html>`,
+        });
+
+        await pool.query(`UPDATE installed_jobs SET cross_sell_email_sent=TRUE WHERE id=$1`, [job.id]);
+
+        if (job.lead_id) {
+          await logActivity(pool, {
+            leadId: job.lead_id, userId: job.user_id, type: 'email_sent',
+            subject: `Auto: 90-day cross-sell — ${template.service}`,
+            body: `Automated cross-sell email sent to ${job.email} suggesting ${template.service}.`,
+            metadata: { auto: true, jobId: job.id, service: template.service },
+          });
+        }
+
+        console.log(`[cross-sell] Sent to ${job.email} (${job.company}) — suggesting ${template.service}`);
+      } catch (emailErr) {
+        console.error('[cross-sell] Email failed:', emailErr.message);
+      }
+    }
+  } catch (e) {
+    console.error('[cross-sell worker]', e.message);
+  }
+}
+
+function startCrossSellWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 9 && now.getMinutes() === 30) {
+      processCrossSells();
+    }
+  };
+  setInterval(check, 60_000);
+  console.log('· Cross-sell worker: running (daily 9:30 AM, 90-day post-install outreach)');
+}
+
 // ── Wrap Maintenance Check Worker ────────────────────────────────────────────
 // At the 2-year mark, sends a care/cleaning guide + soft refresh offer.
 // Fires daily at 10 AM. Sends once per job (blocked by activity log check).
@@ -10598,6 +13868,269 @@ function startReferralMiningWorker() {
   };
   setInterval(check, 60_000);
   console.log('· Referral Mining worker: running (daily 8:15 AM, nudges 30-day post-win referral asks)');
+}
+
+// ── Proposal Nudge Worker — auto follow-up on dark proposals ─────────────────
+async function processProposalNudges() {
+  try {
+    // Proposals sent 3-10 days ago with no views, or viewed but silent for 7+ days
+    const { rows: users } = await pool.query(`
+      SELECT DISTINCT p.user_id
+      FROM proposals p
+      JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+      WHERE p.status = 'sent'
+        AND p.nudge_sent_at IS NULL
+        AND l.email IS NOT NULL AND l.email != ''
+        AND (
+          (p.view_count = 0 AND p.sent_at < NOW() - INTERVAL '3 days' AND p.sent_at > NOW() - INTERVAL '10 days')
+          OR (p.view_count > 0 AND p.last_viewed_at < NOW() - INTERVAL '7 days' AND p.sent_at < NOW() - INTERVAL '7 days' AND p.sent_at > NOW() - INTERVAL '14 days')
+        )
+    `);
+
+    for (const { user_id } of users) {
+      const settingsRow = await pool.query(`SELECT settings_json, email AS shop_email FROM users WHERE id=$1`, [user_id]);
+      const s = settingsRow.rows[0]?.settings_json || {};
+      if (s.autoProposalNudge === false) continue;
+
+      const shopEmail = s.replyToEmail || settingsRow.rows[0]?.shop_email || null;
+      const senderName = s.senderName || 'The team';
+      const shopName = s.companyName || 'our shop';
+
+      const { rows: proposals } = await pool.query(`
+        SELECT p.id, p.title, p.token, p.view_count, p.sent_at, p.last_viewed_at,
+               l.id AS lead_id, l.company, l.contact_name, l.email, l.category, l.fleet_size
+        FROM proposals p
+        JOIN leads l ON l.id = p.lead_id AND l.user_id = p.user_id
+        WHERE p.user_id = $1
+          AND p.status = 'sent'
+          AND p.nudge_sent_at IS NULL
+          AND l.email IS NOT NULL AND l.email != ''
+          AND (
+            (p.view_count = 0 AND p.sent_at < NOW() - INTERVAL '3 days' AND p.sent_at > NOW() - INTERVAL '10 days')
+            OR (p.view_count > 0 AND p.last_viewed_at < NOW() - INTERVAL '7 days' AND p.sent_at < NOW() - INTERVAL '7 days' AND p.sent_at > NOW() - INTERVAL '14 days')
+          )
+        LIMIT 10
+      `, [user_id]);
+
+      const resend = getResend();
+      if (!resend) continue;
+
+      for (const p of proposals) {
+        try {
+          const daysSince = Math.floor((Date.now() - new Date(p.sent_at || p.created_at || Date.now()).getTime()) / 86_400_000);
+          const viewInfo = p.view_count > 0
+            ? `They’ve viewed it ${p.view_count} time${p.view_count !== 1 ? 's' : ''} but haven’t responded.`
+            : 'They haven’t opened it yet.';
+
+          let subject, body;
+          const anthropic = getAnthropic();
+          if (anthropic) {
+            try {
+              const msg = await anthropic.messages.create({
+                model: 'claude-haiku-4-5',
+                max_tokens: 350,
+                messages: [{
+                  role: 'user',
+                  content: `Write a brief, genuine 2-3 sentence follow-up email for a vehicle wrap proposal that went unanswered.
+Sender: ${senderName} at ${shopName}
+Recipient: ${p.contact_name || p.company}
+Category: ${p.category || 'vehicle wraps'}
+Proposal: "${p.title}"
+Days since sent: ${daysSince}
+${viewInfo}
+
+Subject line first, then the body. Tone: professional, not pushy. End with a low-friction CTA.
+Format:
+Subject: [subject]
+
+[body]`,
+                }],
+              });
+              const text = msg.content[0].type === 'text' ? msg.content[0].text : '';
+              const lines = text.split('\n');
+              const subjectLine = lines.find((l) => l.startsWith('Subject:'));
+              subject = subjectLine ? subjectLine.replace('Subject:', '').trim() : `Following up on your wrap proposal`;
+              const bodyStart = lines.indexOf(subjectLine ?? '') + 2;
+              body = lines.slice(bodyStart).join('\n').trim();
+            } catch (_e) {
+              subject = null;
+            }
+          }
+          if (!subject) {
+            subject = `Quick check-in on your wrap proposal`;
+            body = `Hi ${p.contact_name ? p.contact_name.split(' ')[0] : 'there'},\n\nI wanted to follow up on the wrap proposal I sent a few days ago for ${p.company}. Happy to answer any questions or adjust anything to better fit your needs.\n\nWould a quick call help move things forward?\n\nBest,\n${senderName}\n${shopName}`;
+          }
+
+          const publicUrl = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN
+            ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+            : 'https://app.wrapos.com';
+
+          const htmlBody = body
+            .split('\n')
+            .map((line) => line.trim() ? `<p style="margin:0 0 12px 0;color:#1e293b;font-size:15px;line-height:1.6">${line}</p>` : '')
+            .join('');
+
+          const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px">
+<div style="max-width:540px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0">
+<div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>
+${htmlBody}
+<div style="margin-top:28px;padding-top:20px;border-top:1px solid #f1f5f9">
+<a href="${publicUrl}/p/${p.token}" style="display:inline-block;background:#f4551c;color:#fff;padding:10px 22px;border-radius:8px;font-weight:700;font-size:14px;text-decoration:none">View Proposal</a>
+</div>
+</div></body></html>`;
+
+          const fromEmail = shopEmail ? shopEmail : 'proposals@wrapos.com';
+          await resend.emails.send({
+            from: `${shopName} <${fromEmail}>`,
+            to: p.email,
+            subject,
+            html,
+          });
+
+          await pool.query(`UPDATE proposals SET nudge_sent_at = NOW() WHERE id = $1`, [p.id]);
+
+          if (p.lead_id) {
+            await logActivity(pool, {
+              leadId: p.lead_id, userId: user_id, type: 'email_sent',
+              subject: `[Auto] Proposal nudge: ${subject}`,
+              body,
+              metadata: { proposal_id: p.id, auto: true },
+            });
+          }
+          console.log(`[proposal-nudge] sent to ${p.email} for proposal ${p.id} (${p.company})`);
+        } catch (e) {
+          console.error(`[proposal-nudge] error for proposal ${p.id}:`, e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[proposal-nudge] worker error:', e.message);
+  }
+}
+
+function startProposalNudgeWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 10 && now.getMinutes() === 30) processProposalNudges();
+  };
+  setInterval(check, 60_000);
+  console.log('· Proposal Nudge worker: running (daily 10:30 AM — auto follows up on dark sent proposals)');
+}
+
+async function processSavedSearchAlerts() {
+  const resend = getResend();
+  try {
+    const { rows: searches } = await pool.query(`
+      SELECT ss.id, ss.user_id, ss.name, ss.filters, ss.last_checked,
+             u.email AS user_email, u.settings_json
+      FROM saved_searches ss
+      JOIN users u ON u.id::TEXT = ss.user_id
+      WHERE ss.alert_enabled = TRUE
+    `);
+    for (const s of searches) {
+      try {
+        const filters = s.filters || {};
+        const conditions = [];
+        const params = [];
+        if (Array.isArray(filters.sources) && filters.sources.length) { params.push(filters.sources); conditions.push(`source = ANY($${params.length})`); }
+        if (Array.isArray(filters.industries) && filters.industries.length) { params.push(filters.industries); conditions.push(`industry = ANY($${params.length})`); }
+        if (Array.isArray(filters.states) && filters.states.length) { params.push(filters.states.map(x => String(x).toUpperCase())); conditions.push(`state = ANY($${params.length})`); }
+        if (filters.minFleet != null) { params.push(parseInt(filters.minFleet)); conditions.push(`fleet_size >= $${params.length}`); }
+        if (filters.maxFleet != null) { params.push(parseInt(filters.maxFleet)); conditions.push(`fleet_size <= $${params.length}`); }
+        if (filters.query && String(filters.query).trim()) { params.push(`%${String(filters.query).trim()}%`); conditions.push(`(name ILIKE $${params.length} OR dba_name ILIKE $${params.length})`); }
+        if (s.last_checked) { params.push(s.last_checked); conditions.push(`ingested_at > $${params.length}`); }
+        const where = conditions.length ? conditions.join(' AND ') : 'TRUE';
+        const { rows: [count] } = await pool.query(`SELECT COUNT(*)::INT AS n FROM companies WHERE ${where}`, params);
+        const newCount = count?.n || 0;
+        if (newCount === 0) continue;
+
+        // Create in-app notification
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, metadata) VALUES ($1,'saved_search_alert',$2,$3,$4)`,
+          [s.user_id, `${newCount} new carrier${newCount !== 1 ? 's' : ''} match "${s.name}"`,
+           `${newCount} new fleet carrier${newCount !== 1 ? 's' : ''} added to the database matching your saved search.`,
+           JSON.stringify({ saved_search_id: s.id, new_count: newCount })]
+        );
+
+        // Email alert if Resend configured
+        if (resend && s.user_email) {
+          const settings = s.settings_json || {};
+          const shopName = settings.companyName || 'WrapOS';
+          const filterSummary = [
+            Array.isArray(filters.states) && filters.states.length ? `States: ${filters.states.join(', ')}` : null,
+            filters.minFleet ? `Min fleet: ${filters.minFleet}` : null,
+            filters.maxFleet ? `Max fleet: ${filters.maxFleet}` : null,
+            filters.query ? `Search: "${filters.query}"` : null,
+          ].filter(Boolean).join(' · ') || 'All carriers';
+          const html = `<div style="font-family:-apple-system,sans-serif;max-width:500px;margin:0 auto;padding:32px">
+<div style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>
+<h2 style="font-size:20px;font-weight:900;margin:0 0 8px">🔔 ${newCount} new carrier${newCount !== 1 ? 's' : ''} found</h2>
+<p style="color:#6b7280;margin:0 0 16px">Your saved search <strong>"${s.name}"</strong> has ${newCount} new result${newCount !== 1 ? 's' : ''} since your last check.</p>
+<div style="background:#f8fafc;border-radius:8px;padding:12px 16px;font-size:12px;color:#374151;margin-bottom:20px">${filterSummary}</div>
+<p style="color:#6b7280;font-size:12px">Log in to WrapOS to view the new carriers and add them to your CRM.</p>
+</div>`;
+          await resend.emails.send({
+            from: process.env.RESEND_FROM_EMAIL || 'alerts@wrapos.io',
+            to: s.user_email,
+            subject: `🔔 ${newCount} new carrier${newCount !== 1 ? 's' : ''} match "${s.name}"`,
+            html,
+          }).catch(() => {});
+        }
+
+        await pool.query(
+          `UPDATE saved_searches SET last_checked = NOW(), new_count = $1 WHERE id = $2`,
+          [newCount, s.id]
+        );
+      } catch (e) {
+        console.warn(`[search-alerts] search ${s.id}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[search-alerts]', e.message);
+  }
+}
+
+function startSavedSearchAlertWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 30) processSavedSearchAlerts();
+  };
+  setInterval(check, 60_000);
+  console.log('· Saved Search Alert worker: running (daily 8:30 AM — notifies on new matching carriers)');
+}
+
+async function processProposalExpiry() {
+  try {
+    const { rows } = await pool.query(`
+      UPDATE proposals
+      SET status = 'expired', updated_at = NOW()
+      WHERE expires_at IS NOT NULL
+        AND expires_at < NOW()
+        AND status NOT IN ('won','lost','expired','approved')
+      RETURNING id, user_id, lead_id, title, expires_at
+    `);
+    for (const p of rows) {
+      if (p.lead_id) {
+        await logActivity(pool, {
+          leadId: p.lead_id, userId: p.user_id, type: 'note_added',
+          subject: `Proposal expired: "${p.title}"`,
+          metadata: { proposal_id: p.id, expires_at: p.expires_at, auto: true },
+        }).catch(() => {});
+      }
+    }
+    if (rows.length > 0) console.log(`[proposal-expiry] Expired ${rows.length} proposals`);
+  } catch (e) {
+    console.error('[proposal-expiry]', e.message);
+  }
+}
+
+function startProposalExpiryWorker() {
+  const check = () => {
+    const now = new Date();
+    if (now.getHours() === 8 && now.getMinutes() === 0) processProposalExpiry();
+  };
+  setInterval(check, 60_000);
+  console.log('· Proposal Expiry worker: running (daily 8:00 AM — auto-marks expired proposals)');
 }
 
 // Referral ask email generation endpoint
@@ -11343,6 +14876,45 @@ app.post('/leads/:id/check-news', authMiddleware, async (req, res) => {
     res.json({ ok: true, company: lead.company, articles });
   } catch (e) {
     console.error('[check-news]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /leads/:id/nearby-carriers — untouched FMCSA carriers in the same city as a lead.
+// Surfaces cluster opportunities: while working a city, here are similar fleets you haven't contacted.
+app.get('/leads/:id/nearby-carriers', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const leadId = Number(req.params.id);
+  try {
+    const leadR = await pool.query(
+      `SELECT city, state, company FROM leads WHERE id=$1 AND user_id=$2`,
+      [leadId, uid]
+    );
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+
+    const { city, state, company } = leadR.rows[0];
+    if (!city || !state) return res.json({ ok: true, carriers: [], reason: 'no_location' });
+
+    const { rows } = await pool.query(`
+      SELECT c.id, c.source_id AS dot_number, c.name, c.city, c.state,
+             c.fleet_size, c.phone, c.website,
+             LEAST(100, 40 + COALESCE(c.fleet_size, 0) / 5) AS wrap_score
+      FROM companies c
+      WHERE c.city ILIKE $1 AND c.state = $2
+        AND COALESCE(c.fleet_size, 0) >= 5
+        AND similarity(c.name, $3) < 0.6
+        AND NOT EXISTS (
+          SELECT 1 FROM leads l
+          WHERE l.user_id = $4
+            AND (l.company ILIKE c.name OR l.dot_number::text = c.source_id)
+        )
+      ORDER BY c.fleet_size DESC NULLS LAST
+      LIMIT 8
+    `, [city, state.toUpperCase(), company, uid]);
+
+    res.json({ ok: true, carriers: rows, city, state });
+  } catch (e) {
+    console.error('[leads/:id/nearby-carriers]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -12366,11 +15938,16 @@ app.post('/portal/:token/approve', async (req, res) => {
     const settings = link.settings_json || {};
     await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1 AND user_id=$2`, [link.lead_id, link.user_id]);
     await logActivity(pool, { leadId: link.lead_id, userId: link.user_id, type: 'status_changed', subject: 'Client approved quote via portal' });
+    const leadRow2 = (await pool.query('SELECT company, category, email, phone, city, state FROM leads WHERE id=$1', [link.lead_id])).rows[0] || {};
     await createNotification(link.user_id, {
       type: 'email_reply',
-      title: `${(await pool.query('SELECT company FROM leads WHERE id=$1',[link.lead_id])).rows[0]?.company} approved their quote!`,
+      title: `${leadRow2.company || 'Client'} approved their quote!`,
       body: settings.depositPaymentLink ? 'Client approved! Payment link shown — watch for deposit.' : 'Client clicked "Approve" on the portal link. Follow up now.',
       metadata: { lead_id: link.lead_id },
+    });
+    fireWebhooks(link.user_id, 'proposal.approved', {
+      leadId: link.lead_id, company: leadRow2.company, category: leadRow2.category,
+      email: leadRow2.email, phone: leadRow2.phone, city: leadRow2.city, state: leadRow2.state,
     });
     res.json({ ok: true, depositPaymentLink: settings.depositPaymentLink || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -12574,11 +16151,234 @@ app.get('/proposals/:id/views', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PATCH /proposals/:id — edit proposal content (saves a version snapshot first)
+app.patch('/proposals/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const { title, intro, services, pricing_html, timeline, notes, status, mockup_url, expires_at } = req.body || {};
+  try {
+    const existing = await pool.query('SELECT * FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Proposal not found' });
+    const p = existing.rows[0];
+
+    // Save current version before overwriting
+    const versionCount = await pool.query('SELECT COUNT(*) FROM proposal_versions WHERE proposal_id=$1', [id]);
+    const nextVersion = parseInt(versionCount.rows[0].count) + 1;
+    await pool.query(`
+      INSERT INTO proposal_versions (proposal_id, user_id, version_num, title, intro, services, pricing_html, timeline, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `, [id, uid, nextVersion, p.title, p.intro, p.services, p.pricing_html, p.timeline, p.notes]);
+
+    // Apply updates
+    const fields = [];
+    const vals = [];
+    let idx = 1;
+    if (title !== undefined)       { fields.push(`title=$${idx++}`);        vals.push(title); }
+    if (intro !== undefined)       { fields.push(`intro=$${idx++}`);        vals.push(intro); }
+    if (services !== undefined)    { fields.push(`services=$${idx++}`);     vals.push(services); }
+    if (pricing_html !== undefined){ fields.push(`pricing_html=$${idx++}`); vals.push(pricing_html); }
+    if (timeline !== undefined)    { fields.push(`timeline=$${idx++}`);     vals.push(timeline); }
+    if (notes !== undefined)       { fields.push(`notes=$${idx++}`);        vals.push(notes); }
+    if (status !== undefined) {
+      fields.push(`status=$${idx++}`);
+      vals.push(status);
+      if (status === 'sent' && p.status !== 'sent') {
+        fields.push(`sent_at=NOW()`);
+      }
+    }
+    if (mockup_url !== undefined)  { fields.push(`mockup_url=$${idx++}`);   vals.push(mockup_url); }
+    if (expires_at !== undefined)  { fields.push(`expires_at=$${idx++}`);   vals.push(expires_at || null); }
+
+    if (!fields.length) return res.json({ ok: true, proposal: p });
+
+    fields.push(`updated_at=NOW()`);
+    vals.push(id, uid);
+    const { rows } = await pool.query(
+      `UPDATE proposals SET ${fields.join(',')} WHERE id=$${idx++} AND user_id=$${idx} RETURNING *`,
+      vals
+    );
+
+    if (p.lead_id) {
+      await logActivity(pool, {
+        leadId: p.lead_id, userId: uid, type: 'note_added',
+        subject: `Proposal updated — v${nextVersion + 1}: ${rows[0].title}`,
+        metadata: { proposal_id: id, version: nextVersion + 1 },
+      });
+    }
+
+    res.json({ ok: true, proposal: rows[0], savedVersion: nextVersion });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /proposals/:id/versions — version history for a proposal
+app.get('/proposals/:id/versions', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  try {
+    const check = await pool.query('SELECT id FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'Not found' });
+    const { rows } = await pool.query(
+      `SELECT id, version_num, title, saved_at FROM proposal_versions WHERE proposal_id=$1 ORDER BY version_num DESC`,
+      [id]
+    );
+    res.json({ ok: true, versions: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /proposals/:proposalId/versions/:versionId — get a specific version's content
+app.get('/proposals/:id/versions/:vid', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const vid = Number(req.params.vid);
+  try {
+    const check = await pool.query('SELECT id FROM proposals WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'Not found' });
+    const { rows } = await pool.query(
+      `SELECT * FROM proposal_versions WHERE id=$1 AND proposal_id=$2`,
+      [vid, id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Version not found' });
+    res.json({ ok: true, version: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Delete proposal
 app.delete('/proposals/:id', authMiddleware, async (req, res) => {
   try {
     await pool.query('DELETE FROM proposals WHERE id=$1 AND user_id=$2', [req.params.id, String(req.user.id)]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Proposal Template Library ─────────────────────────────────────────────────
+
+// GET /proposals/templates — list user's saved proposal templates
+app.get('/proposals/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, category, intro, services, pricing_html, timeline, notes, use_count, created_at
+       FROM proposal_templates WHERE user_id = $1 ORDER BY use_count DESC, created_at DESC`,
+      [uid]
+    );
+    res.json({ ok: true, templates: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/templates — create a new template manually
+app.post('/proposals/templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { name, category, intro, services, pricing_html, timeline, notes } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ error: 'Template name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO proposal_templates (user_id, name, category, intro, services, pricing_html, timeline, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [uid, name.trim(), category || null, intro || null, services || null, pricing_html || null, timeline || null, notes || null]
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /proposals/templates/:id — update template
+app.patch('/proposals/templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const { name, category, intro, services, pricing_html, timeline, notes } = req.body || {};
+  try {
+    const check = await pool.query('SELECT id FROM proposal_templates WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!check.rows.length) return res.status(404).json({ error: 'Not found' });
+    const fields = [], vals = [];
+    let i = 1;
+    if (name !== undefined)         { fields.push(`name=$${i++}`);         vals.push(name); }
+    if (category !== undefined)     { fields.push(`category=$${i++}`);     vals.push(category); }
+    if (intro !== undefined)        { fields.push(`intro=$${i++}`);        vals.push(intro); }
+    if (services !== undefined)     { fields.push(`services=$${i++}`);     vals.push(services); }
+    if (pricing_html !== undefined) { fields.push(`pricing_html=$${i++}`); vals.push(pricing_html); }
+    if (timeline !== undefined)     { fields.push(`timeline=$${i++}`);     vals.push(timeline); }
+    if (notes !== undefined)        { fields.push(`notes=$${i++}`);        vals.push(notes); }
+    if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+    fields.push(`updated_at=NOW()`);
+    vals.push(id, uid);
+    const { rows } = await pool.query(
+      `UPDATE proposal_templates SET ${fields.join(',')} WHERE id=$${i++} AND user_id=$${i} RETURNING *`,
+      vals
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /proposals/templates/:id
+app.delete('/proposals/templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query('DELETE FROM proposal_templates WHERE id=$1 AND user_id=$2', [Number(req.params.id), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/:id/save-as-template — save an existing proposal as a reusable template
+app.post('/proposals/:id/save-as-template', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = Number(req.params.id);
+  const { name, category } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ error: 'Template name required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT intro, services, pricing_html, timeline, notes FROM proposals WHERE id=$1 AND user_id=$2`,
+      [id, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Proposal not found' });
+    const p = rows[0];
+    const { rows: tpl } = await pool.query(
+      `INSERT INTO proposal_templates (user_id, name, category, intro, services, pricing_html, timeline, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, name, category, created_at`,
+      [uid, name.trim(), category || null, p.intro, p.services, p.pricing_html, p.timeline, p.notes]
+    );
+    res.json({ ok: true, template: tpl[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /proposals/from-template — create a new proposal for a lead using a saved template
+// Skips AI generation entirely; template content is used as-is with the lead's company name
+// substituted where relevant.
+app.post('/proposals/from-template', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { lead_id, template_id } = req.body || {};
+  if (!lead_id || !template_id) return res.status(400).json({ error: 'lead_id and template_id required' });
+  try {
+    const [leadR, tplR] = await Promise.all([
+      pool.query(`SELECT * FROM leads WHERE id=$1 AND user_id=$2`, [lead_id, uid]),
+      pool.query(`SELECT * FROM proposal_templates WHERE id=$1 AND user_id=$2`, [template_id, uid]),
+    ]);
+    if (!leadR.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    if (!tplR.rows.length) return res.status(404).json({ error: 'Template not found' });
+    const lead = leadR.rows[0];
+    const tpl = tplR.rows[0];
+
+    // Substitute company name placeholder in template content
+    const sub = (txt) => (txt || '').replace(/\[Company\]/gi, lead.company || 'your company').replace(/\[company\]/g, lead.company || 'your company');
+
+    const token = require('crypto').randomUUID();
+    const title = `Wrap Proposal — ${lead.company}`;
+    const { rows: proposal } = await pool.query(
+      `INSERT INTO proposals (user_id, lead_id, token, title, intro, services, pricing_html, timeline, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, token, title, status, created_at`,
+      [uid, lead_id, token, title, sub(tpl.intro), sub(tpl.services), tpl.pricing_html || null, sub(tpl.timeline), sub(tpl.notes)]
+    );
+
+    // Increment template use count
+    await pool.query(`UPDATE proposal_templates SET use_count = use_count + 1, updated_at = NOW() WHERE id = $1`, [template_id]);
+
+    if (lead_id) {
+      await logActivity(pool, {
+        leadId: lead_id, userId: uid, type: 'note_added',
+        subject: `Proposal created from template: ${tpl.name}`,
+        metadata: { proposal_id: proposal[0].id, template_id, template_name: tpl.name },
+      });
+    }
+
+    res.json({ ok: true, proposal: proposal[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -14197,6 +17997,63 @@ app.delete('/quotes/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /quotes/:id/convert-to-job — create an installed_jobs entry from an accepted quote
+// Marks the lead as won, creates a pre-filled job record, logs the conversion.
+app.post('/quotes/:id/convert-to-job', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const quoteId = parseInt(req.params.id, 10);
+  try {
+    // Fetch quote + lead in one round-trip
+    const { rows: qrows } = await pool.query(
+      `SELECT q.*, l.company, l.category, l.fleet_size
+       FROM shop_quotes q
+       JOIN leads l ON l.id = q.lead_id AND l.user_id = $1
+       WHERE q.id = $2 AND q.user_id = $1`,
+      [uid, quoteId]
+    );
+    if (!qrows.length) return res.status(404).json({ error: 'Quote not found' });
+    const q = qrows[0];
+
+    // Extract vehicle count from line items if possible
+    const items = Array.isArray(q.line_items) ? q.line_items : [];
+    let vehicleCount = 1;
+    const countItem = items.find((it) => /vehicle|truck|van|unit/i.test(it.description || ''));
+    if (countItem?.qty) vehicleCount = Math.max(1, Math.round(Number(countItem.qty)));
+    if (q.fleet_size && Number(q.fleet_size) > 0) vehicleCount = Math.max(vehicleCount, Number(q.fleet_size));
+
+    // Map category to wrap_category
+    const CAT_MAP = {
+      fleet: 'fleet', dinoc: 'dinoc', gc_referral: 'fleet', construction: 'fleet',
+      colorchange: 'colorchange', racing: 'racing', reatec: 'reatec', design: 'fleet',
+      wallgraphics: 'wallgraphics',
+    };
+    const wrapCategory = CAT_MAP[q.category] || 'fleet';
+
+    // Create the job
+    const { rows: jrows } = await pool.query(
+      `INSERT INTO installed_jobs
+         (user_id, lead_id, company, vehicle_type, vehicle_count, wrap_category, material, install_date, life_years, notes, material_cost, job_revenue, labor_hours)
+       VALUES ($1,$2,$3,'other',$4,$5,null,null,5,$6,0,$7,0) RETURNING *`,
+      [uid, q.lead_id, q.company, vehicleCount, wrapCategory,
+       `Converted from ${q.quote_number || 'quote'} — "${q.title}"`,
+       Number(q.total) || 0]
+    );
+    const job = jrows[0];
+
+    // Move lead to won
+    await pool.query(
+      `UPDATE leads SET status='won', updated_at=NOW() WHERE id=$1 AND user_id=$2`,
+      [q.lead_id, uid]
+    );
+    await logActivity(pool, {
+      leadId: q.lead_id, userId: uid, type: 'status_changed',
+      subject: `Quote accepted → Job created (${q.quote_number || 'Quote'} · $${Number(q.total).toLocaleString()}) · Lead marked Won`,
+    });
+
+    res.json({ ok: true, job, leadId: q.lead_id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Quote Line Item Templates ──────────────────────────────────────────────
 app.get('/quotes/templates', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -14228,6 +18085,82 @@ app.delete('/quotes/templates/:id', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
   try {
     await pool.query('DELETE FROM quote_templates WHERE id=$1 AND user_id=$2', [parseInt(req.params.id), uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── User Email Outreach Templates ─────────────────────────────────────────────
+app.get('/email-templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, label, tag, subject, body, use_count, created_at, updated_at
+       FROM email_templates WHERE user_id=$1 ORDER BY updated_at DESC`,
+      [uid]
+    );
+    res.json({ ok: true, templates: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/email-templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const { label, tag, subject, body } = req.body || {};
+  if (!label?.trim() || !subject?.trim() || !body?.trim()) {
+    return res.status(400).json({ error: 'label, subject, and body are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO email_templates (user_id, label, tag, subject, body)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, label, tag, subject, body, use_count, created_at, updated_at`,
+      [uid, label.trim(), (tag || 'Custom').trim(), subject.trim(), body.trim()]
+    );
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/email-templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const id = parseInt(req.params.id, 10);
+  const { label, tag, subject, body } = req.body || {};
+  try {
+    const sets = [];
+    const vals = [id, uid];
+    if (label?.trim()) { sets.push(`label=$${vals.push(label.trim())}`); }
+    if (tag?.trim())   { sets.push(`tag=$${vals.push(tag.trim())}`); }
+    if (subject?.trim()) { sets.push(`subject=$${vals.push(subject.trim())}`); }
+    if (body?.trim())  { sets.push(`body=$${vals.push(body.trim())}`); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    sets.push(`updated_at=NOW()`);
+    const { rows } = await pool.query(
+      `UPDATE email_templates SET ${sets.join(',')} WHERE id=$1 AND user_id=$2
+       RETURNING id, label, tag, subject, body, use_count, created_at, updated_at`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, template: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/email-templates/:id', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query(
+      'DELETE FROM email_templates WHERE id=$1 AND user_id=$2',
+      [parseInt(req.params.id, 10), uid]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Increment use_count when a saved template is loaded into the composer
+app.post('/email-templates/:id/use', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    await pool.query(
+      'UPDATE email_templates SET use_count=use_count+1, updated_at=NOW() WHERE id=$1 AND user_id=$2',
+      [parseInt(req.params.id, 10), uid]
+    );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -14593,13 +18526,84 @@ app.post('/proposals/:token/approve', async (req, res) => {
     await pool.query(`UPDATE proposals SET status='approved', approved_at=NOW(), updated_at=NOW() WHERE token=$1`, [req.params.token]);
     if (p.lead_id) {
       await pool.query(`UPDATE leads SET status='proposal', updated_at=NOW() WHERE id=$1`, [p.lead_id]);
-      const compR = await pool.query('SELECT company FROM leads WHERE id=$1', [p.lead_id]);
+      const compR = await pool.query('SELECT company, email, contact_name FROM leads WHERE id=$1', [p.lead_id]);
+      const lead = compR.rows[0] || {};
       await logActivity(pool, { leadId: p.lead_id, userId: p.user_id, type: 'status_changed', subject: 'Client approved proposal online' });
       await createNotification(p.user_id, {
         type: 'email_reply',
-        title: `🎉 ${compR.rows[0]?.company || 'A client'} approved your proposal!`,
+        title: `🎉 ${lead.company || 'A client'} approved your proposal!`,
         body: 'They clicked Approve on the proposal page. Time to seal the deal.',
         metadata: { proposal_token: req.params.token, lead_id: p.lead_id },
+      });
+
+      // Auto-send "Thank You + Next Steps" email to the client (fire-and-forget)
+      setImmediate(async () => {
+        try {
+          const resendKey = process.env.RESEND_API_KEY;
+          if (!resendKey) return;
+
+          const userR = await pool.query(`SELECT settings_json, email FROM users WHERE id=$1`, [p.user_id]);
+          const u = userR.rows[0];
+          if (!u) return;
+          const s = u.settings_json || {};
+          if (s.autoProposalThankyou === false) return; // opt-out check
+
+          const toEmail = lead.email;
+          if (!toEmail) return;
+
+          const shopName = s.companyName || s.senderName || 'our shop';
+          const senderName = s.senderName || 'The team';
+          const senderEmail = s.senderEmail || u.email || 'noreply@wrapos.app';
+          const shopPhone = s.phone || '';
+          const contactFirst = (lead.contact_name || '').split(' ')[0] || 'there';
+          const proposalTitle = p.title || 'your wrap project';
+          const appUrl = process.env.APP_URL || 'https://app.wrapleads.io';
+
+          const body = `Hi ${he(contactFirst)},
+
+<p>Thank you for approving the proposal — we're excited to get started on <strong>${he(proposalTitle)}</strong>!</p>
+
+<p><strong>Here's what happens next:</strong></p>
+<ol>
+  <li>We'll reach out to schedule a vehicle survey and confirm measurements</li>
+  <li>Our designer will prepare the final design files for your review</li>
+  <li>You'll get one last approval on the design before we order materials</li>
+  <li>We'll confirm your install date and coordinate vehicle access</li>
+</ol>
+
+<p>In the meantime, it helps to have:</p>
+<ul>
+  <li>Your vehicle list (year, make, model) if we don't already have it</li>
+  <li>Any brand guidelines, logo files, or color codes (PMS/CMYK preferred)</li>
+  <li>Preferred install window and any blackout dates</li>
+</ul>
+
+<p>Questions or anything you want to add? Reply to this email or call us${shopPhone ? ` at <strong>${he(shopPhone)}</strong>` : ''} — we're here to make this seamless.</p>
+
+<p>Looking forward to it,<br><strong>${he(senderName)}</strong><br>${he(shopName)}</p>`;
+
+          const htmlBody = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px"><div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0"><div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${he(shopName)}</div>${body}</div></body></html>`;
+
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: `${shopName} <${senderEmail}>`,
+              to: [toEmail],
+              subject: `✅ Proposal approved — here's what happens next`,
+              html: htmlBody,
+            }),
+          });
+
+          await logActivity(pool, {
+            leadId: p.lead_id, userId: p.user_id,
+            type: 'email_sent',
+            subject: `Auto thank-you: Proposal approved — next steps sent to ${toEmail}`,
+            metadata: { auto: true, proposal_token: req.params.token, thankyou: true },
+          });
+        } catch (e) {
+          console.warn('[proposal-thankyou] auto email failed:', e.message);
+        }
       });
     }
     res.json({ ok: true });
@@ -14652,6 +18656,64 @@ app.get('/me/quote-link', authMiddleware, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /embed.js?token=SHOP_TOKEN — self-contained quote widget script for embedding on any website.
+// Public route, no auth. Creates a floating "Get a Quote" button + iframe overlay.
+app.get('/embed.js', async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  if (!token) {
+    return res.status(400).type('application/javascript').send('// Missing ?token parameter — get yours from WrapOS Settings.');
+  }
+  // Validate token exists
+  const user = await findUserByShopToken(token);
+  if (!user) {
+    return res.status(404).type('application/javascript').send('// Invalid token.');
+  }
+  const s = user.settings_json || {};
+  const shopName = (s.companyName || 'Get a Quote').replace(/'/g, "\\'");
+  const accentColor = s.brandColor || '#f4551c';
+
+  res.type('application/javascript');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(`(function(){
+  if(window.__wraposEmbedInit)return;window.__wraposEmbedInit=true;
+  var token='${token}';
+  var base=document.currentScript.src.replace(/\\/embed\\.js.*/,'');
+  var accent='${accentColor}';
+
+  var btn=document.createElement('button');
+  btn.textContent='✦ Get a Quote';
+  btn.setAttribute('data-wrapos','btn');
+  btn.style.cssText='all:initial;position:fixed;bottom:24px;right:24px;z-index:2147483647;background:'+accent+';color:#fff;border:none;border-radius:50px;padding:14px 22px;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,.25);font-family:system-ui,-apple-system,sans-serif;letter-spacing:-.01em;transition:transform .15s ease,box-shadow .15s ease;display:block;line-height:1;';
+  btn.onmouseenter=function(){btn.style.transform='translateY(-2px)';btn.style.boxShadow='0 8px 30px rgba(0,0,0,.35)';};
+  btn.onmouseleave=function(){btn.style.transform='';btn.style.boxShadow='0 4px 20px rgba(0,0,0,.25)';};
+  document.body.appendChild(btn);
+
+  var overlay=document.createElement('div');
+  overlay.style.cssText='display:none;position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);align-items:center;justify-content:center;';
+  var modal=document.createElement('div');
+  modal.style.cssText='position:relative;width:min(520px,95vw);height:min(700px,90vh);background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.45);';
+  var iframe=document.createElement('iframe');
+  iframe.src=base+'/quote-request/'+token+'?embed=1';
+  iframe.style.cssText='width:100%;height:100%;border:none;display:block;';
+  iframe.allow='camera;microphone';
+  var closeBtn=document.createElement('button');
+  closeBtn.innerHTML='&times;';
+  closeBtn.style.cssText='all:initial;position:absolute;top:12px;right:12px;z-index:1;background:rgba(0,0,0,.4);color:#fff;border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;font-family:sans-serif;';
+  modal.appendChild(iframe);
+  modal.appendChild(closeBtn);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  function openWidget(){overlay.style.display='flex';}
+  function closeWidget(){overlay.style.display='none';}
+  btn.addEventListener('click',openWidget);
+  closeBtn.addEventListener('click',closeWidget);
+  overlay.addEventListener('click',function(e){if(e.target===overlay)closeWidget();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&overlay.style.display!=='none')closeWidget();});
+  window.addEventListener('message',function(e){if(e.data&&e.data.type==='wrapos_quote_submitted')closeWidget();});
+})();`);
 });
 
 app.get('/quote-request/:shopToken', async (req, res) => {
@@ -14741,6 +18803,8 @@ document.getElementById('qr-form').addEventListener('submit', async (e) => {
     if (!j.ok) throw new Error(j.error || 'Something went wrong');
     document.getElementById('form-view').style.display = 'none';
     document.getElementById('success-view').style.display = 'block';
+    // Notify parent window (embed widget) to close
+    if (window.parent !== window) window.parent.postMessage({ type: 'wrapos_quote_submitted' }, '*');
   } catch(ex) {
     err.textContent = ex.message; err.style.display = 'block';
     btn.disabled = false; btn.textContent = 'Send My Request →';
@@ -14759,6 +18823,10 @@ app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
     const { name, company, email, phone, vehicle_type, fleet_size, message } = req.body;
     if (!company?.trim()) return res.status(400).json({ error: 'Company is required' });
 
+    const s = user.settings_json || {};
+    const shopName = s.companyName || 'our shop';
+    const fleetInt = parseInt(fleet_size) || 0;
+
     // Create lead
     const leadRes = await pool.query(`
       INSERT INTO leads (user_id, company, contact_name, email, phone, fleet_size, category, status, source, notes)
@@ -14772,15 +18840,454 @@ app.post('/quote-request/:shopToken', express.json(), async (req, res) => {
     await pool.query(`INSERT INTO quote_requests (user_id,name,company,email,phone,vehicle_type,fleet_size,message,lead_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [String(user.id), name||'', company.trim(), email||'', phone||'', vehicle_type||'', fleet_size||'', message||'', leadId]);
 
+    // Speed-to-lead auto-responder — immediately confirm receipt to prospect
+    const autoReplyEnabled = s.autoReplyEnabled !== false; // default on
+    const resendKey = process.env.RESEND_API_KEY;
+    if (autoReplyEnabled && email && resendKey) {
+      // Build talking points for shop owner via AI (non-blocking)
+      let talkingPoints = '';
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
+      if (anthropicKey) {
+        try {
+          const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 300,
+              messages: [{
+                role: 'user',
+                content: `A prospect just submitted a quote request. Generate 3 short, specific talking points for the shop owner to use when they call back.
+
+Company: ${company.trim()}
+Contact: ${name || 'unknown'}
+Vehicle type: ${vehicle_type || 'not specified'}
+Fleet size: ${fleet_size || 'not specified'}
+Message: ${message || 'none'}
+
+Return ONLY a bulleted list (3 bullets, max 15 words each). No intro, no sign-off.`,
+              }],
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (aiRes.ok) {
+            const aiData = await aiRes.json();
+            talkingPoints = aiData.content?.[0]?.text?.trim() || '';
+          }
+        } catch { /* non-critical */ }
+      }
+
+      // Save talking points as a lead activity note
+      if (talkingPoints) {
+        await pool.query(
+          `INSERT INTO lead_activities (user_id, lead_id, type, subject, body, created_at)
+           VALUES ($1, $2, 'note', 'AI Talking Points (Inbound Lead)', $3, NOW())`,
+          [String(user.id), leadId, `Call-back talking points:\n\n${talkingPoints}`]
+        );
+      }
+
+      // Auto-reply email to prospect
+      const firstName = name ? name.split(' ')[0] : null;
+      const greeting = firstName ? `Hi ${firstName},` : 'Hi there,';
+      const responseTime = s.autoReplyResponseTime || '24 hours';
+      const portfolioUrl = s.portfolioUrl ? `\n\nWhile you wait, browse our recent work: ${s.portfolioUrl}` : '';
+      const customMessage = s.autoReplyMessage || '';
+
+      const emailHtml = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f8f8f8;font-family:system-ui,-apple-system,sans-serif">
+<div style="max-width:540px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07)">
+  <div style="background:linear-gradient(135deg,#f4551c,#ff7b4a);padding:28px 32px">
+    <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;letter-spacing:-0.5px">${shopName}</h1>
+    <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:13px">Vehicle Wraps &amp; Graphics</p>
+  </div>
+  <div style="padding:32px">
+    <p style="margin:0 0 16px;font-size:15px;color:#111;line-height:1.5">${greeting}</p>
+    <p style="margin:0 0 16px;font-size:15px;color:#333;line-height:1.6">
+      ${customMessage || `Thanks for reaching out! We've received your quote request for <strong>${company.trim()}</strong>${vehicle_type ? ` (${vehicle_type}${fleetInt > 0 ? `, ${fleetInt} vehicle${fleetInt !== 1 ? 's' : ''}` : ''})` : ''} and we're excited to learn more about your project.`}
+    </p>
+    <p style="margin:0 0 24px;font-size:15px;color:#333;line-height:1.6">
+      A member of our team will follow up within <strong>${responseTime}</strong>.${portfolioUrl ? '' : ' In the meantime, feel free to reach us at ' + (s.senderPhone || s.senderEmail || 'the contact info on our site') + '.'}
+    </p>
+    ${portfolioUrl ? `<p style="margin:0 0 24px;font-size:14px;color:#555">${portfolioUrl}</p>` : ''}
+    <div style="background:#f9f9f9;border-radius:8px;padding:16px 20px;margin-bottom:24px">
+      <p style="margin:0;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Your Request Summary</p>
+      <p style="margin:6px 0 0;font-size:14px;color:#333"><strong>Company:</strong> ${company.trim()}</p>
+      ${vehicle_type ? `<p style="margin:4px 0 0;font-size:14px;color:#333"><strong>Vehicle type:</strong> ${vehicle_type}</p>` : ''}
+      ${fleetInt > 0 ? `<p style="margin:4px 0 0;font-size:14px;color:#333"><strong>Fleet size:</strong> ${fleetInt} vehicle${fleetInt !== 1 ? 's' : ''}</p>` : ''}
+      ${message ? `<p style="margin:4px 0 0;font-size:14px;color:#555"><em>"${message.slice(0, 120)}${message.length > 120 ? '…' : ''}"</em></p>` : ''}
+    </div>
+    <p style="margin:0;font-size:13px;color:#999;line-height:1.5">
+      — The ${shopName} Team${s.senderPhone ? '<br>' + s.senderPhone : ''}${s.senderEmail ? '<br>' + s.senderEmail : ''}
+    </p>
+  </div>
+</div>
+</body></html>`;
+
+      // Send non-blocking
+      const { Resend } = require('resend');
+      const resend = new Resend(resendKey);
+      const fromDomain = s.senderEmail?.split('@')[1];
+      const fromAddr = fromDomain ? `${shopName} <noreply@${fromDomain}>` : `${shopName} <onboarding@resend.dev>`;
+      resend.emails.send({
+        from: fromAddr,
+        to: [email],
+        subject: `Got your quote request — ${shopName} will follow up within ${responseTime}`,
+        html: emailHtml,
+      }).catch(() => { /* non-critical */ });
+    }
+
+    // Notify shop owner — include talking points if generated
     await createNotification(String(user.id), {
       type: 'new_lead',
-      title: `📥 New inbound quote request — ${company.trim()}`,
-      body: `${name ? name + ' · ' : ''}${email || phone || 'No contact info'}${vehicle_type ? ' · ' + vehicle_type : ''}`,
+      title: `📥 New inbound quote request — ${company.trim()}${fleetInt >= 10 ? ' 🔥' : ''}`,
+      body: `${name ? name + ' · ' : ''}${email || phone || 'No contact info'}${vehicle_type ? ' · ' + vehicle_type : ''}${fleetInt > 0 ? ` · ${fleetInt} vehicles` : ''}`,
       metadata: { lead_id: leadId },
+    });
+
+    // Fire outbound webhooks for inbound lead event
+    fireWebhooks(String(user.id), 'inbound.lead', {
+      leadId, company: company.trim(), contactName: name || null, email: email || null,
+      phone: phone || null, vehicleType: vehicle_type || null, fleetSize: fleetInt || null, message: message || null,
     });
 
     res.json({ ok: true, lead_id: leadId });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Inbound Lead Webhook Receiver ─────────────────────────────────────────────
+// Accepts POSTs from any external source: Facebook Lead Ads, Google Ads Lead Forms,
+// Zapier, Make.com, or any other system that can POST JSON.
+// Endpoint: POST /hook/:shopToken
+// Auth: none — uses the shop token as auth. Public but unforgeable (SHA-256 derived).
+// Field mapping: accepts common naming conventions from major ad platforms.
+app.post('/hook/:shopToken', express.json(), express.urlencoded({ extended: true }), async (req, res) => {
+  try {
+    const user = await findUserByShopToken(req.params.shopToken);
+    if (!user) return res.status(404).json({ error: 'Invalid token' });
+
+    const b = req.body || {};
+
+    // Field normalization — map common field names from different platforms
+    const company = (b.company || b.company_name || b.business_name || b.organization || '').trim();
+    const fullName = (b.name || b.full_name || `${b.first_name || ''} ${b.last_name || ''}`.trim() || b.contact_name || '').trim();
+    const email    = (b.email || b.email_address || '').trim().toLowerCase();
+    const phone    = (b.phone || b.phone_number || b.mobile || b.cell || '').trim();
+    const fleet    = parseInt(b.fleet_size || b.fleet_count || b.vehicles || b.num_vehicles || '0') || 0;
+    const category = (b.category || b.service_type || b.wrap_type || 'fleet').toLowerCase();
+    const message  = (b.message || b.notes || b.description || b.comments || b.custom_message || '').trim();
+    const website  = (b.website || b.url || '').trim();
+    const city     = (b.city || '').trim();
+    const state    = (b.state || b.province || '').trim().toUpperCase().slice(0, 2);
+    const source   = (b.source || b.utm_source || b.ad_source || 'webhook').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+
+    if (!company && !email && !phone && !fullName) {
+      return res.status(400).json({ error: 'At least one of company, email, phone, or name is required' });
+    }
+
+    const companyOrFallback = company || fullName || 'Unknown from webhook';
+    const uid = String(user.id);
+    const VALID_CATEGORIES = ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing'];
+    const finalCategory = VALID_CATEGORIES.includes(category) ? category : 'fleet';
+
+    const leadRes = await pool.query(`
+      INSERT INTO leads (user_id, company, contact_name, email, phone, fleet_size, website, city, state, category, status, source, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'new',$11,$12)
+      RETURNING id
+    `, [uid, companyOrFallback, fullName, email, phone, fleet || null, website || null,
+        city || null, state || null, finalCategory,
+        `webhook_${source}`,
+        message || null]);
+
+    const leadId = leadRes.rows[0].id;
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note_added',
+      subject: `Lead received via webhook (${source})`,
+      body: `Inbound lead from ${source}. Fields received: ${Object.keys(b).join(', ')}.`,
+      metadata: { source, raw: b },
+    });
+
+    await createNotification(uid, {
+      type: 'new_lead',
+      title: `📥 Webhook lead — ${companyOrFallback}`,
+      body: `From: ${source}${email ? ' · ' + email : ''}${phone ? ' · ' + phone : ''}`,
+      metadata: { lead_id: leadId, source },
+    });
+
+    fireWebhooks(uid, 'inbound.lead', {
+      leadId, company: companyOrFallback, contactName: fullName || null,
+      email: email || null, phone: phone || null, source,
+    });
+
+    res.json({ ok: true, lead_id: leadId, company: companyOrFallback });
+  } catch (e) {
+    console.error('[webhook/receive]', e.message);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// GET /me/webhook-url — return the user's inbound webhook receiver URL
+app.get('/me/webhook-url', authMiddleware, async (req, res) => {
+  try {
+    const token = await ensureShopToken(req.user.id);
+    const base = process.env.APP_BASE_URL || process.env.APP_URL || 'https://wrapos.app';
+    res.json({ url: `${base}/hook/${token}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Fleet Maintenance Dashboard — shareable wrap history + care guide for fleet clients ──
+
+// POST /portal-links/:leadId/fleet-access — return (or create) a portal link and fleet URL
+app.post('/portal-links/:leadId/fleet-access', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const leadId = Number(req.params.leadId);
+    const baseUrl = process.env.APP_BASE_URL || process.env.APP_URL || 'https://wrapos.app';
+
+    // Reuse the existing portal_links token for this lead
+    let link = (await pool.query(
+      'SELECT token FROM portal_links WHERE lead_id=$1 AND user_id=$2',
+      [leadId, uid]
+    )).rows[0];
+    if (!link) {
+      const token = require('crypto').randomBytes(16).toString('hex');
+      const r = await pool.query(
+        `INSERT INTO portal_links (user_id, lead_id, token, label) VALUES ($1,$2,$3,'Fleet Dashboard') RETURNING token`,
+        [uid, leadId, token]
+      );
+      link = r.rows[0];
+    }
+    res.json({ ok: true, url: `${baseUrl}/fleet/${link.token}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /fleet/:token — public fleet maintenance dashboard (no auth)
+app.get('/fleet/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const linkR = await pool.query(
+      `SELECT pl.user_id, pl.lead_id, l.company, l.city, l.state, l.phone, l.contact_name
+       FROM portal_links pl JOIN leads l ON l.id=pl.lead_id
+       WHERE pl.token=$1`, [token]
+    );
+    if (!linkR.rows[0]) return res.status(404).send('<h1>Dashboard not found</h1>');
+    const link = linkR.rows[0];
+
+    const [userR, jobsR] = await Promise.all([
+      pool.query('SELECT settings_json FROM users WHERE id=$1', [link.user_id]),
+      pool.query(`
+        SELECT j.id, j.company, j.vehicle_type, j.vehicle_count, j.wrap_category,
+               j.material, j.install_date, j.life_years, j.notes,
+               EXTRACT(EPOCH FROM (NOW() - j.install_date::timestamptz)) / 86400 AS days_installed,
+               (SELECT url FROM job_photos WHERE job_id=j.id AND photo_type='after' ORDER BY created_at DESC LIMIT 1) AS after_photo_url
+        FROM installed_jobs j
+        WHERE j.user_id=$1 AND j.lead_id=$2
+        ORDER BY j.install_date DESC
+      `, [link.user_id, link.lead_id]),
+    ]);
+    const s = userR.rows[0]?.settings_json || {};
+    const jobs = jobsR.rows;
+    const he = (str) => String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    const shopName = he(s.companyName || 'Your Wrap Shop');
+    const shopPhone = he(s.phone || '');
+    const shopEmail = he(s.senderEmail || '');
+    const shopColor = '#f4551c';
+    const company = he(link.company || 'Your Fleet');
+    const portfolioUrl = s.shopToken ? `${process.env.APP_URL || 'https://wrapos.app'}/portfolio/${s.shopToken}` : null;
+
+    function wrapAge(days) {
+      if (days < 30) return `${Math.round(days)}d`;
+      if (days < 365) return `${Math.round(days / 30)}mo`;
+      return `${(days / 365).toFixed(1)}yr`;
+    }
+
+    function agePercent(daysInstalled, lifeYears) {
+      return Math.min(100, Math.round((daysInstalled / (lifeYears * 365)) * 100));
+    }
+
+    function ageColor(pct) {
+      if (pct < 50) return '#10b981';
+      if (pct < 80) return '#f59e0b';
+      return '#ef4444';
+    }
+
+    const categoryLabel = {
+      fleet: 'Fleet Wrap', dinoc: 'DI-NOC Film', colorchange: 'Color Change', design: 'Custom Design',
+      construction: 'Fleet Wrap', racing: 'Race Livery', gc_referral: 'Commercial', reatec: 'Rea-Tec Film',
+      wallgraphics: 'Wall Graphics',
+    };
+
+    const jobCards = jobs.map((j) => {
+      const pct = agePercent(j.days_installed, j.life_years);
+      const color = ageColor(pct);
+      const dueDate = new Date(new Date(j.install_date).getTime() + j.life_years * 365 * 86400000);
+      const isDue = pct >= 80;
+      return `
+        <div class="job-card${isDue ? ' due' : ''}">
+          ${j.after_photo_url ? `<img class="job-photo" src="${he(j.after_photo_url)}" alt="Wrap photo" loading="lazy">` : `<div class="job-photo-placeholder"><span>📷</span></div>`}
+          <div class="job-body">
+            <div class="job-header">
+              <span class="job-label">${he(categoryLabel[j.wrap_category] || j.wrap_category)}</span>
+              ${isDue ? '<span class="due-badge">Re-order Soon</span>' : ''}
+            </div>
+            <div class="job-title">${he(j.vehicle_count)} ${he(j.vehicle_type)}${j.vehicle_count !== 1 ? 's' : ''}</div>
+            <div class="job-meta">${he(j.material || 'Standard vinyl')} · Installed ${new Date(j.install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })}</div>
+            <div class="age-row">
+              <div class="age-bar-bg"><div class="age-bar" style="width:${pct}%;background:${color}"></div></div>
+              <span class="age-pct" style="color:${color}">${wrapAge(j.days_installed)} / ${j.life_years}yr (${pct}%)</span>
+            </div>
+            <div class="job-footer">Expected re-order: ${dueDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const noJobsMsg = jobs.length === 0
+      ? `<div class="empty-msg">No wrap records on file yet. Contact ${shopName} to log your fleet history.</div>`
+      : '';
+
+    const totalVehicles = jobs.reduce((s, j) => s + j.vehicle_count, 0);
+    const oldestPct = jobs.length ? Math.max(...jobs.map((j) => agePercent(j.days_installed, j.life_years))) : 0;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet Wrap Dashboard — ${company}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e2e8f0;min-height:100vh}
+  .header{background:linear-gradient(135deg,#111118,#1a1a24);border-bottom:1px solid rgba(244,85,28,0.2);padding:20px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  .shop-brand{display:flex;align-items:center;gap:12px}
+  .shop-dot{width:36px;height:36px;border-radius:8px;background:${shopColor};display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;color:#fff;flex-shrink:0}
+  .shop-name{font-size:14px;font-weight:800;color:#f1f5f9}
+  .shop-sub{font-size:11px;color:#64748b;margin-top:1px}
+  .header-contact a{font-size:12px;color:${shopColor};text-decoration:none;font-weight:600}
+  .hero{background:#111118;padding:28px 24px;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .hero-company{font-size:26px;font-weight:900;color:#f1f5f9;letter-spacing:-0.5px;margin-bottom:4px}
+  .hero-sub{font-size:13px;color:#64748b}
+  .stats-row{display:flex;gap:16px;margin-top:16px;flex-wrap:wrap}
+  .stat{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:12px 16px;min-width:100px}
+  .stat-num{font-size:24px;font-weight:900;color:#f1f5f9;letter-spacing:-1px}
+  .stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-top:2px}
+  .section{padding:24px}
+  .section-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:14px}
+  .job-card{background:#111118;border:1px solid rgba(255,255,255,0.07);border-radius:12px;overflow:hidden;margin-bottom:12px;display:flex;gap:0;flex-direction:column}
+  .job-card.due{border-color:rgba(239,68,68,0.35)}
+  .job-photo{width:100%;height:160px;object-fit:cover;display:block}
+  .job-photo-placeholder{width:100%;height:100px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-size:24px}
+  .job-body{padding:14px}
+  .job-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .job-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;background:rgba(244,85,28,.12);color:${shopColor};padding:2px 7px;border-radius:4px}
+  .due-badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;background:rgba(239,68,68,.12);color:#ef4444;padding:2px 7px;border-radius:4px;margin-left:auto}
+  .job-title{font-size:15px;font-weight:800;color:#f1f5f9;margin-bottom:3px}
+  .job-meta{font-size:11px;color:#64748b;margin-bottom:10px}
+  .age-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .age-bar-bg{flex:1;height:5px;background:rgba(255,255,255,0.07);border-radius:3px;overflow:hidden}
+  .age-bar{height:100%;border-radius:3px;transition:width .3s}
+  .age-pct{font-size:11px;font-weight:700;flex-shrink:0}
+  .job-footer{font-size:11px;color:#475569}
+  .care-card{background:#111118;border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:16px;margin-bottom:12px}
+  .care-title{font-size:13px;font-weight:700;color:#f1f5f9;margin-bottom:8px}
+  .care-list{list-style:none;display:flex;flex-direction:column;gap:6px}
+  .care-list li{font-size:12px;color:#94a3b8;line-height:1.5;padding-left:20px;position:relative}
+  .care-list li::before{content:'✓';position:absolute;left:0;color:#10b981;font-weight:700}
+  .cta{background:linear-gradient(135deg,rgba(244,85,28,.12),rgba(244,85,28,.06));border:1px solid rgba(244,85,28,.25);border-radius:14px;padding:24px;text-align:center;margin:16px}
+  .cta-title{font-size:18px;font-weight:900;color:#f1f5f9;margin-bottom:6px}
+  .cta-sub{font-size:13px;color:#64748b;margin-bottom:16px}
+  .cta-btn{display:inline-block;background:${shopColor};color:#fff;font-size:14px;font-weight:800;padding:12px 28px;border-radius:9px;text-decoration:none;transition:opacity .15s}
+  .cta-btn:hover{opacity:.88}
+  .empty-msg{font-size:13px;color:#64748b;padding:24px;text-align:center}
+  @media(min-width:600px){.job-card{flex-direction:row}.job-photo{width:160px;height:auto}.job-photo-placeholder{width:120px;height:auto}}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="shop-brand">
+      <div class="shop-dot">${shopName[0].toUpperCase()}</div>
+      <div>
+        <div class="shop-name">${shopName}</div>
+        <div class="shop-sub">Fleet Wrap Services</div>
+      </div>
+    </div>
+    <div class="header-contact">
+      ${shopPhone ? `<a href="tel:${shopPhone}">${shopPhone}</a>` : ''}
+      ${shopEmail && shopPhone ? ' · ' : ''}
+      ${shopEmail ? `<a href="mailto:${shopEmail}">${shopEmail}</a>` : ''}
+    </div>
+  </div>
+
+  <div class="hero">
+    <div class="hero-company">${company} Fleet</div>
+    <div class="hero-sub">Wrap history, maintenance guide, and re-order schedule</div>
+    ${jobs.length > 0 ? `<div class="stats-row">
+      <div class="stat"><div class="stat-num">${jobs.length}</div><div class="stat-label">Wrap Jobs</div></div>
+      <div class="stat"><div class="stat-num">${totalVehicles}</div><div class="stat-label">Vehicles Wrapped</div></div>
+      ${oldestPct >= 80 ? `<div class="stat"><div class="stat-num" style="color:#ef4444">⚠ Re-order</div><div class="stat-label">Action Needed</div></div>` : `<div class="stat"><div class="stat-num" style="color:#10b981">${100 - oldestPct}%</div><div class="stat-label">Life Remaining</div></div>`}
+    </div>` : ''}
+  </div>
+
+  <div class="section">
+    <div class="section-title">Installed Wraps</div>
+    ${jobCards}
+    ${noJobsMsg}
+  </div>
+
+  <div class="section">
+    <div class="section-title">Wrap Care Guide</div>
+    <div class="care-card">
+      <div class="care-title">Daily & Weekly Care</div>
+      <ul class="care-list">
+        <li>Hand-wash with mild soap and a soft cloth — never use abrasive pads</li>
+        <li>Rinse thoroughly; avoid high-pressure sprayers within 12" of wrap edges</li>
+        <li>Remove bird droppings and fuel spills promptly to prevent staining</li>
+        <li>Air-dry or blot dry with a soft microfiber towel</li>
+      </ul>
+    </div>
+    <div class="care-card">
+      <div class="care-title">Long-Term Maintenance</div>
+      <ul class="care-list">
+        <li>Park in a garage or shaded area when possible — UV is the #1 wrap degrader</li>
+        <li>Apply a vinyl-safe wax or spray sealant every 3–6 months</li>
+        <li>Inspect edge seams every 6 months; contact us immediately if lifting occurs</li>
+        <li>Avoid automated car washes with rotating brushes — touchless OK</li>
+      </ul>
+    </div>
+    <div class="care-card">
+      <div class="care-title">When to Re-Order</div>
+      <ul class="care-list">
+        <li>Fading, chalking, or color shift visible from 10 feet away</li>
+        <li>Edge lifting that can't be re-adhered with wrap-safe heat gun</li>
+        <li>Graphic or branding update across the fleet</li>
+        <li>Wrap reaches 80% of its planned life — proactive replacement saves money</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="cta">
+    <div class="cta-title">Ready for a refresh?</div>
+    <div class="cta-sub">Contact ${shopName} for a free re-wrap estimate and fleet pricing.</div>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      ${shopPhone ? `<a class="cta-btn" href="tel:${shopPhone}">📞 Call Us</a>` : ''}
+      ${shopEmail ? `<a class="cta-btn" style="background:rgba(244,85,28,.15);color:${shopColor}" href="mailto:${shopEmail}?subject=Fleet%20Re-wrap%20Quote%20Request">📧 Email Us</a>` : ''}
+      ${portfolioUrl ? `<a class="cta-btn" style="background:rgba(255,255,255,0.07);color:#e2e8f0" href="${portfolioUrl}" target="_blank">View Portfolio</a>` : ''}
+    </div>
+  </div>
+
+  <div style="padding:16px 24px;text-align:center;font-size:11px;color:#334155">
+    Powered by <strong style="color:#f4551c">WrapOS</strong> · Fleet dashboard for ${company}
+  </div>
+</body>
+</html>`;
+    res.send(html);
+  } catch (e) {
+    console.error('[fleet-dash]', e.message);
+    res.status(500).send('<h1>Error loading fleet dashboard</h1>');
+  }
 });
 
 // ── Public Portfolio Page ─────────────────────────────────────────────────────
@@ -15757,6 +20264,27 @@ app.get('/mission/news-signals', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /mission/sms-inbox — recent inbound SMS messages from prospects
+app.get('/mission/sms-inbox', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT a.id, a.lead_id, a.body, a.created_at,
+             l.company, l.phone, l.contact_name, l.sms_opted_out
+      FROM lead_activities a
+      JOIN leads l ON l.id = a.lead_id
+      WHERE a.user_id = $1
+        AND a.type = 'email_reply'
+        AND a.metadata->>'channel' = 'sms'
+      ORDER BY a.created_at DESC
+      LIMIT 20
+    `, [uid]);
+    res.json({ ok: true, messages: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Mission Live Signals ───────────────────────────────────────────────────────
 app.get('/mission/signals', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -15893,11 +20421,15 @@ function startBidExpiryWorker() {
 async function processQuoteExpiry() {
   try {
     const { rows: users } = await pool.query(
-      `SELECT DISTINCT user_id FROM shop_quotes WHERE status='sent' AND sent_at IS NOT NULL`
+      `SELECT DISTINCT q.user_id, u.settings_json
+         FROM shop_quotes q JOIN users u ON u.id::text = q.user_id
+        WHERE q.status='sent' AND q.sent_at IS NOT NULL`
     );
-    for (const { user_id } of users) {
+    for (const { user_id, settings_json } of users) {
+      const s = settings_json || {};
       const { rows: expiring } = await pool.query(
         `SELECT q.id, q.quote_number, q.title, q.total, q.sent_at, q.valid_days, q.lead_id,
+                q.expiry_email_sent,
                 l.company, l.contact_name, l.email
            FROM shop_quotes q
            LEFT JOIN leads l ON l.id = q.lead_id AND l.user_id = q.user_id
@@ -15913,13 +20445,94 @@ async function processQuoteExpiry() {
            AND metadata->>'quote_id' = $2 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
           [user_id, String(quote.id)]
         );
-        if (already.rows.length) continue;
-        await createNotification(user_id, {
-          type: 'quote_expiring',
-          title: `⏳ Quote expires ${daysLeft === 0 ? 'today' : `in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`} — ${quote.title}`,
-          body: `${quote.company || 'Unknown client'} · ${quote.quote_number} · $${(quote.total || 0).toLocaleString()} — follow up before they ask for a reprice.`,
-          metadata: { quote_id: quote.id, lead_id: quote.lead_id, days_left: daysLeft, company: quote.company },
-        });
+        if (!already.rows.length) {
+          await createNotification(user_id, {
+            type: 'quote_expiring',
+            title: `⏳ Quote expires ${daysLeft === 0 ? 'today' : `in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`} — ${quote.title}`,
+            body: `${quote.company || 'Unknown client'} · ${quote.quote_number} · $${(quote.total || 0).toLocaleString()} — follow up before they ask for a reprice.`,
+            metadata: { quote_id: quote.id, lead_id: quote.lead_id, days_left: daysLeft, company: quote.company },
+          });
+        }
+
+        // Auto-email the client 3 days before expiry (once per quote, opt-out via settings)
+        if (
+          daysLeft >= 1 && daysLeft <= 3 &&
+          !quote.expiry_email_sent &&
+          quote.email &&
+          s.autoQuoteExpiryEmail !== false &&
+          resend
+        ) {
+          const shopName = s.companyName || 'our shop';
+          const shopPhone = s.phone || '';
+          const expiryDate = new Date(expiryMs).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+          const clientName = quote.contact_name || 'there';
+          const total = `$${(quote.total || 0).toLocaleString()}`;
+
+          try {
+            await resend.emails.send({
+              from: s.resendFrom || process.env.RESEND_FROM || `noreply@wrapleads.io`,
+              to: [quote.email],
+              subject: `Your wrap quote expires ${daysLeft === 1 ? 'tomorrow' : `in ${daysLeft} days`} — ${quote.quote_number}`,
+              html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+<div style="max-width:540px;margin:40px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,.08);">
+  <div style="background:#f4551c;padding:28px 32px;">
+    <div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:-.02em;">${shopName}</div>
+    <div style="color:rgba(255,255,255,.8);font-size:13px;margin-top:4px;">Vehicle Wrap Specialists</div>
+  </div>
+  <div style="padding:32px;">
+    <p style="margin:0 0 16px;font-size:16px;color:#111;font-weight:600;">Hi ${clientName},</p>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6;">
+      Just a quick reminder that your quote <strong>${quote.quote_number}</strong> for
+      <strong>${quote.title}</strong> totaling <strong>${total}</strong> expires on
+      <strong>${expiryDate}</strong>${daysLeft === 1 ? ' — that’s tomorrow' : ''}.
+    </p>
+    <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6;">
+      To lock in this pricing, simply reply to this email or give us a call. After the expiry date,
+      material costs and scheduling may require a revised quote.
+    </p>
+    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:16px;margin-bottom:24px;">
+      <div style="font-size:12px;color:#9a3412;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">Quote Summary</div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;color:#374151;margin-bottom:4px;">
+        <span>Quote #</span><strong>${quote.quote_number}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;color:#374151;margin-bottom:4px;">
+        <span>Service</span><strong>${quote.title}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:15px;color:#111;font-weight:700;margin-top:8px;padding-top:8px;border-top:1px solid #fed7aa;">
+        <span>Total</span><span>${total}</span>
+      </div>
+    </div>
+    <p style="margin:0 0 8px;font-size:14px;color:#6b7280;">Questions? Reply to this email${shopPhone ? ` or call us at <strong>${shopPhone}</strong>` : ''}.</p>
+    <p style="margin:0;font-size:14px;color:#6b7280;">We look forward to working with you.</p>
+    <p style="margin:24px 0 0;font-size:14px;color:#374151;font-weight:600;">— ${shopName}</p>
+  </div>
+  <div style="background:#f9fafb;padding:16px 32px;font-size:11px;color:#9ca3af;">
+    This is an automated reminder from your quote management system.
+  </div>
+</div>
+</body></html>`,
+            });
+
+            await pool.query(
+              `UPDATE shop_quotes SET expiry_email_sent=TRUE WHERE id=$1`,
+              [quote.id]
+            );
+
+            if (quote.lead_id) {
+              await logActivity(pool, {
+                leadId: quote.lead_id, userId: user_id, type: 'email_sent',
+                subject: `Auto: Quote expiry reminder — ${quote.quote_number}`,
+                body: `Automated reminder sent to ${quote.email}: quote expires ${daysLeft === 1 ? 'tomorrow' : `in ${daysLeft} days`} (${quote.quote_number}).`,
+                metadata: { auto: true, daysLeft, quoteId: quote.id },
+              });
+            }
+
+            console.log(`[quote-expiry] Expiry reminder sent → ${quote.email} (${quote.quote_number}, ${daysLeft}d left)`);
+          } catch (emailErr) {
+            console.error('[quote-expiry] Email send failed:', emailErr.message);
+          }
+        }
       }
     }
   } catch (e) {
@@ -16303,6 +20916,107 @@ app.get('/analytics/email-timing', authMiddleware, async (req, res) => {
     });
   } catch (e) {
     console.error('[analytics/email-timing]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// Email template performance analytics
+app.get('/analytics/email-templates', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        et.id,
+        et.label,
+        et.tag,
+        et.use_count,
+        COUNT(tr.id)                                          AS sends,
+        SUM(CASE WHEN tr.open_count > 0 THEN 1 ELSE 0 END)  AS opens,
+        ROUND(AVG(CASE WHEN tr.open_count > 0 THEN tr.open_count ELSE NULL END)::numeric, 1) AS avg_opens_per_opener,
+        MAX(tr.opened_at)                                    AS last_open_at
+      FROM email_templates et
+      LEFT JOIN email_tracking tr ON tr.template_id = et.id AND tr.user_id = $1
+      WHERE et.user_id = $1
+      GROUP BY et.id, et.label, et.tag, et.use_count
+      ORDER BY sends DESC, et.use_count DESC
+    `, [uid]);
+
+    res.json({
+      templates: rows.map(r => ({
+        id: Number(r.id),
+        label: r.label,
+        tag: r.tag,
+        useCount: Number(r.use_count),
+        sends: Number(r.sends),
+        opens: Number(r.opens),
+        openRate: r.sends > 0 ? Math.round((r.opens / r.sends) * 100) : 0,
+        avgOpensPerOpener: r.avg_opens_per_opener ? Number(r.avg_opens_per_opener) : null,
+        lastOpenAt: r.last_open_at,
+      })),
+    });
+  } catch (e) {
+    console.error('[analytics/email-templates]', e.message);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// Proposal analytics — aggregate stats across all proposals
+app.get('/analytics/proposals', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows: [stats] } = await pool.query(`
+      SELECT
+        COUNT(*)                                                                AS total,
+        COUNT(*) FILTER (WHERE status = 'draft')                               AS draft,
+        COUNT(*) FILTER (WHERE status = 'sent')                                AS sent,
+        COUNT(*) FILTER (WHERE status = 'approved')                            AS approved,
+        COUNT(*) FILTER (WHERE status = 'declined')                            AS declined,
+        COUNT(*) FILTER (WHERE status = 'expired')                             AS expired,
+        ROUND(
+          COUNT(*) FILTER (WHERE status = 'approved')::numeric /
+          NULLIF(COUNT(*) FILTER (WHERE status IN ('sent','approved','declined')), 0) * 100
+        , 1)                                                                   AS close_rate,
+        ROUND(AVG(EXTRACT(EPOCH FROM (sent_at - created_at))/3600)::numeric, 1)
+            FILTER (WHERE sent_at IS NOT NULL)                                 AS avg_hours_to_send,
+        ROUND(AVG(EXTRACT(EPOCH FROM (approved_at - sent_at))/86400)::numeric, 1)
+            FILTER (WHERE approved_at IS NOT NULL AND sent_at IS NOT NULL)     AS avg_days_to_approve,
+        ROUND(AVG(view_count)::numeric, 1)
+            FILTER (WHERE status = 'approved' AND view_count > 0)             AS avg_views_approved,
+        ROUND(AVG(view_count)::numeric, 1)
+            FILTER (WHERE status IN ('declined','expired') AND view_count > 0) AS avg_views_declined
+      FROM proposals WHERE user_id = $1
+    `, [uid]);
+
+    const { rows: topViewed } = await pool.query(`
+      SELECT p.id, p.title, p.status, p.view_count, p.sent_at, l.company
+      FROM proposals p
+      LEFT JOIN leads l ON l.id = p.lead_id AND l.user_id = $1
+      WHERE p.user_id = $1 AND p.view_count > 0
+      ORDER BY p.view_count DESC LIMIT 5
+    `, [uid]);
+
+    res.json({
+      ok: true,
+      total: Number(stats.total),
+      byStatus: {
+        draft: Number(stats.draft),
+        sent: Number(stats.sent),
+        approved: Number(stats.approved),
+        declined: Number(stats.declined),
+        expired: Number(stats.expired),
+      },
+      closeRate: stats.close_rate ? Number(stats.close_rate) : null,
+      avgHoursToSend: stats.avg_hours_to_send ? Number(stats.avg_hours_to_send) : null,
+      avgDaysToApprove: stats.avg_days_to_approve ? Number(stats.avg_days_to_approve) : null,
+      avgViewsApproved: stats.avg_views_approved ? Number(stats.avg_views_approved) : null,
+      avgViewsDeclined: stats.avg_views_declined ? Number(stats.avg_views_declined) : null,
+      topViewed: topViewed.map(r => ({
+        id: Number(r.id), title: r.title, status: r.status,
+        viewCount: Number(r.view_count), sentAt: r.sent_at, company: r.company,
+      })),
+    });
+  } catch (e) {
+    console.error('[analytics/proposals]', e.message);
     res.status(500).json({ ok: false });
   }
 });
@@ -17296,6 +22010,89 @@ app.get('/analytics/cohort', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Time-to-Close by Category ─────────────────────────────────────────────────
+// Avg/median days from lead creation to won status, broken down by category.
+// Pulls from leads table (status='won') + win_debriefs for richer data.
+app.get('/analytics/time-to-close', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    // Primary: leads table — all-time won leads with a date delta
+    const leadsQ = await pool.query(`
+      SELECT
+        category,
+        COUNT(*)::INT                                                        AS won_count,
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_days,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400
+        ))::INT                                                              AS median_days,
+        ROUND(MIN(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS min_days,
+        ROUND(MAX(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS max_days
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'won'
+        AND created_at IS NOT NULL
+        AND updated_at > created_at
+      GROUP BY category
+      ORDER BY avg_days ASC
+    `, [uid]);
+
+    // Secondary: win_debriefs (has explicit days_to_close if logged)
+    const debriefQ = await pool.query(`
+      SELECT
+        category,
+        COUNT(*)::INT                         AS debrief_count,
+        ROUND(AVG(days_to_close))::INT        AS debrief_avg_days,
+        ROUND(AVG(touch_count))::INT          AS avg_touches
+      FROM win_debriefs
+      WHERE user_id = $1
+        AND days_to_close IS NOT NULL
+        AND days_to_close > 0
+      GROUP BY category
+    `, [uid]);
+
+    const debriefMap = {};
+    for (const r of debriefQ.rows) debriefMap[r.category] = r;
+
+    const byCategory = leadsQ.rows.map((r) => {
+      const d = debriefMap[r.category] || {};
+      return {
+        category: r.category,
+        wonCount: r.won_count,
+        avgDays: r.avg_days,
+        medianDays: r.median_days,
+        minDays: r.min_days,
+        maxDays: r.max_days,
+        // debrief data is richer — prefer it when enough samples
+        debriefAvgDays: d.debrief_avg_days ?? null,
+        avgTouches: d.avg_touches ?? null,
+      };
+    });
+
+    // Overall stats
+    const overall = await pool.query(`
+      SELECT
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS overall_avg,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400
+        ))::INT                                                                  AS overall_median,
+        COUNT(*)::INT                                                            AS total_won
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'won'
+        AND updated_at > created_at
+    `, [uid]);
+
+    const ov = overall.rows[0] || {};
+
+    res.json({
+      byCategory,
+      overallAvgDays: ov.overall_avg ?? null,
+      overallMedianDays: ov.overall_median ?? null,
+      totalWon: ov.total_won ?? 0,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /analytics/revenue-monthly — monthly revenue trend from installed_jobs (last 18 months)
 app.get('/analytics/revenue-monthly', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);
@@ -18028,6 +22825,99 @@ app.get('/analytics/cash-flow', authMiddleware, async (req, res) => {
     });
   } catch (e) {
     console.error('[cash-flow]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/speed-to-lead — measures how quickly leads are contacted after entering CRM
+app.get('/analytics/speed-to-lead', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE first_contacted_at IS NOT NULL)::INT AS contacted_count,
+        COUNT(*) FILTER (WHERE first_contacted_at IS NULL AND status NOT IN ('new'))::INT AS missing_count,
+        ROUND(AVG(
+          EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0
+        ) FILTER (WHERE first_contacted_at IS NOT NULL), 1)::FLOAT AS avg_hours,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0
+        ) FILTER (WHERE first_contacted_at IS NOT NULL), 1)::FLOAT AS median_hours,
+        COUNT(*) FILTER (
+          WHERE first_contacted_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 60.0 <= 5
+        )::INT AS within_5min,
+        COUNT(*) FILTER (
+          WHERE first_contacted_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0 <= 1
+        )::INT AS within_1hour,
+        COUNT(*) FILTER (
+          WHERE first_contacted_at IS NOT NULL
+            AND EXTRACT(EPOCH FROM (first_contacted_at - created_at)) / 3600.0 <= 24
+        )::INT AS within_24hours
+      FROM leads
+      WHERE user_id = $1
+    `, [uid]);
+
+    const stat = rows[0] || {};
+
+    // Uncontacted leads waiting > 1 hour
+    const { rows: waiting } = await pool.query(`
+      SELECT id, company, category, created_at,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0, 1) AS hours_waiting
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'new'
+        AND first_contacted_at IS NULL
+        AND created_at < NOW() - INTERVAL '1 hour'
+      ORDER BY created_at ASC
+      LIMIT 10
+    `, [uid]);
+
+    res.json({
+      ok: true,
+      avgHours: stat.avg_hours ?? null,
+      medianHours: stat.median_hours ?? null,
+      contactedCount: stat.contacted_count ?? 0,
+      within5min: stat.within_5min ?? 0,
+      within1hour: stat.within_1hour ?? 0,
+      within24hours: stat.within_24hours ?? 0,
+      waitingLeads: waiting.map((r) => ({
+        id: r.id, company: r.company, category: r.category,
+        createdAt: r.created_at, hoursWaiting: parseFloat(r.hours_waiting),
+      })),
+    });
+  } catch (e) {
+    console.error('[speed-to-lead]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /analytics/1099-summary — subcontractors paid this year, grouped for 1099 reporting
+app.get('/analytics/1099-summary', authMiddleware, async (req, res) => {
+  const uid  = String(req.user.id);
+  const year = parseInt(String(req.query.year || new Date().getFullYear()), 10);
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.id, s.name, s.email, s.tax_id, s.business_type, s.specialty, s.address,
+              COUNT(js.id)::INT AS assignment_count,
+              COALESCE(SUM(js.paid_amount), SUM(js.labor_cost))::NUMERIC AS total_paid,
+              SUM(CASE WHEN js.paid_at IS NOT NULL THEN js.paid_amount ELSE 0 END)::NUMERIC AS confirmed_paid,
+              SUM(CASE WHEN js.paid_at IS NULL THEN js.labor_cost ELSE 0 END)::NUMERIC AS outstanding
+       FROM subcontractors s
+       LEFT JOIN job_subcontractors js ON js.sub_id = s.id
+         AND EXTRACT(YEAR FROM COALESCE(js.paid_at, js.created_at)) = $2
+       WHERE s.user_id = $1
+       GROUP BY s.id
+       HAVING COALESCE(SUM(js.paid_amount), SUM(js.labor_cost)) > 0 OR COUNT(js.id) > 0
+       ORDER BY total_paid DESC NULLS LAST`,
+      [uid, year]
+    );
+    const totalPaid      = rows.reduce((s, r) => s + Number(r.confirmed_paid || 0), 0);
+    const needsForm1099  = rows.filter((r) => Number(r.confirmed_paid || 0) >= 600);
+    res.json({ ok: true, year, subs: rows, totalPaid, needs1099Count: needsForm1099.length });
+  } catch (e) {
+    console.error('[1099-summary]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -20017,6 +24907,152 @@ app.delete('/milestones/:milestoneId', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Web Push Notifications ────────────────────────────────────────────────────
+
+// GET /push/vapid-key — return public VAPID key so browser can subscribe
+app.get('/push/vapid-key', authMiddleware, (req, res) => {
+  const key = process.env.VAPID_PUBLIC_KEY;
+  if (!key) return res.json({ ok: false, publicKey: null });
+  res.json({ ok: true, publicKey: key });
+});
+
+// POST /push/subscribe — save or update a push subscription
+app.post('/push/subscribe', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { endpoint, keys } = req.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'Missing subscription fields' });
+    const ua = (req.headers['user-agent'] || '').slice(0, 256);
+    await pool.query(
+      `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, ua)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id=$1, p256dh=$3, auth=$4, ua=$5`,
+      [uid, endpoint, keys.p256dh, keys.auth, ua]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /push/subscribe — unsubscribe (remove by endpoint)
+app.delete('/push/subscribe', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { endpoint } = req.body || {};
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+    await pool.query('DELETE FROM push_subscriptions WHERE user_id=$1 AND endpoint=$2', [uid, endpoint]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /push/status — check if this user has any active push subscriptions
+app.get('/push/status', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query('SELECT COUNT(*) FROM push_subscriptions WHERE user_id=$1', [uid]);
+    const vapidConfigured = !!process.env.VAPID_PUBLIC_KEY;
+    res.json({ ok: true, subscribed: parseInt(rows[0].count) > 0, vapidConfigured });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Outbound Webhooks — Zapier / Make / Slack integrations ───────────────────
+
+const WEBHOOK_EVENTS = [
+  { value: 'lead.won',         label: 'Lead Won' },
+  { value: 'lead.lost',        label: 'Lead Lost' },
+  { value: 'lead.advanced',    label: 'Lead Stage Changed' },
+  { value: 'proposal.approved',label: 'Proposal Approved by Client' },
+  { value: 'inbound.lead',     label: 'New Inbound Quote Request' },
+];
+
+// GET /webhooks — list user's configured webhooks
+app.get('/webhooks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { rows } = await pool.query(
+      `SELECT id, event_type, url, label, enabled, last_triggered_at, last_status_code, created_at
+       FROM user_webhooks WHERE user_id=$1 ORDER BY created_at DESC`,
+      [uid]
+    );
+    res.json({ ok: true, webhooks: rows, events: WEBHOOK_EVENTS });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /webhooks — create a webhook
+app.post('/webhooks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const { event_type, url, label, secret } = req.body || {};
+    if (!event_type || !url) return res.status(400).json({ error: 'event_type and url are required' });
+    if (!WEBHOOK_EVENTS.find(e => e.value === event_type)) return res.status(400).json({ error: 'Invalid event_type' });
+    if (!url.startsWith('https://')) return res.status(400).json({ error: 'URL must use HTTPS' });
+    const count = await pool.query('SELECT COUNT(*) FROM user_webhooks WHERE user_id=$1', [uid]);
+    if (parseInt(count.rows[0].count) >= 20) return res.status(400).json({ error: 'Maximum 20 webhooks per account' });
+    const { rows } = await pool.query(
+      `INSERT INTO user_webhooks (user_id, event_type, url, label, secret)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, event_type, url, label, enabled, last_triggered_at, last_status_code, created_at`,
+      [uid, event_type, url, label || null, secret || null]
+    );
+    res.json({ ok: true, webhook: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /webhooks/:id — toggle enabled
+app.patch('/webhooks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id);
+    const { enabled } = req.body || {};
+    const { rows } = await pool.query(
+      `UPDATE user_webhooks SET enabled=$1 WHERE id=$2 AND user_id=$3 RETURNING id, event_type, url, label, enabled, last_triggered_at, last_status_code, created_at`,
+      [enabled !== false, id, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true, webhook: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /webhooks/:id
+app.delete('/webhooks/:id', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id);
+    await pool.query('DELETE FROM user_webhooks WHERE id=$1 AND user_id=$2', [id, uid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /webhooks/:id/test — fire a test payload to the configured URL
+app.post('/webhooks/:id/test', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const id = parseInt(req.params.id);
+    const { rows } = await pool.query('SELECT * FROM user_webhooks WHERE id=$1 AND user_id=$2', [id, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const hook = rows[0];
+    const crypto = require('crypto');
+    const data = {
+      id: 0, company: 'Acme Trucking (TEST)', category: 'fleet', status: hook.event_type.split('.')[1] || 'test',
+      contactName: 'John Smith', email: 'john@acme-trucking.com', phone: '317-555-0100',
+      city: 'Indianapolis', state: 'IN', fleetSize: 45,
+    };
+    const payload = JSON.stringify({ event: hook.event_type, timestamp: new Date().toISOString(), test: true, data });
+    const headers = { 'Content-Type': 'application/json', 'User-Agent': 'WrapOS-Webhook/1.0' };
+    if (hook.secret) {
+      headers['X-WrapOS-Signature'] = 'sha256=' + crypto.createHmac('sha256', hook.secret).update(payload).digest('hex');
+    }
+    let statusCode = 0;
+    try {
+      const r = await fetch(hook.url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(8000) });
+      statusCode = r.status;
+      await pool.query('UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=$1 WHERE id=$2', [statusCode, id]);
+    } catch (err) {
+      await pool.query('UPDATE user_webhooks SET last_triggered_at=NOW(), last_status_code=0 WHERE id=$1', [id]);
+      return res.json({ ok: false, statusCode: 0, error: err.message });
+    }
+    res.json({ ok: statusCode >= 200 && statusCode < 300, statusCode });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Static — serve React SPA (must be LAST) ───────────────────────────────────
 app.use(express.static(path.join(__dirname, 'dist')));
 app.get('*', (req, res) => {
@@ -20036,6 +25072,8 @@ app.listen(PORT, async () => {
   console.log(stripe ? '· Stripe: configured' : '· Stripe: NOT configured (set STRIPE_SECRET_KEY)');
   console.log(process.env.RESEND_API_KEY ? '· Resend: configured' : '· Resend: NOT configured (set RESEND_API_KEY)');
   console.log(process.env.HUNTER_API_KEY ? '· Hunter.io: configured (email waterfall active)' : '· Hunter.io: not configured (set HUNTER_API_KEY for free enrichment)');
+  console.log(process.env.FMCSA_SAFER_API_KEY ? '· FMCSA SAFER: configured (auto-fill fleet phone numbers active)' : '· FMCSA SAFER: not configured (set FMCSA_SAFER_API_KEY for fleet phone lookup)');
+  console.log(process.env.VAPID_PUBLIC_KEY ? '· Web Push: configured (mobile notifications active)' : '· Web Push: not configured (set VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY + VAPID_MAILTO — run: npx web-push generate-vapid-keys)');
   // Run migrations first so checkDb works on a fresh database
   try { await migrateDb(); } catch (e) { console.error('migrateDb error:', e.message); }
   const db = await checkDb();
@@ -20044,6 +25082,11 @@ app.listen(PORT, async () => {
     : `· Postgres NOT connected: ${db.error}\n  Run: docker compose up -d`);
   if (db.ok) {
     startDripWorker();
+    startSmsSequenceWorker();
+    startOmniSequenceWorker();
+    startEmailEnrichmentWorker();
+    startFmcsaSaferWorker();
+    startFleetMonitorWorker();
     startDigestWorker();
     startColdNurtureWorker();
     startReOrderWorker();
@@ -20051,11 +25094,15 @@ app.listen(PORT, async () => {
     startQuoteExpiryWorker();
     startStalledDealWorker();
     startAnniversaryWorker();
+    startCrossSellWorker();
     startMaintenanceWorker();
     startRescueWorker();
     startWeatherWorker();
     startProspectIntelWorker();
     startReferralMiningWorker();
+    startProposalNudgeWorker();
+    startProposalExpiryWorker();
+    startSavedSearchAlertWorker();
     email.startTrialCron(pool);
     try {
       const { startSignalWorker } = require('./lib/signalWorker');

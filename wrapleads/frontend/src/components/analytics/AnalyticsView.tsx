@@ -773,6 +773,234 @@ function EmailTimingCard() {
   );
 }
 
+function EmailTemplateStatsCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['email-template-analytics'],
+    queryFn: () => api.getEmailTemplateAnalytics(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+    </div>
+  );
+
+  const templates = data?.templates ?? [];
+  if (templates.length === 0) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+      <div className="an-card-title">Email Template Performance</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+        Save email templates and send them to prospects — WrapOS will track which templates get the highest open rates.
+      </p>
+    </div>
+  );
+
+  const withSends = templates.filter(t => t.sends > 0);
+  const bestTemplate = withSends.length > 0 ? withSends.reduce((best, t) => t.openRate > best.openRate ? t : best) : null;
+  const tagColor = (tag: string | null) => {
+    const h: Record<string, string> = { 'Intro': '#4d8af5', 'Follow-up': '#f4551c', 'Objection': '#f59e0b', 'Cold': '#8b5cf6' };
+    return h[tag ?? ''] ?? '#6b7280';
+  };
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Email Template Performance</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            Open rates by template — {templates.length} template{templates.length !== 1 ? 's' : ''}, {withSends.reduce((s, t) => s + t.sends, 0)} tracked sends
+          </div>
+        </div>
+        {bestTemplate && (
+          <div style={{
+            background: 'rgba(77,138,245,0.1)', border: '1px solid rgba(77,138,245,0.3)',
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#4d8af5',
+          }}>
+            Best: {bestTemplate.label} — {bestTemplate.openRate}% open rate
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {templates.map(t => {
+          const barPct = Math.min(100, t.sends > 0 ? t.openRate : 0);
+          const isBest = bestTemplate?.id === t.id;
+          return (
+            <div key={t.id} style={{
+              display: 'grid', gridTemplateColumns: '1fr 180px 80px 80px',
+              alignItems: 'center', gap: 12,
+              padding: '10px 14px', borderRadius: 8,
+              background: isBest ? 'rgba(77,138,245,0.07)' : 'var(--bg-elev)',
+              border: `1px solid ${isBest ? 'rgba(77,138,245,0.25)' : 'var(--border-subtle)'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                  padding: '2px 6px', borderRadius: 4,
+                  background: `${tagColor(t.tag)}22`, color: tagColor(t.tag), flexShrink: 0,
+                }}>{t.tag ?? 'Custom'}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.label}</span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', borderRadius: 3, width: `${barPct}%`,
+                    background: isBest ? '#4d8af5' : barPct >= 40 ? '#00d97e' : barPct >= 20 ? '#f4551c' : '#6b7280',
+                    transition: 'width 0.5s ease',
+                  }} />
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: isBest ? '#4d8af5' : 'var(--text)', minWidth: 36, textAlign: 'right' }}>
+                  {t.sends > 0 ? `${t.openRate}%` : '—'}
+                </span>
+              </div>
+
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{t.sends}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>sends</div>
+              </div>
+
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: t.opens > 0 ? '#00d97e' : 'var(--text-faint)' }}>{t.opens}</div>
+                <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>opens</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ProposalAnalyticsCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['proposal-analytics'],
+    queryFn: () => api.getProposalAnalytics(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div className="skeleton" style={{ height: 80, borderRadius: 8 }} />
+    </div>
+  );
+
+  const d = data;
+  if (!d?.ok || d.total === 0) return (
+    <div className="an-card" style={{ gridColumn: '1 / -1', opacity: 0.7 }}>
+      <div className="an-card-title">Proposal Analytics</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+        Generate proposals for leads to start tracking close rates, time to approve, and view engagement.
+      </p>
+    </div>
+  );
+
+  const statusBar: Array<{ key: string; label: string; color: string; count: number }> = [
+    { key: 'approved', label: 'Approved', color: '#00d97e', count: d.byStatus.approved },
+    { key: 'sent',     label: 'Sent',     color: '#4d8af5', count: d.byStatus.sent },
+    { key: 'draft',    label: 'Draft',    color: '#6b7280', count: d.byStatus.draft },
+    { key: 'declined', label: 'Declined', color: '#ef4444', count: d.byStatus.declined },
+    { key: 'expired',  label: 'Expired',  color: '#9a3a0f', count: d.byStatus.expired },
+  ].filter(s => s.count > 0);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="an-card-title" style={{ margin: 0 }}>Proposal Analytics</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+            {d.total} proposal{d.total !== 1 ? 's' : ''} total
+            {d.closeRate !== null ? ` · ${d.closeRate}% close rate` : ''}
+          </div>
+        </div>
+        {d.closeRate !== null && (
+          <div style={{
+            background: d.closeRate >= 50 ? 'rgba(0,217,126,0.1)' : 'rgba(77,138,245,0.1)',
+            border: `1px solid ${d.closeRate >= 50 ? 'rgba(0,217,126,0.3)' : 'rgba(77,138,245,0.3)'}`,
+            borderRadius: 8, padding: '6px 14px', fontSize: 11, fontWeight: 700,
+            color: d.closeRate >= 50 ? '#00d97e' : '#4d8af5',
+          }}>
+            {d.closeRate}% close rate
+          </div>
+        )}
+      </div>
+
+      {/* Status distribution bar */}
+      <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 8, gap: 1 }}>
+        {statusBar.map(s => (
+          <div key={s.key} style={{ flex: s.count, background: s.color, minWidth: 2 }} title={`${s.label}: ${s.count}`} />
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+        {statusBar.map(s => (
+          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{s.count}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Key metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: d.topViewed.length > 0 ? 16 : 0 }}>
+        {d.avgHoursToSend !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--text)', letterSpacing: '-0.5px' }}>{d.avgHoursToSend}h</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg time to send</div>
+          </div>
+        )}
+        {d.avgDaysToApprove !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: '#00d97e', letterSpacing: '-0.5px' }}>{d.avgDaysToApprove}d</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg days to approve</div>
+          </div>
+        )}
+        {d.avgViewsApproved !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: '#4d8af5', letterSpacing: '-0.5px' }}>{d.avgViewsApproved}×</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg views (approved)</div>
+          </div>
+        )}
+        {d.avgViewsDeclined !== null && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: '#ef4444', letterSpacing: '-0.5px' }}>{d.avgViewsDeclined}×</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>avg views (declined)</div>
+          </div>
+        )}
+      </div>
+
+      {/* Top viewed proposals */}
+      {d.topViewed.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Most-viewed proposals
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {d.topViewed.map(p => {
+              const statusColor: Record<string, string> = { approved: '#00d97e', sent: '#4d8af5', declined: '#ef4444', expired: '#9a3a0f', draft: '#6b7280' };
+              return (
+                <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 50px', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
+                    {p.company && <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{p.company}</div>}
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, background: `${statusColor[p.status] ?? '#6b7280'}22`, color: statusColor[p.status] ?? '#6b7280' }}>
+                      {p.status}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#4d8af5' }}>{p.viewCount}×</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SequencePerformanceCard() {
   const { data, isLoading } = useQuery({
     queryKey: ['sequence-performance'],
@@ -2183,11 +2411,16 @@ function LossAnalysisCard() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {(data.byCompetitor ?? []).slice(0, 5).map((c) => (
+              {(data.byCompetitor ?? []).slice(0, 5).map((c: { competitor: string; losses: number; categories: string[]; avg_competitor_price?: number; price_data_points?: number }) => (
                 <div key={c.competitor} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.competitor}
                   </div>
+                  {c.avg_competitor_price && (
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                      avg ${c.avg_competitor_price.toLocaleString()}
+                    </div>
+                  )}
                   <div style={{
                     fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 99,
                     background: 'rgba(239,68,68,.1)', color: '#ef4444',
@@ -2250,6 +2483,108 @@ function LossAnalysisCard() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Time-to-Close by Category ──────────────────────────────────────────────────
+const CATEGORY_LABEL: Record<string, string> = {
+  fleet: 'Fleet', design: 'Design', construction: 'Construction', dinoc: 'DI-NOC',
+  reatec: 'Reatec', colorchange: 'Color Change', wallgraphics: 'Wall Graphics',
+  gc_referral: 'GC Referral', racing: 'Racing',
+};
+
+function TimeToCloseCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['time-to-close'],
+    queryFn: () => api.getTimeToClose(),
+    staleTime: 15 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ padding: 24 }}>
+      <div className="an-title" style={{ marginBottom: 16 }}>⏱ Time to Close by Category</div>
+      <div className="an-stat-sub">Loading…</div>
+    </div>
+  );
+
+  const d = data;
+  const cats = d?.byCategory ?? [];
+
+  if (!cats.length) return (
+    <div className="an-card" style={{ padding: 24 }}>
+      <div className="an-title" style={{ marginBottom: 8 }}>⏱ Time to Close by Category</div>
+      <div className="an-stat-sub" style={{ color: 'var(--text-faint)' }}>
+        Win your first deal to see how long each category takes to close.
+      </div>
+    </div>
+  );
+
+  const maxDays = Math.max(...cats.map((c) => c.avgDays), 1);
+  const overall = d?.overallAvgDays ?? null;
+
+  return (
+    <div className="an-card" style={{ padding: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div className="an-title">⏱ Time to Close by Category</div>
+        {overall !== null && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.5px', color: 'var(--text)', fontFamily: 'var(--display)' }}>
+              {overall}d
+            </div>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-faint)', fontWeight: 700 }}>
+              Overall avg · {d?.totalWon ?? 0} wins
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {cats.map((cat) => {
+          const pct = Math.max(4, Math.round((cat.avgDays / maxDays) * 100));
+          const isFast = cat.avgDays <= (overall ?? cat.avgDays) * 0.8;
+          const isSlow = cat.avgDays >= (overall ?? cat.avgDays) * 1.3;
+          const barColor = isFast ? '#00d97e' : isSlow ? '#f59e0b' : 'var(--accent)';
+          const preferDays = cat.debriefAvgDays ?? cat.avgDays;
+          return (
+            <div key={cat.category}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                    {CATEGORY_LABEL[cat.category] ?? cat.category}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                    {cat.wonCount} win{cat.wonCount !== 1 ? 's' : ''}
+                  </span>
+                  {cat.avgTouches !== null && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                      · {cat.avgTouches} touches
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: barColor, fontFamily: 'var(--mono, monospace)' }}>
+                    {preferDays}d
+                  </span>
+                  {cat.minDays !== cat.maxDays && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                      {cat.minDays}–{cat.maxDays}d range
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div style={{ height: 5, background: 'var(--bg-base)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: 3, transition: 'width 0.4s ease' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-soft)', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+        Green = faster than your average · Amber = slower than average.
+        Median days may differ from average when outlier deals skew the dataset.
+      </div>
     </div>
   );
 }
@@ -2383,6 +2718,94 @@ function CohortAnalysisCard() {
           Bar height = leads added · color fill = win rate · W = wins, d = avg close days
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Speed to Lead ─────────────────────────────────────────────────────────────
+function SpeedToLeadCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['speed-to-lead'],
+    queryFn: () => api.getSpeedToLead(),
+    staleTime: 5 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card">
+      <div className="an-card-title">Speed to Lead</div>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+    </div>
+  );
+
+  const avgH = data?.avgHours ?? null;
+  const medH = data?.medianHours ?? null;
+  const contacted = data?.contactedCount ?? 0;
+  const within5 = data?.within5min ?? 0;
+  const within1h = data?.within1hour ?? 0;
+  const waiting = data?.waitingLeads ?? [];
+
+  function fmtHours(h: number | null) {
+    if (h === null) return '—';
+    if (h < 1) return `${Math.round(h * 60)}m`;
+    return `${h.toFixed(1)}h`;
+  }
+
+  const scoreColor = avgH === null ? 'var(--text-faint)' : avgH < 1 ? '#00d97e' : avgH < 4 ? '#f59e0b' : '#ef4444';
+
+  return (
+    <div className="an-card">
+      <div className="an-card-title">
+        Speed to Lead
+        <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-faint)', marginLeft: 8 }}>
+          industry benchmark: &lt;5 min = 400% more likely to close
+        </span>
+      </div>
+
+      {contacted === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          No first-contact data yet. Speed tracking starts automatically when you send your first email or SMS to a new lead.
+        </p>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 14 }}>
+            {[
+              { label: 'Avg response', value: fmtHours(avgH), color: scoreColor },
+              { label: 'Median', value: fmtHours(medH), color: 'var(--text)' },
+              { label: 'Under 5 min', value: within5, color: within5 > 0 ? '#00d97e' : 'var(--text-faint)' },
+              { label: 'Under 1 hour', value: within1h, color: 'var(--text)' },
+              { label: 'Leads contacted', value: contacted, color: 'var(--text)' },
+              { label: 'Benchmark', value: '< 5 min', color: 'var(--text-faint)' },
+            ].map((s) => (
+              <div key={s.label} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-faint)', marginBottom: 4 }}>{s.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {waiting.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#ef4444', marginBottom: 8 }}>
+                ⚠ Waiting for first contact ({waiting.length} lead{waiting.length !== 1 ? 's' : ''})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {waiting.map((l) => (
+                  <div key={l.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '6px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.06)',
+                    border: '1px solid rgba(239,68,68,0.2)', fontSize: 12,
+                  }}>
+                    <span style={{ color: 'var(--text)', fontWeight: 500 }}>{l.company}</span>
+                    <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 700 }}>
+                      {l.hoursWaiting < 1 ? `${Math.round(l.hoursWaiting * 60)}m waiting` : `${l.hoursWaiting.toFixed(1)}h waiting`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -2827,6 +3250,114 @@ function JobProfitabilityCard() {
       <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-soft)', fontSize: 10, color: 'var(--text-faint)' }}>
         Green ≥50% · Blue ≥35% · Amber ≥20% · Red &lt;20% · Sub Labor from the Subcontractors tab in each job.
       </div>
+    </div>
+  );
+}
+
+function Sub1099Card() {
+  const [year, setYear] = useState(new Date().getFullYear());
+  const { data, isLoading } = useQuery({
+    queryKey: ['1099-summary', year],
+    queryFn: () => api.get1099Summary(year),
+    staleTime: 5 * 60_000,
+  });
+
+  const subs = data?.subs ?? [];
+  const totalPaid = data?.totalPaid ?? 0;
+  const needs1099 = subs.filter((s) => Number(s.confirmed_paid) >= 600);
+
+  return (
+    <div className="an-card" style={{ gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div className="an-card-title">📋 1099 Subcontractor Summary</div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Year:</span>
+          <select
+            className="input"
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            style={{ fontSize: 12, padding: '3px 8px', width: 80 }}
+          >
+            {[0, 1, 2].map((n) => {
+              const y = new Date().getFullYear() - n;
+              return <option key={y} value={y}>{y}</option>;
+            })}
+          </select>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><span className="spinner" /></div>
+      ) : subs.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+          No subcontractor payments recorded for {year}.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 16px' }}>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Total Paid {year}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#f59e0b' }}>${totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+            <div style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 16px' }}>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', marginBottom: 2 }}>Need 1099 (≥$600)</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: needs1099.length > 0 ? '#ef4444' : '#22c55e' }}>{needs1099.length} sub{needs1099.length !== 1 ? 's' : ''}</div>
+            </div>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {['Subcontractor', 'Type', 'Tax ID', 'Email', 'Jobs', 'Confirmed Paid', 'Outstanding', '1099?'].map((h) => (
+                    <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {subs.map((s) => {
+                  const confirmed = Number(s.confirmed_paid);
+                  const needs = confirmed >= 600;
+                  return (
+                    <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 10px', fontWeight: 700 }}>{s.name}</td>
+                      <td style={{ padding: '8px 10px', color: 'var(--text-muted)' }}>{s.business_type === 'business' ? 'Business' : 'Individual'}</td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {s.tax_id ? (
+                          <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{s.tax_id}</span>
+                        ) : (
+                          <span style={{ color: needs ? '#ef4444' : 'var(--text-faint)', fontStyle: 'italic', fontSize: 11 }}>{needs ? '⚠ Missing' : '—'}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '8px 10px', color: 'var(--text-muted)', fontSize: 11 }}>{s.email || '—'}</td>
+                      <td style={{ padding: '8px 10px', textAlign: 'center' }}>{s.assignment_count}</td>
+                      <td style={{ padding: '8px 10px', fontWeight: 700, color: '#10b981' }}>${confirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '8px 10px', color: Number(s.outstanding) > 0 ? '#f59e0b' : 'var(--text-faint)' }}>
+                        {Number(s.outstanding) > 0 ? `$${Number(s.outstanding).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {needs ? (
+                          <span style={{ fontSize: 10, fontWeight: 700, background: '#ef444420', color: '#ef4444', padding: '2px 6px', borderRadius: 3, textTransform: 'uppercase' }}>
+                            Yes {!s.tax_id && '⚠'}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>No</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {needs1099.some((s) => !s.tax_id) && (
+            <div style={{ marginTop: 12, padding: '8px 12px', background: '#ef444412', border: '1px solid #ef444430', borderRadius: 6, fontSize: 11, color: '#ef4444' }}>
+              ⚠ Some subs paid ≥$600 are missing Tax IDs. Add them in Settings → Subcontractors before filing 1099-NEC forms. The IRS threshold for 1099-NEC is $600 in payments during the calendar year.
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -3490,6 +4021,12 @@ export default function AnalyticsView() {
         {/* ── Email Send-Time Intelligence ── */}
         <EmailTimingCard />
 
+        {/* ── Email Template Performance ── */}
+        <EmailTemplateStatsCard />
+
+        {/* ── Proposal Analytics ── */}
+        <ProposalAnalyticsCard />
+
         {/* ── AI Pipeline Narrative ── */}
         <PipelineNarrativeCard />
 
@@ -3517,6 +4054,9 @@ export default function AnalyticsView() {
         {/* ── Cash Flow / Receivables ── */}
         <CashFlowCard />
 
+        {/* ── Speed to Lead ── */}
+        <SpeedToLeadCard />
+
         {/* ── Client Satisfaction ── */}
         <SatisfactionCard />
 
@@ -3525,6 +4065,9 @@ export default function AnalyticsView() {
 
         {/* ── Lead Database Coverage ── */}
         <LeadCoverageCard />
+
+        {/* ── Time-to-Close by Category ── */}
+        <TimeToCloseCard />
 
         {/* ── Lead Cohort Analysis ── */}
         <CohortAnalysisCard />
@@ -3537,6 +4080,9 @@ export default function AnalyticsView() {
 
         {/* ── Territory Intel ── */}
         <TerritoryIntelCard />
+
+        {/* ── 1099 Sub Summary ── */}
+        <Sub1099Card />
 
         {/* ── Customer Lifetime Value ── */}
         {topCustomers && topCustomers.length > 0 && (

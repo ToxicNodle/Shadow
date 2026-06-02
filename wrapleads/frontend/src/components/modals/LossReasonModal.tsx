@@ -24,16 +24,18 @@ export default function LossReasonModal({ leadId, company, onClose, onDone }: Pr
   const showToast = useAppStore((s) => s.showToast);
   const [selected, setSelected] = useState<string | null>(null);
   const [competitor, setCompetitor] = useState('');
+  const [competitorPrice, setCompetitorPrice] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const showCompetitorField = selected === 'competitor';
+  const showPriceField = selected === 'competitor' || selected === 'price';
 
   async function save() {
     if (!selected) return;
     setSaving(true);
     try {
-      await api.captureWinLoss(leadId, selected, notes.trim(), competitor.trim() || undefined);
+      await api.captureWinLoss(leadId, selected, notes.trim(), competitor.trim() || undefined, competitorPrice ? parseFloat(competitorPrice) : undefined);
       showToast(`Loss reason saved — we'll help you win ${company} back`);
       onDone();
     } catch (e) {
@@ -89,7 +91,7 @@ export default function LossReasonModal({ leadId, company, onClose, onDone }: Pr
           ))}
         </div>
 
-        {/* Competitor name input */}
+        {/* Competitor name + price inputs */}
         {showCompetitorField && (
           <div style={{ marginBottom: 12 }}>
             <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
@@ -103,6 +105,26 @@ export default function LossReasonModal({ leadId, company, onClose, onDone }: Pr
               style={{ fontSize: 12 }}
               autoFocus
             />
+          </div>
+        )}
+        {showPriceField && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>
+              What price did they quote? (optional — builds competitive intel over time)
+            </label>
+            <div style={{ position: 'relative' }}>
+              <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: 'var(--text-muted)' }}>$</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step={100}
+                placeholder="e.g. 3500"
+                value={competitorPrice}
+                onChange={(e) => setCompetitorPrice(e.target.value)}
+                style={{ fontSize: 12, paddingLeft: 20 }}
+              />
+            </div>
           </div>
         )}
 
