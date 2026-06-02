@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '⚙️ Mission Dashboard Customization — Pin or Hide Any Card',
+    body: 'The Mission dashboard now has a "Customize" button in the header. Click it to open the card picker panel — all 34 cards organized into five groups (Intelligence, Pipeline, Outreach, Operations, Activity). Each card is a toggle chip: blue = visible, gray = hidden. Click any chip to toggle it instantly. Changes persist in localStorage so your layout survives refreshes and sessions. "Reset All" brings everything back. Core action cards (overdue follow-ups, replied leads, bids due, call-ready leads) always show regardless of the setting — those are the mission. Everything else is optional. Hidden cards still run their data queries in the background, so turning a card back on is instant. The customize panel closes on backdrop click and shows a count of how many cards are currently hidden.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🎬 Video Pitch Script Generator — 90-Second Personalized Scripts for Loom/BombBomb',
     body: 'Every active lead now has a "Video Pitch Script" panel in the Info tab (below the call opener). Click "Generate Script" and Claude writes a structured 90-second video script personalized to that company\'s fleet size, location, category, and CRM notes. Four timed sections: Hook (0–15s), Value Statement (15–45s), Proof Point (45–70s), and Call to Action (70–90s). Talking points strip at the top keeps key facts visible while you\'re recording. Copy the full script to clipboard, open Loom or BombBomb, hit record. Video pitches typically get 3–5× higher reply rates than text emails. Requires ShopFlow tier + Anthropic API key.',
   },
