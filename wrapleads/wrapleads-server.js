@@ -18460,6 +18460,10 @@ app.get('/proposals/:token', async (req, res) => {
     const html = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${p.title}</title>
+<meta property="og:title" content="${he(p.title)}">
+<meta property="og:description" content="Vehicle wrap proposal from ${he(shopName)} — click to view and approve.">
+${logoUrl ? `<meta property="og:image" content="${he(logoUrl)}">` : ''}
+<meta property="og:type" content="website">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8f8f8;color:#111;line-height:1.6}
@@ -18509,7 +18513,10 @@ app.get('/proposals/:token', async (req, res) => {
   .mockup-tag{position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:4px 8px;border-radius:4px;letter-spacing:.04em}
   .footer{background:#f8f8f8;padding:24px 48px;border-top:1px solid #eee;font-size:12px;color:#888;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
   @media(max-width:600px){.body-wrap,.header,.footer{padding:24px 20px}.prop-title{font-size:22px}}
-  @media print{body{background:#fff}.wrap{box-shadow:none}.approve-section,.approve-btn{display:none}}
+  @media print{body{background:#fff}.wrap{box-shadow:none}.approve-section,.approve-btn,.tier-select-btn,.print-btn-wrap{display:none!important}}
+  .print-btn-wrap{text-align:center;margin-top:16px;padding-bottom:24px}
+  .print-btn{background:transparent;border:1px solid #d1d5db;border-radius:7px;padding:8px 18px;font-size:12px;color:#6b7280;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .print-btn:hover{background:#f9fafb;border-color:#9ca3af;color:#374151}
 </style>
 </head><body>
 <div class="wrap">
@@ -18585,6 +18592,12 @@ app.get('/proposals/:token', async (req, res) => {
   <div class="footer">
     <span>${he(shopName)}${senderName ? ' · ' + he(senderName) : ''}</span>
     <span>${[senderPhone, senderEmail].filter(Boolean).map(he).join(' · ')}</span>
+  </div>
+  <div class="print-btn-wrap">
+    <button class="print-btn" onclick="window.print()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      Save as PDF / Print
+    </button>
   </div>
 </div>
 <script>
