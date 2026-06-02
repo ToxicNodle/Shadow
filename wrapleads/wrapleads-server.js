@@ -982,6 +982,8 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS scheduled_crew_count INT DEFAULT 2`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS cross_sell_email_sent BOOLEAN DEFAULT FALSE`);
     await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS care_email_sent_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS tracker_token TEXT UNIQUE`);
+    await pool.query(`ALTER TABLE installed_jobs ADD COLUMN IF NOT EXISTS job_status TEXT DEFAULT 'scheduled'`);
   } catch (e) {
     console.warn('[migrate] Could not add scheduled columns to installed_jobs:', e.message);
   }
@@ -9232,6 +9234,23 @@ app.patch('/jobs/:id/payment', authMiddleware, async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Job not found' });
     res.json({ ok: true, job: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /jobs/:id/status — update job production status (scheduled → in_progress → complete)
+app.patch('/jobs/:id/status', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  const { job_status } = req.body || {};
+  const VALID = ['scheduled', 'in_progress', 'complete'];
+  if (!VALID.includes(job_status)) return res.status(400).json({ error: `job_status must be one of: ${VALID.join(', ')}` });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE installed_jobs SET job_status=$1, updated_at=NOW() WHERE id=$2 AND user_id=$3 RETURNING id, job_status`,
+      [job_status, jobId, uid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Job not found' });
+    res.json({ ok: true, job_status: rows[0].job_status });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -19701,6 +19720,177 @@ app.get('/fleet/:token', async (req, res) => {
   } catch (e) {
     console.error('[fleet-dash]', e.message);
     res.status(500).send('<h1>Error loading fleet dashboard</h1>');
+  }
+});
+
+// ── Client-Facing Job Status Tracker ─────────────────────────────────────────
+// Generates a shareable URL so fleet managers can see project progress without calling.
+
+// POST /jobs/:id/tracker-link — create or retrieve the public tracker token
+app.post('/jobs/:id/tracker-link', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const jobId = parseInt(req.params.id, 10);
+  try {
+    const { rows } = await pool.query('SELECT tracker_token FROM installed_jobs WHERE id=$1 AND user_id=$2', [jobId, uid]);
+    if (!rows.length) return res.status(404).json({ error: 'Job not found' });
+
+    let token = rows[0].tracker_token;
+    if (!token) {
+      token = require('crypto').randomBytes(16).toString('hex');
+      await pool.query('UPDATE installed_jobs SET tracker_token=$1 WHERE id=$2', [token, jobId]);
+    }
+    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+    res.json({ ok: true, token, url: `${appUrl}/job-tracker/${token}` });
+  } catch (e) {
+    console.error('[tracker-link]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /job-tracker/:token — public job status page for clients
+app.get('/job-tracker/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { rows } = await pool.query(`
+      SELECT j.*, u.settings_json, u.company_name AS user_company,
+             COALESCE(json_agg(jp.*) FILTER (WHERE jp.id IS NOT NULL), '[]') AS photos
+      FROM installed_jobs j
+      JOIN users u ON u.id = j.user_id::bigint
+      LEFT JOIN job_photos jp ON jp.job_id = j.id
+      WHERE j.tracker_token = $1
+      GROUP BY j.id, u.settings_json, u.company_name
+    `, [token]);
+    if (!rows.length) return res.status(404).send('<h1>Project tracker not found or link has expired.</h1>');
+
+    const j = rows[0];
+    const s = j.settings_json || {};
+    const shopName = s.companyName || j.user_company || 'Your Wrap Shop';
+    const accentColor = s.accentColor || '#f4551c';
+    const shopPhone = s.senderPhone || s.phone || '';
+    const shopEmail = s.senderEmail || '';
+    const logoUrl = s.logoUrl || '';
+
+    const photos = (j.photos || []).filter((p) => p && p.image_data);
+    const completedDate = j.install_date ? new Date(j.install_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : null;
+
+    // Determine status stage (map job_status + payment_status → display stage)
+    const js = j.job_status || 'scheduled';
+    const STAGES = [
+      { key: 'scheduled',   label: 'Project Scheduled',  desc: 'Your project is on the calendar.',              icon: '📅' },
+      { key: 'in_progress', label: 'In Production',       desc: 'Installation is underway.',                     icon: '🔧' },
+      { key: 'complete',    label: 'Complete',             desc: 'Your fleet wrap is finished!',                  icon: '✅' },
+    ];
+    const currentIdx = STAGES.findIndex((st) => st.key === js) ?? 0;
+
+    const stageHtml = STAGES.map((st, i) => {
+      const done   = i < currentIdx;
+      const active = i === currentIdx;
+      return `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;${i < STAGES.length-1 ? 'border-bottom:1px solid #2a2d3a;' : ''}">
+          <div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;
+            background:${done ? accentColor : active ? accentColor+'22' : '#1a1d27'};
+            border:2px solid ${done || active ? accentColor : '#3a3d4a'};">
+            ${done ? '✓' : st.icon}
+          </div>
+          <div>
+            <div style="font-size:13px;font-weight:${active ? '800' : '600'};color:${active ? '#f1f5f9' : done ? '#94a3b8' : '#6b7280'}">${st.label}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px">${active ? st.desc : done ? 'Completed' : ''}</div>
+          </div>
+          ${active ? `<div style="margin-left:auto;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;background:${accentColor};color:#fff;padding:2px 8px;border-radius:4px;white-space:nowrap">In Progress</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const photoHtml = photos.slice(0, 6).map((p) =>
+      `<div style="aspect-ratio:16/9;overflow:hidden;border-radius:8px;background:#1a1d27">
+        <img src="${p.image_data}" alt="${he(j.company || 'wrap')} photo" loading="lazy"
+          style="width:100%;height:100%;object-fit:cover;display:block">
+      </div>`
+    ).join('');
+
+    const VEHICLE_NAMES = { cargo_van_standard:'Cargo Van', cargo_van_high_roof:'Cargo Van (High Roof)', box_truck_16:'16ft Box Truck', box_truck_24:'24ft Box Truck', semi_cab_only:'Semi (Cab)', semi_full:'Semi (Full)', pickup_truck:'Pickup Truck', suv_large:'SUV', other:'Vehicle' };
+    const CAT_NAMES = { fleet:'Fleet Wraps', racing:'Racing', dinoc:'DI-NOC / Architectural', construction:'Construction Fleet', colorchange:'Color Change', gc_referral:'GC / Commercial', reatec:'Rea Tec', other:'Vehicle Wrap' };
+    const vehName = VEHICLE_NAMES[j.vehicle_type] || j.vehicle_type || 'Vehicle';
+    const catName = CAT_NAMES[j.wrap_category] || 'Wrap Project';
+
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${he(j.company || 'Your Project')} — ${he(shopName)}</title>
+<meta name="description" content="Track the progress of your vehicle wrap project with ${he(shopName)}.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;padding:20px;min-height:100vh}
+.container{max-width:640px;margin:0 auto}
+.card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:16px;padding:24px;margin-bottom:16px}
+.shop-header{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid #2a2d3a;margin-bottom:20px}
+.shop-name{font-size:16px;font-weight:800;color:#f1f5f9}
+.badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;padding:3px 10px;border-radius:4px}
+.project-title{font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#f1f5f9;margin-bottom:4px}
+.project-sub{font-size:13px;color:#8892a4;margin-bottom:16px}
+.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+.meta-cell{background:#0f1117;border-radius:8px;padding:10px 14px}
+.meta-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-bottom:4px}
+.meta-value{font-size:14px;font-weight:700;color:#e2e8f0}
+.photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.contact-bar{display:flex;gap:10px;flex-wrap:wrap}
+.contact-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;background:#1e2235;border:1px solid #2a2d3a;color:#e2e8f0}
+h2{font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Shop Header -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="shop-header">
+      <div>
+        ${logoUrl ? `<img src="${he(logoUrl)}" alt="${he(shopName)}" style="max-height:40px;max-width:140px;object-fit:contain;display:block;margin-bottom:6px">` : ''}
+        <div class="shop-name">${he(shopName)}</div>
+      </div>
+      <span class="badge" style="background:${accentColor}18;color:${accentColor}">Project Tracker</span>
+    </div>
+
+    <div class="project-title">${he(j.company || 'Your Project')}</div>
+    <div class="project-sub">${he(catName)}${j.vehicle_count ? ` · ${j.vehicle_count}× ${he(vehName)}` : ''}${j.material ? ` · ${he(j.material)}` : ''}</div>
+
+    <div class="meta-grid">
+      ${completedDate ? `<div class="meta-cell"><div class="meta-label">Install Date</div><div class="meta-value">${he(completedDate)}</div></div>` : ''}
+      ${j.vehicle_count ? `<div class="meta-cell"><div class="meta-label">Vehicles</div><div class="meta-value">${j.vehicle_count}</div></div>` : ''}
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card">
+    <h2>Project Status</h2>
+    ${stageHtml}
+  </div>
+
+  ${photos.length > 0 ? `
+  <div class="card">
+    <h2>Photos</h2>
+    <div class="photo-grid">${photoHtml}</div>
+  </div>` : ''}
+
+  <!-- Contact -->
+  ${shopPhone || shopEmail ? `
+  <div class="card">
+    <h2>Questions? Contact Us</h2>
+    <div class="contact-bar">
+      ${shopPhone ? `<a href="tel:${he(shopPhone)}" class="contact-btn">📞 ${he(shopPhone)}</a>` : ''}
+      ${shopEmail ? `<a href="mailto:${he(shopEmail)}" class="contact-btn">✉️ ${he(shopEmail)}</a>` : ''}
+    </div>
+  </div>` : ''}
+
+  <div style="text-align:center;font-size:11px;color:#3a3d4a;padding:16px 0">
+    Powered by WrapOS
+  </div>
+</div>
+</body>
+</html>`);
+  } catch (e) {
+    console.error('[job-tracker]', e.message);
+    res.status(500).send('<h1>Error loading project tracker.</h1>');
   }
 });
 

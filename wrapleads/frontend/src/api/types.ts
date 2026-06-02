@@ -384,6 +384,8 @@ export interface InstalledJob {
   amount_paid?: number | null;
   scheduled_install_date?: string | null;
   scheduled_crew_count?: number | null;
+  job_status?: 'scheduled' | 'in_progress' | 'complete' | null;
+  tracker_token?: string | null;
 }
 
 // ── Material Inventory ────────────────────────────────────────────────────────

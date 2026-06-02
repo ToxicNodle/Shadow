@@ -65,6 +65,7 @@ export default defineConfig({
       '/appointments':     API,
       '/hook':             API,
       '/embed.js':         API,
+      '/job-tracker':      API,
     },
   },
 });

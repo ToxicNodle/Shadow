@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔗 Client Job Status Tracker — Live Progress Page for Fleet Managers',
+    body: 'Every job now has a "Tracker" tab inside the job modal. Set the production stage (Scheduled → In Progress → Complete) with one click — the public client page updates instantly. Click "Create Status Page" to generate a permanent, shareable URL that requires no login. Send it to your fleet contact so they can check job progress, see uploaded photos, and find your shop\'s contact info without calling you. The page shows your shop logo, project details (company, vehicle count, category, material), a color-coded 3-stage progress tracker, the full photo gallery, and a contact bar with click-to-call and email links. Powered by WrapOS branding in the footer. The URL persists — you can use it for every communication update throughout the job.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📅 Appointment Scheduler — Fleet Measurements, Consults, Installs',
     body: 'Every lead in My Leads now has an Appointments section (in the Info panel, below Contacts). Schedule any appointment type: Fleet Measurement, Consultation, Design Review, Install, or Follow-up. Pick a date, time, and duration (30–120 min), add a location and prep notes. Upcoming appointments appear with a color-coded left border by type (amber = measurement, blue = consultation, purple = design review, green = install). When an appointment is done, click "Done" to mark it complete — or "×" to delete it. Past appointments collapse into a disclosure group to keep the view clean. The Mission Dashboard shows an "Upcoming Appointments" card for the next 14 days. Today\'s appointments show a red "Today" badge. Click any appointment in Mission to jump directly to that lead. All appointments log an activity note to the lead timeline automatically.',
   },

@@ -2229,4 +2229,10 @@ export const api = {
       `/leads/${sourceId}/merge-into/${targetId}`,
       { method: 'POST' }
     ),
+
+  createJobTrackerLink: (jobId: number) =>
+    authFetch<{ ok: boolean; token: string; url: string }>(`/jobs/${jobId}/tracker-link`, { method: 'POST' }),
+
+  updateJobStatus: (jobId: number, status: 'scheduled' | 'in_progress' | 'complete') =>
+    authFetch<{ ok: boolean; job_status: string }>(`/jobs/${jobId}/status`, { method: 'PATCH', body: JSON.stringify({ job_status: status }) }),
 };
