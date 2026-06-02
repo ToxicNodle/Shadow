@@ -531,6 +531,20 @@ export default function SettingsModal() {
           </p>
         </div>
         <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoKickoffEmail !== false}
+              onChange={e => setLocal(s => ({ ...s, autoKickoffEmail: e.target.checked }))}
+            />
+            Auto-send project kickoff email when deal is marked Won
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When you mark a lead as Won, WrapOS immediately sends an AI-written welcome email to the client outlining next steps, requesting vehicle/design info, and setting project expectations. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
           <label className="field-label">Expected Response Time</label>
           <select className="select" {...f('autoReplyResponseTime')}>
             <option value="">1 business day (default)</option>

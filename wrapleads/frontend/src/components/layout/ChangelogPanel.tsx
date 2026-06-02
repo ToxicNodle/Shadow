@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🎉 Auto Kickoff Email — First Impression After Winning a Deal',
+    body: 'When you mark a lead as Won, WrapOS immediately sends an AI-written project kickoff email to the client. The email thanks them for choosing you, outlines the next 3-4 steps in your workflow (vehicle survey, design consultation, material approval, install scheduling), and asks for any info needed to get started (vehicle list, brand colors, site contact). Completely automated — no manual drafting. Toggle it off per-shop in Settings if you prefer to write kickoff emails yourself. Requires a Resend API key. The email is logged to the lead\'s activity timeline so you always have a record. Works alongside the closed-won webhook — both fire when you move a lead to Won status.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📄 Proposal Template Library — Save & Reuse Your Best Proposals',
     body: 'The Proposal Writer in each lead now has a template library. After generating an AI proposal you like, click "Save as Template" and give it a name (e.g. "Fleet Wrap Standard", "DI-NOC Commercial", "Color Change Premium"). The next time you create a proposal for any lead, saved templates appear as chips above the AI generator — one click creates the full proposal instantly without consuming an AI generation. Templates track a use count so you can see your most-used structures. Templates are category-aware (fleet, color change, DI-NOC, etc.) and support the [Company] placeholder which auto-substitutes the prospect\'s name. Useful for shops with standardized pricing tiers, common service bundles, or category-specific approaches.',
   },

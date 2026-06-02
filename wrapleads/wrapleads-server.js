@@ -297,6 +297,9 @@ async function migrateDb() {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_asked_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add referral_asked_at column:', e.message); }
   try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS kickoff_email_sent_at TIMESTAMPTZ`);
+  } catch (e) { console.warn('[migrate] Could not add kickoff_email_sent_at column:', e.message); }
+  try {
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS sms_opted_out_at TIMESTAMPTZ`);
   } catch (e) { console.warn('[migrate] Could not add sms_opted_out column:', e.message); }
@@ -2756,6 +2759,82 @@ async function fireWebhooks(userId, eventType, data) {
   }
 }
 
+// ── Kickoff Email — sent automatically when a lead is marked Won ─────────────
+// Fire-and-forget: does not block the PUT /leads/:id response.
+async function sendKickoffEmail(uid, lead) {
+  try {
+    if (!lead.email) return;
+    const already = await pool.query(`SELECT kickoff_email_sent_at FROM leads WHERE id=$1`, [lead.id]);
+    if (already.rows[0]?.kickoff_email_sent_at) return;
+
+    const settingsRow = await pool.query(`SELECT settings_json, email AS shop_email FROM users WHERE id=$1`, [uid]);
+    const s = settingsRow.rows[0]?.settings_json || {};
+    if (s.autoKickoffEmail === false) return;
+
+    const shopName = s.companyName || s.senderName || 'us';
+    const senderName = s.senderName || 'The team';
+    const shopEmail = s.replyToEmail || settingsRow.rows[0]?.shop_email || null;
+    const contactFirst = (lead.contact_name || lead.company || 'there').split(' ')[0];
+
+    let subject = `Welcome aboard — next steps for ${lead.company}`;
+    let body;
+
+    const anthropic = getAnthropic();
+    if (anthropic) {
+      try {
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 500,
+          messages: [{
+            role: 'user',
+            content: `Write a professional welcome/project kickoff email from ${senderName} at ${shopName} to ${lead.contact_name || lead.company} at ${lead.company}.
+
+Context:
+- They just agreed to a ${lead.category || 'vehicle wrap'} project
+- This is the first email after closing the deal
+- Include: thank them, outline 3-4 concrete next steps (measurement/survey, design consultation, material approval, install date)
+- Ask for anything needed to kick off (vehicle list for fleet, preferred colors/style direction, contact for site access)
+- Keep it warm, professional, and under 150 words
+
+Return JSON: {"subject": "...", "body": "plain text email, no markdown"}`,
+          }],
+        });
+        const parsed = JSON.parse(msg.content[0].text);
+        subject = parsed.subject || subject;
+        body = parsed.body;
+      } catch (_e) { body = null; }
+    }
+
+    if (!body) {
+      body = `Hi ${contactFirst},\n\nThank you for choosing ${shopName} — we're excited to get started on your project!\n\nHere's what happens next:\n\n1. We'll reach out to schedule a vehicle survey and measurements\n2. Our designer will prepare concepts for your review\n3. You'll approve the final design and material\n4. We'll confirm the install date and coordinate access\n\nIn the meantime, it would help to have your current vehicle list (make, model, year, count) and any brand guidelines or color preferences you'd like us to follow.\n\nLooking forward to working with you.\n\nBest,\n${senderName}\n${shopName}`;
+    }
+
+    const resend = getResend();
+    if (!resend) return;
+
+    const htmlBody = body.split('\n').map((l) => l.trim() ? `<p style="margin:0 0 10px 0;color:#1e293b;font-size:15px;line-height:1.6">${l}</p>` : '').join('');
+    const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;margin:0;padding:32px"><div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0"><div style="font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#f4551c;margin-bottom:20px">${shopName}</div>${htmlBody}</div></body></html>`;
+
+    await resend.emails.send({
+      from: `${shopName} <${shopEmail || 'kickoff@wrapos.com'}>`,
+      to: lead.email,
+      subject,
+      html,
+    });
+
+    await pool.query(`UPDATE leads SET kickoff_email_sent_at = NOW() WHERE id = $1`, [lead.id]);
+    await logActivity(pool, {
+      leadId: lead.id, userId: uid, type: 'email_sent',
+      subject: `[Auto] Kickoff: ${subject}`,
+      body,
+      metadata: { auto: true, kickoff: true },
+    });
+    console.log(`[kickoff] sent to ${lead.email} for ${lead.company}`);
+  } catch (e) {
+    console.error('[kickoff] error for lead', lead.id, ':', e.message);
+  }
+}
+
 app.get('/leads', authMiddleware, async (req, res) => {
   try {
     const r = await pool.query(`SELECT * FROM leads WHERE user_id = $1 ORDER BY updated_at DESC`, [String(req.user.id)]);
@@ -2859,6 +2938,9 @@ app.put('/leads/:id', authMiddleware, async (req, res) => {
           contactName: row.contact_name, email: row.email, phone: row.phone,
           city: row.city, state: row.state, fleetSize: row.fleet_size,
         });
+        if (d.status === 'won') {
+          sendKickoffEmail(uid, row).catch(() => {});
+        }
       } else {
         const row = r.rows[0];
         fireWebhooks(uid, 'lead.advanced', {

@@ -179,6 +179,7 @@ export interface Settings {
   autoQuoteExpiryEmail: boolean;
   autoCrossSell: boolean;
   autoProposalNudge: boolean;
+  autoKickoffEmail: boolean;
 }
 
 export interface CarrierSearchParams {
@@ -315,6 +316,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoQuoteExpiryEmail: true,
   autoCrossSell: true,
   autoProposalNudge: true,
+  autoKickoffEmail: true,
 };
 
 // ── Wrap Lifecycle Tracker ────────────────────────────────────────────────────
