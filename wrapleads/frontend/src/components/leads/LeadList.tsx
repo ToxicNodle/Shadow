@@ -306,6 +306,9 @@ export default function LeadList() {
   const [bulkTagInput, setBulkTagInput] = useState('');
   const [emailHuntRunning, setEmailHuntRunning] = useState(false);
   const [dedupOpen, setDedupOpen] = useState(false);
+  const [bulkSmsOpen, setBulkSmsOpen] = useState(false);
+  const [bulkSmsMsg, setBulkSmsMsg] = useState('Hey {first}, {sender} here from {shop}. Wanted to reach out about fleet graphics for {company}. Reply STOP to opt out.');
+  const [bulkSmsSending, setBulkSmsSending] = useState(false);
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -853,6 +856,14 @@ export default function LeadList() {
           </button>
           <button
             className="btn"
+            style={{ fontSize: 11, background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={() => setBulkSmsOpen(true)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Bulk SMS
+          </button>
+          <button
+            className="btn"
             style={{ fontSize: 11, background: 'transparent', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.3)', padding: '3px 10px' }}
             onClick={clearLeadSelection}
           >
@@ -921,6 +932,67 @@ export default function LeadList() {
 
       {urlImportOpen && <UrlImportModal onClose={() => setUrlImportOpen(false)} />}
       {dedupOpen && <DedupModal onClose={() => setDedupOpen(false)} />}
+
+      {/* Bulk SMS modal */}
+      {bulkSmsOpen && (
+        <div className="modal-overlay" onClick={() => setBulkSmsOpen(false)}>
+          <div className="modal-box" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">📱 Bulk SMS — {selCount} leads</h2>
+              <button className="modal-close" onClick={() => setBulkSmsOpen(false)}>✕</button>
+            </div>
+            <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Sends an SMS to all selected leads that have a phone number and haven't opted out.
+                Variables: <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{first}'}</code>{' '}
+                <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{company}'}</code>{' '}
+                <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{sender}'}</code>{' '}
+                <code style={{ background: 'var(--bg-elev-2)', padding: '0 4px', borderRadius: 3 }}>{'{shop}'}</code>
+              </div>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-faint)', display: 'block', marginBottom: 6 }}>
+                  Message
+                </label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  style={{ fontSize: 13, resize: 'vertical', width: '100%' }}
+                  value={bulkSmsMsg}
+                  onChange={(e) => setBulkSmsMsg(e.target.value)}
+                />
+                <div style={{ fontSize: 11, color: bulkSmsMsg.length > 160 ? '#f59e0b' : 'var(--text-faint)', marginTop: 4, textAlign: 'right' }}>
+                  {bulkSmsMsg.length} chars{bulkSmsMsg.length > 160 ? ' — will split into 2 segments' : ''}
+                </div>
+              </div>
+              <div style={{ background: 'var(--bg-elev-2)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                ⚠ Requires Twilio configured in Settings. Respects opt-outs automatically. Include "reply STOP to opt out" per carrier compliance requirements.
+              </div>
+              <button
+                className="btn btn-primary"
+                style={{ justifyContent: 'center', fontSize: 13 }}
+                disabled={bulkSmsSending || !bulkSmsMsg.trim()}
+                onClick={async () => {
+                  const ids = leads.filter((l) => selectedLeadIds.has(l.id) && l.serverId && l.phone).map((l) => l.serverId!);
+                  if (!ids.length) { showToast('No selected leads have phone numbers', 'error'); return; }
+                  setBulkSmsSending(true);
+                  try {
+                    const r = await api.bulkSms(ids, bulkSmsMsg);
+                    showToast(`Sent ${r.sent} SMS · ${r.skipped} skipped · ${r.errors} errors`, r.sent > 0 ? 'success' : 'info');
+                    setBulkSmsOpen(false);
+                    clearLeadSelection();
+                  } catch (e: unknown) {
+                    showToast(e instanceof Error ? e.message : 'SMS failed', 'error');
+                  } finally {
+                    setBulkSmsSending(false);
+                  }
+                }}
+              >
+                {bulkSmsSending ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Send to ${leads.filter((l) => selectedLeadIds.has(l.id) && l.phone).length} leads with phone numbers`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

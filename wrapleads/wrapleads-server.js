@@ -20825,6 +20825,68 @@ app.post('/leads/broadcast/preview-ai', authMiddleware, requireShopFlow, async (
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /leads/bulk-sms — send an SMS to up to 50 leads at once (Twilio)
+// Gates: requireShopFlow + Twilio configured in settings
+app.post('/leads/bulk-sms', authMiddleware, requireShopFlow, async (req, res) => {
+  const { leadIds, message } = req.body || {};
+  if (!Array.isArray(leadIds) || !leadIds.length) return res.status(400).json({ error: 'leadIds[] required' });
+  if (!message || message.trim().length < 5) return res.status(400).json({ error: 'message required (5+ chars)' });
+  if (leadIds.length > 50) return res.status(400).json({ error: 'Max 50 leads per bulk SMS' });
+  const uid = String(req.user.id);
+
+  const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [uid]);
+  const s = userR.rows[0]?.settings_json || {};
+  if (!s.twilioAccountSid || !s.twilioAuthToken || !s.twilioFromNumber) {
+    return res.status(400).json({ error: 'Twilio not configured — add credentials in Settings' });
+  }
+
+  const { rows: leads } = await pool.query(
+    `SELECT id, company, contact_name, phone, sms_opted_out FROM leads WHERE id=ANY($1) AND user_id=$2`,
+    [leadIds, uid]
+  );
+
+  const senderName = s.senderName || 'WrapLeads';
+  const shopName = s.companyName || 'our shop';
+  const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${s.twilioAccountSid}/Messages.json`;
+  const authHeader = 'Basic ' + Buffer.from(`${s.twilioAccountSid}:${s.twilioAuthToken}`).toString('base64');
+
+  let sent = 0, skipped = 0, errors = 0;
+  for (const lead of leads) {
+    if (!lead.phone || lead.sms_opted_out) { skipped++; continue; }
+    try {
+      // Replace simple template vars
+      const first = (lead.contact_name || '').split(' ')[0] || lead.company.split(' ')[0];
+      const body = message
+        .replace(/\{first\}/gi, first)
+        .replace(/\{company\}/gi, lead.company)
+        .replace(/\{sender\}/gi, senderName)
+        .replace(/\{shop\}/gi, shopName);
+
+      const twilioResp = await fetch(twilioUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: authHeader },
+        body: new URLSearchParams({ To: lead.phone, From: s.twilioFromNumber, Body: body }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const twilioData = await twilioResp.json();
+      if (!twilioResp.ok) { errors++; continue; }
+
+      await pool.query(
+        `INSERT INTO lead_activities (user_id, lead_id, type, subject, body, created_at)
+         VALUES ($1, $2, 'sms_sent', $3, $4, NOW())`,
+        [uid, lead.id, `Bulk SMS to ${lead.company}`, body]
+      );
+      // Update last_contacted
+      await pool.query(`UPDATE leads SET last_contacted=NOW() WHERE id=$1 AND user_id=$2`, [lead.id, uid]);
+      sent++;
+      // Tiny delay to respect Twilio rate limits (1 msg/sec per default number)
+      await new Promise(r => setTimeout(r, 200));
+    } catch (e) { errors++; console.warn('[bulk-sms] lead', lead.id, e.message); }
+  }
+
+  res.json({ ok: true, sent, skipped, errors, total: leads.length });
+});
+
 // ── Global Activity Feed ───────────────────────────────────────────────────────
 app.get('/activity/feed', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);

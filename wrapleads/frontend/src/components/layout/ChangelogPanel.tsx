@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '📱 Bulk SMS Campaign — Text Your Entire Pipeline in One Shot',
+    body: 'Select any group of leads and click "Bulk SMS" in the bulk action toolbar. Write a message using template variables ({first}, {company}, {sender}, {shop}) and WrapOS sends it via your Twilio number to every selected lead that has a phone number. Automatically skips opted-out contacts — no compliance risk. Character counter warns when you exceed 160 chars (SMS segment boundary). Results summary shows sent/skipped/errors. Requires Twilio credentials in Settings. Each sent SMS is logged to the lead\'s activity timeline and updates last_contacted. Combine with Smart Segments for precision: filter to "Going Cold" leads, select all, send a personal re-engagement text in under 30 seconds.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '🎯 Smart Segments — AI-Powered Lead Groupings That Update Automatically',
     body: 'Your lead list now shows data-driven segment chips above the bulk toolbar. Five segments are computed in real time from your lead data: "High-Value Sleepers" (high-score leads untouched for 30+ days), "Near Win" (deals in Meeting/Proposal stage with recent contact), "Going Cold" (replied or contacted leads with 14+ days of silence), "Overdue Follow-up" (past-due follow-up dates), and "Missing Email" (leads with a website domain but no email address — prime candidates for Find Emails). Segments show a count badge and only appear when they contain leads. Click a segment chip to filter your entire list to just those leads. Combine with the existing status/category/tag filters, then bulk-email or activate sequences for that exact group. Smart Segments re-compute every time your lead data updates.',
   },

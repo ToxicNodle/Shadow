@@ -2233,6 +2233,11 @@ export const api = {
   createJobTrackerLink: (jobId: number) =>
     authFetch<{ ok: boolean; token: string; url: string }>(`/jobs/${jobId}/tracker-link`, { method: 'POST' }),
 
+  bulkSms: (leadIds: number[], message: string) =>
+    authFetch<{ ok: boolean; sent: number; skipped: number; errors: number; total: number }>(
+      '/leads/bulk-sms', { method: 'POST', body: JSON.stringify({ leadIds, message }) }
+    ),
+
   updateJobStatus: (jobId: number, status: 'scheduled' | 'in_progress' | 'complete') =>
     authFetch<{ ok: boolean; job_status: string }>(`/jobs/${jobId}/status`, { method: 'PATCH', body: JSON.stringify({ job_status: status }) }),
 };
