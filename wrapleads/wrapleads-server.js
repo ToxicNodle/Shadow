@@ -18095,6 +18095,295 @@ app.get('/mission/stale-pipeline', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Deal Risk Scoring — multi-signal risk score per active pipeline deal ──────
+// Combines days-stale, proposal view state, overdue follow-up, and outbound
+// count without reply to produce a 0–100 risk score per deal.
+app.get('/mission/deal-risks', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+
+    const { rows } = await pool.query(`
+      WITH outbound_counts AS (
+        SELECT
+          la.lead_id,
+          COUNT(*) AS outbound_since_reply
+        FROM lead_activities la
+        WHERE la.user_id = $1
+          AND la.type IN ('email_sent', 'called')
+          AND la.created_at > COALESCE(
+            (SELECT MAX(la2.created_at)
+             FROM lead_activities la2
+             WHERE la2.lead_id = la.lead_id
+               AND la2.user_id = $1
+               AND la2.type IN ('email_reply', 'sms_reply', 'meeting_set')
+            ),
+            '2000-01-01'::timestamptz
+          )
+        GROUP BY la.lead_id
+      ),
+      proposal_views AS (
+        SELECT lead_id, COALESCE(SUM(view_count), 0) AS total_views
+        FROM proposals
+        WHERE user_id = $1
+        GROUP BY lead_id
+      )
+      SELECT
+        l.id,
+        l.company,
+        l.contact_name,
+        l.category,
+        l.status,
+        l.email,
+        l.phone,
+        l.followup_due_at,
+        EXTRACT(EPOCH FROM (NOW() - COALESCE(l.last_contacted_at, l.updated_at))) / 86400.0 AS days_stale,
+        CASE WHEN l.followup_due_at IS NOT NULL
+             THEN EXTRACT(EPOCH FROM (NOW() - l.followup_due_at::timestamptz)) / 86400.0
+             ELSE 0 END AS overdue_days,
+        COALESCE(oc.outbound_since_reply, 0) AS outbound_since_reply,
+        COALESCE(pv.total_views, 0) AS proposal_views
+      FROM leads l
+      LEFT JOIN outbound_counts oc ON oc.lead_id = l.id
+      LEFT JOIN proposal_views pv ON pv.lead_id = l.id
+      WHERE l.user_id = $1
+        AND l.status IN ('contacted', 'replied', 'meeting', 'proposal')
+        AND (l.snooze_until IS NULL OR l.snooze_until < NOW())
+      ORDER BY l.updated_at DESC
+      LIMIT 60
+    `, [uid]);
+
+    const deals = rows.map((r) => {
+      const dayStale = parseFloat(r.days_stale) || 0;
+      const overdueDays = parseFloat(r.overdue_days) || 0;
+      const outbound = parseInt(r.outbound_since_reply, 10) || 0;
+      const propViews = parseInt(r.proposal_views, 10) || 0;
+      const status = r.status;
+
+      let score = 0;
+      const reasons = [];
+
+      // Stale signal (0–40 pts) — proposal stage has tighter windows
+      if (status === 'proposal') {
+        if (dayStale > 21)      { score += 40; reasons.push(`Proposal sent ${Math.round(dayStale)}d ago, no movement`); }
+        else if (dayStale > 14) { score += 28; reasons.push(`Proposal aging — ${Math.round(dayStale)}d old`); }
+        else if (dayStale > 7)  { score += 15; reasons.push(`Proposal approaching stale — ${Math.round(dayStale)}d`); }
+      } else if (status === 'meeting') {
+        if (dayStale > 14)      { score += 35; reasons.push(`Meeting stage stalled ${Math.round(dayStale)}d`); }
+        else if (dayStale > 7)  { score += 20; reasons.push(`Meeting stage — ${Math.round(dayStale)}d inactive`); }
+      } else {
+        if (dayStale > 30)      { score += 30; reasons.push(`No activity in ${Math.round(dayStale)}d`); }
+        else if (dayStale > 14) { score += 15; reasons.push(`Going cold — ${Math.round(dayStale)}d since contact`); }
+      }
+
+      // Proposal never viewed (0–30 pts)
+      if (status === 'proposal' && propViews === 0 && dayStale > 3) {
+        score += 30; reasons.push('Proposal never opened');
+      }
+
+      // Overdue follow-up (0–25 pts)
+      if (overdueDays > 7)     { score += 25; reasons.push(`Follow-up ${Math.round(overdueDays)}d overdue`); }
+      else if (overdueDays > 0) { score += 15; reasons.push(`Follow-up overdue`); }
+
+      // Outbound without reply (0–25 pts)
+      if (outbound >= 5)      { score += 25; reasons.push(`${outbound} follow-ups — no reply`); }
+      else if (outbound >= 3) { score += 15; reasons.push(`${outbound} unanswered follow-ups`); }
+      else if (outbound >= 2) { score += 8;  reasons.push(`${outbound} unanswered emails`); }
+
+      score = Math.min(score, 100);
+
+      let riskLabel, riskColor;
+      if (score >= 80)      { riskLabel = 'Critical'; riskColor = '#ef4444'; }
+      else if (score >= 60) { riskLabel = 'High';     riskColor = '#f97316'; }
+      else if (score >= 40) { riskLabel = 'Elevated'; riskColor = '#eab308'; }
+      else if (score >= 20) { riskLabel = 'Watch';    riskColor = '#60a5fa'; }
+      else                  { riskLabel = 'Healthy';  riskColor = '#22c55e'; }
+
+      return {
+        leadId: parseInt(r.id, 10),
+        company: r.company,
+        contactName: r.contact_name,
+        category: r.category,
+        status: r.status,
+        email: r.email,
+        phone: r.phone,
+        followupDueAt: r.followup_due_at,
+        daysStale: Math.round(dayStale * 10) / 10,
+        riskScore: score,
+        riskLabel,
+        riskColor,
+        topReason: reasons[0] || null,
+        reasons,
+      };
+    })
+      .filter((d) => d.riskScore >= 25)
+      .sort((a, b) => b.riskScore - a.riskScore)
+      .slice(0, 8);
+
+    res.json({ ok: true, deals });
+  } catch (e) {
+    console.error('[deal-risks]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Cold Lead Reactivation ────────────────────────────────────────────────────
+// GET /leads/reactivation-candidates — list of cold/lost leads eligible for
+// a re-engagement campaign (status=cold, last contact 45+ days ago, has email)
+app.get('/leads/reactivation-candidates', authMiddleware, async (req, res) => {
+  try {
+    const uid = String(req.user.id);
+    const minDays = parseInt(req.query.minDays, 10) || 45;
+    const { rows } = await pool.query(`
+      SELECT id, company, contact_name, category, email, status,
+             COALESCE(last_contacted_at, created_at) AS last_contact,
+             EXTRACT(EPOCH FROM (NOW() - COALESCE(last_contacted_at, created_at))) / 86400.0 AS days_since_contact
+      FROM leads
+      WHERE user_id = $1
+        AND status IN ('cold', 'lost')
+        AND email IS NOT NULL AND email != ''
+        AND (snooze_until IS NULL OR snooze_until < NOW())
+        AND COALESCE(last_contacted_at, created_at) < NOW() - ($2 || ' days')::interval
+      ORDER BY days_since_contact DESC
+      LIMIT 100
+    `, [uid, minDays]);
+
+    const candidates = rows.map((r) => ({
+      id: parseInt(r.id, 10),
+      company: r.company,
+      contactName: r.contact_name,
+      category: r.category,
+      email: r.email,
+      status: r.status,
+      daysSinceContact: Math.round(parseFloat(r.days_since_contact)),
+    }));
+
+    res.json({ ok: true, candidates, total: candidates.length });
+  } catch (e) {
+    console.error('[reactivation-candidates]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /leads/reactivation-campaign — generate + queue AI re-engagement emails
+// for cold/lost leads. Accepts { leadIds: number[], tone?: string }
+// tone: 'warm' | 'offer' | 'update' (default 'warm')
+app.post('/leads/reactivation-campaign', authMiddleware, requireShopFlow, async (req, res) => {
+  const uid = String(req.user.id);
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const { leadIds, tone = 'warm' } = req.body || {};
+
+  if (!Array.isArray(leadIds) || leadIds.length === 0)
+    return res.status(400).json({ error: 'leadIds array required' });
+  if (leadIds.length > 50)
+    return res.status(400).json({ error: 'Max 50 leads per campaign' });
+
+  try {
+    // Fetch user settings for sender name + shop info
+    const userR = await pool.query(
+      `SELECT settings_json, email FROM users WHERE id = $1`, [uid]
+    );
+    const user = userR.rows[0];
+    const settings = (user?.settings_json) || {};
+    const senderName = settings.senderName || settings.shopName || 'the team';
+    const shopName   = settings.shopName || 'our wrap shop';
+
+    // Verify all leads belong to this user and are eligible
+    const leadsR = await pool.query(`
+      SELECT id, company, contact_name, category, email, status
+      FROM leads
+      WHERE user_id = $1 AND id = ANY($2::bigint[])
+        AND status IN ('cold', 'lost')
+        AND email IS NOT NULL AND email != ''
+    `, [uid, leadIds]);
+
+    const leads = leadsR.rows;
+    if (leads.length === 0)
+      return res.status(400).json({ error: 'No eligible leads found (must be cold/lost with email)' });
+
+    const TONE_PROMPTS = {
+      warm:   'Write a warm, genuine re-engagement email. The angle is "checking back in — has your timing changed?" Keep it under 100 words. No hard pitch. Just a friendly nudge.',
+      offer:  'Write a re-engagement email with a limited seasonal offer angle (e.g., early booking discount or a new design package). Keep it under 120 words. One clear CTA.',
+      update: 'Write a re-engagement email sharing a portfolio update or recent project that is relevant to their industry. Keep it under 120 words. Make them curious about what\'s new.',
+    };
+    const toneInstruction = TONE_PROMPTS[tone] || TONE_PROMPTS.warm;
+
+    const CATEGORY_CONTEXT = {
+      fleet: 'fleet vehicle wraps (trucks, vans, trailers)',
+      dinoc: '3M DI-NOC architectural film (surfaces, interiors)',
+      construction: 'construction and contractor vehicle graphics',
+      racing: 'racing and motorsport graphics / liveries',
+      colorchange: 'full vehicle color change wraps',
+      wallgraphics: 'wall graphics and interior branding',
+      gc_referral: 'commercial signage and fleet programs',
+      design: 'custom vehicle wrap design',
+      reatec: '3M Rea-Tec reflective film',
+    };
+
+    const results = [];
+
+    // Process leads — generate + queue each one
+    for (const lead of leads) {
+      try {
+        let subject = `Checking back in — ${lead.company}`;
+        let body = '';
+
+        if (apiKey) {
+          const catCtx = CATEGORY_CONTEXT[lead.category] || 'vehicle wraps';
+          const prompt = `You are ${senderName} from ${shopName}, a vehicle wrap specialist.
+This prospect (${lead.company}) in the ${catCtx} space went cold. ${toneInstruction}
+
+Rules:
+- Address them as ${lead.contact_name ? `"${lead.contact_name.split(' ')[0]}"` : '"there"'}
+- Do NOT use the phrase "circle back", "hope this finds you well", or "just checking in"
+- Sign off as: ${senderName}
+- Return JSON: {"subject": "...", "body": "..."}`;
+
+          const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 300);
+          const m = raw.match(/\{[\s\S]*\}/);
+          if (m) {
+            const parsed = JSON.parse(m[0]);
+            subject = parsed.subject || subject;
+            body    = parsed.body   || '';
+          }
+        }
+
+        if (!body) {
+          // Fallback — no AI key or parse failed
+          const firstName = lead.contact_name ? lead.contact_name.split(' ')[0] : null;
+          body = `Hi ${firstName || 'there'},\n\nIt's been a while since we last connected about ${lead.company}'s wrap project. I wanted to reach out to see if the timing has improved — we've done some really great work recently and would love to explore what's possible for you.\n\nWould a quick 10-minute call make sense this week?\n\n${senderName}`;
+          subject = `Checking back in — ${lead.company}`;
+        }
+
+        // Queue the email via email_queue
+        await pool.query(`
+          INSERT INTO email_queue
+            (user_id, lead_id, subject, body, send_at, metadata)
+          VALUES ($1, $2, $3, $4, NOW() + (random() * interval '2 hours'), $5)
+        `, [uid, lead.id, subject, body, JSON.stringify({ source: 'reactivation', tone })]);
+
+        // Log activity
+        await pool.query(`
+          INSERT INTO lead_activities (user_id, lead_id, type, note)
+          VALUES ($1, $2, 'email_sent', $3)
+        `, [uid, lead.id, `Reactivation email queued (${tone} tone): ${subject}`]);
+
+        results.push({ leadId: parseInt(lead.id, 10), company: lead.company, status: 'queued' });
+      } catch (innerErr) {
+        console.error(`[reactivation] Lead ${lead.id}:`, innerErr.message);
+        results.push({ leadId: parseInt(lead.id, 10), company: lead.company, status: 'failed', error: innerErr.message });
+      }
+    }
+
+    const queued  = results.filter((r) => r.status === 'queued').length;
+    const failed  = results.filter((r) => r.status === 'failed').length;
+
+    res.json({ ok: true, queued, failed, results });
+  } catch (e) {
+    console.error('[reactivation-campaign]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Daily Briefing — short AI-generated morning summary for Mission ───────────
 // Auto-loads on Mission open, cached 4h. 3-sentence briefing: focus/risk/opportunity.
 // Falls back gracefully with data-only summary when AI is unavailable.

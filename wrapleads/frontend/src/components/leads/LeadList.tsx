@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLeads } from '../../hooks/useLeads';
 import { useAppStore } from '../../store/useAppStore';
 import type { LeadSort, ActiveFilter } from '../../store/useAppStore';
@@ -310,6 +310,7 @@ export default function LeadList() {
   const [bulkSmsMsg, setBulkSmsMsg] = useState('Hey {first}, {sender} here from {shop}. Wanted to reach out about fleet graphics for {company}. Reply STOP to opt out.');
   const [bulkSmsSending, setBulkSmsSending] = useState(false);
   const [importContactsOpen, setImportContactsOpen] = useState(false);
+  const [reactivationOpen, setReactivationOpen] = useState(false);
 
   // Deep-link from notification: auto-open the lead that matches pendingOpenLeadServerId
   useEffect(() => {
@@ -650,6 +651,19 @@ export default function LeadList() {
             <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
           </svg>
           Update Contacts
+        </button>
+
+        <button
+          className="btn"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#a855f7', borderColor: 'rgba(168,85,247,0.4)' }}
+          onClick={() => setReactivationOpen(true)}
+          title="Re-engage cold and lost leads with AI-generated personalized emails"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+            <path d="M1 4v6h6"/><path d="M23 20v-6h-6"/>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+          </svg>
+          Reactivate
         </button>
 
         <button
@@ -1020,6 +1034,15 @@ export default function LeadList() {
           </div>
         </div>
       )}
+
+      {/* Reactivation Campaign modal */}
+      {reactivationOpen && (
+        <div className="modal-overlay" onClick={() => setReactivationOpen(false)}>
+          <div className="modal-container" style={{ maxWidth: 580 }} onClick={(e) => e.stopPropagation()}>
+            <ReactivationModal onClose={() => setReactivationOpen(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1132,6 +1155,241 @@ function ImportContactsModal({ onClose }: { onClose: () => void }) {
             </div>
             <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={onClose}>Done</button>
           </>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Reactivation Campaign Modal ───────────────────────────────────────────────
+
+const CAT_LABELS_SHORT: Record<string, string> = {
+  fleet: 'Fleet', dinoc: 'DI-NOC', gc_referral: 'GC Ref', construction: 'Const.',
+  racing: 'Racing', reatec: 'Rea-Tec', colorchange: 'Color', design: 'Design', wallgraphics: 'Wall',
+};
+
+function ReactivationModal({ onClose }: { onClose: () => void }) {
+  const showToast = useAppStore((s) => s.showToast);
+  const [tone, setTone] = useState<'warm' | 'offer' | 'update'>('warm');
+  const [minDays, setMinDays] = useState(45);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [step, setStep] = useState<'configure' | 'results'>('configure');
+  const [results, setResults] = useState<{ queued: number; failed: number } | null>(null);
+  const [launching, setLaunching] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['reactivation-candidates', minDays],
+    queryFn: () => api.getReactivationCandidates(minDays),
+    staleTime: 60_000,
+  });
+
+  const candidates = data?.candidates ?? [];
+
+  // Select all on load
+  const allIds = candidates.map((c) => c.id);
+  const isAllSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+
+  function toggleAll() {
+    if (isAllSelected) setSelected(new Set());
+    else setSelected(new Set(allIds));
+  }
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function launch() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) { showToast('Select at least one lead', 'error'); return; }
+    if (ids.length > 50) { showToast('Max 50 leads per campaign', 'error'); return; }
+    setLaunching(true);
+    try {
+      const r = await api.launchReactivationCampaign(ids, tone);
+      setResults({ queued: r.queued, failed: r.failed });
+      setStep('results');
+      showToast(`${r.queued} re-engagement email${r.queued !== 1 ? 's' : ''} queued!`, 'success');
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Launch failed', 'error');
+    } finally {
+      setLaunching(false);
+    }
+  }
+
+  const TONE_OPTIONS: { key: 'warm' | 'offer' | 'update'; label: string; desc: string }[] = [
+    { key: 'warm',   label: '👋 Warm Check-in',      desc: '"Has your timing changed? Love to reconnect."' },
+    { key: 'offer',  label: '🎁 Seasonal Offer',     desc: '"We have a limited window / new booking slot."' },
+    { key: 'update', label: '📸 Portfolio Update',   desc: '"We just finished a similar project — want to see it?"' },
+  ];
+
+  return (
+    <>
+      <div className="modal-header">
+        <h2 className="modal-title">🔄 Reactivate Cold Leads</h2>
+        <p className="modal-subtitle">
+          Send AI-personalized re-engagement emails to cold and lost leads.
+        </p>
+      </div>
+      <div className="modal-body">
+        {step === 'configure' ? (
+          <>
+            {/* Min days filter */}
+            <div className="field-group" style={{ marginBottom: 16 }}>
+              <label className="field-label">Leads inactive for at least</label>
+              <select
+                className="input"
+                value={minDays}
+                onChange={(e) => { setMinDays(Number(e.target.value)); setSelected(new Set()); }}
+              >
+                <option value={30}>30 days</option>
+                <option value={45}>45 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days</option>
+                <option value={180}>6 months</option>
+              </select>
+            </div>
+
+            {/* Tone selector */}
+            <div className="field-group" style={{ marginBottom: 16 }}>
+              <label className="field-label">Email tone</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {TONE_OPTIONS.map(({ key, label, desc }) => (
+                  <button
+                    key={key}
+                    onClick={() => setTone(key)}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 10,
+                      padding: '10px 12px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                      background: tone === key ? 'rgba(168,85,247,0.12)' : 'var(--surface-2)',
+                      border: `1px solid ${tone === key ? '#a855f7' : 'var(--border-subtle)'}`,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{label}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>{desc}</div>
+                    </div>
+                    {tone === key && (
+                      <div style={{ width: 16, height: 16, borderRadius: 99, background: '#a855f7', flexShrink: 0, marginTop: 2 }} />
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Candidates list */}
+            <div className="field-group" style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <label className="field-label" style={{ margin: 0 }}>
+                  {isLoading ? 'Loading candidates…' : `${candidates.length} eligible leads`}
+                </label>
+                {candidates.length > 0 && (
+                  <button
+                    className="btn"
+                    style={{ fontSize: 11, padding: '2px 8px' }}
+                    onClick={toggleAll}
+                  >
+                    {isAllSelected ? 'Deselect All' : `Select All (${candidates.length})`}
+                  </button>
+                )}
+              </div>
+              {isLoading ? (
+                <div className="skeleton" style={{ height: 120, borderRadius: 8 }} />
+              ) : candidates.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 13, background: 'var(--surface-2)', borderRadius: 8 }}>
+                  No cold/lost leads inactive for {minDays}+ days with email addresses.
+                </div>
+              ) : (
+                <div style={{ maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {candidates.slice(0, 50).map((c) => (
+                    <label
+                      key={c.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+                        background: selected.has(c.id) ? 'rgba(168,85,247,0.08)' : 'var(--surface-2)',
+                        border: `1px solid ${selected.has(c.id) ? 'rgba(168,85,247,0.3)' : 'var(--border-subtle)'}`,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(c.id)}
+                        onChange={() => toggleOne(c.id)}
+                        style={{ accentColor: '#a855f7', flexShrink: 0 }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.company}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                          {CAT_LABELS_SHORT[c.category] ?? c.category} · {c.status} · {c.daysSinceContact}d ago
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>
+                        {c.email.length > 22 ? c.email.slice(0, 19) + '…' : c.email}
+                      </span>
+                    </label>
+                  ))}
+                  {candidates.length > 50 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', textAlign: 'center', padding: 8 }}>
+                      Showing first 50 of {candidates.length}. Filter by days above to narrow down.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={onClose}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 2, justifyContent: 'center', background: '#a855f7', borderColor: '#a855f7' }}
+                onClick={launch}
+                disabled={launching || selected.size === 0}
+              >
+                {launching ? (
+                  <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating emails…</>
+                ) : (
+                  `🔄 Launch for ${selected.size} Lead${selected.size !== 1 ? 's' : ''}`
+                )}
+              </button>
+            </div>
+          </>
+        ) : (
+          /* Results screen */
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
+              Campaign Launched!
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24 }}>
+              <strong style={{ color: '#a855f7' }}>{results?.queued ?? 0}</strong> re-engagement email{results?.queued !== 1 ? 's' : ''} queued for delivery.
+              {results?.failed ? ` ${results.failed} failed.` : ''}
+            </div>
+            <div style={{ background: 'var(--surface-2)', borderRadius: 10, padding: '14px 20px', marginBottom: 24, textAlign: 'left' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+                What happens next
+              </div>
+              {[
+                'Emails are queued and sent within 2 hours (randomized to avoid spam filters)',
+                'Each email is AI-personalized for the lead\'s company and category',
+                'Replies trigger AI classification and update lead status automatically',
+                'Track opens and replies in the lead\'s Activity tab',
+              ].map((tip, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <span style={{ color: '#a855f7', flexShrink: 0 }}>·</span>
+                  <span>{tip}</span>
+                </div>
+              ))}
+            </div>
+            <button className="btn btn-primary" style={{ justifyContent: 'center', minWidth: 160 }} onClick={onClose}>
+              Done
+            </button>
+          </div>
         )}
       </div>
     </>

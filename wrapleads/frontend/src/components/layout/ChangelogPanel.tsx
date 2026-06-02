@@ -9,6 +9,18 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '🔄 Cold Lead Reactivation Campaign — One-Click AI Re-Engagement',
+    body: 'New "Reactivate" button in the lead list toolbar (purple, next to Update Contacts). Opens a campaign builder where you choose how long leads have been inactive (30–180 days) and pick an email tone: Warm Check-in ("has your timing changed?"), Seasonal Offer ("we have a limited window"), or Portfolio Update ("we just finished a similar project"). Browse and cherry-pick individual cold and lost leads from the eligibility list, or select all with one click. Supports up to 50 leads per campaign. WrapOS generates an AI-personalized re-engagement email for each selected lead using Claude — tailored to their company name, category, and contact name. Emails are queued and sent within a 2-hour window (randomized timing to avoid spam filters). Requires ShopFlow tier. Replies are automatically classified by the AI reply classifier and update lead status. Track results in each lead\'s Activity tab.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
+    title: '⚠️ Deal Risk Score — Multi-Signal Warning System for Your Pipeline',
+    body: 'New "Deal Risk" card on the Mission Dashboard (Pipeline group). Unlike the Stale Pipeline card which simply filters by days since last activity, Deal Risk uses four independent signals to compute a 0–100 risk score per active deal: (1) Days in stage vs. stage-specific thresholds — proposal stage has tighter windows (7d/14d/21d) than earlier stages; (2) Proposal view count — a proposal that was never opened scores 30 extra risk points; (3) Overdue follow-up severity — 7+ days overdue adds more weight than 1 day overdue; (4) Outbound-without-reply count — sending 3+ unanswered follow-ups is a strong risk signal. Each deal shows its risk score as a color-coded bar (Critical/High/Elevated/Watch), the primary risk reason ("Proposal never opened", "12 follow-ups, no reply"), and expands to show all contributing signals on hover. Click any deal to open it directly. Only deals scoring 25+ appear, so you only see genuine risks, not healthy deals.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📇 Contact CSV Importer — Bulk Update Email & Phone from Apollo',
     body: 'New "Update Contacts" button in the lead list toolbar (green, between Dedup and Hot Only). Paste a CSV with three columns — Company Name, Email, Phone — and WrapOS fuzzy-matches each row to an existing lead using normalized name comparison (removes LLC, Inc, Racing, Motorsports suffixes and handles abbreviations). Only fills in missing fields: if a lead already has an email, it\'s never overwritten. Shows a live result grid: Updated (green check), No Match (red ✗), Already Complete (gray ≈). Works great for pasting Apollo exports directly — the header row is auto-skipped. Supports up to 500 rows per import. After import, all updated leads refresh automatically. The fuzzy matcher catches common variations: "Acme Trucking LLC" matches "Acme Trucking", "JFR Racing" matches "John Force Racing".',
   },

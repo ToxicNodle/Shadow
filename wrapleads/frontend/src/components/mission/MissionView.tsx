@@ -29,6 +29,7 @@ import MaterialInventoryCard from './MaterialInventoryCard';
 import SubPayablesCard from './SubPayablesCard';
 import QuickStartCard from './QuickStartCard';
 import UpcomingAppointmentsCard from './UpcomingAppointmentsCard';
+import DealRiskCard from './DealRiskCard';
 import { winProbability, scoreLead, scoreLabel, SCORE_COLORS } from '../../utils/scoring';
 import type { LeadStatus, LeadCategory } from '../../api/types';
 
@@ -2009,6 +2010,7 @@ const MISSION_CARDS: { id: string; label: string; icon: string; group: string }[
   { id: 'sms-inbox', label: 'SMS Inbox', icon: '📱', group: 'Outreach' },
   { id: 'inbound-requests', label: 'Inbound Fleet Requests', icon: '📬', group: 'Outreach' },
   { id: 'stale-pipeline', label: 'Stale Pipeline', icon: '🧊', group: 'Outreach' },
+  { id: 'deal-risk', label: 'Deal Risk Score', icon: '⚠️', group: 'Pipeline' },
   { id: 'upcoming-appointments', label: 'Upcoming Appointments', icon: '📅', group: 'Operations' },
   { id: 'task-queue', label: 'Daily Task Queue', icon: '✅', group: 'Operations' },
   { id: 'overdue-invoices', label: 'Unpaid Invoices', icon: '💰', group: 'Operations' },
@@ -2217,6 +2219,7 @@ export default function MissionView() {
       {cardVisible('expiring-quotes') && <ExpiringQuotesCard onLeadClick={goToLead} />}
       {cardVisible('speed-dial') && <SpeedDialCard />}
       {cardVisible('stale-pipeline') && <StalePipelineCard />}
+      {cardVisible('deal-risk') && <DealRiskCard />}
       {cardVisible('referral-engine') && <ReferralEngineCard />}
       {cardVisible('objection-counter') && <ObjectionCounterCard />}
       {cardVisible('task-queue') && <TaskQueueCard />}

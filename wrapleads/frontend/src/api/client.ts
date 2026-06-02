@@ -2267,4 +2267,51 @@ export const api = {
       skipped: number;
       results: { input: string; matched: string | null; action: 'updated' | 'unmatched' | 'already_complete'; addedEmail?: string | null; addedPhone?: string | null }[];
     }>('/leads/import-contacts', { method: 'POST', body: JSON.stringify({ contacts }) }),
+
+  getDealRisks: () =>
+    authFetch<{
+      ok: boolean;
+      deals: {
+        leadId: number;
+        company: string;
+        contactName: string | null;
+        category: string;
+        status: string;
+        email: string | null;
+        phone: string | null;
+        followupDueAt: string | null;
+        daysStale: number;
+        riskScore: number;
+        riskLabel: string;
+        riskColor: string;
+        topReason: string | null;
+        reasons: string[];
+      }[];
+    }>('/mission/deal-risks'),
+
+  getReactivationCandidates: (minDays?: number) =>
+    authFetch<{
+      ok: boolean;
+      candidates: {
+        id: number;
+        company: string;
+        contactName: string | null;
+        category: string;
+        email: string;
+        status: string;
+        daysSinceContact: number;
+      }[];
+      total: number;
+    }>(`/leads/reactivation-candidates${minDays ? `?minDays=${minDays}` : ''}`),
+
+  launchReactivationCampaign: (leadIds: number[], tone: 'warm' | 'offer' | 'update') =>
+    authFetch<{
+      ok: boolean;
+      queued: number;
+      failed: number;
+      results: { leadId: number; company: string; status: 'queued' | 'failed'; error?: string }[];
+    }>('/leads/reactivation-campaign', {
+      method: 'POST',
+      body: JSON.stringify({ leadIds, tone }),
+    }),
 };
