@@ -1268,6 +1268,17 @@ export const api = {
       priorRate: number | null;
     }>('/analytics/cohort'),
 
+  getTimeToClose: () =>
+    authFetch<{
+      byCategory: Array<{
+        category: string; wonCount: number; avgDays: number; medianDays: number;
+        minDays: number; maxDays: number; debriefAvgDays: number | null; avgTouches: number | null;
+      }>;
+      overallAvgDays: number | null;
+      overallMedianDays: number | null;
+      totalWon: number;
+    }>('/analytics/time-to-close'),
+
   // Lost Lead Rescue Queue
   getRescueQueue: () =>
     authFetch<{

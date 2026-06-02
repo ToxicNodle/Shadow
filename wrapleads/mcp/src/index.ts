@@ -630,6 +630,95 @@ server.registerTool('mission_news_signals', {
   return { content: [{ type: 'text', text: json(data) }] };
 });
 
+server.registerTool('analytics_time_to_close', {
+  description:
+    'Get average days-to-close broken down by deal category (fleet, design, construction, etc.). ' +
+    'Shows fastest vs slowest categories, win counts, and day ranges. Use to set realistic timelines ' +
+    'and prioritize categories when cash flow is needed.',
+  inputSchema: z.object({}),
+  annotations: { readOnlyHint: true },
+}, async () => {
+  const data = await client.get<unknown>('/analytics/time-to-close');
+  return { content: [{ type: 'text', text: json(data) }] };
+});
+
+server.registerTool('leads_find_email', {
+  description:
+    'Run email permutation + optional SMTP probe on a single lead. ' +
+    'Returns ranked candidate emails with confidence scores. ' +
+    'Works best when the lead has a website domain and a contact name.',
+  inputSchema: z.object({
+    lead_id: z.number().int().describe('Lead ID to find email for'),
+    probe:   z.boolean().optional().default(false)
+      .describe('If true, attempts SMTP RCPT TO probe — slower but more accurate. Skip for Google/Microsoft domains.'),
+  }),
+  annotations: { readOnlyHint: true },
+}, async (args) => {
+  const data = await client.get<unknown>(`/leads/${args.lead_id}/find-email?probe=${args.probe ?? false}`);
+  return { content: [{ type: 'text', text: json(data) }] };
+});
+
+server.registerTool('leads_get_contacts', {
+  description:
+    'Get all contacts (decision-makers) associated with a lead. ' +
+    'Each contact has name, title, email, phone, and a primary flag.',
+  inputSchema: z.object({
+    lead_id: z.number().int().describe('Lead ID'),
+  }),
+  annotations: { readOnlyHint: true },
+}, async (args) => {
+  const data = await client.get<unknown>(`/leads/${args.lead_id}/contacts`);
+  return { content: [{ type: 'text', text: json(data) }] };
+});
+
+server.registerTool('leads_add_contact', {
+  description:
+    'Add a new contact (decision-maker) to a lead. ' +
+    "Contacts are separate from the lead's primary contact fields.",
+  inputSchema: z.object({
+    lead_id:    z.number().int().describe('Lead ID'),
+    name:       z.string().describe('Contact full name'),
+    title:      z.string().optional().describe('Job title (e.g. Fleet Manager, VP Operations)'),
+    email:      z.string().email().optional().describe('Contact email address'),
+    phone:      z.string().optional().describe('Contact phone number'),
+    is_primary: z.boolean().optional().default(false).describe('Mark as the primary contact'),
+    notes:      z.string().optional().describe('Any notes about this contact'),
+  }),
+}, async (args) => {
+  const { lead_id, ...body } = args;
+  const data = await client.post<unknown>(`/leads/${lead_id}/contacts`, body);
+  return { content: [{ type: 'text', text: ok('Contact added', data) }] };
+});
+
+server.registerTool('proposal_coach', {
+  description:
+    'Get AI coaching on how to improve a proposal before sending. ' +
+    'Returns specific suggestions for pricing, framing, urgency, and objection pre-emption ' +
+    'based on the lead history and category.',
+  inputSchema: z.object({
+    lead_id:     z.number().int().describe('Lead ID'),
+    proposal_id: z.number().int().optional().describe('Specific proposal ID (uses latest if omitted)'),
+  }),
+  annotations: { readOnlyHint: true },
+}, async (args) => {
+  const params = new URLSearchParams({ lead_id: String(args.lead_id) });
+  if (args.proposal_id) params.set('proposal_id', String(args.proposal_id));
+  const data = await client.get<unknown>(`/ai/proposal-coach?${params}`);
+  return { content: [{ type: 'text', text: json(data) }] };
+});
+
+server.registerTool('analytics_cohort', {
+  description:
+    'Get cohort analysis — leads grouped by month added, showing win rate, 90-day close rate, ' +
+    'and whether recent cohorts are improving or declining vs prior months. ' +
+    'Use to understand if your prospecting quality is trending up.',
+  inputSchema: z.object({}),
+  annotations: { readOnlyHint: true },
+}, async () => {
+  const data = await client.get<unknown>('/analytics/cohort');
+  return { content: [{ type: 'text', text: json(data) }] };
+});
+
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------

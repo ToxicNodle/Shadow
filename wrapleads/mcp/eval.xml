@@ -111,4 +111,39 @@
     <success_criteria>Returns total_score integer, calls_made, emails_sent, deals_advanced, wins_today; all non-negative integers</success_criteria>
   </eval>
 
+  <eval id="16" tool="analytics_time_to_close" category="analytics">
+    <description>Get time-to-close breakdown by deal category</description>
+    <input>{}</input>
+    <expected_contains>byCategory</expected_contains>
+    <success_criteria>Returns byCategory array; each item has category, avgDays, wonCount, medianDays, minDays, maxDays; overallAvgDays is a number or null</success_criteria>
+  </eval>
+
+  <eval id="17" tool="leads_find_email" category="leads">
+    <description>Find email candidates for a lead with a known domain</description>
+    <input>{"lead_id": 1, "probe": false}</input>
+    <expected_contains>candidates</expected_contains>
+    <success_criteria>Returns candidates array with email, confidence, format fields; mx object shows domain MX records or error; top candidate has confidence > 0.5</success_criteria>
+  </eval>
+
+  <eval id="18" tool="proposal_coach" category="proposals">
+    <description>Get AI coaching on a proposal before sending</description>
+    <input>{"lead_id": 1}</input>
+    <expected_contains>suggestions</expected_contains>
+    <success_criteria>Returns coaching suggestions object; contains at least 3 specific, actionable recommendations about pricing, urgency, or objection handling for this lead</success_criteria>
+  </eval>
+
+  <eval id="19" tool="analytics_cohort" category="analytics">
+    <description>Get cohort win rate analysis by intake month</description>
+    <input>{}</input>
+    <expected_contains>cohorts</expected_contains>
+    <success_criteria>Returns cohorts array (monthly); each has month, total, won, winRate; trend field is one of improving/declining/stable; recentRate and priorRate are numbers or null</success_criteria>
+  </eval>
+
+  <eval id="20" tool="leads_get_contacts" category="leads">
+    <description>Get all contacts for a lead</description>
+    <input>{"lead_id": 1}</input>
+    <expected_contains>contacts</expected_contains>
+    <success_criteria>Returns contacts array; each contact has id, name, title or null, email or null, phone or null, is_primary boolean</success_criteria>
+  </eval>
+
 </evals>

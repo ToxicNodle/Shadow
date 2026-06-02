@@ -9,6 +9,12 @@ const CHANGELOG: Array<{
   {
     date: 'Jun 2026',
     tag: 'new',
+    title: '⏱ Time-to-Close by Category — Which Deals Close Fastest?',
+    body: 'Analytics now shows how long each deal category takes to close, from first contact to won status. Fleet deals that close in 12 days vs. DI-NOC deals that take 45 days — see them ranked with color-coded bars (green = faster than your average, amber = slower). Each row shows won count, average days, day range (fastest to slowest deal in that category), and average touches when win debrief data is available. Overall average and total win count sit in the top-right corner. Use this to set realistic close-time expectations per category, prioritize your fastest-closing segments when you need cash flow, and identify which categories need better follow-up cadences.',
+  },
+  {
+    date: 'Jun 2026',
+    tag: 'new',
     title: '📊 Proposal Analytics — Close Rate, Time to Approve, Most-Viewed',
     body: 'Analytics now has a "Proposal Analytics" card. See your overall proposal close rate (approved ÷ sent), average time from proposal created to sent, average days from sent to approved, and average view counts for approved vs. declined proposals — a view-count comparison that reveals whether high-engagement proposals win more. A status distribution bar shows your proposal pipeline at a glance (draft, sent, approved, declined, expired). The bottom of the card lists your 5 most-viewed proposals so you can spot which ones generate the most interest. All stats update in real time as you mark proposals sent or approved.',
   },

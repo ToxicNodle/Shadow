@@ -21868,6 +21868,89 @@ app.get('/analytics/cohort', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Time-to-Close by Category ─────────────────────────────────────────────────
+// Avg/median days from lead creation to won status, broken down by category.
+// Pulls from leads table (status='won') + win_debriefs for richer data.
+app.get('/analytics/time-to-close', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  try {
+    // Primary: leads table — all-time won leads with a date delta
+    const leadsQ = await pool.query(`
+      SELECT
+        category,
+        COUNT(*)::INT                                                        AS won_count,
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS avg_days,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400
+        ))::INT                                                              AS median_days,
+        ROUND(MIN(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS min_days,
+        ROUND(MAX(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS max_days
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'won'
+        AND created_at IS NOT NULL
+        AND updated_at > created_at
+      GROUP BY category
+      ORDER BY avg_days ASC
+    `, [uid]);
+
+    // Secondary: win_debriefs (has explicit days_to_close if logged)
+    const debriefQ = await pool.query(`
+      SELECT
+        category,
+        COUNT(*)::INT                         AS debrief_count,
+        ROUND(AVG(days_to_close))::INT        AS debrief_avg_days,
+        ROUND(AVG(touch_count))::INT          AS avg_touches
+      FROM win_debriefs
+      WHERE user_id = $1
+        AND days_to_close IS NOT NULL
+        AND days_to_close > 0
+      GROUP BY category
+    `, [uid]);
+
+    const debriefMap = {};
+    for (const r of debriefQ.rows) debriefMap[r.category] = r;
+
+    const byCategory = leadsQ.rows.map((r) => {
+      const d = debriefMap[r.category] || {};
+      return {
+        category: r.category,
+        wonCount: r.won_count,
+        avgDays: r.avg_days,
+        medianDays: r.median_days,
+        minDays: r.min_days,
+        maxDays: r.max_days,
+        // debrief data is richer — prefer it when enough samples
+        debriefAvgDays: d.debrief_avg_days ?? null,
+        avgTouches: d.avg_touches ?? null,
+      };
+    });
+
+    // Overall stats
+    const overall = await pool.query(`
+      SELECT
+        ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400))::INT AS overall_avg,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400
+        ))::INT                                                                  AS overall_median,
+        COUNT(*)::INT                                                            AS total_won
+      FROM leads
+      WHERE user_id = $1
+        AND status = 'won'
+        AND updated_at > created_at
+    `, [uid]);
+
+    const ov = overall.rows[0] || {};
+
+    res.json({
+      byCategory,
+      overallAvgDays: ov.overall_avg ?? null,
+      overallMedianDays: ov.overall_median ?? null,
+      totalWon: ov.total_won ?? 0,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /analytics/revenue-monthly — monthly revenue trend from installed_jobs (last 18 months)
 app.get('/analytics/revenue-monthly', authMiddleware, async (req, res) => {
   const uid = String(req.user.id);

@@ -2487,6 +2487,108 @@ function LossAnalysisCard() {
   );
 }
 
+// ── Time-to-Close by Category ──────────────────────────────────────────────────
+const CATEGORY_LABEL: Record<string, string> = {
+  fleet: 'Fleet', design: 'Design', construction: 'Construction', dinoc: 'DI-NOC',
+  reatec: 'Reatec', colorchange: 'Color Change', wallgraphics: 'Wall Graphics',
+  gc_referral: 'GC Referral', racing: 'Racing',
+};
+
+function TimeToCloseCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['time-to-close'],
+    queryFn: () => api.getTimeToClose(),
+    staleTime: 15 * 60_000,
+  });
+
+  if (isLoading) return (
+    <div className="an-card" style={{ padding: 24 }}>
+      <div className="an-title" style={{ marginBottom: 16 }}>⏱ Time to Close by Category</div>
+      <div className="an-stat-sub">Loading…</div>
+    </div>
+  );
+
+  const d = data;
+  const cats = d?.byCategory ?? [];
+
+  if (!cats.length) return (
+    <div className="an-card" style={{ padding: 24 }}>
+      <div className="an-title" style={{ marginBottom: 8 }}>⏱ Time to Close by Category</div>
+      <div className="an-stat-sub" style={{ color: 'var(--text-faint)' }}>
+        Win your first deal to see how long each category takes to close.
+      </div>
+    </div>
+  );
+
+  const maxDays = Math.max(...cats.map((c) => c.avgDays), 1);
+  const overall = d?.overallAvgDays ?? null;
+
+  return (
+    <div className="an-card" style={{ padding: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div className="an-title">⏱ Time to Close by Category</div>
+        {overall !== null && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.5px', color: 'var(--text)', fontFamily: 'var(--display)' }}>
+              {overall}d
+            </div>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-faint)', fontWeight: 700 }}>
+              Overall avg · {d?.totalWon ?? 0} wins
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {cats.map((cat) => {
+          const pct = Math.max(4, Math.round((cat.avgDays / maxDays) * 100));
+          const isFast = cat.avgDays <= (overall ?? cat.avgDays) * 0.8;
+          const isSlow = cat.avgDays >= (overall ?? cat.avgDays) * 1.3;
+          const barColor = isFast ? '#00d97e' : isSlow ? '#f59e0b' : 'var(--accent)';
+          const preferDays = cat.debriefAvgDays ?? cat.avgDays;
+          return (
+            <div key={cat.category}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                    {CATEGORY_LABEL[cat.category] ?? cat.category}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                    {cat.wonCount} win{cat.wonCount !== 1 ? 's' : ''}
+                  </span>
+                  {cat.avgTouches !== null && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                      · {cat.avgTouches} touches
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: barColor, fontFamily: 'var(--mono, monospace)' }}>
+                    {preferDays}d
+                  </span>
+                  {cat.minDays !== cat.maxDays && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                      {cat.minDays}–{cat.maxDays}d range
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div style={{ height: 5, background: 'var(--bg-base)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: 3, transition: 'width 0.4s ease' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-soft)', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+        Green = faster than your average · Amber = slower than average.
+        Median days may differ from average when outlier deals skew the dataset.
+      </div>
+    </div>
+  );
+}
+
 // ── Lead Cohort Analysis ──────────────────────────────────────────────────────
 function CohortAnalysisCard() {
   const { data, isLoading } = useQuery({
@@ -3963,6 +4065,9 @@ export default function AnalyticsView() {
 
         {/* ── Lead Database Coverage ── */}
         <LeadCoverageCard />
+
+        {/* ── Time-to-Close by Category ── */}
+        <TimeToCloseCard />
 
         {/* ── Lead Cohort Analysis ── */}
         <CohortAnalysisCard />
