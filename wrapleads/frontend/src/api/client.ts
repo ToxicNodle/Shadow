@@ -75,7 +75,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink, SolarLead, SolarSearchParams, PilotInstaller, SolarAuction } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink, MaterialItem, SolarLead, SolarSearchParams, PilotInstaller, SolarAuction } from './types';
 
 export const api = {
   // Auth
@@ -185,7 +185,7 @@ export const api = {
     authFetch<import('./types').LeadActivity>(`/leads/${serverId}/activities`, {
       method: 'POST', body: JSON.stringify(activity),
     }),
-  sendEmail: (serverId: number, payload: { subject: string; body: string; toEmail: string; toName?: string }) =>
+  sendEmail: (serverId: number, payload: { subject: string; body: string; toEmail: string; toName?: string; template_id?: number }) =>
     authFetch<{ ok: boolean; resend_id?: string }>(`/leads/${serverId}/send-email`, {
       method: 'POST', body: JSON.stringify(payload),
     }),
@@ -265,6 +265,8 @@ export const api = {
     authFetch<void>(`/searches/saved/${id}`, { method: 'DELETE' }),
   runSavedSearch: (id: number) =>
     authFetch<{ new_count: number }>(`/searches/saved/${id}/run`, { method: 'POST' }),
+  toggleSavedSearchAlert: (id: number) =>
+    authFetch<{ ok: boolean; alert_enabled: boolean }>(`/searches/saved/${id}/alert`, { method: 'PATCH' }),
 
   // Apollo
   apolloSearch: (params: { apiKey: string; company: string; domain?: string; titles: string[]; limit?: number }) =>
@@ -722,6 +724,8 @@ export const api = {
   deletePortalLink: (id: number) =>
     authFetch<{ ok: boolean }>(`/portal-links/${id}`, { method: 'DELETE' }),
   getPortalUrl: (token: string) => `${window.location.origin}/portal/${token}`,
+  generateFleetDashboard: (leadId: number) =>
+    authFetch<{ ok: boolean; url: string }>(`/portal-links/${leadId}/fleet-access`, { method: 'POST' }),
 
   // AI Calling — campaigns
   getCampaigns: () =>
@@ -734,8 +738,27 @@ export const api = {
     authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>(`/leads/${leadId}/proposal`, { method: 'POST', body: JSON.stringify({ extra_notes: extraNotes || '', mockup_url: mockupUrl || null, roi_html: roiHtml || null }) }),
   getProposals: () => authFetch<{ proposals: { id: number; token: string; title: string; status: string; created_at: string; lead_company: string }[] }>('/proposals'),
   deleteProposal: (id: number) => authFetch<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
+  updateProposal: (id: number, data: { title?: string; intro?: string; services?: string; pricing_html?: string; timeline?: string; notes?: string; status?: string; expires_at?: string | null; pricing_options?: Array<{ label: string; description?: string; price: number; highlight?: boolean; features?: string[] }> | null }) =>
+    authFetch<{ ok: boolean; proposal: Record<string, unknown>; savedVersion: number }>(`/proposals/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  getProposalVersions: (id: number) =>
+    authFetch<{ ok: boolean; versions: Array<{ id: number; version_num: number; title: string; saved_at: string }> }>(`/proposals/${id}/versions`),
+  getProposalVersion: (proposalId: number, versionId: number) =>
+    authFetch<{ ok: boolean; version: Record<string, unknown> }>(`/proposals/${proposalId}/versions/${versionId}`),
   getProposalUrl: (token: string) => `${window.location.origin}/proposals/${token}`,
+  createJobFromProposal: (proposalId: number) =>
+    authFetch<{ ok: boolean; jobId: number }>(`/proposals/${proposalId}/create-job`, { method: 'POST' }),
+
+  // Proposal template library
+  getProposalTemplates: () =>
+    authFetch<{ ok: boolean; templates: Array<{ id: number; name: string; category: string | null; intro: string | null; services: string | null; pricing_html: string | null; timeline: string | null; notes: string | null; use_count: number; created_at: string }> }>('/proposals/templates'),
+  saveProposalAsTemplate: (proposalId: number, name: string, category?: string) =>
+    authFetch<{ ok: boolean; template: { id: number; name: string; category: string | null; created_at: string } }>(`/proposals/${proposalId}/save-as-template`, { method: 'POST', body: JSON.stringify({ name, category }) }),
+  deleteProposalTemplate: (id: number) =>
+    authFetch<{ ok: boolean }>(`/proposals/templates/${id}`, { method: 'DELETE' }),
+  createProposalFromTemplate: (leadId: number, templateId: number) =>
+    authFetch<{ ok: boolean; proposal: { id: number; token: string; title: string; status: string; created_at: string } }>('/proposals/from-template', { method: 'POST', body: JSON.stringify({ lead_id: leadId, template_id: templateId }) }),
   getMyQuoteLink: () => authFetch<{ token: string; url: string }>('/me/quote-link'),
+  getMyWebhookUrl: () => authFetch<{ url: string }>('/me/webhook-url'),
   getProposalViewCount: (id: number) => authFetch<{ view_count: number; last_viewed_ago: string | null }>(`/proposals/${id}/views`),
 
   // Proposals needing follow-up (sent 3+ days ago, no response)
@@ -922,12 +945,48 @@ export const api = {
   },
 
   // Win/Loss capture
-  captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string) =>
-    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor }) }),
+  captureWinLoss: (leadId: number, factor: string, notes: string, competitor?: string, competitorPrice?: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/win-loss`, { method: 'POST', body: JSON.stringify({ factor, notes, competitor, competitorPrice }) }),
 
   // SMS outreach
   sendSms: (leadId: number, message: string) =>
     authFetch<{ ok: boolean; sid?: string }>(`/leads/${leadId}/sms`, { method: 'POST', body: JSON.stringify({ message }) }),
+
+  // SMS campaign sequences
+  getSmsInbox: () =>
+    authFetch<{ ok: boolean; messages: Array<{
+      id: number; lead_id: number; body: string; created_at: string;
+      company: string; phone: string | null; contact_name: string | null; sms_opted_out: boolean;
+    }> }>('/mission/sms-inbox'),
+
+  getSmsSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequence: import('./types').SmsSequence | null }>(`/leads/${leadId}/sms-sequence`),
+  startSmsSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequenceId: number; steps: import('./types').SmsSequenceStep[] }>(`/leads/${leadId}/sms-sequence`, { method: 'POST' }),
+  cancelSmsSequence: (leadId: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/sms-sequence`, { method: 'DELETE' }),
+  getSmsTemplates: (leadId: number) =>
+    authFetch<{ ok: boolean; category: string; templates: Array<{ stepNum: number; dayOffset: number; message: string }> }>(`/leads/${leadId}/sms-templates`),
+
+  // Omni (multi-channel) sequences
+  getOmniTemplates: (leadId: number) =>
+    authFetch<{ ok: boolean; category: string; hasEmail: boolean; hasPhone: boolean; steps: import('./types').OmniTemplateStep[] }>(`/leads/${leadId}/omni-templates`),
+  startOmniSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequenceId: number; steps: import('./types').OmniSequenceStep[] }>(`/leads/${leadId}/omni-sequence`, { method: 'POST' }),
+  getOmniSequence: (leadId: number) =>
+    authFetch<{ ok: boolean; sequence: import('./types').OmniSequence | null }>(`/leads/${leadId}/omni-sequence`),
+  cancelOmniSequence: (leadId: number) =>
+    authFetch<{ ok: boolean }>(`/leads/${leadId}/omni-sequence`, { method: 'DELETE' }),
+  enrichFmcsa: (leadId: number, dotNumber?: string) =>
+    authFetch<{
+      ok: boolean; patched: boolean;
+      phone: string | null; safetyRating: string | null;
+      operatingStatus: string | null; entityType: string | null;
+      legalName: string | null; dotNumber: string;
+    }>(`/leads/${leadId}/enrich-fmcsa`, {
+      method: 'POST',
+      body: dotNumber ? JSON.stringify({ dotNumber }) : '{}',
+    }),
 
   // Bid tracker
   getBids: () => authFetch<{ bids: Bid[] }>('/bids'),
@@ -961,6 +1020,11 @@ export const api = {
   getBidCalendarUrl: () => {
     const token = getToken();
     return `/bids/calendar.ics?token=${encodeURIComponent(token || '')}`;
+  },
+
+  getFollowupIcalUrl: () => {
+    const token = getToken();
+    return `/leads/followups.ics?token=${encodeURIComponent(token || '')}`;
   },
 
   broadcastEmail: (leadIds: number[], subject: string, body: string, aiPersonalize?: boolean) =>
@@ -1087,6 +1151,19 @@ export const api = {
       totalUntapped: number;
     }>('/analytics/market-opportunity'),
 
+  // Speed to Lead
+  getSpeedToLead: () =>
+    authFetch<{
+      ok: boolean;
+      avgHours: number | null;
+      medianHours: number | null;
+      contactedCount: number;
+      within5min: number;
+      within1hour: number;
+      within24hours: number;
+      waitingLeads: Array<{ id: number; company: string; category: string; createdAt: string; hoursWaiting: number }>;
+    }>('/analytics/speed-to-lead'),
+
   // Revenue Attribution
   getRevenueAttribution: () => authFetch<{
     bySource: Array<{ source: string; won_count: number; estimated_revenue: number; avg_close_days: number | null; sharePct: number }>;
@@ -1188,6 +1265,8 @@ export const api = {
     authFetch<{ ok: boolean; quote: import('./types').ShopQuote }>(`/quotes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteQuote: (id: number) =>
     authFetch<{ ok: boolean }>(`/quotes/${id}`, { method: 'DELETE' }),
+  convertQuoteToJob: (quoteId: number) =>
+    authFetch<{ ok: boolean; job: import('./types').InstalledJob; leadId: number }>(`/quotes/${quoteId}/convert-to-job`, { method: 'POST' }),
 
   // ── Commercial Solar Scout ───────────────────────────────────────────
   searchSolarLeads: (params: SolarSearchParams) =>
@@ -1366,6 +1445,17 @@ export const api = {
       priorRate: number | null;
     }>('/analytics/cohort'),
 
+  getTimeToClose: () =>
+    authFetch<{
+      byCategory: Array<{
+        category: string; wonCount: number; avgDays: number; medianDays: number;
+        minDays: number; maxDays: number; debriefAvgDays: number | null; avgTouches: number | null;
+      }>;
+      overallAvgDays: number | null;
+      overallMedianDays: number | null;
+      totalWon: number;
+    }>('/analytics/time-to-close'),
+
   // Lost Lead Rescue Queue
   getRescueQueue: () =>
     authFetch<{
@@ -1423,6 +1513,17 @@ export const api = {
     }>('/analytics/job-profitability?' + qs.toString());
   },
 
+  // 1099 Subcontractor Summary
+  get1099Summary: (year?: number) =>
+    authFetch<{
+      ok: boolean; year: number; totalPaid: number; needs1099Count: number;
+      subs: Array<{
+        id: number; name: string; email?: string | null; tax_id?: string | null;
+        business_type?: string | null; specialty?: string | null; address?: string | null;
+        assignment_count: number; total_paid: number; confirmed_paid: number; outstanding: number;
+      }>;
+    }>(`/analytics/1099-summary${year ? `?year=${year}` : ''}`),
+
   // Material Margin Analytics
   getMarginAnalytics: () =>
     authFetch<{
@@ -1442,11 +1543,42 @@ export const api = {
       hasData: boolean;
     }>('/analytics/margin'),
 
+  // Proposal pipeline analytics
+  getProposalAnalytics: () =>
+    authFetch<{
+      ok: boolean; total: number;
+      byStatus: { draft: number; sent: number; approved: number; declined: number; expired: number };
+      closeRate: number | null;
+      avgHoursToSend: number | null;
+      avgDaysToApprove: number | null;
+      avgViewsApproved: number | null;
+      avgViewsDeclined: number | null;
+      topViewed: Array<{ id: number; title: string; status: string; viewCount: number; sentAt: string | null; company: string | null }>;
+    }>('/analytics/proposals'),
+
+  // Email template performance analytics
+  getEmailTemplateAnalytics: () =>
+    authFetch<{
+      templates: Array<{
+        id: number; label: string; tag: string | null;
+        useCount: number; sends: number; opens: number;
+        openRate: number; avgOpensPerOpener: number | null; lastOpenAt: string | null;
+      }>;
+    }>('/analytics/email-templates'),
+
   // CAN-SPAM unsubscribe status for a lead's email
   getUnsubscribeStatus: (leadId: number) =>
     authFetch<{ unsubscribed: boolean; email: string | null; unsubscribed_at: string | null }>(
       `/leads/${leadId}/unsubscribe-status`
     ),
+
+  // Suppression list management
+  getUnsubscribes: () =>
+    authFetch<{ unsubscribes: Array<{ id: number; email: string; unsubscribed_at: string; company: string | null; lead_id: number | null }> }>('/settings/unsubscribes'),
+  addUnsubscribe: (email: string) =>
+    authFetch<{ ok: boolean }>('/settings/unsubscribes', { method: 'POST', body: JSON.stringify({ email }) }),
+  removeUnsubscribe: (id: number) =>
+    authFetch<{ ok: boolean }>(`/settings/unsubscribes/${id}`, { method: 'DELETE' }),
 
   // Shareable ROI calculator link pre-filled with prospect data
   getOrCreateRoiLink: (leadId: number) =>
@@ -1926,6 +2058,12 @@ export const api = {
       confidence: 'high' | 'medium' | 'low';
     }>(`/ai/proposal-coach?leadId=${leadId}`),
 
+  suggestSubjectLines: (args: { leadId?: number; currentBody?: string; currentSubject?: string }) =>
+    authFetch<{ ok: boolean; suggestions: Array<{ subject: string; approach: string; why: string }> }>(
+      '/ai/subject-lines',
+      { method: 'POST', body: JSON.stringify(args) }
+    ),
+
   // ── Google Review Automation ──
   requestReview: (jobId: number, opts: { clientEmail?: string; clientPhone?: string; clientName?: string; googleUrl?: string }) =>
     authFetch<{ ok: boolean; token: string; reviewUrl: string; sentVia: string[] }>(
@@ -1959,6 +2097,15 @@ export const api = {
     authFetch<{ ok: boolean; score: number; label: string; color: string; signals: string[] }>(
       `/leads/${leadId}/heat-score`
     ),
+
+  getNearbyCarriers: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      carriers: Array<{ id: number; dot_number: string; name: string; city: string; state: string; fleet_size: number | null; phone: string | null; website: string | null; wrap_score: number }>;
+      city?: string;
+      state?: string;
+      reason?: string;
+    }>(`/leads/${leadId}/nearby-carriers`),
 
   // ── Portal Link Stats ──
   getPortalLinkStats: (leadId: number) =>
@@ -2044,9 +2191,21 @@ export const api = {
 
   // ── Invoice ──
   getInvoiceUrl: (jobId: number) => `/jobs/${jobId}/invoice`,
+  getWorkOrderUrl: (jobId: number) => {
+    const token = getToken();
+    return `/jobs/${jobId}/work-order?token=${encodeURIComponent(token || '')}`;
+  },
+  getCompletionReceiptUrl: (jobId: number) => {
+    const token = getToken();
+    return `/jobs/${jobId}/completion-receipt?token=${encodeURIComponent(token || '')}`;
+  },
   sendInvoice: (jobId: number, opts: { toEmail: string; toName?: string }) =>
     authFetch<{ ok: boolean; invoiceNum: string }>(
       `/jobs/${jobId}/send-invoice`, { method: 'POST', body: JSON.stringify(opts) }
+    ),
+  notifyJobReady: (jobId: number, opts: { via: 'email' | 'sms' | 'both'; toEmail?: string; toPhone?: string; toName?: string; customMessage?: string }) =>
+    authFetch<{ ok: boolean; sentVia: string[] }>(
+      `/jobs/${jobId}/notify-ready`, { method: 'POST', body: JSON.stringify(opts) }
     ),
 
   // ── Job Schedule ──
@@ -2060,7 +2219,7 @@ export const api = {
     authFetch<{ ok: boolean; subs: import('./types').Subcontractor[] }>('/subcontractors'),
   createSubcontractor: (data: { name: string; contact?: string; specialty?: string; labor_rate?: number; notes?: string }) =>
     authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>('/subcontractors', { method: 'POST', body: JSON.stringify(data) }),
-  updateSubcontractor: (id: number, data: Partial<{ name: string; contact: string; specialty: string; labor_rate: number; notes: string }>) =>
+  updateSubcontractor: (id: number, data: Partial<{ name: string; contact: string; specialty: string; labor_rate: number; notes: string; tax_id: string; business_type: 'individual' | 'business'; email: string; address: string }>) =>
     authFetch<{ ok: boolean; sub: import('./types').Subcontractor }>(`/subcontractors/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteSubcontractor: (id: number) =>
     authFetch<{ ok: boolean }>(`/subcontractors/${id}`, { method: 'DELETE' }),
@@ -2070,6 +2229,31 @@ export const api = {
     authFetch<{ ok: boolean; assignment: import('./types').SubcontractorAssignment }>(`/jobs/${jobId}/subcontractors`, { method: 'POST', body: JSON.stringify(data) }),
   removeSubAssignment: (assignmentId: number) =>
     authFetch<{ ok: boolean }>(`/jobs/sub-assignments/${assignmentId}`, { method: 'DELETE' }),
+  markSubAssignmentPaid: (assignmentId: number, paidAmount?: number, undo?: boolean) =>
+    authFetch<{ ok: boolean; assignment: import('./types').SubcontractorAssignment }>(
+      `/jobs/sub-assignments/${assignmentId}/mark-paid`,
+      { method: 'PATCH', body: JSON.stringify({ paid_amount: paidAmount, undo }) }
+    ),
+  getSubPayables: () =>
+    authFetch<{ ok: boolean; payables: (import('./types').SubcontractorAssignment & { job_company: string; install_date: string | null; job_revenue: number; sub_email?: string })[]; totalOwed: number }>('/subcontractors/payables'),
+
+  // ── Job Expenses ──
+  getJobExpenses: (jobId: number) =>
+    authFetch<{ ok: boolean; expenses: import('./types').JobExpense[]; total: number }>(`/jobs/${jobId}/expenses`),
+  addJobExpense: (jobId: number, data: { category?: string; description: string; amount: number; expense_date?: string; receipt_note?: string }) =>
+    authFetch<{ ok: boolean; expense: import('./types').JobExpense }>(`/jobs/${jobId}/expenses`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteJobExpense: (jobId: number, expenseId: number) =>
+    authFetch<{ ok: boolean }>(`/jobs/${jobId}/expenses/${expenseId}`, { method: 'DELETE' }),
+
+  // ── Job Vehicle Intake ──
+  getJobVehicles: (jobId: number) =>
+    authFetch<{ ok: boolean; vehicles: import('./types').JobVehicle[] }>(`/jobs/${jobId}/vehicles`),
+  addJobVehicle: (jobId: number, data: Partial<import('./types').JobVehicle>) =>
+    authFetch<{ ok: boolean; vehicle: import('./types').JobVehicle }>(`/jobs/${jobId}/vehicles`, { method: 'POST', body: JSON.stringify(data) }),
+  updateJobVehicle: (jobId: number, vehicleId: number, data: Partial<import('./types').JobVehicle>) =>
+    authFetch<{ ok: boolean; vehicle: import('./types').JobVehicle }>(`/jobs/${jobId}/vehicles/${vehicleId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteJobVehicle: (jobId: number, vehicleId: number) =>
+    authFetch<{ ok: boolean }>(`/jobs/${jobId}/vehicles/${vehicleId}`, { method: 'DELETE' }),
 
   // ── Cash Flow ──
   getCashFlow: () =>
@@ -2082,4 +2266,227 @@ export const api = {
       mid: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
       late: Array<{ id: number; company: string; vehicleType: string; vehicleCount: number; category: string; revenue: number; amountPaid: number; balance: number; paymentStatus: string; installDate: string | null; invoiceSentAt: string | null; daysSinceInstall: number }>;
     }>('/analytics/cash-flow'),
+
+  // ── Outbound Webhooks ──
+  getWebhooks: () =>
+    authFetch<{
+      ok: boolean;
+      webhooks: Array<{ id: number; event_type: string; url: string; label: string | null; enabled: boolean; last_triggered_at: string | null; last_status_code: number | null; created_at: string }>;
+      events: Array<{ value: string; label: string }>;
+    }>('/webhooks'),
+  createWebhook: (data: { event_type: string; url: string; label?: string; secret?: string }) =>
+    authFetch<{ ok: boolean; webhook: { id: number; event_type: string; url: string; label: string | null; enabled: boolean; last_triggered_at: string | null; last_status_code: number | null; created_at: string } }>('/webhooks', { method: 'POST', body: JSON.stringify(data) }),
+  toggleWebhook: (id: number, enabled: boolean) =>
+    authFetch<{ ok: boolean }>(`/webhooks/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  deleteWebhook: (id: number) =>
+    authFetch<{ ok: boolean }>(`/webhooks/${id}`, { method: 'DELETE' }),
+  testWebhook: (id: number) =>
+    authFetch<{ ok: boolean; statusCode: number; error?: string }>(`/webhooks/${id}/test`, { method: 'POST' }),
+
+  // ── Web Push ──
+  getPushVapidKey: () =>
+    authFetch<{ ok: boolean; publicKey: string | null }>('/push/vapid-key'),
+  getPushStatus: () =>
+    authFetch<{ ok: boolean; subscribed: boolean; vapidConfigured: boolean }>('/push/status'),
+  subscribePush: (subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+    authFetch<{ ok: boolean }>('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
+  unsubscribePush: (endpoint: string) =>
+    authFetch<{ ok: boolean }>('/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
+
+  // ── Installation Contract ──
+  getContractUrl: (leadId: number) => {
+    const token = getToken();
+    return `/leads/${leadId}/contract?token=${encodeURIComponent(token || '')}`;
+  },
+
+  // ── Fleet Growth Signals ──
+  getFleetGrowthSignals: () =>
+    authFetch<{ ok: boolean; signals: Array<{ id: number; company: string; category: string; status: string; fleet_size: number | null; fmcsa_fleet_size_snapshot: number | null; fmcsa_fleet_grew_at: string; contact_name: string | null; state: string | null }> }>('/leads/fleet-growth-signals'),
+
+  // ── User Email Templates ──
+  getEmailTemplates: () =>
+    authFetch<{ ok: boolean; templates: Array<{ id: number; label: string; tag: string; subject: string; body: string; use_count: number; created_at: string; updated_at: string }> }>('/email-templates'),
+  createEmailTemplate: (data: { label: string; tag?: string; subject: string; body: string }) =>
+    authFetch<{ ok: boolean; template: { id: number; label: string; tag: string; subject: string; body: string; use_count: number; created_at: string; updated_at: string } }>('/email-templates', { method: 'POST', body: JSON.stringify(data) }),
+  updateEmailTemplate: (id: number, data: { label?: string; tag?: string; subject?: string; body?: string }) =>
+    authFetch<{ ok: boolean; template: { id: number; label: string; tag: string; subject: string; body: string; use_count: number; created_at: string; updated_at: string } }>(`/email-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteEmailTemplate: (id: number) =>
+    authFetch<{ ok: boolean }>(`/email-templates/${id}`, { method: 'DELETE' }),
+  recordEmailTemplateUse: (id: number) =>
+    authFetch<{ ok: boolean }>(`/email-templates/${id}/use`, { method: 'POST' }),
+
+  // Material inventory
+  getMaterials: () =>
+    authFetch<{ ok: boolean; materials: MaterialItem[] }>('/materials'),
+  getLowStockMaterials: () =>
+    authFetch<{ ok: boolean; materials: MaterialItem[] }>('/materials/low-stock'),
+  createMaterial: (data: Partial<MaterialItem>) =>
+    authFetch<{ ok: boolean; material: MaterialItem }>('/materials', { method: 'POST', body: JSON.stringify(data) }),
+  updateMaterial: (id: number, data: Partial<MaterialItem>) =>
+    authFetch<{ ok: boolean; material: MaterialItem }>(`/materials/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  adjustMaterialStock: (id: number, delta: number, reason?: string) =>
+    authFetch<{ ok: boolean; material: MaterialItem }>(`/materials/${id}/adjust`, { method: 'POST', body: JSON.stringify({ delta, reason }) }),
+  deleteMaterial: (id: number) =>
+    authFetch<{ ok: boolean }>(`/materials/${id}`, { method: 'DELETE' }),
+
+  estimateMaterialCost: (params: {
+    vehicle_type: string;
+    vehicle_count: number;
+    coverage?: 'full' | 'partial' | 'spot';
+    material_id?: number;
+  }) => {
+    const q = new URLSearchParams({
+      vehicle_type: params.vehicle_type,
+      vehicle_count: String(params.vehicle_count),
+      coverage: params.coverage ?? 'full',
+    });
+    if (params.material_id) q.set('material_id', String(params.material_id));
+    return authFetch<{
+      ok: boolean;
+      vehicleType: string;
+      vehicleLabel: string;
+      vehicleCount: number;
+      coverage: string;
+      sqftPerVehicleLow: number;
+      sqftPerVehicleHigh: number;
+      totalSqftLow: number;
+      totalSqftHigh: number;
+      suggestions: Array<{
+        id: number; name: string; sku: string | null;
+        rollSqft: number; rollsNeededLow: number; rollsNeededHigh: number;
+        rollsInStock: number; unitCostPerRoll: number;
+        costLow: number; costHigh: number;
+        canCoverWithStock: boolean; shortfall: number;
+      }>;
+    }>(`/materials/estimate?${q}`);
+  },
+
+  // ── Appointments ──
+  getAppointments: (params?: { leadId?: number; upcoming?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.leadId) q.set('leadId', String(params.leadId));
+    if (params?.upcoming) q.set('upcoming', '1');
+    return authFetch<{ appointments: Array<{
+      id: number; lead_id: number | null; company: string | null; contact_name: string | null;
+      title: string; appt_type: string; scheduled_at: string; duration_mins: number;
+      location: string | null; notes: string | null; status: string;
+    }> }>(`/appointments${q.toString() ? '?' + q.toString() : ''}`);
+  },
+  getUpcomingAppointments: () =>
+    authFetch<{ appointments: Array<{
+      id: number; lead_id: number | null; lead_id_link: number | null; company: string | null;
+      contact_name: string | null; title: string; appt_type: string; scheduled_at: string;
+      duration_mins: number; location: string | null; notes: string | null; status: string;
+    }> }>('/appointments/upcoming'),
+  createAppointment: (data: {
+    leadId?: number; title?: string; apptType?: string;
+    scheduledAt: string; durationMins?: number; location?: string; notes?: string;
+  }) => authFetch<{ ok: boolean; appointment: { id: number } }>('/appointments', { method: 'POST', body: JSON.stringify(data) }),
+  updateAppointment: (id: number, data: {
+    title?: string; apptType?: string; scheduledAt?: string;
+    durationMins?: number; location?: string; notes?: string; status?: string;
+  }) => authFetch<{ ok: boolean }>(`/appointments/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteAppointment: (id: number) =>
+    authFetch<{ ok: boolean }>(`/appointments/${id}`, { method: 'DELETE' }),
+
+  // ── Lead Deduplication ──
+  findDuplicateLeads: () =>
+    authFetch<{
+      pairs: Array<{
+        a: { id: number; company: string; status: string; city: string | null; state: string | null; email: string | null; phone: string | null; fleetSize: number | null; category: string };
+        b: { id: number; company: string; status: string; city: string | null; state: string | null; email: string | null; phone: string | null; fleetSize: number | null; category: string };
+        simPct: number;
+      }>;
+    }>('/leads/potential-duplicates'),
+
+  mergeLeads: (sourceId: number, targetId: number) =>
+    authFetch<{ ok: boolean; keptId: number; mergedCompany: string }>(
+      `/leads/${sourceId}/merge-into/${targetId}`,
+      { method: 'POST' }
+    ),
+
+  createJobTrackerLink: (jobId: number) =>
+    authFetch<{ ok: boolean; token: string; url: string }>(`/jobs/${jobId}/tracker-link`, { method: 'POST' }),
+
+  bulkSms: (leadIds: number[], message: string) =>
+    authFetch<{ ok: boolean; sent: number; skipped: number; errors: number; total: number }>(
+      '/leads/bulk-sms', { method: 'POST', body: JSON.stringify({ leadIds, message }) }
+    ),
+
+  generateVideoPitchScript: (leadId: number) =>
+    authFetch<{
+      ok: boolean;
+      script: {
+        hook: string;
+        valueStatement: string;
+        proofPoint: string;
+        callToAction: string;
+        totalTimeEstimate: number;
+        talkingPoints: string[];
+      };
+    }>('/ai/video-pitch-script', { method: 'POST', body: JSON.stringify({ leadId }) }),
+
+  updateJobStatus: (jobId: number, status: 'scheduled' | 'in_progress' | 'complete') =>
+    authFetch<{ ok: boolean; job_status: string }>(`/jobs/${jobId}/status`, { method: 'PATCH', body: JSON.stringify({ job_status: status }) }),
+
+  snoozeLead: (leadId: number, until: string | null) =>
+    authFetch<{ ok: boolean; snoozeUntil: string | null }>(`/leads/${leadId}/snooze`, { method: 'POST', body: JSON.stringify({ until }) }),
+
+  getSnoozeWakeups: () =>
+    authFetch<{ leads: { id: number; company: string; category: string; status: string; snooze_until: string }[] }>('/mission/snooze-wakeups'),
+
+  importContacts: (contacts: { company: string; email?: string; phone?: string }[]) =>
+    authFetch<{
+      ok: boolean;
+      updated: number;
+      skipped: number;
+      results: { input: string; matched: string | null; action: 'updated' | 'unmatched' | 'already_complete'; addedEmail?: string | null; addedPhone?: string | null }[];
+    }>('/leads/import-contacts', { method: 'POST', body: JSON.stringify({ contacts }) }),
+
+  getDealRisks: () =>
+    authFetch<{
+      ok: boolean;
+      deals: {
+        leadId: number;
+        company: string;
+        contactName: string | null;
+        category: string;
+        status: string;
+        email: string | null;
+        phone: string | null;
+        followupDueAt: string | null;
+        daysStale: number;
+        riskScore: number;
+        riskLabel: string;
+        riskColor: string;
+        topReason: string | null;
+        reasons: string[];
+      }[];
+    }>('/mission/deal-risks'),
+
+  getReactivationCandidates: (minDays?: number) =>
+    authFetch<{
+      ok: boolean;
+      candidates: {
+        id: number;
+        company: string;
+        contactName: string | null;
+        category: string;
+        email: string;
+        status: string;
+        daysSinceContact: number;
+      }[];
+      total: number;
+    }>(`/leads/reactivation-candidates${minDays ? `?minDays=${minDays}` : ''}`),
+
+  launchReactivationCampaign: (leadIds: number[], tone: 'warm' | 'offer' | 'update') =>
+    authFetch<{
+      ok: boolean;
+      queued: number;
+      failed: number;
+      results: { leadId: number; company: string; status: 'queued' | 'failed'; error?: string }[];
+    }>('/leads/reactivation-campaign', {
+      method: 'POST',
+      body: JSON.stringify({ leadIds, tone }),
+    }),
 };

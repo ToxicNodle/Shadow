@@ -280,6 +280,29 @@ export default function NotesTab({ lead }: Props) {
           onKeyDown={handleQuickNoteKey}
           style={{ resize: 'vertical', fontSize: 13 }}
         />
+        {/* Quick-tap note chips */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+          {[
+            'Left voicemail',
+            'Spoke with gatekeeper',
+            'Not interested — timing',
+            'Requested callback',
+            'Budget approved',
+            'Meeting confirmed',
+            'Sent follow-up email',
+            'Competitor is involved',
+          ].map((chip) => (
+            <button
+              key={chip}
+              className="btn"
+              style={{ fontSize: 10, padding: '2px 8px', color: 'var(--text-muted)' }}
+              onClick={() => { setQuickNote(chip); quickRef.current?.focus(); }}
+              tabIndex={-1}
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
         <button
           className="btn btn-primary"
           style={{ fontSize: 12, alignSelf: 'flex-end', marginTop: 6 }}

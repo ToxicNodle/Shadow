@@ -20,6 +20,7 @@ import ErrorBoundary from '../components/ui/ErrorBoundary';
 import Toast from '../components/ui/Toast';
 import { useGlobalDraggableModals } from '../hooks/useGlobalDraggableModals';
 import { useLeads } from '../hooks/useLeads';
+import { useProposalViewAlert } from '../hooks/useProposalViewAlert';
 
 // ── Lazy-loaded views — only bundle-split from the initial chunk ──────────────
 // Each view is 400–3000 lines; lazy-loading them saves ~900 KB on first load.
@@ -67,6 +68,7 @@ function ViewSpinner() {
 
 export default function CRMPage() {
   useGlobalDraggableModals();
+  useProposalViewAlert();
   const { user, isLoading } = useAuth();
   const {
     mode, setMode, setPaywallOpen,

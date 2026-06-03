@@ -260,6 +260,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     { id: 'a:url-import', group: 'action', label: 'Import Lead from URL', sub: 'AI extracts company data from any website or LinkedIn page', icon: '🔗', action: () => { store.setUrlImportOpen(true); onClose(); } },
     { id: 'a:quick-quote', group: 'action', label: 'Quick Quote', sub: 'Ballpark price estimate for an on-the-call prospect', icon: '⚡', action: () => { store.setQuickQuoteOpen(true); onClose(); } },
     { id: 'a:ai-coach', group: 'action', label: 'AI Revenue Coach', sub: 'Ask your AI coach what to do next — knows your live pipeline', icon: '🤖', action: () => { store.setAiCoachOpen(true); onClose(); } },
+    { id: 'a:dedup', group: 'action', label: 'Scan for Duplicate Leads', sub: 'Find and merge duplicate company records — click "Dedup" in the toolbar', icon: '🔀', action: () => { store.setMode('leads'); onClose(); } },
   ];
 
   const NAV_ITEMS: CmdItem[] = [

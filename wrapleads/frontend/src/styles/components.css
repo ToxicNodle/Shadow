@@ -1452,14 +1452,19 @@
 .mission-stat-card {
   flex: 1; min-width: 120px;
   background: var(--bg-card); border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
   border-radius: 12px; padding: 14px 18px; cursor: pointer;
-  transition: border-color .15s;
+  transition: border-color .15s, box-shadow .15s;
 }
-.mission-stat-card:hover { border-color: var(--accent); }
-.mission-stat-val { font-size: 26px; font-weight: 800; line-height: 1; }
-.mission-stat-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.mission-stat-card:hover { border-color: var(--accent); box-shadow: 0 2px 12px rgba(0,0,0,.18); }
+.mission-stat-card--green  { border-left-color: #22c55e; }
+.mission-stat-card--blue   { border-left-color: #4d8af5; }
+.mission-stat-card--purple { border-left-color: #6366f1; }
+.mission-stat-card--amber  { border-left-color: #f59e0b; }
+.mission-stat-val { font-size: 42px; font-weight: 900; line-height: 1; letter-spacing: -2px; font-variant-numeric: tabular-nums; }
+.mission-stat-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-faint); margin-top: 6px; font-weight: 700; }
 .mission-stat-green  { color: #22c55e; }
-.mission-stat-blue   { color: #3b82f6; }
+.mission-stat-blue   { color: #4d8af5; }
 .mission-stat-purple { color: #6366f1; }
 
 /* All clear */

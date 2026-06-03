@@ -4,7 +4,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../api/client';
 import Modal from '../ui/Modal';
-import type { Settings } from '../../api/types';
+import type { Settings, MaterialItem } from '../../api/types';
 
 type FleetStatus = 'idle' | 'testing' | 'ok' | 'fail' | 'importing' | 'imported';
 
@@ -21,6 +21,10 @@ export default function SettingsModal() {
   const [portalLoading, setPortalLoading] = useState(false);
   const [quoteLink, setQuoteLink] = useState<string | null>(null);
   const [quoteLinkCopied, setQuoteLinkCopied] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
+  const [webhookCopied, setWebhookCopied] = useState(false);
+  const [calendarCopied, setCalendarCopied] = useState(false);
   const [portfolioLink, setPortfolioLink] = useState<string | null>(null);
   const [portfolioLinkCopied, setPortfolioLinkCopied] = useState(false);
   const [apolloStatus, setApolloStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
@@ -31,11 +35,99 @@ export default function SettingsModal() {
   const [motiveCount, setMotiveCount] = useState<number | null>(null);
   const [motiveImported, setMotiveImported] = useState<{ imported: number; skipped: number } | null>(null);
 
+  const [newUnsub, setNewUnsub] = useState('');
+  const [showUnsubs, setShowUnsubs] = useState(false);
+
   // Subcontractors
   const qc = useQueryClient();
   const [newSubName, setNewSubName] = useState('');
   const [newSubSpecialty, setNewSubSpecialty] = useState('');
   const [newSubRate, setNewSubRate] = useState('');
+  const [editSubId, setEditSubId] = useState<number | null>(null);
+  const [editSubForm, setEditSubForm] = useState<{name:string;specialty:string;labor_rate:string;tax_id:string;business_type:string;email:string;address:string}>({name:'',specialty:'',labor_rate:'',tax_id:'',business_type:'individual',email:'',address:''});
+
+  // Web Push notifications
+  const [pushLoading, setPushLoading] = useState(false);
+  const { data: pushStatus, refetch: refetchPush } = useQuery({
+    queryKey: ['push-status'],
+    queryFn: () => api.getPushStatus(),
+    staleTime: 30_000,
+    enabled: settingsOpen,
+  });
+  async function togglePush() {
+    setPushLoading(true);
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        showToast('Push notifications not supported in this browser', 'error');
+        return;
+      }
+      if (pushStatus?.subscribed) {
+        const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+        const sub = await reg?.pushManager?.getSubscription();
+        if (sub) {
+          await sub.unsubscribe();
+          await api.unsubscribePush(sub.endpoint);
+        }
+        showToast('Push notifications disabled');
+      } else {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') { showToast('Permission denied', 'error'); return; }
+        const vapidRes = await api.getPushVapidKey();
+        if (!vapidRes.publicKey) { showToast('Push not configured on server — add VAPID_PUBLIC_KEY to env', 'error'); return; }
+        const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: vapidRes.publicKey,
+        });
+        const json = sub.toJSON() as { endpoint: string; keys: { p256dh: string; auth: string } };
+        await api.subscribePush({ endpoint: json.endpoint, keys: json.keys });
+        showToast('Push notifications enabled — you\'ll be notified even when WrapOS is closed');
+      }
+    } catch (e: any) {
+      showToast(e.message, 'error');
+    } finally {
+      setPushLoading(false);
+      refetchPush();
+    }
+  }
+
+  // Webhooks
+  const [newHookEvent, setNewHookEvent] = useState('lead.won');
+  const [newHookUrl, setNewHookUrl] = useState('');
+  const [newHookLabel, setNewHookLabel] = useState('');
+  const [newHookSecret, setNewHookSecret] = useState('');
+  const [testingHook, setTestingHook] = useState<number | null>(null);
+  const [testResult, setTestResult] = useState<Record<number, { ok: boolean; code: number }>>({});
+  const { data: hooksData } = useQuery({
+    queryKey: ['user-webhooks'],
+    queryFn: () => api.getWebhooks(),
+    staleTime: 60_000,
+    enabled: settingsOpen,
+  });
+  const createHookMut = useMutation({
+    mutationFn: () => api.createWebhook({ event_type: newHookEvent, url: newHookUrl.trim(), label: newHookLabel.trim() || undefined, secret: newHookSecret.trim() || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['user-webhooks'] }); setNewHookUrl(''); setNewHookLabel(''); setNewHookSecret(''); showToast('Webhook saved'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const deleteHookMut = useMutation({
+    mutationFn: (id: number) => api.deleteWebhook(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['user-webhooks'] }),
+  });
+  async function testHook(id: number) {
+    setTestingHook(id);
+    try {
+      const r = await api.testWebhook(id);
+      setTestResult((prev) => ({ ...prev, [id]: { ok: r.ok, code: r.statusCode } }));
+      if (r.ok) showToast(`Webhook delivered — HTTP ${r.statusCode}`);
+      else showToast(`Webhook failed — HTTP ${r.statusCode}`, 'error');
+    } catch (e: any) {
+      showToast(e.message, 'error');
+    } finally {
+      setTestingHook(null);
+    }
+  }
+
   const { data: subsData } = useQuery({
     queryKey: ['subcontractors'],
     queryFn: () => api.getSubcontractors(),
@@ -50,6 +142,88 @@ export default function SettingsModal() {
   const deleteSubMut = useMutation({
     mutationFn: (id: number) => api.deleteSubcontractor(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['subcontractors'] }),
+  });
+  const updateSubMut = useMutation({
+    mutationFn: (id: number) => api.updateSubcontractor(id, {
+      name: editSubForm.name.trim() || undefined,
+      specialty: editSubForm.specialty.trim() || undefined,
+      labor_rate: editSubForm.labor_rate ? Number(editSubForm.labor_rate) : undefined,
+      tax_id: editSubForm.tax_id.trim() || undefined,
+      business_type: (editSubForm.business_type as 'individual' | 'business') || undefined,
+      email: editSubForm.email.trim() || undefined,
+      address: editSubForm.address.trim() || undefined,
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['subcontractors'] }); setEditSubId(null); showToast('Subcontractor updated', 'success'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  // Material inventory
+  const [matForm, setMatForm] = useState<Partial<MaterialItem>>({ brand: '', product_name: '', finish: '', roll_width_in: 60, roll_length_ft: 25, rolls_in_stock: 0, reorder_at: 2, unit_cost: 0 });
+  const [matEditId, setMatEditId] = useState<number | null>(null);
+  const [matAdjustId, setMatAdjustId] = useState<number | null>(null);
+  const [matAdjustDelta, setMatAdjustDelta] = useState('');
+  const [matShowAdd, setMatShowAdd] = useState(false);
+  const { data: matsData } = useQuery({
+    queryKey: ['materials'],
+    queryFn: () => api.getMaterials(),
+    staleTime: 5 * 60_000,
+    enabled: settingsOpen,
+  });
+  const createMatMut = useMutation({
+    mutationFn: () => api.createMaterial(matForm),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+      setMatForm({ brand: '', product_name: '', finish: '', roll_width_in: 60, roll_length_ft: 25, rolls_in_stock: 0, reorder_at: 2, unit_cost: 0 });
+      setMatShowAdd(false);
+      showToast('Material added', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const updateMatMut = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<MaterialItem> }) => api.updateMaterial(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+      setMatEditId(null);
+      showToast('Material updated', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const deleteMatMut = useMutation({
+    mutationFn: (id: number) => api.deleteMaterial(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+    },
+  });
+  const adjustMatMut = useMutation({
+    mutationFn: ({ id, delta }: { id: number; delta: number }) => api.adjustMaterialStock(id, delta),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['materials'] });
+      qc.invalidateQueries({ queryKey: ['materials-low-stock'] });
+      setMatAdjustId(null);
+      setMatAdjustDelta('');
+      showToast('Stock updated', 'success');
+    },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  const { data: unsubData, refetch: refetchUnsubs } = useQuery({
+    queryKey: ['unsubscribes'],
+    queryFn: () => api.getUnsubscribes(),
+    enabled: showUnsubs,
+    staleTime: 30_000,
+  });
+  const addUnsubMut = useMutation({
+    mutationFn: (email: string) => api.addUnsubscribe(email),
+    onSuccess: () => { refetchUnsubs(); setNewUnsub(''); showToast('Email suppressed'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+  const removeUnsubMut = useMutation({
+    mutationFn: (id: number) => api.removeUnsubscribe(id),
+    onSuccess: () => { refetchUnsubs(); showToast('Removed from suppression list'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
   });
 
   // Sync local form state whenever the modal opens — settings may have loaded from
@@ -143,8 +317,8 @@ export default function SettingsModal() {
 
   function f(field: keyof Settings) {
     return {
-      value: local[field],
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+      value: local[field] as string,
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
         setLocal((s) => ({ ...s, [field]: e.target.value })),
     };
   }
@@ -308,6 +482,11 @@ export default function SettingsModal() {
             <label className="field-label">Portfolio URL</label>
             <input className="input" {...f('portfolioUrl')} placeholder="https://yourshop.com/portfolio" />
           </div>
+          <div className="field-group">
+            <label className="field-label">Shop Logo URL</label>
+            <input className="input" {...f('logoUrl')} placeholder="https://yourshop.com/logo.png" />
+            <p className="settings-help" style={{ marginTop: 4 }}>Shown in the header of every proposal your clients receive. Use a PNG or SVG with a transparent background for best results.</p>
+          </div>
         </div>
       </div>
 
@@ -317,6 +496,127 @@ export default function SettingsModal() {
         <div className="field-group">
           <label className="field-label">Monthly Revenue Goal ($)</label>
           <input className="input" type="number" min={0} {...f('monthlyRevenueGoal')} placeholder="10000" />
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Speed-to-Lead Auto-Responder</div>
+        <p className="settings-help">When a prospect submits your public quote request form, WrapOS instantly sends them a confirmation email — so no lead goes unanswered. Enabled by default when Resend is configured.</p>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoReplyEnabled !== false}
+              onChange={e => setLocal(s => ({ ...s, autoReplyEnabled: e.target.checked }))}
+            />
+            Auto-reply to inbound quote requests
+          </label>
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoQuoteExpiryEmail !== false}
+              onChange={e => setLocal(s => ({ ...s, autoQuoteExpiryEmail: e.target.checked }))}
+            />
+            Auto-send expiry reminder to client (3 days before a sent quote expires)
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            WrapOS emails the client a branded reminder when their quote is about to expire — recovers deals without manual follow-up.
+          </p>
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoCrossSell !== false}
+              onChange={e => setLocal(s => ({ ...s, autoCrossSell: e.target.checked }))}
+            />
+            Auto-send 90-day cross-sell email after job installation
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            90 days after a wrap job, WrapOS emails the client suggesting a complementary service (e.g., fleet client → DI-NOC, color change → PPF, racing → trailer wrap). Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoProposalNudge !== false}
+              onChange={e => setLocal(s => ({ ...s, autoProposalNudge: e.target.checked }))}
+            />
+            Auto-send proposal follow-up nudge (3 days after sending)
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When a sent proposal goes unread for 3 days (or viewed but silent for 7 days), WrapOS sends a short AI-written follow-up to the prospect automatically. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoKickoffEmail !== false}
+              onChange={e => setLocal(s => ({ ...s, autoKickoffEmail: e.target.checked }))}
+            />
+            Auto-send project kickoff email when deal is marked Won
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When you mark a lead as Won, WrapOS immediately sends an AI-written welcome email to the client outlining next steps, requesting vehicle/design info, and setting project expectations. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoProposalThankyou !== false}
+              onChange={e => setLocal(s => ({ ...s, autoProposalThankyou: e.target.checked }))}
+            />
+            Auto-send "Thank You + Next Steps" email when client approves a proposal
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When a client clicks Approve on your proposal portal page, WrapOS immediately sends them a branded email confirming their approval, outlining the 4-step process (survey → design → material order → install), and asking for vehicle list / brand guidelines. Keeps the project momentum going without any manual follow-up. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 16, height: 16 }}
+              checked={local.autoCareEmail !== false}
+              onChange={e => setLocal(s => ({ ...s, autoCareEmail: e.target.checked }))}
+            />
+            Auto-send post-install care guide when a job is logged
+          </label>
+          <p className="settings-help" style={{ marginTop: 4 }}>
+            When you add a job in the Jobs view, WrapOS instantly emails the client a care guide with vinyl-specific cleaning instructions, curing period info, and maintenance tips. Category-aware: fleet/standard, matte color change, DI-NOC, Reätec each get tailored guidance. Requires Resend.
+          </p>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Expected Response Time</label>
+          <select className="select" {...f('autoReplyResponseTime')}>
+            <option value="">1 business day (default)</option>
+            <option value="a few hours">A few hours</option>
+            <option value="24 hours">24 hours</option>
+            <option value="1 business day">1 business day</option>
+            <option value="2 business days">2 business days</option>
+          </select>
+        </div>
+        <div className="field-group">
+          <label className="field-label">Custom Auto-Reply Message (optional)</label>
+          <textarea
+            className="input"
+            {...f('autoReplyMessage')}
+            placeholder="Thanks for reaching out! We'll review your fleet wrap request and get back to you shortly."
+            rows={3}
+            style={{ resize: 'vertical', minHeight: 72 }}
+          />
+          <p className="settings-help" style={{ marginTop: 4 }}>Leave blank to use the default AI-personalized message.</p>
         </div>
       </div>
 
@@ -436,6 +736,102 @@ export default function SettingsModal() {
             Get My Quote Link
           </button>
         )}
+
+        {quoteLink && (() => {
+          const shopToken = quoteLink.split('/quote-request/')[1] ?? '';
+          const embedCode = `<script src="${window.location.origin}/embed.js?token=${shopToken}" defer><\/script>`;
+          return (
+            <div style={{ marginTop: 16, padding: '14px 16px', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 8 }}>
+                Website Widget — Embed on Any Page
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+                Paste this one line before <code style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 3, padding: '1px 4px' }}>&lt;/body&gt;</code> on your website.
+                It adds a floating "Get a Quote" button that opens your form in a popup — no redirects, no extra pages.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <code style={{ flex: 1, fontSize: 10, background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', wordBreak: 'break-all', color: 'var(--text-dim)', display: 'block', whiteSpace: 'pre-wrap' }}>
+                  {embedCode}
+                </code>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}
+                  onClick={() => { navigator.clipboard.writeText(embedCode); setEmbedCopied(true); setTimeout(() => setEmbedCopied(false), 2500); }}
+                >
+                  {embedCopied ? '✓ Copied!' : 'Copy Code'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Webhook Lead Receiver</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Your unique inbound URL. Point Facebook Lead Ads, Google Ads Lead Forms, Zapier, or any system that POSTs JSON here — leads arrive in WrapOS automatically.
+          Accepts fields: <code style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 3, padding: '1px 4px', fontSize: 10 }}>company, name, email, phone, fleet_size, vehicle_type, message, city, state, source</code>
+        </p>
+        {webhookUrl ? (
+          <div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <code style={{ flex: 1, fontSize: 10, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all', color: 'var(--text-muted)' }}>
+                {webhookUrl}
+              </code>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                onClick={() => { navigator.clipboard.writeText(webhookUrl); setWebhookCopied(true); setTimeout(() => setWebhookCopied(false), 2000); }}
+              >
+                {webhookCopied ? '✓ Copied!' : 'Copy URL'}
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+              Method: <strong>POST</strong> · Content-Type: <strong>application/json</strong> or <strong>application/x-www-form-urlencoded</strong> · No API key needed — the URL is your auth.
+            </p>
+          </div>
+        ) : (
+          <button
+            className="btn"
+            style={{ fontSize: 12 }}
+            onClick={async () => {
+              const r = await api.getMyWebhookUrl();
+              setWebhookUrl(r.url);
+            }}
+          >
+            Get My Webhook URL
+          </button>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">CRM Follow-up Calendar</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Subscribe to your WrapOS follow-up dates in Google Calendar, Apple Calendar, or Outlook. Every CRM follow-up reminder appears as an all-day event with a 1-hour alert — no manual entry required.
+        </p>
+        {(() => {
+          const calUrl = api.getFollowupIcalUrl();
+          const fullUrl = `${window.location.origin}${calUrl}`;
+          return (
+            <div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <code style={{ flex: 1, fontSize: 10, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', wordBreak: 'break-all', color: 'var(--text-muted)' }}>
+                  {fullUrl}
+                </code>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                  onClick={() => { navigator.clipboard.writeText(fullUrl); setCalendarCopied(true); setTimeout(() => setCalendarCopied(false), 2000); }}
+                >
+                  {calendarCopied ? '✓ Copied!' : 'Copy URL'}
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>
+                In Google Calendar: Other calendars → + → From URL → paste above. Updates automatically every time WrapOS sets a new follow-up date.
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="settings-section">
@@ -519,14 +915,53 @@ export default function SettingsModal() {
         </p>
         {/* List existing */}
         {(subsData?.subs ?? []).map((sub) => (
-          <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, background: 'var(--bg-input)', borderRadius: 6, padding: '6px 10px' }}>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{sub.name}</span>
-              {sub.specialty && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.specialty}</span>}
-              {sub.labor_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>${Number(sub.labor_rate)}/hr</span>}
-              {(sub.job_count ?? 0) > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.job_count} jobs · ${Number(sub.total_paid).toLocaleString()} paid</span>}
+          <div key={sub.id} style={{ marginBottom: 6, background: 'var(--bg-input)', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px' }}>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{sub.name}</span>
+                {sub.specialty && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.specialty}</span>}
+                {sub.labor_rate && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>${Number(sub.labor_rate)}/hr</span>}
+                {sub.tax_id && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6, fontFamily: 'monospace' }}>TIN: {sub.tax_id}</span>}
+                {(sub.job_count ?? 0) > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 6 }}>{sub.job_count} jobs</span>}
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 10, padding: '2px 8px' }}
+                onClick={() => {
+                  if (editSubId === sub.id) { setEditSubId(null); return; }
+                  setEditSubId(sub.id);
+                  setEditSubForm({ name: sub.name, specialty: sub.specialty || '', labor_rate: sub.labor_rate ? String(sub.labor_rate) : '', tax_id: sub.tax_id || '', business_type: sub.business_type || 'individual', email: sub.email || '', address: sub.address || '' });
+                }}
+              >{editSubId === sub.id ? 'Cancel' : 'Edit'}</button>
+              <button className="btn" style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }} onClick={() => deleteSubMut.mutate(sub.id)} disabled={deleteSubMut.isPending}>Remove</button>
             </div>
-            <button className="btn" style={{ fontSize: 10, color: 'var(--red)', padding: '2px 8px' }} onClick={() => deleteSubMut.mutate(sub.id)} disabled={deleteSubMut.isPending}>Remove</button>
+            {editSubId === sub.id && (
+              <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8 }}>
+                  <div><label className="field-label">Name</label><input className="input" value={editSubForm.name} onChange={(e) => setEditSubForm((f) => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} /></div>
+                  <div><label className="field-label">Specialty</label><input className="input" value={editSubForm.specialty} onChange={(e) => setEditSubForm((f) => ({ ...f, specialty: e.target.value }))} style={{ fontSize: 12 }} /></div>
+                  <div><label className="field-label">$/hr</label><input className="input" type="number" min={0} value={editSubForm.labor_rate} onChange={(e) => setEditSubForm((f) => ({ ...f, labor_rate: e.target.value }))} style={{ fontSize: 12 }} /></div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                  <div>
+                    <label className="field-label">Tax ID (EIN/SSN)</label>
+                    <input className="input" value={editSubForm.tax_id} onChange={(e) => setEditSubForm((f) => ({ ...f, tax_id: e.target.value }))} placeholder="XX-XXXXXXX" style={{ fontSize: 12 }} />
+                  </div>
+                  <div>
+                    <label className="field-label">Business Type</label>
+                    <select className="input" value={editSubForm.business_type} onChange={(e) => setEditSubForm((f) => ({ ...f, business_type: e.target.value }))} style={{ fontSize: 12 }}>
+                      <option value="individual">Individual / Sole Prop</option>
+                      <option value="business">Business / LLC / Corp</option>
+                    </select>
+                  </div>
+                  <div><label className="field-label">Email</label><input className="input" type="email" value={editSubForm.email} onChange={(e) => setEditSubForm((f) => ({ ...f, email: e.target.value }))} placeholder="installer@email.com" style={{ fontSize: 12 }} /></div>
+                </div>
+                <div><label className="field-label">Address (for 1099)</label><input className="input" value={editSubForm.address} onChange={(e) => setEditSubForm((f) => ({ ...f, address: e.target.value }))} placeholder="123 Main St, City, State ZIP" style={{ fontSize: 12 }} /></div>
+                <button className="btn btn-primary" style={{ fontSize: 12, alignSelf: 'flex-start' }} disabled={!editSubForm.name.trim() || updateSubMut.isPending} onClick={() => updateSubMut.mutate(sub.id)}>
+                  {updateSubMut.isPending ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {/* Add new */}
@@ -547,6 +982,382 @@ export default function SettingsModal() {
             {createSubMut.isPending ? 'Adding…' : '+ Add'}
           </button>
         </div>
+      </div>
+
+      {/* ── Material Inventory ── */}
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+            <line x1="12" y1="22.08" x2="12" y2="12" />
+          </svg>
+          Material Inventory
+        </div>
+        <p className="settings-help">
+          Track your vinyl and film stock by brand, color, and finish. Set a reorder threshold — WrapOS will alert you on the Mission view when you're running low.
+        </p>
+
+        {/* Inventory list */}
+        {(matsData?.materials ?? []).length === 0 && (
+          <p className="settings-help" style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>
+            No materials tracked yet. Add your first vinyl roll below.
+          </p>
+        )}
+        {(matsData?.materials ?? []).map((mat) => {
+          const isLow = Number(mat.rolls_in_stock) <= Number(mat.reorder_at);
+          const isEditing = matEditId === mat.id;
+          const isAdjusting = matAdjustId === mat.id;
+
+          if (isEditing) {
+            return (
+              <div key={mat.id} style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px', marginBottom: 6, border: '1px solid var(--accent)30' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 6 }}>
+                  <div>
+                    <label className="field-label">Brand</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.brand} id={`mat-edit-brand-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Product Name</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.product_name} id={`mat-edit-name-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Finish / Color</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.finish ?? ''} id={`mat-edit-finish-${mat.id}`} placeholder="Gloss Black" />
+                  </div>
+                  <div>
+                    <label className="field-label">SKU</label>
+                    <input className="input" style={{ fontSize: 12 }} defaultValue={mat.sku ?? ''} id={`mat-edit-sku-${mat.id}`} placeholder="3M-1080-G12" />
+                  </div>
+                  <div>
+                    <label className="field-label">Rolls in Stock</label>
+                    <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} defaultValue={mat.rolls_in_stock} id={`mat-edit-stock-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Reorder When Below</label>
+                    <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} defaultValue={mat.reorder_at} id={`mat-edit-reorder-${mat.id}`} />
+                  </div>
+                  <div>
+                    <label className="field-label">Cost / Roll ($)</label>
+                    <input className="input" type="number" min={0} step={1} style={{ fontSize: 12 }} defaultValue={mat.unit_cost} id={`mat-edit-cost-${mat.id}`} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={updateMatMut.isPending}
+                    onClick={() => {
+                      const brand = (document.getElementById(`mat-edit-brand-${mat.id}`) as HTMLInputElement).value.trim();
+                      const product_name = (document.getElementById(`mat-edit-name-${mat.id}`) as HTMLInputElement).value.trim();
+                      const finish = (document.getElementById(`mat-edit-finish-${mat.id}`) as HTMLInputElement).value.trim();
+                      const sku = (document.getElementById(`mat-edit-sku-${mat.id}`) as HTMLInputElement).value.trim();
+                      const rolls_in_stock = parseFloat((document.getElementById(`mat-edit-stock-${mat.id}`) as HTMLInputElement).value) || 0;
+                      const reorder_at = parseFloat((document.getElementById(`mat-edit-reorder-${mat.id}`) as HTMLInputElement).value) || 2;
+                      const unit_cost = parseFloat((document.getElementById(`mat-edit-cost-${mat.id}`) as HTMLInputElement).value) || 0;
+                      if (!brand || !product_name) return;
+                      updateMatMut.mutate({ id: mat.id, data: { brand, product_name, finish: finish || null, sku: sku || null, rolls_in_stock, reorder_at, unit_cost } });
+                    }}>
+                    {updateMatMut.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => setMatEditId(null)}>Cancel</button>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={mat.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, background: 'var(--bg-input)', borderRadius: 8, padding: '8px 12px', border: `1px solid ${isLow ? '#f59e0b30' : 'transparent'}` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mat.product_name}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)', background: 'var(--surface)', padding: '1px 5px', borderRadius: 3 }}>{mat.brand}</span>
+                  {mat.finish && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{mat.finish}</span>}
+                  {isLow && <span style={{ fontSize: 9, color: '#f59e0b', fontWeight: 700, background: '#f59e0b18', padding: '1px 5px', borderRadius: 3 }}>LOW</span>}
+                </div>
+                {isAdjusting ? (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 4 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>+/− rolls:</span>
+                    <input
+                      type="number"
+                      step={0.5}
+                      value={matAdjustDelta}
+                      onChange={(e) => setMatAdjustDelta(e.target.value)}
+                      style={{ width: 60, fontSize: 12, padding: '2px 6px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', textAlign: 'center' }}
+                      autoFocus
+                      placeholder="e.g. 3"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const d = parseFloat(matAdjustDelta);
+                          if (!isNaN(d)) adjustMatMut.mutate({ id: mat.id, delta: d });
+                        }
+                        if (e.key === 'Escape') { setMatAdjustId(null); setMatAdjustDelta(''); }
+                      }}
+                    />
+                    <button className="btn btn-primary" style={{ fontSize: 11 }}
+                      onClick={() => { const d = parseFloat(matAdjustDelta); if (!isNaN(d)) adjustMatMut.mutate({ id: mat.id, delta: d }); }}>
+                      Apply
+                    </button>
+                    <button className="btn" style={{ fontSize: 11 }} onClick={() => { setMatAdjustId(null); setMatAdjustDelta(''); }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: isLow ? '#f59e0b' : 'var(--text-muted)', marginTop: 2 }}>
+                    {Number(mat.rolls_in_stock).toFixed(1)} rolls in stock
+                    {mat.rolls_on_order > 0 && <span style={{ color: '#4d8af5', marginLeft: 6 }}>· {Number(mat.rolls_on_order).toFixed(1)} on order</span>}
+                    · reorder at {Number(mat.reorder_at).toFixed(1)}
+                    {mat.unit_cost > 0 && <span style={{ marginLeft: 6 }}>· ${Number(mat.unit_cost).toFixed(0)}/roll</span>}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => { setMatAdjustId(mat.id); setMatAdjustDelta(''); }}>±</button>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => setMatEditId(mat.id)}>Edit</button>
+                <button className="btn" style={{ fontSize: 10, padding: '2px 8px', color: 'var(--red)' }} onClick={() => deleteMatMut.mutate(mat.id)} disabled={deleteMatMut.isPending}>Remove</button>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Add new material form */}
+        {matShowAdd ? (
+          <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px', marginTop: 8, border: '1px solid var(--accent)30' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 6 }}>
+              <div>
+                <label className="field-label">Brand *</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.brand ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, brand: e.target.value }))} placeholder="3M" />
+              </div>
+              <div>
+                <label className="field-label">Product Name *</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.product_name ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, product_name: e.target.value }))} placeholder="1080-G12 Gloss Black" />
+              </div>
+              <div>
+                <label className="field-label">Finish / Color</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.finish ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, finish: e.target.value }))} placeholder="Gloss Black" />
+              </div>
+              <div>
+                <label className="field-label">SKU</label>
+                <input className="input" style={{ fontSize: 12 }} value={matForm.sku ?? ''} onChange={(e) => setMatForm((p) => ({ ...p, sku: e.target.value }))} placeholder="3M-1080-G12" />
+              </div>
+              <div>
+                <label className="field-label">Rolls in Stock</label>
+                <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} value={matForm.rolls_in_stock ?? 0} onChange={(e) => setMatForm((p) => ({ ...p, rolls_in_stock: parseFloat(e.target.value) || 0 }))} />
+              </div>
+              <div>
+                <label className="field-label">Reorder When Below</label>
+                <input className="input" type="number" min={0} step={0.5} style={{ fontSize: 12 }} value={matForm.reorder_at ?? 2} onChange={(e) => setMatForm((p) => ({ ...p, reorder_at: parseFloat(e.target.value) || 2 }))} />
+              </div>
+              <div>
+                <label className="field-label">Cost / Roll ($)</label>
+                <input className="input" type="number" min={0} step={1} style={{ fontSize: 12 }} value={matForm.unit_cost ?? 0} onChange={(e) => setMatForm((p) => ({ ...p, unit_cost: parseFloat(e.target.value) || 0 }))} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="btn btn-primary" style={{ fontSize: 12 }}
+                disabled={!matForm.brand?.trim() || !matForm.product_name?.trim() || createMatMut.isPending}
+                onClick={() => createMatMut.mutate()}>
+                {createMatMut.isPending ? 'Adding…' : '+ Add Material'}
+              </button>
+              <button className="btn" style={{ fontSize: 12 }} onClick={() => setMatShowAdd(false)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn" style={{ fontSize: 12, marginTop: 8 }} onClick={() => setMatShowAdd(true)}>
+            + Add Material
+          </button>
+        )}
+      </div>
+
+      {/* ── Mobile Push Notifications ── */}
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          Mobile Push Notifications
+        </div>
+        <p className="settings-help">
+          Get real-time notifications on your phone or desktop — new inbound leads, proposal approvals, email replies — even when WrapOS isn't open. Requires VAPID keys configured on the server.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            className={`btn ${pushStatus?.subscribed ? '' : 'btn-primary'}`}
+            onClick={togglePush}
+            disabled={pushLoading}
+            style={{ fontSize: 12 }}
+          >
+            {pushLoading ? 'Working…' : pushStatus?.subscribed ? 'Disable Push Notifications' : 'Enable Push Notifications'}
+          </button>
+          {pushStatus?.subscribed && (
+            <span style={{ fontSize: 12, color: '#10b981', fontWeight: 700 }}>
+              ✓ Active — this device will receive push alerts
+            </span>
+          )}
+          {pushStatus && !pushStatus.vapidConfigured && (
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+              Server not configured — add VAPID keys to enable
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ── Webhook Integrations ── */}
+      <div className="settings-section">
+        <div className="settings-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+          </svg>
+          Webhooks &amp; Integrations
+        </div>
+        <p className="settings-help">
+          Fire HTTP POST events to any URL when key things happen — lead won, proposal approved, inbound lead. Connect WrapOS to Zapier, Make, Slack, or your own systems. All payloads include a <code style={{ fontSize: 10, background: 'var(--surface)', padding: '1px 4px', borderRadius: 3 }}>X-WrapOS-Signature</code> HMAC header for verification.
+        </p>
+
+        {/* Existing webhooks */}
+        {(hooksData?.webhooks ?? []).map((hook) => {
+          const eventLabel = hooksData?.events?.find(e => e.value === hook.event_type)?.label ?? hook.event_type;
+          const lastResult = testResult[hook.id];
+          return (
+            <div key={hook.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8, background: 'var(--bg-input)', borderRadius: 8, padding: '8px 10px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#4d8af5', background: 'rgba(77,138,245,0.12)', padding: '1px 6px', borderRadius: 3 }}>
+                    {eventLabel}
+                  </span>
+                  {hook.label && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{hook.label}</span>}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', wordBreak: 'break-all' }}>{hook.url}</div>
+                {hook.last_triggered_at && (
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                    Last fired: {new Date(hook.last_triggered_at).toLocaleString()}
+                    {hook.last_status_code != null && (
+                      <span style={{ marginLeft: 6, color: hook.last_status_code >= 200 && hook.last_status_code < 300 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+                        HTTP {hook.last_status_code}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {lastResult && (
+                  <div style={{ fontSize: 10, marginTop: 2, color: lastResult.ok ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+                    {lastResult.ok ? `✓ Test delivered — HTTP ${lastResult.code}` : `✗ Test failed — HTTP ${lastResult.code}`}
+                  </div>
+                )}
+              </div>
+              <button
+                className="btn"
+                style={{ fontSize: 10, padding: '3px 9px', flexShrink: 0 }}
+                onClick={() => testHook(hook.id)}
+                disabled={testingHook === hook.id}
+              >
+                {testingHook === hook.id ? '…' : 'Test'}
+              </button>
+              <button
+                className="btn"
+                style={{ fontSize: 10, color: 'var(--red)', padding: '3px 8px', flexShrink: 0 }}
+                onClick={() => deleteHookMut.mutate(hook.id)}
+                disabled={deleteHookMut.isPending}
+              >
+                Remove
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Add new webhook form */}
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Add Webhook
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div className="field-group" style={{ flex: '0 0 auto', minWidth: 160 }}>
+              <label className="field-label">Event</label>
+              <select className="input" value={newHookEvent} onChange={(e) => setNewHookEvent(e.target.value)} style={{ fontSize: 12 }}>
+                {(hooksData?.events ?? [{ value: 'lead.won', label: 'Lead Won' }, { value: 'lead.lost', label: 'Lead Lost' }, { value: 'lead.advanced', label: 'Lead Stage Changed' }, { value: 'proposal.approved', label: 'Proposal Approved' }, { value: 'inbound.lead', label: 'New Inbound Lead' }]).map((ev) => (
+                  <option key={ev.value} value={ev.value}>{ev.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field-group" style={{ flex: 3, minWidth: 200 }}>
+              <label className="field-label">Destination URL (HTTPS)</label>
+              <input className="input" value={newHookUrl} onChange={(e) => setNewHookUrl(e.target.value)} placeholder="https://hooks.zapier.com/hooks/catch/..." style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: 1, minWidth: 120 }}>
+              <label className="field-label">Label (optional)</label>
+              <input className="input" value={newHookLabel} onChange={(e) => setNewHookLabel(e.target.value)} placeholder="Slack notify" style={{ fontSize: 12 }} />
+            </div>
+            <div className="field-group" style={{ flex: 1, minWidth: 120 }}>
+              <label className="field-label">Secret (optional)</label>
+              <input className="input" type="password" value={newHookSecret} onChange={(e) => setNewHookSecret(e.target.value)} placeholder="used to sign payload" style={{ fontSize: 12 }} />
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12, marginBottom: 1, flexShrink: 0 }}
+              disabled={!newHookUrl.trim() || createHookMut.isPending}
+              onClick={() => createHookMut.mutate()}
+            >
+              {createHookMut.isPending ? 'Saving…' : '+ Add'}
+            </button>
+          </div>
+          {(hooksData?.webhooks ?? []).length === 0 && (
+            <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: '8px 0 0', lineHeight: 1.5 }}>
+              No webhooks yet — add one above. Example: paste your Zapier catch hook URL to auto-create a row in Google Sheets every time you win a deal.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Email Suppression List</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          Contacts who have unsubscribed from your outreach. WrapOS blocks all automated emails to these addresses. You can manually add addresses or remove them if someone re-subscribes.
+        </p>
+        <button
+          className="btn"
+          style={{ fontSize: 12, marginBottom: showUnsubs ? 12 : 0 }}
+          onClick={() => setShowUnsubs((s) => !s)}
+        >
+          {showUnsubs ? 'Hide' : 'View Suppression List'}
+          {!showUnsubs && unsubData && unsubData.unsubscribes.length > 0 && (
+            <span style={{ marginLeft: 6, background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 6px', fontSize: 10 }}>
+              {unsubData.unsubscribes.length}
+            </span>
+          )}
+        </button>
+        {showUnsubs && (
+          <div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <input
+                className="input"
+                style={{ flex: 1, fontSize: 12 }}
+                placeholder="Manually suppress an email address…"
+                value={newUnsub}
+                onChange={(e) => setNewUnsub(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && newUnsub.includes('@')) addUnsubMut.mutate(newUnsub.trim()); }}
+              />
+              <button
+                className="btn"
+                style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                disabled={!newUnsub.includes('@') || addUnsubMut.isPending}
+                onClick={() => addUnsubMut.mutate(newUnsub.trim())}
+              >Add</button>
+            </div>
+            {!unsubData?.unsubscribes.length ? (
+              <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>No suppressions yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 200, overflowY: 'auto' }}>
+                {unsubData.unsubscribes.map((u) => (
+                  <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 7, background: 'var(--bg-elev)', border: '1px solid var(--border-subtle)' }}>
+                    <span style={{ flex: 1, fontSize: 12, fontWeight: 500, color: 'var(--text)' }}>{u.email}</span>
+                    {u.company && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{u.company}</span>}
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{new Date(u.unsubscribed_at).toLocaleDateString()}</span>
+                    <button
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 14, padding: '0 2px', lineHeight: 1 }}
+                      title="Remove from suppression list"
+                      onClick={() => removeUnsubMut.mutate(u.id)}
+                    >×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {(user?.subStatus === 'active' || user?.subStatus === 'past_due' || user?.subStatus === 'trialing') && (

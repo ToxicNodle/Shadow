@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import type { Lead } from '../../../api/types';
 import { api } from '../../../api/client';
 import { useAppStore } from '../../../store/useAppStore';
 import SmartFollowupButton from './SmartFollowupButton';
+import OmniCampaignPanel from './OmniCampaignPanel';
 
 // ── Per-lead Send Timing Chip ─────────────────────────────────────────────────
 function SendTimingChip({ leadId }: { leadId: number }) {
@@ -237,6 +238,7 @@ const TONES = ['Professional', 'Friendly', 'Direct', 'Consultative'];
 type TabMode = 'single' | 'sequence' | 'templates';
 
 interface EmailTemplate {
+  id?: number;
   label: string;
   tag: string;
   subject: string;
@@ -346,6 +348,51 @@ export default function EmailTab({ lead }: Props) {
   const [activating, setActivating] = useState(false);
   const [copiedTpl, setCopiedTpl] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
+  const [activeTemplateId, setActiveTemplateId] = useState<number | null>(null);
+  const [showSubjectSuggestions, setShowSubjectSuggestions] = useState(false);
+  const [subjectSuggestions, setSubjectSuggestions] = useState<Array<{ subject: string; approach: string; why: string }> | null>(null);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+
+  // User-saved templates
+  const { data: userTplData, refetch: refetchUserTpls } = useQuery({
+    queryKey: ['email-templates'],
+    queryFn: () => api.getEmailTemplates(),
+    staleTime: 60_000,
+  });
+  const userTemplates = userTplData?.templates ?? [];
+  const [savingTpl, setSavingTpl] = useState(false);
+  const [saveTplName, setSaveTplName] = useState('');
+  const [saveTplTag, setSaveTplTag] = useState('Custom');
+  const [showSaveForm, setShowSaveForm] = useState(false);
+  const saveTplNameRef = useRef<HTMLInputElement>(null);
+  const deleteTplMut = useMutation({
+    mutationFn: (id: number) => api.deleteEmailTemplate(id),
+    onSuccess: () => { refetchUserTpls(); showToast('Template deleted'); },
+    onError: (e: Error) => showToast(e.message, 'error'),
+  });
+
+  async function saveAsTemplate() {
+    if (!result || !saveTplName.trim()) return;
+    setSavingTpl(true);
+    try {
+      await api.createEmailTemplate({ label: saveTplName.trim(), tag: saveTplTag.trim() || 'Custom', subject: result.subject, body: result.body });
+      refetchUserTpls();
+      showToast('Template saved!');
+      setSaveTplName('');
+      setSaveTplTag('Custom');
+      setShowSaveForm(false);
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+    } finally {
+      setSavingTpl(false);
+    }
+  }
+
+  function loadUserTemplate(tpl: { id: number; subject: string; body: string }) {
+    setResult({ subject: tpl.subject, body: tpl.body });
+    setTabMode('single');
+    api.recordEmailTemplateUse(tpl.id).catch(() => {});
+  }
 
   function fillTemplate(tpl: EmailTemplate) {
     const location = settings.city && settings.state
@@ -367,6 +414,7 @@ export default function EmailTab({ lead }: Props) {
     const filled = fillTemplate(tpl);
     setResult(filled);
     setTabMode('single');
+    setActiveTemplateId(tpl.id ?? null);
   }
 
   function copyTemplate(tpl: EmailTemplate, idx: number) {
@@ -399,6 +447,7 @@ export default function EmailTab({ lead }: Props) {
     setLoading(true);
     setResult(null);
     setSequence(null);
+    setActiveTemplateId(null);
     try {
       if (tabMode === 'single') {
         const data = await api.generateEmail({ lead, emailType, tone, settings });
@@ -436,6 +485,7 @@ export default function EmailTab({ lead }: Props) {
         body: result.body,
         toEmail: lead.email,
         toName: lead.contactName || undefined,
+        ...(activeTemplateId ? { template_id: activeTemplateId } : {}),
       });
       qc.invalidateQueries({ queryKey: ['activities', lead.serverId] });
       qc.invalidateQueries({ queryKey: ['leads'] });
@@ -476,6 +526,25 @@ export default function EmailTab({ lead }: Props) {
     }
   }
 
+  async function fetchSubjectSuggestions() {
+    if (!result) return;
+    setLoadingSubjects(true);
+    setShowSubjectSuggestions(true);
+    try {
+      const data = await api.suggestSubjectLines({
+        leadId: lead.serverId ?? undefined,
+        currentBody: result.body,
+        currentSubject: result.subject,
+      });
+      setSubjectSuggestions(data.suggestions);
+    } catch (e: unknown) {
+      showToast((e as Error).message, 'error');
+      setShowSubjectSuggestions(false);
+    } finally {
+      setLoadingSubjects(false);
+    }
+  }
+
   function handleSmartFollowupDraft(subject: string, body: string) {
     setResult({ subject, body });
     setTabMode('single');
@@ -485,6 +554,9 @@ export default function EmailTab({ lead }: Props) {
     <div>
       {/* CAN-SPAM: warn if contact has unsubscribed */}
       {lead.serverId && <UnsubscribedWarning leadId={lead.serverId} />}
+
+      {/* 4-Step Omni Campaign (email + SMS) */}
+      {lead.serverId && <OmniCampaignPanel lead={lead} />}
 
       {/* Smart Follow-up AI composer */}
       {lead.serverId && (
@@ -528,24 +600,65 @@ export default function EmailTab({ lead }: Props) {
       </div>
 
       {tabMode === 'templates' && (
-        <div className="tpl-grid">
-          {BUILT_IN_TEMPLATES.map((tpl, i) => (
-            <div key={i} className="tpl-card">
-              <div className="tpl-card-header">
-                <span className="tpl-tag">{tpl.tag}</span>
-                <span className="tpl-name">{tpl.label}</span>
+        <div>
+          {/* My saved templates */}
+          {userTemplates.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-faint)', marginBottom: 8 }}>
+                My Templates ({userTemplates.length})
               </div>
-              <div className="tpl-preview">{fillTemplate(tpl).body.split('\n').slice(0, 3).join(' ').slice(0, 120)}…</div>
-              <div className="tpl-actions">
-                <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => loadTemplate(tpl)}>
-                  Use Template
-                </button>
-                <button className="btn" style={{ fontSize: 11 }} onClick={() => copyTemplate(tpl, i)}>
-                  {copiedTpl === i ? '✓ Copied' : 'Copy'}
-                </button>
+              <div className="tpl-grid">
+                {userTemplates.map((tpl) => (
+                  <div key={tpl.id} className="tpl-card" style={{ borderColor: 'rgba(77,138,245,0.3)', position: 'relative' }}>
+                    <div className="tpl-card-header">
+                      <span className="tpl-tag" style={{ background: 'rgba(77,138,245,0.15)', color: '#4d8af5', borderColor: 'rgba(77,138,245,0.3)' }}>{tpl.tag}</span>
+                      <span className="tpl-name">{tpl.label}</span>
+                      {tpl.use_count > 0 && (
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>Used {tpl.use_count}×</span>
+                      )}
+                    </div>
+                    <div className="tpl-preview">{tpl.body.split('\n').slice(0, 3).join(' ').slice(0, 120)}…</div>
+                    <div className="tpl-actions">
+                      <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => loadUserTemplate(tpl)}>
+                        Use Template
+                      </button>
+                      <button
+                        className="btn"
+                        style={{ fontSize: 11, color: 'var(--red)', borderColor: 'rgba(248,113,113,0.3)' }}
+                        onClick={() => deleteTplMut.mutate(tpl.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
+          )}
+
+          {/* Built-in templates */}
+          <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-faint)', marginBottom: 8 }}>
+            Built-in Templates
+          </div>
+          <div className="tpl-grid">
+            {BUILT_IN_TEMPLATES.map((tpl, i) => (
+              <div key={i} className="tpl-card">
+                <div className="tpl-card-header">
+                  <span className="tpl-tag">{tpl.tag}</span>
+                  <span className="tpl-name">{tpl.label}</span>
+                </div>
+                <div className="tpl-preview">{fillTemplate(tpl).body.split('\n').slice(0, 3).join(' ').slice(0, 120)}…</div>
+                <div className="tpl-actions">
+                  <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={() => loadTemplate(tpl)}>
+                    Use Template
+                  </button>
+                  <button className="btn" style={{ fontSize: 11 }} onClick={() => copyTemplate(tpl, i)}>
+                    {copiedTpl === i ? '✓ Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -659,11 +772,19 @@ export default function EmailTab({ lead }: Props) {
       {/* Single email result */}
       {result && (
         <div className="email-preview">
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: showSubjectSuggestions ? 4 : 8 }}>
             <div className="email-subject-row" style={{ flex: 1, margin: 0, border: 'none', padding: 0, background: 'none' }}>
               <span className="label">Sub</span>
               <span className="subject">{result.subject}</span>
             </div>
+            <button
+              className="btn"
+              style={{ fontSize: 10, flexShrink: 0, padding: '3px 8px', color: '#4d8af5', borderColor: 'rgba(77,138,245,.3)' }}
+              onClick={() => { if (showSubjectSuggestions) { setShowSubjectSuggestions(false); setSubjectSuggestions(null); } else fetchSubjectSuggestions(); }}
+              title="Get 3 alternative subject lines from AI"
+            >
+              {showSubjectSuggestions ? '✕ Close' : '✦ Try different'}
+            </button>
             <button
               className="btn"
               style={{ fontSize: 11, flexShrink: 0, padding: '4px 10px' }}
@@ -673,6 +794,46 @@ export default function EmailTab({ lead }: Props) {
               {previewMode ? '✎ Edit' : '⊞ Preview'}
             </button>
           </div>
+          {showSubjectSuggestions && (
+            <div style={{ marginBottom: 8, padding: '8px 10px', background: 'var(--bg-elev)', borderRadius: 8, border: '1px solid rgba(77,138,245,.2)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#4d8af5', marginBottom: 6 }}>
+                ✦ AI Subject Line Alternatives
+              </div>
+              {loadingSubjects ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', padding: '4px 0' }}>
+                  <span className="spinner" style={{ width: 10, height: 10 }} />
+                  Generating options…
+                </div>
+              ) : subjectSuggestions ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {subjectSuggestions.map((s, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setResult((r) => r ? { ...r, subject: s.subject } : r);
+                        setShowSubjectSuggestions(false);
+                        setSubjectSuggestions(null);
+                      }}
+                      style={{
+                        display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                        background: 'var(--bg-card)', border: '1px solid var(--border)',
+                        borderRadius: 6, padding: '7px 10px', cursor: 'pointer', textAlign: 'left',
+                        transition: 'border-color .12s',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#4d8af5')}
+                      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+                    >
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>{s.subject}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+                        <span style={{ color: '#4d8af5', fontWeight: 700, marginRight: 4, textTransform: 'capitalize' }}>{s.approach}</span>
+                        {s.why}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
           {previewMode ? (
             <div className="email-client-preview">
               <div className="email-client-preview-meta">
@@ -705,7 +866,54 @@ export default function EmailTab({ lead }: Props) {
                 </button>
               </>
             )}
+            <button
+              className="btn"
+              style={{ fontSize: 11, color: '#4d8af5', borderColor: 'rgba(77,138,245,0.3)', marginLeft: 'auto' }}
+              onClick={() => { setShowSaveForm((v) => !v); setTimeout(() => saveTplNameRef.current?.focus(), 50); }}
+              title="Save this email as a reusable template"
+            >
+              {showSaveForm ? '✕ Cancel' : '+ Save as Template'}
+            </button>
           </div>
+
+          {/* Save-as-template inline form */}
+          {showSaveForm && (
+            <div style={{ marginTop: 10, padding: '12px 14px', background: 'rgba(77,138,245,0.06)', border: '1px solid rgba(77,138,245,0.2)', borderRadius: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#4d8af5', marginBottom: 10 }}>
+                Save as Template
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <input
+                  ref={saveTplNameRef}
+                  value={saveTplName}
+                  onChange={(e) => setSaveTplName(e.target.value)}
+                  placeholder="Template name (e.g. 'My Fleet Intro')"
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                    background: 'var(--bg-input)', color: 'var(--text)', fontSize: 12,
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveAsTemplate(); }}
+                />
+                <input
+                  value={saveTplTag}
+                  onChange={(e) => setSaveTplTag(e.target.value)}
+                  placeholder="Tag"
+                  style={{
+                    width: 80, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                    background: 'var(--bg-input)', color: 'var(--text)', fontSize: 12,
+                  }}
+                />
+              </div>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: 12, width: '100%' }}
+                onClick={saveAsTemplate}
+                disabled={savingTpl || !saveTplName.trim()}
+              >
+                {savingTpl ? 'Saving…' : 'Save Template'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
