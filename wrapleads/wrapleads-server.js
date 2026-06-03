@@ -403,6 +403,33 @@ async function migrateDb() {
   } catch (e) {
     console.warn('[migrate] Could not create quote_requests table:', e.message);
   }
+
+  // Pitch shares — public single-page leave-behinds for the in-person AR pitch
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pitch_shares (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        token           TEXT NOT NULL UNIQUE,
+        company_name    TEXT NOT NULL,
+        domain          TEXT,
+        logo_url        TEXT,
+        primary_color   TEXT,
+        secondary_color TEXT,
+        tagline         TEXT,
+        mockup_url      TEXT NOT NULL,
+        roi_html        TEXT,
+        vehicle_type    TEXT,
+        view_count      INT DEFAULT 0,
+        last_viewed_at  TIMESTAMPTZ,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pitch_shares_token ON pitch_shares(token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pitch_shares_user  ON pitch_shares(user_id)`);
+  } catch (e) {
+    console.warn('[migrate] Could not create pitch_shares table:', e.message);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -5399,6 +5426,257 @@ app.post('/proposals/:token/approve', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── Pitch Shares — public single-page QR leave-behind for in-person AR pitch ──
+
+const pitchQuoteLimiter = rateLimit({ windowMs: 60 * 1000, max: 12, standardHeaders: true, legacyHeaders: false });
+
+app.post('/pitch-shares', authMiddleware, async (req, res) => {
+  const uid = String(req.user.id);
+  const {
+    company_name, domain = null, logo_url = null,
+    primary_color = null, secondary_color = null, tagline = null,
+    mockup_url, roi_html = null, vehicle_type = null,
+  } = req.body || {};
+  if (!company_name || !mockup_url) return res.status(400).json({ error: 'company_name and mockup_url required' });
+  const token = require('crypto').randomBytes(16).toString('hex');
+  try {
+    await pool.query(`
+      INSERT INTO pitch_shares
+        (user_id, token, company_name, domain, logo_url, primary_color, secondary_color, tagline, mockup_url, roi_html, vehicle_type)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    `, [uid, token, company_name, domain, logo_url, primary_color, secondary_color, tagline, mockup_url, roi_html, vehicle_type]);
+    res.json({ ok: true, token, url: `${APP_URL}/pitch/${token}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUBLIC — pitch leave-behind page (no auth, prospect scans QR)
+app.get('/pitch/:token', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT s.*, u.settings_json
+      FROM pitch_shares s
+      JOIN users u ON u.id = s.user_id::bigint
+      WHERE s.token = $1
+    `, [req.params.token]);
+    if (!rows.length) return res.status(404).send('<h2 style="font-family:sans-serif;padding:40px">This pitch link has expired or does not exist.</h2>');
+    const p = rows[0];
+
+    // View tracking + notify shop owner on first view (and every 3rd after).
+    pool.query(
+      `UPDATE pitch_shares SET view_count = COALESCE(view_count,0)+1, last_viewed_at = NOW() WHERE token=$1 RETURNING view_count`,
+      [req.params.token],
+    ).then(async ({ rows: vRows }) => {
+      const vc = vRows[0]?.view_count || 0;
+      if (vc === 1 || vc % 3 === 0) {
+        await createNotification(String(p.user_id), {
+          type: 'email_reply',
+          title: `👁 ${p.company_name} opened the AR pitch you left them`,
+          body: vc === 1 ? 'First view — strike while it\'s hot.' : `Opened ${vc}× — they keep coming back.`,
+          metadata: { pitch_token: req.params.token },
+        });
+      }
+    }).catch(() => {});
+
+    const s = p.settings_json || {};
+    const shopName    = s.companyName || 'Shadow Graphix';
+    const senderName  = s.senderName || '';
+    const senderEmail = s.senderEmail || '';
+    const senderPhone = s.senderPhone || '';
+    const primary = p.primary_color || '#ff6b35';
+
+    const html = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(p.company_name)} — Wrap Concept · ${escapeHtml(shopName)}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0b0d;color:#f4f5f7;line-height:1.55}
+  .wrap{max-width:540px;margin:0 auto;background:#14161a;min-height:100vh}
+  .header{padding:28px 24px 20px;background:linear-gradient(180deg,${primary} 0%,${primary}cc 100%);color:#fff;text-align:center}
+  .shop{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.85;margin-bottom:6px}
+  .h1{font-size:22px;font-weight:800;line-height:1.2;margin-bottom:6px}
+  .h-sub{font-size:13px;opacity:.9}
+  .hero{position:relative;background:#000}
+  .hero img{width:100%;display:block}
+  .hero-tag{position:absolute;bottom:10px;right:10px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:4px 8px;border-radius:4px;letter-spacing:.04em}
+  .body{padding:24px 24px 32px;display:flex;flex-direction:column;gap:24px}
+  .section-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:${primary};margin-bottom:10px;border-bottom:2px solid ${primary}33;padding-bottom:6px}
+  .roi p{font-size:13px;color:#cbd1da;margin-bottom:10px}
+  .roi table{width:100%;border-collapse:collapse;font-size:12px;color:#e5e7eb}
+  .roi th{background:#1c1f24;padding:8px 10px;text-align:left;font-weight:700;color:#9ca3af;font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+  .roi td{padding:8px 10px;border-bottom:1px solid #232830}
+  .roi tr:last-child td{border-bottom:none}
+  .form-card{background:#1c1f24;border:1px solid #2a2e36;border-radius:12px;padding:20px}
+  .form-title{font-size:18px;font-weight:800;margin-bottom:4px;color:#fff}
+  .form-sub{font-size:12px;color:#9ca3af;margin-bottom:16px}
+  .field{margin-bottom:10px}
+  .label{display:block;font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+  .input{width:100%;padding:11px 12px;background:#0a0b0d;border:1px solid #2a2e36;border-radius:6px;color:#fff;font-size:14px;font-family:inherit}
+  .input:focus{outline:none;border-color:${primary}}
+  textarea.input{resize:vertical;min-height:60px}
+  .cta{background:${primary};color:#fff;border:none;width:100%;padding:14px;border-radius:8px;font-size:15px;font-weight:800;cursor:pointer;margin-top:6px;letter-spacing:-.2px}
+  .cta:disabled{opacity:.6;cursor:default}
+  .submitted{background:#064e3b;border:1px solid #047857;color:#d1fae5;padding:16px;border-radius:10px;text-align:center;font-weight:700;font-size:14px}
+  .contact{font-size:12px;color:#9ca3af;text-align:center;padding:18px 24px 28px;border-top:1px solid #232830}
+  .contact strong{color:#e5e7eb}
+  .contact a{color:${primary};text-decoration:none}
+  .disclaimer{font-size:10px;color:#5e6470;text-align:center;padding:0 24px 18px}
+  @media(min-width:600px){.body{padding:32px}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="header">
+    <div class="shop">${escapeHtml(shopName)} · Vehicle Wraps</div>
+    <div class="h1">${escapeHtml(p.company_name)}</div>
+    <div class="h-sub">A wrap concept on the vehicle we showed you today</div>
+  </div>
+
+  <div class="hero">
+    <img src="${p.mockup_url}" alt="${escapeHtml(p.company_name)} wrap concept" />
+    <div class="hero-tag">AI-rendered concept</div>
+  </div>
+
+  <div class="body">
+    ${p.roi_html ? `
+    <div>
+      <div class="section-label">Your rolling billboard — the numbers</div>
+      <div class="roi">${p.roi_html}</div>
+    </div>` : ''}
+
+    <div class="form-card" id="formCard">
+      <div class="form-title">Get a real quote</div>
+      <div class="form-sub">Tell us how to reach you and we'll send a full proposal within 1 business day.</div>
+      <div class="field"><label class="label">Your name</label><input class="input" id="f-name" autocomplete="name" /></div>
+      <div class="field"><label class="label">Email</label><input class="input" type="email" id="f-email" autocomplete="email" /></div>
+      <div class="field"><label class="label">Phone</label><input class="input" type="tel" id="f-phone" autocomplete="tel" /></div>
+      <div class="field"><label class="label">Anything to know?</label><textarea class="input" id="f-message" placeholder="Fleet size, timing, special requests…"></textarea></div>
+      <button class="cta" id="submitBtn">Send my info →</button>
+    </div>
+  </div>
+
+  <div class="contact">
+    ${escapeHtml(shopName)}${senderName ? ' · <strong>' + escapeHtml(senderName) + '</strong>' : ''}<br>
+    ${[
+      senderPhone ? `<a href="tel:${senderPhone.replace(/[^0-9+]/g,'')}">${escapeHtml(senderPhone)}</a>` : '',
+      senderEmail ? `<a href="mailto:${senderEmail}">${escapeHtml(senderEmail)}</a>` : '',
+    ].filter(Boolean).join(' · ')}
+  </div>
+  <div class="disclaimer">Concept generated on-site using AI. Final design, materials, and pricing confirmed in the proposal.</div>
+</div>
+<script>
+(function(){
+  var btn = document.getElementById('submitBtn');
+  btn.addEventListener('click', async function(){
+    var name = document.getElementById('f-name').value.trim();
+    var em = document.getElementById('f-email').value.trim();
+    var ph = document.getElementById('f-phone').value.trim();
+    var msg = document.getElementById('f-message').value.trim();
+    if (!name || (!em && !ph)) { btn.textContent = 'Add name + email or phone'; return; }
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      var r = await fetch('/pitch/${req.params.token}/quote-request', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ name: name, email: em, phone: ph, message: msg })
+      });
+      if (!r.ok) throw new Error('Network error');
+      document.getElementById('formCard').innerHTML = '<div class="submitted">✓ Thanks ' + name.split(' ')[0].replace(/[<>]/g,'') + '! ${escapeHtml(shopName).replace(/'/g, "\\'")} will be in touch within 1 business day.</div>';
+    } catch(e) {
+      btn.disabled = false; btn.textContent = 'Try again';
+    }
+  });
+})();
+</script>
+</body></html>`;
+    res.set('Content-Type', 'text/html').send(html);
+  } catch (e) {
+    res.status(500).send('<h2 style="font-family:sans-serif;padding:40px">Server error</h2>');
+  }
+});
+
+// PUBLIC — quote submission from the pitch page
+app.post('/pitch/:token/quote-request', pitchQuoteLimiter, express.json(), async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT user_id, company_name, domain FROM pitch_shares WHERE token=$1',
+      [req.params.token],
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Pitch share not found' });
+    const share = rows[0];
+    const uid = String(share.user_id);
+    const name = String(req.body?.name || '').trim().slice(0, 200);
+    const emailAddr = String(req.body?.email || '').trim().slice(0, 200);
+    const phone = String(req.body?.phone || '').trim().slice(0, 60);
+    const message = String(req.body?.message || '').trim().slice(0, 2000);
+    if (!name || (!emailAddr && !phone)) return res.status(400).json({ error: 'name and email or phone required' });
+
+    await pool.query(
+      `INSERT INTO quote_requests (user_id, name, company, email, phone, message)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [uid, name, share.company_name, emailAddr || null, phone || null, message || null],
+    );
+
+    const existing = await pool.query(
+      `SELECT id FROM leads WHERE user_id=$1 AND lower(company)=lower($2) LIMIT 1`,
+      [uid, share.company_name],
+    );
+    let leadId;
+    if (existing.rows.length) {
+      leadId = existing.rows[0].id;
+      await pool.query(
+        `UPDATE leads SET contact_name = COALESCE(NULLIF($1,''), contact_name),
+                          email        = COALESCE(NULLIF($2,''), email),
+                          phone        = COALESCE(NULLIF($3,''), phone),
+                          status       = CASE WHEN status IN ('won','lost') THEN status ELSE 'replied' END,
+                          updated_at   = NOW()
+         WHERE id = $4 AND user_id = $5`,
+        [name, emailAddr, phone, leadId, uid],
+      );
+    } else {
+      const clientId = `pitch-qr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const ins = await pool.query(
+        `INSERT INTO leads
+           (user_id, client_id, company, category, contact_name, email, phone, website,
+            pitch_angle, status, notes)
+         VALUES ($1,$2,$3,'fleet',$4,$5,$6,$7,$8,'new',$9) RETURNING id`,
+        [
+          uid, clientId, share.company_name, name,
+          emailAddr || null, phone || null,
+          share.domain ? `https://${share.domain}` : null,
+          'On-site AR pitch — prospect scanned the QR and submitted the form',
+          message ? `Inbound from pitch QR:\n${message}` : 'Inbound from pitch QR (no message)',
+        ],
+      );
+      leadId = ins.rows[0].id;
+    }
+
+    await logActivity(pool, {
+      leadId, userId: uid, type: 'note_added',
+      subject: '🎯 Prospect submitted the on-site AR pitch form',
+      body: `${name}${emailAddr ? ' · ' + emailAddr : ''}${phone ? ' · ' + phone : ''}${message ? '\n\n' + message : ''}`,
+      metadata: { pitch_token: req.params.token, source: 'pitch_qr' },
+    });
+
+    await createNotification(uid, {
+      type: 'email_reply',
+      title: `🎯 ${share.company_name} just sent in their info!`,
+      body: `${name} filled out the form on your AR pitch leave-behind. ${emailAddr || phone || 'No contact info'}.`,
+      metadata: { lead_id: leadId, pitch_token: req.params.token },
+    });
+
+    res.json({ ok: true, lead_id: leadId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Tiny HTML escape helper used by the pitch page template.
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 // ── Quote Request (inbound lead form) ─────────────────────────────────────────
 

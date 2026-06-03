@@ -5,6 +5,7 @@ import type { Lead, LeadCategory } from '../../api/types';
 import { DEFAULT_SETTINGS } from '../../api/types';
 import BeforeAfterSlider from '../ui/BeforeAfterSlider';
 import WrapRoiPanel from '../ui/WrapRoiPanel';
+import QrLeaveBehind from '../ui/QrLeaveBehind';
 import { roiHtml, type RoiResult } from '../../utils/wrapRoi';
 
 type Step = 'company' | 'brand' | 'capture' | 'result';
@@ -548,6 +549,9 @@ export default function PitchModeModal({ onClose }: Props) {
                 brandColor={brand.primary_color}
                 onRoiChange={setRoi}
               />
+
+              {/* QR leave-behind — prospect scans, lands on a public pitch page */}
+              <QrLeaveBehind brand={brand} pickedVariant={pickedVariant} roi={roi} />
 
               {/* Save target picker */}
               <div style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>

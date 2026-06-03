@@ -276,6 +276,20 @@ export const api = {
       ok: boolean;
       brand: { name: string; domain: string; logo_url: string; primary_color: string; secondary_color: string; tagline: string };
     }>('/vision/brand-lookup', { method: 'POST', body: JSON.stringify({ companyName }) }),
+  createPitchShare: (payload: {
+    company_name: string;
+    domain?: string | null;
+    logo_url?: string | null;
+    primary_color?: string | null;
+    secondary_color?: string | null;
+    tagline?: string | null;
+    mockup_url: string;
+    roi_html?: string | null;
+    vehicle_type?: string | null;
+  }) => authFetch<{ ok: boolean; token: string; url: string }>('/pitch-shares', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+
   pitchPreview: (file: File, params: { companyName: string; primary_color: string; secondary_color: string; tagline?: string; styles?: string[]; style?: string }) => {
     const token = getToken();
     const form = new FormData();
