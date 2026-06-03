@@ -13,9 +13,10 @@ export default function Topbar() {
   const { user, logout } = useAuth();
   const [visionOpen, setVisionOpen] = useState(false);
   const [arOpen, setArOpen] = useState(false);
-  const [pitchOpen, setPitchOpen] = useState(false);
   const [cardScanOpen, setCardScanOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const pitchOpen = useAppStore((s) => s.pitchOpen);
+  const setPitchOpen = useAppStore((s) => s.setPitchOpen);
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => import('../../api/client').then((m) => m.api.getNotifications()),

@@ -50,26 +50,30 @@ export default function BeforeAfterSlider({ before, after, border }: Props) {
         border: border || '1px solid var(--border)',
         cursor: 'ew-resize',
         background: '#000',
-        lineHeight: 0,
+        // gpt-image-1 returns 1536×1024 (3:2). Lock the container to that
+        // aspect so the BEFORE and AFTER images cover the same area and the
+        // slider reveals an aligned crop regardless of the source photo's
+        // native aspect ratio.
+        aspectRatio: '3 / 2',
+        width: '100%',
       }}
       onMouseDown={(e) => { setDragging(true); updateFromClientX(e.clientX); }}
       onTouchStart={(e) => { setDragging(true); const t = e.touches[0]; if (t) updateFromClientX(t.clientX); }}
     >
-      {/* AFTER image (full width, sets the box height) */}
+      {/* AFTER image — fills the box */}
       <img
         src={after}
         alt="wrap concept"
         draggable={false}
-        style={{ width: '100%', display: 'block' }}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
       />
-      {/* BEFORE image, absolute, full-size, clipped from the right */}
+      {/* BEFORE image — same coverage, clipped from the right by pct */}
       <img
         src={before}
         alt="original"
         draggable={false}
         style={{
-          position: 'absolute',
-          top: 0, left: 0,
+          position: 'absolute', inset: 0,
           width: '100%', height: '100%',
           objectFit: 'cover',
           clipPath: `inset(0 ${100 - pct}% 0 0)`,

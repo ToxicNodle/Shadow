@@ -49,19 +49,15 @@ export default function CRMPage() {
     commandPaletteOpen: s.commandPaletteOpen,
     setCommandPaletteOpen: s.setCommandPaletteOpen,
   }));
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  // Onboarding is derived from the user's first-login flag plus a "dismissed"
+  // toggle the user can flip themselves. Avoids setState-in-effect cascades.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const blocked = user?.subStatus === 'inactive' || user?.subStatus === 'canceled';
+  const showOnboarding = !!user?.isFirstLogin && !blocked && !onboardingDismissed;
 
   useEffect(() => {
-    if (!user) return;
-    const blocked = user.subStatus === 'inactive' || user.subStatus === 'canceled';
-    if (blocked) {
-      setPaywallOpen(true);
-      return;
-    }
-    if (user.isFirstLogin) {
-      setShowOnboarding(true);
-    }
-  }, [user, setPaywallOpen]);
+    if (blocked) setPaywallOpen(true);
+  }, [blocked, setPaywallOpen]);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -128,7 +124,7 @@ export default function CRMPage() {
       <SettingsModal />
       <ApolloModal />
       <PaywallModal />
-      {showOnboarding && <OnboardingModal onClose={() => setShowOnboarding(false)} />}
+      {showOnboarding && <OnboardingModal onClose={() => setOnboardingDismissed(true)} />}
       {blueprintOpen && <BlueprintScanner onClose={() => setBlueprintOpen(false)} />}
       {bulkOutreachOpen && <BulkOutreachModal />}
       {csvImportOpen && <CSVImportModal />}

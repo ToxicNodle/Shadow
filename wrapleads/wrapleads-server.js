@@ -681,6 +681,31 @@ app.get('/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
+
+// HTML escaping for inline templates (proposals, pitch shares, portal pages).
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Robust extractor for OpenAI image-edit responses. gpt-image-1 returns
+// `b64_json` by default; legacy endpoints return `url`. Throw if neither is
+// present so callers surface a real error instead of producing
+// `data:image/png;base64,undefined`.
+function extractImageUrl(openaiResponse) {
+  const item = openaiResponse?.data?.[0];
+  if (item?.url) return item.url;
+  if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
+  throw new Error(
+    openaiResponse?.error?.message
+      || 'OpenAI returned no image (it may have refused the prompt — try a different photo or style)'
+  );
+}
+
 function safeUser(u) {
   return {
     id:           u.id,
@@ -4248,7 +4273,7 @@ app.post('/vision/ar-preview', authMiddleware, upload.single('image'), async (re
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
 
-    const image_url = data.data?.[0]?.url || (`data:image/png;base64,${data.data?.[0]?.b64_json}`);
+    const image_url = extractImageUrl(data);
     res.json({ ok: true, image_url, original_url: originalDataUrl });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4373,7 +4398,7 @@ app.post('/vision/pitch-preview', authMiddleware, upload.single('image'), async 
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error?.message || 'OpenAI image edit error');
-      const image_url = data.data?.[0]?.url || (`data:image/png;base64,${data.data?.[0]?.b64_json}`);
+      const image_url = extractImageUrl(data);
       return { style: styleKey, label: STYLE_LIBRARY[styleKey].label, image_url };
     }
 
@@ -5670,13 +5695,6 @@ app.post('/pitch/:token/quote-request', pitchQuoteLimiter, express.json(), async
     res.status(500).json({ error: e.message });
   }
 });
-
-// Tiny HTML escape helper used by the pitch page template.
-function escapeHtml(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
 
 // ── Quote Request (inbound lead form) ─────────────────────────────────────────
 

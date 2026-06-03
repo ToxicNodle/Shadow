@@ -26,7 +26,7 @@ The repo's single product lives in `wrapleads/` — a B2B lead-gen SaaS for vehi
 
 There is **no test runner** configured — `package.json` has no `test` script and no test files exist. Do not invent or claim test commands.
 
-CI (`.github/workflows/webpack.yml`) only does `npm install && npx webpack` on Node 18/20/22; this workflow predates the Vite setup and will fail since there is no webpack config. Don't rely on it as a signal — verify changes locally.
+CI (`.github/workflows/ci.yml`) runs `node --check wrapleads-server.js`, `cd frontend && npm run lint` (non-blocking — pre-existing backlog), and `npm run build` on Node 20/22. It does NOT run tests (there aren't any). Verify substantive changes locally too — CI catches syntax errors and TS/Vite build failures, but the lint step is intentionally non-blocking so it won't block on the pre-existing warnings.
 
 ## Architecture
 

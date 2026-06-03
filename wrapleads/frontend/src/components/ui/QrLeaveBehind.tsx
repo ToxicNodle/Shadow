@@ -36,6 +36,27 @@ interface Share {
   vehicleType: string | null;
 }
 
+// Relative luminance of a #RRGGBB color, per WCAG. Used to keep the QR
+// foreground readable when the brand color is a wash-out (light yellow, etc).
+function luminance(hex: string): number {
+  const m = /^#?([\da-f]{6})$/i.exec(hex);
+  if (!m) return 0;
+  const v = parseInt(m[1], 16);
+  const channel = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel((v >> 16) & 0xff)
+       + 0.7152 * channel((v >> 8) & 0xff)
+       + 0.0722 * channel(v & 0xff);
+}
+
+// QR scanners need ~3:1 contrast against white. If the brand color is too
+// light, fall back to near-black so the code still scans.
+function qrForeground(brandColor: string): string {
+  return luminance(brandColor) > 0.5 ? '#0f172a' : brandColor;
+}
+
 export default function QrLeaveBehind({ brand, pickedVariant, roi }: Props) {
   const showToast = useAppStore((s) => s.showToast);
   const [share, setShare] = useState<Share | null>(null);
@@ -68,7 +89,7 @@ export default function QrLeaveBehind({ brand, pickedVariant, roi }: Props) {
         errorCorrectionLevel: 'M',
         margin: 1,
         width: 360,
-        color: { dark: brand.primary_color || '#111', light: '#ffffff' },
+        color: { dark: qrForeground(brand.primary_color || '#111'), light: '#ffffff' },
       });
       if (!mountedRef.current) return;
       setShare({ token, url, variantStyle: pickedVariant.style, vehicleType: currentVehicle });

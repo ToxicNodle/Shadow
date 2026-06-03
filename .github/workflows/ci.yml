@@ -1,0 +1,55 @@
+name: CI
+
+# Validates what the codebase actually has:
+#   - Express monolith server (syntax-checked with `node --check`)
+#   - React/Vite SPA in wrapleads/frontend (typecheck + build via `npm run build`)
+#   - ESLint on the frontend (non-blocking — backlog being burned down)
+# There is no test runner configured in this repo (see CLAUDE.md), so there
+# are no test steps here. Add them when tests exist.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20.x, 22.x]
+    defaults:
+      run:
+        working-directory: wrapleads
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: |
+            wrapleads/package-lock.json
+            wrapleads/frontend/package-lock.json
+
+      - name: Install server deps
+        run: npm ci
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: wrapleads/frontend
+
+      - name: Syntax-check server
+        run: node --check wrapleads-server.js
+
+      - name: Lint frontend
+        run: npm run lint
+        working-directory: wrapleads/frontend
+        continue-on-error: true
+
+      - name: Build frontend (tsc + vite)
+        run: npm run build

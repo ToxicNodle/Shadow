@@ -95,6 +95,7 @@ interface AppStore {
   csvImportOpen: boolean;
   proposalOpen: boolean;
   proposalLeadId: string | null;
+  pitchOpen: boolean;
   setAddLeadOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setApolloOpen: (open: boolean) => void;
@@ -103,6 +104,7 @@ interface AppStore {
   setBulkOutreachOpen: (open: boolean) => void;
   setCsvImportOpen: (open: boolean) => void;
   setProposalOpen: (open: boolean, leadId?: string) => void;
+  setPitchOpen: (open: boolean) => void;
 
   // Current lead for Apollo enrichment
   apolloLeadId: string | null;
@@ -225,6 +227,7 @@ export const useAppStore = create<AppStore>()(
       csvImportOpen: false,
       proposalOpen: false,
       proposalLeadId: null,
+      pitchOpen: false,
       setAddLeadOpen: (open) => set({ addLeadOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setApolloOpen: (open) => set({ apolloOpen: open }),
@@ -233,6 +236,7 @@ export const useAppStore = create<AppStore>()(
       setBulkOutreachOpen: (open) => set({ bulkOutreachOpen: open }),
       setCsvImportOpen: (open) => set({ csvImportOpen: open }),
       setProposalOpen: (open, leadId) => set({ proposalOpen: open, proposalLeadId: leadId ?? null }),
+      setPitchOpen: (open) => set({ pitchOpen: open }),
 
       // Apollo lead context
       apolloLeadId: null,

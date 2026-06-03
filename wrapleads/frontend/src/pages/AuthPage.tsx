@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, setToken } from '../api/client';
@@ -32,10 +32,6 @@ export default function AuthPage() {
   // Reset password fields
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-
-  useEffect(() => {
-    if (resetToken) setView('reset');
-  }, [resetToken]);
 
   function switchView(v: View) {
     setView(v);

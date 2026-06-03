@@ -38,7 +38,12 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
   if (!res.ok) {
     let msg = res.statusText;
-    try { const e = await res.json(); msg = e.error ?? e.message ?? msg; } catch {}
+    try {
+      const e = await res.json();
+      msg = e.error ?? e.message ?? msg;
+    } catch {
+      // Response body wasn't JSON — fall back to the statusText already in msg.
+    }
     throw new ApiError(res.status, msg);
   }
 

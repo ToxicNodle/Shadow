@@ -46,6 +46,7 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
     });
 
   const ACTIONS: CmdItem[] = [
+    { id: 'a:pitch',     group: 'action', label: 'Pitch Mode',        sub: 'In-person AR demo: brand lookup + camera → wrap', icon: '📱', action: () => { store.setPitchOpen(true); onClose(); } },
     { id: 'a:add',       group: 'action', label: 'Add Lead',          sub: 'Create a new lead manually',              icon: '+',  action: () => { store.setAddLeadOpen(true); onClose(); } },
     { id: 'a:import',    group: 'action', label: 'Import CSV',        sub: 'Bulk import leads from a spreadsheet',     icon: '↑',  action: () => { store.setCsvImportOpen(true); onClose(); } },
     { id: 'a:ai-import', group: 'action', label: 'AI Import',         sub: 'Paste any contact list — AI parses it',    icon: '✨', action: () => { store.setPasteImportOpen(true); onClose(); } },
