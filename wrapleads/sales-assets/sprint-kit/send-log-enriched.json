@@ -1,0 +1,146 @@
+[
+  {
+    "ts": "2026-06-02T17:22:34.873Z",
+    "name": "Vincent Battaglia",
+    "company": "Renova Energy",
+    "state": "CA",
+    "to": "vbattaglia@renovaenergy.com",
+    "message_id": "767408e4-106d-484a-ab94-d8de9cf25d64",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:35.634Z",
+    "name": "Michael Allen",
+    "company": "All Energy Solar",
+    "state": "MN",
+    "to": "michael.allen@allenergysolar.com",
+    "message_id": "be74f621-6e46-49a9-a12a-70e29afbd70f",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:36.396Z",
+    "name": "Sean McDonald",
+    "company": "IronRidge",
+    "state": "CA",
+    "to": "smcdonald@ironridge.com",
+    "message_id": "8f05bf3f-bc93-48c3-bea5-aa89993ef3b6",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:37.173Z",
+    "name": "Jason Pittman",
+    "company": "Big Sun Solar",
+    "state": "TX",
+    "to": "jason@bigsunsolar.com",
+    "message_id": "5b938e3c-452f-4da2-83ee-576399832b59",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:37.882Z",
+    "name": "Thomas Byrne",
+    "company": "CleanCapital",
+    "state": "NY",
+    "to": "tbyrne@cleancapital.com",
+    "message_id": "e20bd46d-c270-4ff5-b01b-dcb07ebd891c",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:39.410Z",
+    "name": "Lloyd Lee",
+    "company": "NATiVE Solar",
+    "state": "TX",
+    "to": "lloyd@nativesolar.com",
+    "message_id": "1199970d-a622-481c-b077-756ece3973f7",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:40.148Z",
+    "name": "Stan Pipkin",
+    "company": "Lighthouse Solar Austin",
+    "state": "TX",
+    "to": "spipkin@lighthousesolar.com",
+    "message_id": "35a2d1ff-f729-47e1-8ffa-5f8128076409",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:40.918Z",
+    "name": "Cory Hayes",
+    "company": "A.M. Sun Solar",
+    "state": "CA",
+    "to": "cory@amsunsolar.com",
+    "message_id": "96ce24dc-82dd-4ba2-bf9e-54adfeb1ded0",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:41.670Z",
+    "name": "Jeffrey Cohen",
+    "company": "Nautilus Solar Energy",
+    "state": "IL",
+    "to": "jeff@nautilussolar.com",
+    "message_id": "023385bb-b983-4daf-a09c-6af9a0043823",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:42.391Z",
+    "name": "Heather Ingebrigtsen",
+    "company": "Sunrise Power Solutions",
+    "state": "NY",
+    "to": "heather@sunrisepowersolutions.com",
+    "message_id": "15eb1f8b-5f3a-45ef-864c-a0774fbaa52d",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:43.163Z",
+    "name": "Erik Krivokopich",
+    "company": "M Bar C Construction",
+    "state": "CA",
+    "to": "erik@mbarconline.com",
+    "message_id": "b688c142-7db0-441f-8aa0-cadf1c6ac83c",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:43.884Z",
+    "name": "Al Lawrence",
+    "company": "Artisan Electrical Contractors",
+    "state": "NH",
+    "to": "allawrence@artisanelectric.com",
+    "message_id": "77a69fa1-7032-4abc-8ce1-4803e73eb7dc",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:44.609Z",
+    "name": "Lindsay Mills",
+    "company": "John Mills Electric",
+    "state": "NY",
+    "to": "lmills@johnmillselectric.com",
+    "message_id": "eb525263-ed58-4c01-8efd-38e8efc7fd01",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:45.329Z",
+    "name": "Jeffrey Shed",
+    "company": "Sunshine Renewable Solutions",
+    "state": "TX",
+    "to": "jeff@sunshinerenewable.com",
+    "message_id": "306dfdfb-778e-4977-b612-38a76c52868e",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:46.073Z",
+    "name": "Steve Nelson",
+    "company": "Brooklyn SolarWorks",
+    "state": "NY",
+    "to": "steve@brooklynsolarworks.com",
+    "message_id": "582d30ce-50c3-4d29-b39b-77977e1d7dfb",
+    "ok": true
+  },
+  {
+    "ts": "2026-06-02T17:22:46.802Z",
+    "name": "Greg Jakubowski",
+    "company": "Solar by CIR",
+    "state": "NY",
+    "to": "gjakubowski@cirelectric.com",
+    "message_id": "467a1d93-9a61-4827-9945-d047afb710f3",
+    "ok": true
+  }
+]

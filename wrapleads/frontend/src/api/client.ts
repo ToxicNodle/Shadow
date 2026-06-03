@@ -21,6 +21,26 @@ export class ApiError extends Error {
   }
 }
 
+// Build a query string from a partial-record params object, omitting any
+// undefined / null / empty entries so we never stamp "?state=undefined".
+function buildQueryString(params?: Record<string, unknown>): string {
+  if (!params) return '';
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  if (!entries.length) return '';
+  return '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
+}
+
+// Extract { error } from a JSON error response, falling back to a default
+// when parsing fails. Replaces the silent empty-catch pattern.
+async function safeJsonError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string; message?: string } | null;
+    return body?.error ?? body?.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -37,8 +57,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
   }
 
   if (res.status === 402) {
-    let msg = 'Subscription required';
-    try { const e = await res.json(); msg = e.error ?? msg; } catch {}
+    const msg = await safeJsonError(res, 'Subscription required');
     // Open paywall — lazy require to avoid circular import at module load
     import('../store/useAppStore').then(({ useAppStore }) => {
       useAppStore.getState().setPaywallOpen(true);
@@ -47,8 +66,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
   }
 
   if (!res.ok) {
-    let msg = res.statusText;
-    try { const e = await res.json(); msg = e.error ?? e.message ?? msg; } catch {}
+    const msg = await safeJsonError(res, res.statusText);
     throw new ApiError(res.status, msg);
   }
 
@@ -57,7 +75,7 @@ export async function authFetch<T>(url: string, opts?: RequestInit): Promise<T> 
 
 // ---- Typed API helpers ----
 
-import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink, MaterialItem } from './types';
+import type { Lead, User, SavedSearch, CarrierSearchParams, CarrierSearchResult, CarrierStats, BlueprintResult, PipelineAnalytics, QueuedEmail, Bid, BidSummary, InstalledJob, VisionQuoteResult, DesignBrief, MockupResult, FleetVehicle, FleetImportResult, WrapContent, ContentSchedule, EinkDevice, EinkPushLog, JobPhoto, AppNotification, PortalLink, MaterialItem, SolarLead, SolarSearchParams, PilotInstaller, SolarAuction } from './types';
 
 export const api = {
   // Auth
@@ -1250,6 +1268,163 @@ export const api = {
   convertQuoteToJob: (quoteId: number) =>
     authFetch<{ ok: boolean; job: import('./types').InstalledJob; leadId: number }>(`/quotes/${quoteId}/convert-to-job`, { method: 'POST' }),
 
+  // ── Commercial Solar Scout ───────────────────────────────────────────
+  searchSolarLeads: (params: SolarSearchParams) =>
+    authFetch<{ total: number; results: SolarLead[]; limit: number; offset: number }>('/solar/discover', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  getQualifiedSolarLeads: (params?: { state?: string; limit?: number }) => {
+    const qs = buildQueryString(params);
+    return authFetch<{ qualified: SolarLead[]; total: number; gates_applied: string[] }>(
+      `/solar/qualified${qs}`
+    );
+  },
+  getSolarCompany: (id: number) =>
+    authFetch<{
+      company: Record<string, unknown>;
+      economics: import('./types').SolarEconomics;
+      incentive_stack: import('./types').SolarIncentiveStack | null;
+      net_payback_years: number | null;
+      naics_fit: import('./types').NaicsFitProfile | null;
+      satellite_url: string | null;
+      suggested_titles: string[];
+    }>(`/solar/companies/${id}`),
+  importSolarLead: (companyId: number) =>
+    authFetch<{ ok: boolean; leadId: number | null }>('/solar/import', {
+      method: 'POST', body: JSON.stringify({ companyId }),
+    }),
+  qualifyLead: (input: { domain?: string; company?: string; street?: string; city?: string; state?: string; zip?: string; latitude?: number; longitude?: number; building_sqft?: number; roof_type?: string }) =>
+    authFetch<{
+      qualified_at: string;
+      status: 'Ultra-Qualified' | 'Qualified' | 'Marginal' | 'Disqualified';
+      score: number;
+      gates: Record<string, boolean>;
+      lead_alert: string;
+      economics: import('./types').SolarEconomics;
+      incentive_stack: import('./types').SolarIncentiveStack;
+      net_payback_years: number | null;
+      urgency: string;
+      naics_fit: import('./types').NaicsFitProfile | null;
+      tariff: import('./types').SolarTariff;
+      utility: { name: string | null; rate_per_kwh: number; source: string };
+      dsire_programs?: Array<{ name: string; end_date?: string | null; administrator?: string | null }>;
+    }>('/solar/qualify', { method: 'POST', body: JSON.stringify(input) }),
+
+  // Customer-ready solar proposal HTML (publicly shareable URL).
+  createSolarProposal: (leadId: number) =>
+    authFetch<{
+      token: string;
+      url: string;
+      pdf_url: string;
+      summary: { company: string; system_kw: number; net_payback: number | null; net_cost: number; annual_savings: number; npv_p50?: number | null; pays_back_prob?: number | null };
+      simulation?: {
+        npv: { p10: number; p50: number; p90: number; mean: number };
+        payback_years: { p10: number; p50: number; p90: number; probability_under_10y: number; probability_pays_back: number };
+      } | null;
+    }>(`/solar/leads/${leadId}/proposal`, { method: 'POST', body: '{}' }),
+
+  // Pilot installers (requireWrapOS)
+  getPilotInstallers: () =>
+    authFetch<{ installers: PilotInstaller[] }>('/solar/pilot/installers'),
+  createPilotInstaller: (data: Partial<PilotInstaller>) =>
+    authFetch<{ installer: PilotInstaller }>('/solar/pilot/installers', {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+  updatePilotInstaller: (id: number, patch: Partial<PilotInstaller>) =>
+    authFetch<{ installer: PilotInstaller }>(`/solar/pilot/installers/${id}`, {
+      method: 'PUT', body: JSON.stringify(patch),
+    }),
+  deletePilotInstaller: (id: number) =>
+    authFetch<{ ok: boolean }>(`/solar/pilot/installers/${id}`, { method: 'DELETE' }),
+  assignSolarLeads: (installerId: number, leadIds: number[]) =>
+    authFetch<{ ok: boolean; assigned: number }>('/solar/pilot/assign', {
+      method: 'POST', body: JSON.stringify({ installer_id: installerId, lead_ids: leadIds }),
+    }),
+  exportSolarPilotCsv: (params?: { state?: string; minScore?: number }) =>
+    `${window.location.origin}/solar/pilot/export.csv${buildQueryString(params)}`,
+
+  // Auction marketplace
+  getSolarAuctions: () =>
+    authFetch<{ auctions: SolarAuction[] }>('/solar/auctions'),
+  openSolarAuction: (params: { lead_id: number; hours?: number; floor_price?: number; bid_modes?: string[] }) =>
+    authFetch<{ auction: SolarAuction; invited: number }>('/solar/auctions', {
+      method: 'POST', body: JSON.stringify(params),
+    }),
+  awardSolarAuction: (auctionId: number, bidId: number) =>
+    authFetch<{ auction: SolarAuction; winner: unknown }>(`/solar/auctions/${auctionId}/award`, {
+      method: 'POST', body: JSON.stringify({ bid_id: bidId }),
+    }),
+  cancelSolarAuction: (auctionId: number) =>
+    authFetch<{ auction: SolarAuction }>(`/solar/auctions/${auctionId}/cancel`, {
+      method: 'POST', body: '{}',
+    }),
+  getPublicAuction: (token: string) =>
+    fetch(`/solar/auctions/${token}`).then(r => r.json()) as Promise<{ auction: SolarAuction; snapshot: SolarAuction['snapshot']; bids: unknown[]; bid_count: number }>,
+
+  // Speed-to-lead webhook config
+  getSolarIntakeSecret: () =>
+    authFetch<{ secret: string | null }>('/solar/intake/secret'),
+  rotateSolarIntakeSecret: () =>
+    authFetch<{ secret: string; hint: string }>('/solar/intake/rotate-secret', { method: 'POST', body: '{}' }),
+
+  // Speed-to-lead SLA dashboard
+  getSolarSla: () =>
+    authFetch<{
+      total_leads: number;
+      avg_seconds_to_first_touch: number | null;
+      median_seconds_to_first_touch: number | null;
+      under_one_minute: number;
+      under_five_minutes: number;
+    }>('/solar/sla'),
+
+  // Aggregated overview for the HelioScout home dashboard
+  getSolarOverview: () =>
+    authFetch<{
+      totals: {
+        total_companies?: number; my_solar_leads?: number; my_won?: number;
+        my_open_auctions?: number; my_installers?: number;
+      };
+      by_state:   Array<{ state: string; n: number }>;
+      by_source:  Array<{ source: string; n: number }>;
+      by_naics2:  Array<{ naics2: string; n: number }>;
+      score_distribution: {
+        bucket_80_100?: number; bucket_60_79?: number; bucket_40_59?: number;
+        bucket_20_39?: number; bucket_under_20?: number;
+      };
+      monthly_adds: Array<{ month: string; n: number }>;
+    }>('/solar/overview'),
+
+  // Bulk import installer's own CSV of leads
+  importSolarCsv: (csvText: string) =>
+    authFetch<{ ok: boolean; inserted: number; skipped: number; errors: number; mapped_columns: string[] }>(
+      '/solar/leads/csv-import',
+      { method: 'POST', body: JSON.stringify({ csv_text: csvText }) }
+    ),
+
+  // EventSource URL for live auction bid streaming (public, tokenized)
+  solarAuctionStreamUrl: (token: string) =>
+    `${window.location.origin}/solar/auctions/${token}/stream`,
+
+  // CRM integrations (Phase B4) — HubSpot first, more providers later.
+  getIntegrationsStatus: () =>
+    authFetch<{
+      hubspot_configured: boolean;
+      connections: Array<{ provider: string; account_id: string | null; account_name: string | null; updated_at: string }>;
+    }>('/solar/integrations/status'),
+
+  // URL to start HubSpot OAuth — this is a redirect endpoint, so we open it in
+  // the same tab and let it bounce through HubSpot back to the callback.
+  hubspotConnectUrl: () => `${window.location.origin}/solar/integrations/hubspot/connect`,
+
+  disconnectHubSpot: () =>
+    authFetch<{ ok: boolean }>('/solar/integrations/hubspot/disconnect', { method: 'POST', body: '{}' }),
+
+  // Manually re-sync this user's commercial_solar leads in a state to HubSpot
+  pushHubSpotState: (state: string) =>
+    authFetch<{ ok: number; failed: number; errors: Array<{ batch_index: number; status: number; body: string }> }>(
+      '/solar/integrations/hubspot/push',
+      { method: 'POST', body: JSON.stringify({ state }) }
+    ),
   // Market White Space Map
   getMarketMap: () =>
     authFetch<{

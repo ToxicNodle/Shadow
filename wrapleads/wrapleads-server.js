@@ -46,6 +46,12 @@ const jwt      = require('jsonwebtoken');
 const Stripe   = require('stripe');
 const crypto   = require('crypto');
 const email    = require('./lib/email');
+const compliance = require('./lib/compliance');
+const solarMath = require('./lib/solar-math');
+const incentives = require('./lib/solar-incentives');
+const naicsFit = require('./lib/naics-solar-fit');
+const tariffs = require('./lib/solar-tariffs');
+const { buildSolarRouter, startAuctionWorker } = require('./lib/solar-router');
 const rateLimit = require('express-rate-limit');
 
 const PORT              = parseInt(process.env.PORT || '3001', 10);
@@ -809,6 +815,204 @@ async function migrateDb() {
     console.warn('[migrate] Could not create shop_quotes table:', e.message);
   }
 
+  // ── Commercial Solar Scout ────────────────────────────────────────────────
+  // Property-data columns used by the solar-score formula and the discover view.
+  try {
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS building_sqft INTEGER`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS roof_type TEXT`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS utility_provider TEXT`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS est_kw_capacity INTEGER`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS est_annual_kwh INTEGER`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS naics_code TEXT`);
+    // Owner-occupied properties can capture the ITC themselves; lessees
+    // need their landlord involved or a PPA structure. Surfacing this flag
+    // separates the high-conviction sales calls from the political ones.
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_owner_occupied BOOLEAN`);
+    // intent_signal stores the strongest external buying signal we have on
+    // file for this company (e.g. recent sustainability-manager job posting,
+    // public ESG commitment, new-roof permit). Used by the solar-score SQL
+    // and the AI prompt.
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS intent_signal TEXT`);
+    await pool.query(`ALTER TABLE companies ADD COLUMN IF NOT EXISTS intent_signal_at TIMESTAMPTZ`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_sqft ON companies(building_sqft DESC NULLS LAST)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_roof ON companies(roof_type)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_intent ON companies(intent_signal) WHERE intent_signal IS NOT NULL`);
+  } catch (e) { console.warn('[migrate] Could not add solar columns to companies:', e.message); }
+
+  // TCPA / consent flags on leads.
+  try {
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS do_not_email BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS do_not_call BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS opt_out_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS consent_basis TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_leads_dne ON leads(do_not_email) WHERE do_not_email = TRUE`);
+  } catch (e) { console.warn('[migrate] Could not add consent columns to leads:', e.message); }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS unsubscribe_tokens (
+        id          BIGSERIAL PRIMARY KEY,
+        token       TEXT NOT NULL UNIQUE,
+        lead_id     BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        user_id     TEXT NOT NULL,
+        email       TEXT NOT NULL,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        used_at     TIMESTAMPTZ
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_unsub_token ON unsubscribe_tokens(token)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_unsub_lead  ON unsubscribe_tokens(lead_id)`);
+  } catch (e) { console.warn('[migrate] Could not create unsubscribe_tokens:', e.message); }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS outreach_audit_log (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        lead_id       BIGINT REFERENCES leads(id) ON DELETE CASCADE,
+        channel       TEXT NOT NULL,
+        recipient     TEXT,
+        consent_basis TEXT,
+        message_id    TEXT,
+        metadata      JSONB DEFAULT '{}',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_oal_user ON outreach_audit_log(user_id, created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_oal_lead ON outreach_audit_log(lead_id)`);
+  } catch (e) { console.warn('[migrate] Could not create outreach_audit_log:', e.message); }
+
+  // Pilot installer registry — WrapLeads users (brokers) onboard local solar
+  // installers and route exclusive leads to them with a per-lead price.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pilot_installers (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        installer_name  TEXT NOT NULL,
+        installer_email TEXT NOT NULL,
+        installer_phone TEXT,
+        company_name    TEXT,
+        territory_states TEXT[] DEFAULT '{}',
+        territory_zips   TEXT[] DEFAULT '{}',
+        lead_quota      INT DEFAULT 25,
+        price_per_lead  NUMERIC(8,2) DEFAULT 0,
+        accept_token    TEXT NOT NULL UNIQUE,
+        active          BOOLEAN DEFAULT TRUE,
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pilot_inst_user ON pilot_installers(user_id)`);
+  } catch (e) { console.warn('[migrate] Could not create pilot_installers:', e.message); }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pilot_assignments (
+        id             BIGSERIAL PRIMARY KEY,
+        installer_id   BIGINT NOT NULL REFERENCES pilot_installers(id) ON DELETE CASCADE,
+        lead_id        BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        user_id        TEXT NOT NULL,
+        assigned_at    TIMESTAMPTZ DEFAULT NOW(),
+        accepted_at    TIMESTAMPTZ,
+        outcome        TEXT NOT NULL DEFAULT 'pending',
+        outcome_notes  TEXT,
+        payout_amount  NUMERIC(8,2),
+        outcome_token  TEXT NOT NULL UNIQUE,
+        updated_at     TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (installer_id, lead_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pilot_assign_user ON pilot_assignments(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pilot_assign_inst ON pilot_assignments(installer_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pilot_assign_out  ON pilot_assignments(outcome)`);
+  } catch (e) { console.warn('[migrate] Could not create pilot_assignments:', e.message); }
+
+  // Per-user webhook secret for the /webhooks/solar-intake speed-to-lead path.
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS solar_intake_secret TEXT`);
+  } catch (e) { console.warn('[migrate] Could not add solar_intake_secret column:', e.message); }
+
+  // Auction marketplace — installers bid for exclusive access to a discovered lead.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS solar_auctions (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        lead_id         BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+        public_token    TEXT NOT NULL UNIQUE,
+        status          TEXT NOT NULL DEFAULT 'open',
+        bid_modes       TEXT[] NOT NULL DEFAULT ARRAY['fixed','commission','hybrid'],
+        floor_price     NUMERIC(8,2) DEFAULT 0,
+        opens_at        TIMESTAMPTZ DEFAULT NOW(),
+        closes_at       TIMESTAMPTZ NOT NULL,
+        winning_bid_id  BIGINT,
+        winner_installer_id BIGINT REFERENCES pilot_installers(id) ON DELETE SET NULL,
+        award_notes     TEXT,
+        snapshot        JSONB DEFAULT '{}',
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_auctions_user      ON solar_auctions(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_auctions_lead      ON solar_auctions(lead_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_auctions_status    ON solar_auctions(status, closes_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_auctions_token     ON solar_auctions(public_token)`);
+  } catch (e) { console.warn('[migrate] Could not create solar_auctions:', e.message); }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS solar_auction_bids (
+        id              BIGSERIAL PRIMARY KEY,
+        auction_id      BIGINT NOT NULL REFERENCES solar_auctions(id) ON DELETE CASCADE,
+        installer_id    BIGINT NOT NULL REFERENCES pilot_installers(id) ON DELETE CASCADE,
+        bid_mode        TEXT NOT NULL,
+        amount          NUMERIC(8,2) NOT NULL DEFAULT 0,
+        commission_pct  NUMERIC(5,2) DEFAULT 0,
+        message         TEXT,
+        submitted_at    TIMESTAMPTZ DEFAULT NOW(),
+        score           NUMERIC(10,2),
+        UNIQUE (auction_id, installer_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_auction_bids_a ON solar_auction_bids(auction_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_auction_bids_i ON solar_auction_bids(installer_id)`);
+  } catch (e) { console.warn('[migrate] Could not create solar_auction_bids:', e.message); }
+
+  // CRM integrations — HubSpot/Salesforce/Pipedrive OAuth token storage.
+  // Phase B4. One row per (user_id, provider). Tokens auto-refreshed by
+  // lib/integrations/hubspot.js#getValidToken — long-lived refresh, short-lived access.
+  //
+  // SECURITY NOTE: access_token + refresh_token are stored as plaintext TEXT.
+  // Protection layers in order:
+  //   1. Managed Postgres at-rest disk encryption (Railway/RDS default)
+  //   2. Network-level TLS for all DB connections
+  //   3. Application-layer auth — only req.user.id matching the row can read
+  // For a hardening upgrade, wrap access_token + refresh_token with pgcrypto
+  // (pgp_sym_encrypt) keyed off a separate KMS secret. Tracked as a follow-up;
+  // consistent with how users.password_hash and users.solar_intake_secret are
+  // currently stored elsewhere in this file.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_connections (
+        id            BIGSERIAL PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        provider      TEXT NOT NULL,
+        access_token  TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at    TIMESTAMPTZ,
+        account_id    TEXT,
+        account_name  TEXT,
+        scopes        TEXT[] DEFAULT '{}',
+        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_id, provider)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_crm_user_provider ON crm_connections(user_id, provider)`);
+  } catch (e) { console.warn('[migrate] Could not create crm_connections:', e.message); }
   try {
     await pool.query(`ALTER TABLE shop_quotes ADD COLUMN IF NOT EXISTS expiry_email_sent BOOLEAN DEFAULT FALSE`);
   } catch (e) {
@@ -1341,6 +1545,28 @@ const apiLimiter = rateLimit({
     if (p.startsWith('/portal/'))        return true;
     if (p.startsWith('/portfolio/'))     return true;
     if (p.startsWith('/quote-request/')) return true;
+    // Solar Scout: speed-to-lead intake + public auction bid pages must
+    // not be throttled — installers hit them from email links and external
+    // webhooks need consistent sub-5s response times.
+    if (p === '/solar/intake')                 return true;
+    if (p.startsWith('/solar/auctions/') &&
+        (p.endsWith('/bid') || p.endsWith('/stream') || /^\/solar\/auctions\/[^/]+$/.test(p))) return true;
+    if (p.startsWith('/solar/__unsubscribe/')) return true;
+    // Body-large endpoint shouldn't be capped per-minute.
+    if (p === '/solar/leads/csv-import')       return true;
+    // Public top-of-funnel marketing endpoints — these get hit by anonymous
+    // traffic from the calculator + sales pages; a per-IP global cap would
+    // throttle a viral spike. They have their own lightweight guards.
+    if (p === '/solar/store/calculate')        return true;
+    if (p === '/solar/store/sample')           return true;
+    if (p === '/solar/store/sample.csv')       return true;
+    if (p === '/solar/store/roast-pitch')      return true;
+    if (p === '/solar/store/checkout')         return true;
+    if (p.startsWith('/solar/store/state-stats/')) return true;
+    // Unified all-leads bundle — large + freely shareable, viral-friendly.
+    if (p === '/solar/store/all-leads.csv'    ) return true;
+    if (p === '/solar/store/all-leads.jsonl'  ) return true;
+    if (p === '/solar/store/all-leads.zip'    ) return true;
     if (p.startsWith('/hook/'))          return true;
     if (p.startsWith('/embed.js'))       return true;
     if (p.startsWith('/demo'))           return true;
@@ -2193,6 +2419,7 @@ const APOLLO_TITLES = {
   reatec:       ['Principal', 'Design Director', 'Project Architect', 'Managing Principal'],
   colorchange:  ['Owner', 'General Manager', 'Marketing Director', 'VP of Marketing'],
   wallgraphics: ['Marketing Director', 'Brand Manager', 'Facilities Manager', 'Director of Marketing'],
+  commercial_solar: ['Facilities Manager', 'Director of Facilities', 'Plant Manager', 'Sustainability Director', 'Chief Operating Officer', 'VP of Real Estate', 'Property Manager', 'Director of Operations'],
   default:      ['Owner', 'CEO', 'President', 'Marketing Director', 'Operations Manager'],
 };
 
@@ -3153,6 +3380,17 @@ app.post('/webhooks/email-inbound', express.json({ type: '*/*' }), async (req, r
     const lead = leads[0];
     const uid = lead.user_id;
 
+    // STOP / UNSUBSCRIBE detection — short-circuit before any other processing
+    // so we don't run AI classification on what's already an unambiguous opt-out
+    // and don't count STOP as engagement.
+    if (compliance.isStopReply(subject + ' ' + text)) {
+      await compliance.flipOptOut(pool, { leadId: lead.id, userId: uid, reason: 'inbound_stop' });
+      await logActivity(pool, { leadId: lead.id, userId: uid, type: 'status_changed',
+        subject: 'Auto opt-out (STOP reply)', body: 'Lead replied with STOP / unsubscribe — drips cancelled.',
+        metadata: { inbound: true, opt_out: true, from } });
+      return;
+    }
+
     // AI intent classification — runs async, falls back to 'interested' on failure
     let intent = 'interested';
     let summary = '';
@@ -3611,7 +3849,8 @@ app.get('/leads/analytics', authMiddleware, async (req, res) => {
     // Projected revenue by category (conservative per-lead averages)
     const REV_PER_LEAD = {
       fleet: 2500, dinoc: 4500, gc_referral: 12000,
-      construction: 3500, color_change: 1800, racing: 35000, other: 1500,
+      construction: 3500, color_change: 1800, racing: 35000,
+      commercial_solar: 8000, other: 1500,
     };
     let projectedRevenue = 0;
     for (const [cat, count] of Object.entries(byCategory)) {
@@ -4622,7 +4861,7 @@ const CSV_FIELD_MAP = {
   pitch_angle: ['pitchangle', 'pitch', 'pitchnotes'],
 };
 
-const VALID_CATEGORIES = ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing'];
+const VALID_CATEGORIES = ['fleet','design','construction','dinoc','reatec','colorchange','wallgraphics','gc_referral','racing','commercial_solar'];
 const VALID_STATUSES = ['new','cold','contacted','replied','meeting','proposal','won','lost'];
 
 // Multer for multipart uploads (CSV import, blueprint PDF, vision images, job photos)
@@ -6785,7 +7024,7 @@ async function processEmailQueue() {
   if (!resendKey) return;
   try {
     const { rows } = await pool.query(`
-      SELECT q.*, l.contact_name, l.company
+      SELECT q.*, l.contact_name, l.company, l.do_not_email, l.category
       FROM email_queue q
       JOIN leads l ON l.id = q.lead_id
       WHERE q.status = 'pending' AND q.send_at <= NOW()
@@ -6793,6 +7032,11 @@ async function processEmailQueue() {
       FOR UPDATE SKIP LOCKED
     `);
     for (const item of rows) {
+      // Compliance gate — never send to a lead that's opted out.
+      if (item.do_not_email) {
+        await pool.query(`UPDATE email_queue SET status='cancelled', error_msg='do_not_email' WHERE id=$1`, [item.id]);
+        continue;
+      }
       try {
         const userR = await pool.query('SELECT settings_json FROM users WHERE id=$1', [item.user_id]);
         const s = userR.rows[0]?.settings_json || {};
@@ -6823,7 +7067,10 @@ async function processEmailQueue() {
         const baseUrl = process.env.APP_BASE_URL || APP_URL;
         const dripPixelUrl = `${baseUrl}/track/email/${dripTrackToken}`;
 
-        // CAN-SPAM: generate (or reuse) unsubscribe token and build footer
+        // CAN-SPAM: generate (or reuse) unsubscribe token and build footer.
+        // Universal across all categories (commercial_solar gets the same
+        // treatment via this path — solar-specific compliance footer was
+        // superseded by the unified getOrCreateUnsubToken+buildUnsubFooter).
         const unsubToken = await getOrCreateUnsubToken(item.user_id, item.to_email, item.lead_id).catch(() => null);
         const unsubUrl = unsubToken ? `${baseUrl}/unsubscribe/${unsubToken}` : null;
         const unsubFooter = buildUnsubFooter(unsubUrl || `${baseUrl}/unsubscribe/invalid`, fromName);
@@ -6934,7 +7181,7 @@ function startDripWorker() {
 }
 
 // Daily digest — sends each user a 7am morning briefing via email
-const REV_EST_DIGEST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500 };
+const REV_EST_DIGEST = { fleet: 4500, dinoc: 6000, gc_referral: 18000, construction: 5000, colorchange: 3500, racing: 40000, reatec: 5500, design: 3000, wallgraphics: 2500, commercial_solar: 8000 };
 
 function digestFmt(n) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -20428,7 +20675,7 @@ app.post('/ai/social-post', authMiddleware, async (req, res) => {
     const shopSettings = settingsR.rows[0]?.settings_json || {};
     const shopName = shopSettings.companyName || 'our shop';
     const VEHICLE_NAMES = { cargo_van: 'cargo van', box_truck: 'box truck', semi: 'semi hauler', pickup: 'pickup truck', bus: 'bus', fleet_mixed: 'mixed fleet', other: 'vehicle' };
-    const CAT_NAMES = { fleet: 'fleet wrap', racing: 'race livery', dinoc: 'DI-NOC architectural film', construction: 'construction fleet wrap', colorchange: 'color change wrap', gc_referral: 'commercial wrap', reatec: 'Rea Tec film', other: 'vehicle wrap' };
+    const CAT_NAMES = { fleet: 'fleet wrap', racing: 'race livery', dinoc: 'DI-NOC architectural film', construction: 'construction fleet wrap', colorchange: 'color change wrap', gc_referral: 'commercial wrap', reatec: 'Rea Tec film', commercial_solar: 'commercial solar installation', other: 'vehicle wrap' };
 
     const prompt = `You're writing social media posts for ${shopName}, a vehicle wrap and graphics shop.
 
@@ -22960,6 +23207,370 @@ app.get('/analytics/market-opportunity', authMiddleware, async (req, res) => {
 
     res.json({ ok: true, opportunities, totalUntapped });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Commercial Solar Scout ───────────────────────────────────────────────────
+
+// Lead-pack fulfillment — fires from the Stripe webhook on a successful
+// one-time payment. Resolves the right CSV(s) for the purchased pack and
+// emails them to the buyer with a download link. Idempotent enough for
+// Stripe's at-least-once delivery: re-sending the same email is harmless.
+async function fulfillLeadPack(session) {
+  const fs = require('fs');
+  const path = require('path');
+  const pack = session.metadata?.helioscout_pack;
+  const state = (session.metadata?.helioscout_state || '').toUpperCase();
+  const buyerEmail = session.customer_details?.email || session.customer_email;
+  const dir = path.join(__dirname, 'sales-assets', 'territory-packs');
+
+  if (!buyerEmail) {
+    console.error('[fulfillLeadPack] no buyer email on session', session.id);
+    return;
+  }
+
+  // Resolve which file(s) the buyer gets.
+  let files = [];
+  let label = '';
+  try {
+    const all = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    if (pack === 'national') {
+      files = all.filter(f => /^helioscout-[A-Z]{2}-\d+leads\.csv$/.test(f));
+      label = `the National Pack (all ${files.length} states, ~20,206 leads)`;
+    } else if (pack === 'state' || pack === 'metro') {
+      const match = all.find(f => f.startsWith(`helioscout-${state}-`));
+      if (match) files = [match];
+      label = `the ${state} ${pack === 'metro' ? 'Metro' : 'State'} Pack`;
+    }
+  } catch (e) {
+    console.error('[fulfillLeadPack] file resolution error:', e.message);
+  }
+
+  const baseUrl = process.env.APP_BASE_URL || APP_URL;
+  // Build secure download links. For the public asset dir these are direct;
+  // a production deploy would sign these or gate behind a one-time token.
+  const links = files.map(f => `${baseUrl}/sales-assets/territory-packs/${f}`);
+  const linkBlock = links.length
+    ? links.map(l => `• ${l}`).join('\n')
+    : `Your pack is being prepared — we'll email it within 24 hours.`;
+
+  const body = `Thanks for your purchase!\n\nYou bought ${label}.\n\nDownload your CSV${links.length > 1 ? 's' : ''} here:\n${linkBlock}\n\nEach row includes: company, city, state, NAICS code + sector, solar fit score (0-100), estimated system kW, year-1 kWh + dollar savings, net payback after ITC + state stack, 25-yr NPV, and an industry-specific sales script.\n\nQuestions? Just reply to this email.\n\n— The HelioScout team`;
+
+  try {
+    await sendCompliantEmail({
+      to: buyerEmail,
+      subject: `Your HelioScout leads are ready — ${label}`,
+      body,
+      skipCompliance: true,
+    });
+    console.log(`[fulfillLeadPack] delivered ${pack}${state ? '/' + state : ''} to ${buyerEmail} (${files.length} file(s))`);
+  } catch (e) {
+    console.error('[fulfillLeadPack] email failed:', e.message);
+  }
+
+  // Record the sale for revenue tracking.
+  try {
+    await pool.query(`
+      INSERT INTO outreach_audit_log (user_id, channel, recipient, consent_basis, metadata)
+      VALUES ('sales', 'pack_purchase', $1, 'purchase', $2)
+    `, [buyerEmail.toLowerCase(), JSON.stringify({
+      pack, state, amount_total: session.amount_total, session_id: session.id, files: files.length,
+    })]);
+  } catch (e) { /* non-fatal */ }
+
+  // Phase B4: push the pack's leads into the buyer's connected CRM (HubSpot).
+  // Resolves user_id from Stripe metadata first (set at checkout for logged-in
+  // buyers), falls back to looking up by buyer email. Skips silently when the
+  // buyer has no HubSpot connection — non-fatal to the purchase.
+  try {
+    let userId = session.metadata?.helioscout_user_id || null;
+    if (!userId) {
+      const ur = await pool.query(`SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`, [buyerEmail]);
+      userId = ur.rows[0]?.id ? String(ur.rows[0].id) : null;
+    }
+    if (userId && files.length) {
+      const hubspot = require('./lib/integrations/hubspot');
+      const conn = await hubspot.isConnected(pool, userId);
+      if (conn.connected) {
+        // Parse CSV rows from the pack file (just the first/state file — for
+        // the National Pack we'd want to batch-push every state, but for B4
+        // ship we focus on the single-state common case).
+        const { parse } = require('csv-parse/sync');
+        const csvPath = path.join(dir, files[0]);
+        const csvText = fs.readFileSync(csvPath, 'utf-8');
+        const rows = parse(csvText, { columns: true, skip_empty_lines: true, trim: true });
+        const result = await hubspot.pushContacts(pool, userId, rows);
+        console.log(`[fulfillLeadPack] hubspot push: ${result.ok}/${rows.length} ok, ${result.failed} failed`);
+        try {
+          await pool.query(`
+            INSERT INTO outreach_audit_log (user_id, channel, recipient, consent_basis, metadata)
+            VALUES ($1, 'crm_push', $2, 'purchase_fulfillment', $3)
+          `, [String(userId), buyerEmail.toLowerCase(), JSON.stringify({
+            provider: 'hubspot', pack, state, ...result,
+          })]);
+        } catch { /* non-fatal */ }
+      }
+    }
+  } catch (e) {
+    console.warn('[fulfillLeadPack] hubspot push failed (non-fatal):', e.message);
+  }
+}
+
+// AI prompt builder for the commercial-solar vertical — replaces the wrap-shop
+// system prompt with one tailored to property economics, ITC math, and
+// utility-rate context.
+async function generateSolarOpener({ lead, settings, building_sqft, roof_type, utility_provider, building_econ }) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const econ = building_econ || solarMath.fullEstimate({
+    buildingSqft: building_sqft, roofType: roof_type, latitude: null, utilityRate: null,
+  });
+  const fit = naicsFit.profileFor({ naics_code: lead.naics_code, industry: lead.industry || '' });
+  const tariff = tariffs.lookup(utility_provider);
+  const intel = incentives.buildPropertyIntel({
+    state: lead.state, city: lead.city, zip: lead.zip,
+    systemKw: econ.system_kw, annualKwh: econ.annual_kwh, grossCost: econ.gross_cost_usd,
+    tariff, bonuses: {},
+  });
+  const netCost = intel.stack.net_cost;
+  const netPayback = incentives.netPaybackYears(netCost, econ.annual_savings_usd);
+  const itcDays = require('./lib/itc-deadline').daysUntilITCDeadline();
+  const urgencyLine = itcDays > 0 && itcDays <= 90
+    ? `CRITICAL: Only ${itcDays} days until the July 4, 2026 ITC construction-start deadline. ${intel.urgency}`
+    : intel.urgency;
+  // Adjust the recommendation to PPA/lease for tax-exempt entities so we
+  // never pitch the ITC to a buyer who can't use it.
+  const ownershipModel = fit?.ownership_model || 'direct_purchase';
+  const ownershipExplainer = fit?.ownership_model_explainer || '';
+  const taxAppetite = fit?.tax_appetite || 'corporate';
+
+  const userPrompt = `You are a B2B commercial-solar advisor connecting property owners with vetted local installers.
+
+Property: ${lead.company}
+Contact: ${lead.contact_title || lead.contactTitle || 'Decision Maker'}${lead.contact_name ? ' — ' + lead.contact_name : ''}
+Location: ${lead.city || ''} ${lead.state || ''}
+Building: ${building_sqft ? building_sqft.toLocaleString() + ' sqft, ' : ''}${roof_type || ''} roof
+Utility: ${tariff.name || utility_provider || 'unknown'}${tariff.nem_version ? ' (' + tariff.nem_version + ')' : ''}
+Estimated system size: ${econ.system_kw} kW DC
+Estimated annual production: ${econ.annual_kwh.toLocaleString()} kWh
+Estimated gross install cost: $${econ.gross_cost_usd.toLocaleString()}
+Estimated annual savings: $${econ.annual_savings_usd.toLocaleString()}
+ITC + depreciation + state-stack net cost: $${netCost.toLocaleString()}
+Net payback after incentives: ${netPayback ? netPayback + ' years' : 'TBD'}
+${intel.srec?.npv ? `SREC/PBI revenue (10-yr NPV): $${intel.srec.npv.toLocaleString()} via ${intel.srec.market.market}\n` : ''}${intel.municipal ? `Local rebate: ${intel.municipal.name} ≈ $${intel.municipal.amount.toLocaleString()}\n` : ''}${tariff.notes ? `Tariff notes: ${tariff.notes}\n` : ''}${fit ? `Industry angle: ${fit.pitchHook}\nLoad profile: ${fit.load_profile_details?.label || fit.load_profile}\nESG pressure: ${fit.esg_pressure}\nTax appetite: ${taxAppetite}\nRecommended ownership: ${ownershipModel} — ${ownershipExplainer}\n${fit.sales_script ? `Sales-tested opener (use as reference, don't copy verbatim): "${fit.sales_script}"\n` : ''}` : ''}URGENCY HOOK (weave into the email): ${urgencyLine}
+
+Write ONE warm-introduction email under 150 words.
+Tone: professional, NO hype, concrete. Open with the SPECIFIC property characteristics above.
+${taxAppetite === 'tax_exempt'
+    ? 'CRITICAL: This buyer cannot use the federal ITC directly. DO NOT pitch a direct purchase. Pitch a Power Purchase Agreement (PPA) — they pay below-grid-rate per kWh, the installer takes the tax credit.'
+    : 'Reference ACTUAL DOLLAR NUMBERS — gross cost, net cost after incentives, annual savings, payback years.'}
+${tariff.storage_recommended ? 'Mention that pairing with battery storage is essential under this utility\'s export structure.' : ''}
+Weave in the URGENCY HOOK naturally — this is the primary urgency driver.
+End with a single soft CTA (a 15-minute call or a request to share their last utility bill).
+Include "Reply STOP to opt out." at the end.
+
+Return ONLY raw JSON:
+{"subject":"...","body":"..."}`;
+
+  if (!apiKey) {
+    return {
+      subject: `Solar opportunity at ${lead.company} — ${econ.system_kw}kW`,
+      body: `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''},\n\nQuick note about ${lead.company}: your ${building_sqft ? building_sqft.toLocaleString() + ' sqft ' : ''}${roof_type || ''} roof could host a ${econ.system_kw} kW solar system producing ~${econ.annual_kwh.toLocaleString()} kWh/year, saving roughly $${econ.annual_savings_usd.toLocaleString()} in electric costs annually.\n\nWith the 30% federal ITC plus accelerated depreciation, net payback typically lands inside 5 years for facilities like yours. Worth a 15-minute call to walk through the numbers for ${lead.company} specifically?\n\nReply STOP to opt out.`,
+    };
+  }
+  const raw = await claudeHaiku(apiKey, [{ role: 'user', content: userPrompt }], 800);
+  try {
+    return JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+  } catch {
+    return {
+      subject: `Solar opportunity at ${lead.company}`,
+      body: raw.slice(0, 1200),
+    };
+  }
+}
+
+// Queues Day 5 + Day 12 follow-ups for a freshly contacted solar lead.
+async function queueSolarFollowups({ pool, leadId, userId, lead, settings, building_sqft, roof_type, utility_provider, building_econ }) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const econ = building_econ || solarMath.fullEstimate({
+    buildingSqft: building_sqft, roofType: roof_type, latitude: null, utilityRate: null,
+  });
+  const prompt = `Property: ${lead.company} (${building_sqft || 'unknown'} sqft ${roof_type || ''} roof, ${econ.system_kw} kW system).
+Write 2 follow-up emails (Day 5 and Day 12) under 120 words each. Reference different angles each time (Day 5 adds a peer case study; Day 12 is a brief direct close).
+Each ends with "Reply STOP to opt out."
+Return ONLY JSON: {"emails":[{"day":5,"subject":"...","body":"..."},{"day":12,"subject":"...","body":"..."}]}`;
+  let emails;
+  if (apiKey) {
+    try {
+      const raw = await claudeHaiku(apiKey, [{ role: 'user', content: prompt }], 1500);
+      emails = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim()).emails;
+    } catch (e) {
+      emails = null;
+    }
+  }
+  if (!emails) {
+    emails = [
+      { day: 5, subject: `Following up — ${lead.company} solar`, body: `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''},\n\nQuick follow-up: a similar ${building_sqft || ''} sqft warehouse operator in your region just locked in $${econ.annual_savings_usd.toLocaleString()}/yr in savings on a ${econ.system_kw}kW system. Happy to share the case study if useful.\n\nReply STOP to opt out.` },
+      { day: 12, subject: `Last note on ${lead.company} solar`, body: `Hi${lead.contact_name ? ' ' + lead.contact_name.split(' ')[0] : ''},\n\nLast touch — if commercial solar is on the roadmap for ${lead.company} at all in 2026, I can have a vetted local installer reach out with a real proposal in under a week. Otherwise I'll close the loop on my end.\n\nReply STOP to opt out.` },
+    ];
+  }
+  for (const em of emails) {
+    const sendAt = new Date(Date.now() + (em.day - 1) * 86_400_000);
+    await pool.query(
+      `INSERT INTO email_queue (user_id, lead_id, sequence_day, subject, body, to_email, to_name, send_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [userId, leadId, em.day, em.subject, em.body, lead.email, lead.contact_name || null, sendAt]
+    );
+  }
+}
+
+// Compliance-aware email send helper used by intake/auction/pilot flows. Adds
+// the unsubscribe footer + writes outreach_audit_log + email_tracking.
+async function sendCompliantEmail({ to, toName = null, subject, body, leadId = null, userId = null, settings = {}, skipCompliance = false }) {
+  const resendKey = process.env.RESEND_API_KEY;
+  const fromName  = settings.senderName || 'HelioScout';
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'outreach@wrapleads.io';
+
+  let finalBody = body;
+  let unsubUrl = null;
+  if (!skipCompliance && leadId && userId) {
+    const baseUrl = process.env.APP_BASE_URL || APP_URL;
+    const { url } = await compliance.generateUnsubscribeToken(pool, {
+      leadId, userId, email: to, baseUrl, pathPrefix: '/solar/__unsubscribe',
+    }).catch(() => ({ url: null }));
+    unsubUrl = url;
+    if (unsubUrl) {
+      finalBody = compliance.withComplianceFooter(body, {
+        unsubscribeUrl: unsubUrl,
+        sender: { companyName: settings.companyName || fromName, city: settings.city, state: settings.state, senderName: fromName },
+        format: 'html',
+      });
+    }
+  }
+
+  let trackToken = null;
+  if (leadId && userId) {
+    trackToken = crypto.randomBytes(16).toString('hex');
+    try {
+      await pool.query(
+        `INSERT INTO email_tracking (token, user_id, lead_id, subject) VALUES ($1,$2,$3,$4)`,
+        [trackToken, String(userId), leadId, subject]
+      );
+    } catch { /* non-fatal */ }
+  }
+
+  if (!resendKey) {
+    console.log(`[solar email] (no RESEND_API_KEY) → ${to} | ${subject}`);
+    if (leadId && userId) {
+      await compliance.logOutreach(pool, { userId, leadId, channel: 'email', recipient: to, messageId: 'dev-noop', metadata: { subject, dev: true } });
+    }
+    return { id: 'dev-noop' };
+  }
+
+  const finalHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#111;max-width:600px;">${typeof finalBody === 'string' ? finalBody.replace(/\n/g, '<br>') : finalBody}</div>${trackToken ? `<img src="${(process.env.APP_BASE_URL || APP_URL)}/track/email/${trackToken}" width="1" height="1" style="display:none;opacity:0" alt="">` : ''}`;
+
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: `${fromName} <${fromEmail}>`,
+      to: toName ? `${toName} <${to}>` : to,
+      subject,
+      html: finalHtml,
+      text: typeof body === 'string' ? body : null,
+    }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.message || 'Resend error');
+
+  if (leadId && userId) {
+    await compliance.logOutreach(pool, {
+      userId, leadId, channel: 'email', recipient: to, messageId: data.id, metadata: { subject, track_token: trackToken },
+    });
+  }
+  return data;
+}
+
+// Mount solar router. Lives BEFORE the SPA fallback so /solar/* hits the API.
+app.use('/solar', buildSolarRouter({
+  pool,
+  authMiddleware,
+  subMiddleware,
+  requireShopFlow,
+  requireWrapOS,
+  logActivity,
+  createNotification,
+  sendCompliantEmail,
+  appBaseUrl: () => process.env.APP_BASE_URL || APP_URL,
+  APOLLO_TITLES,
+  generateSolarOpener,
+  queueSolarFollowups,
+  stripe,
+}));
+
+// Speed-to-lead intake lives at POST /solar/intake (rate-limit-exempted
+// below). External webhook configs should target that path directly.
+
+// ── Public marketing/sales pages (dist-public/) ──────────────────────────────
+// The HelioScout lead-store sales page lives here. Served before the SPA
+// static so /buy-solar-leads doesn't get caught by the React app.
+app.get('/buy-solar-leads', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'buy-solar-leads.html'));
+});
+// Per-state landing pages — /buy-solar-leads/tx, /buy-solar-leads/ca, etc.
+// The single template reads the state from the URL path and fetches
+// /solar/store/state-stats/:state to populate.
+app.get(/^\/buy-solar-leads\/[a-zA-Z]{2}\/?$/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'buy-solar-leads-state.html'));
+});
+// Public commercial-solar ROI calculator — wide-net lead magnet.
+app.get('/commercial-solar-roi-calculator', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'commercial-solar-roi-calculator.html'));
+});
+// Viral "roast my pitch" tool
+app.get('/roast-my-pitch', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist-public', 'roast-my-pitch.html'));
+});
+app.use('/sales-assets/territory-packs', express.static(path.join(__dirname, 'sales-assets', 'territory-packs')));
+
+// ── 404 guard for unmatched API paths ────────────────────────────────────────
+// Without this, an unmatched API path (e.g. typo'd POST /solr/discover or a
+// GET to a POST-only route) would fall through to the SPA fallback below and
+// return index.html with 200 — which masks bugs and breaks client error
+// handling. Explicit JSON 404s keep the API honest.
+const API_PREFIXES = [
+  '/auth', '/leads', '/carriers', '/searches', '/settings', '/analytics',
+  '/apollo', '/stripe', '/ai', '/bids', '/calls', '/blueprint', '/content',
+  '/devices', '/email-queue', '/integrations', '/jobs', '/me', '/mission',
+  '/notifications', '/portal-links', '/portal', '/portfolio', '/proposals',
+  '/quotes', '/quote-request', '/track', '/vision', '/webhooks', '/health',
+  '/test', '/activity', '/onboarding', '/admin', '/solar', '/u',
+];
+function isApiPath(p) {
+  for (const prefix of API_PREFIXES) {
+    if (p === prefix || p.startsWith(prefix + '/')) return true;
+  }
+  return false;
+}
+app.use((req, res, next) => {
+  if (isApiPath(req.path)) {
+    return res.status(404).json({
+      error: 'Not found',
+      method: req.method,
+      path: req.path,
+      hint: 'This API route does not exist or does not accept this HTTP method.',
+    });
+  }
+  next();
+});
+
+// ── Global error handler — sanitize 500s so we never leak infra details ─────
+// Without this, errors like "connect ECONNREFUSED 127.0.0.1:5432" leak the
+// internal database host/port to the client. Keep the full message in server
+// logs but only surface a generic message externally.
+app.use((err, req, res, _next) => {
+  // Skip if a route already sent a response.
+  if (res.headersSent) return;
+  console.error(`[unhandled-error] ${req.method} ${req.path}:`, err.message);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // Revenue Attribution — which lead source / category drives the most won revenue.
@@ -26240,6 +26851,10 @@ app.listen(PORT, async () => {
     startQuoteExpiryWorker();
     startStalledDealWorker();
     startAnniversaryWorker();
+    startAuctionWorker(pool, {
+      appBaseUrl: () => process.env.APP_BASE_URL || APP_URL,
+      sendCompliantEmail,
+    });
     startCrossSellWorker();
     startMaintenanceWorker();
     startRescueWorker();

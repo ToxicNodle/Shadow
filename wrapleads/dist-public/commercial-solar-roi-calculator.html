@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Free Commercial Solar ROI Calculator | HelioScout</title>
+<meta name="description" content="Calculate commercial solar ROI in seconds — system size, 25-year NPV with Monte Carlo, ITC + state incentive stack, net payback. Free, no signup.">
+<meta property="og:title" content="Commercial Solar ROI Calculator — Monte Carlo NPV in seconds">
+<meta property="og:description" content="Enter your building size + state. Get system size, savings, incentive stack, and a 25-year NPV distribution. Free.">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; margin: 0; background: #0a0b0d; color: #f4f5f7; line-height: 1.55; }
+  .page { max-width: 1000px; margin: 0 auto; padding: 24px 20px 80px; }
+  .nav { display: flex; justify-content: space-between; align-items: center; padding-bottom: 28px; }
+  .brand { font-weight: 800; font-size: 18px; }
+  .brand span { color: #f59e0b; }
+  .nav a { font-size: 13px; color: #94a3b8; text-decoration: none; }
+
+  .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #f59e0b; margin-bottom: 14px; }
+  h1 { font-size: 44px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 12px; line-height: 1.05; }
+  h1 .accent { color: #f59e0b; }
+  .lede { font-size: 17px; color: #cbd5e1; max-width: 700px; margin: 0 0 32px; }
+
+  .calc { display: grid; grid-template-columns: 360px 1fr; gap: 24px; align-items: start; }
+  .form-card { padding: 24px; background: #14161a; border: 1px solid #2a2e36; border-radius: 14px; position: sticky; top: 20px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 6px; }
+  .field input, .field select {
+    width: 100%; padding: 12px 14px; font-size: 15px; background: #0a0b0d;
+    border: 1px solid #2a2e36; border-radius: 8px; color: #f4f5f7;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: #f59e0b; }
+  .btn { display: inline-block; width: 100%; padding: 14px; background: #f59e0b; color: #000; border: none; border-radius: 8px; font-weight: 700; font-size: 15px; cursor: pointer; }
+  .btn:hover { background: #fbbf24; }
+  .btn.alt { background: rgba(255,255,255,0.06); color: #f4f5f7; border: 1px solid #2a2e36; }
+
+  .results { min-height: 400px; }
+  .placeholder { padding: 80px 40px; text-align: center; color: #5e6470; font-size: 14px; border: 1px dashed #2a2e36; border-radius: 14px; }
+
+  .hero-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .hero-stat { padding: 18px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3); border-radius: 10px; }
+  .hero-stat .v { font-size: 24px; font-weight: 800; color: #f59e0b; line-height: 1; }
+  .hero-stat .l { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-top: 6px; }
+
+  .section-card { padding: 20px 24px; background: #14161a; border: 1px solid #2a2e36; border-radius: 12px; margin-bottom: 16px; }
+  .section-card h3 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin: 0 0 16px; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .row .k { color: #94a3b8; }
+  .row .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .row .v.good { color: #22c55e; }
+  .row .v.accent { color: #f59e0b; }
+
+  .npv-bars { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .npv-bar { padding: 16px; background: rgba(255,255,255,0.03); border-radius: 8px; text-align: center; }
+  .npv-bar .pct { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8; }
+  .npv-bar .val { font-size: 20px; font-weight: 800; margin-top: 6px; }
+
+  .urgency { padding: 14px 18px; background: #fef2f2; color: #991b1b; border-radius: 8px; font-size: 13px; font-weight: 600; margin-top: 16px; }
+  .cross-sell { padding: 24px; background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.04)); border: 1px solid #f59e0b; border-radius: 12px; margin-top: 16px; text-align: center; }
+  .cross-sell h4 { margin: 0 0 8px; font-size: 18px; font-weight: 800; }
+  .cross-sell p { margin: 0 0 16px; font-size: 14px; color: #cbd5e1; }
+
+  @media (max-width: 760px) {
+    h1 { font-size: 32px; }
+    .calc { grid-template-columns: 1fr; }
+    .form-card { position: static; }
+    .hero-stats { grid-template-columns: 1fr 1fr; }
+    .npv-bars { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <nav class="nav">
+    <div class="brand">HelioScout<span>.</span></div>
+    <a href="/buy-solar-leads">Buy leads →</a>
+  </nav>
+
+  <div class="eyebrow">Free · No signup · Monte Carlo-backed</div>
+  <h1>Commercial Solar <span class="accent">ROI Calculator</span></h1>
+  <p class="lede">
+    Enter a building size + state. Get the estimated system size, 25-year NPV distribution (P10/P50/P90 across 1,000 simulations),
+    full incentive stack (ITC + state programs), and net payback — the same engine that powers our installer proposals.
+  </p>
+
+  <div id="itc-calc-banner" style="margin-bottom:20px;padding:14px 18px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;display:flex;align-items:center;gap:12px;">
+    <span style="font-size:22px;font-weight:800;color:#dc2626;" id="itc-calc-days"></span>
+    <span style="font-size:13px;font-weight:600;color:#991b1b;">days until ITC construction-start deadline (July 4, 2026) — projects not under construction by then may miss the full 30% federal credit.</span>
+  </div>
+
+  <div class="calc">
+    <div class="form-card">
+      <div class="field">
+        <label>Building size (sqft)</label>
+        <input type="number" id="sqft" value="100000" min="1000" step="1000">
+      </div>
+      <div class="field">
+        <label>State</label>
+        <select id="state">
+          <option value="">Select…</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Industry (NAICS, optional)</label>
+        <select id="naics">
+          <option value="">General commercial</option>
+          <option value="493120">Cold storage / refrigerated warehousing</option>
+          <option value="493110">General warehousing</option>
+          <option value="518210">Data center</option>
+          <option value="311000">Food manufacturing</option>
+          <option value="331000">Metals manufacturing</option>
+          <option value="622000">Hospital</option>
+          <option value="611000">School / university</option>
+          <option value="721000">Hotel</option>
+          <option value="445000">Grocery</option>
+          <option value="531000">Self storage</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Roof type</label>
+        <select id="roof">
+          <option value="membrane">Membrane (flat)</option>
+          <option value="flat">Flat / built-up</option>
+          <option value="metal">Metal</option>
+          <option value="shingle">Shingle</option>
+        </select>
+      </div>
+      <button class="btn" id="calc-btn">Calculate ROI →</button>
+      <p style="font-size: 11px; color: #5e6470; margin: 12px 0 0; text-align: center;">
+        Estimates use PVWatts/NREL methodology. Confirm with a licensed installer before contract.
+      </p>
+    </div>
+
+    <div class="results" id="results">
+      <div class="placeholder">
+        👆 Enter your building details and hit Calculate.<br><br>
+        We'll run 1,000 Monte Carlo simulations modeling production variance, rate inflation,
+        panel degradation, and inverter replacement to give you a real probability distribution
+        — not a single fake number.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ITC countdown
+  (function() {
+    const deadline = new Date('2026-07-04T00:00:00Z');
+    const days = Math.max(0, Math.ceil((deadline - new Date()) / (1000*60*60*24)));
+    const el = document.getElementById('itc-calc-days');
+    if (el) el.textContent = days;
+    if (days <= 0) { const b = document.getElementById('itc-calc-banner'); if (b) b.style.display = 'none'; }
+  })();
+
+  const STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+  const sel = document.getElementById('state');
+  STATES.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o); });
+  sel.value = 'TX';
+
+  function fmtMoney(n) { return '$' + Math.round(n || 0).toLocaleString(); }
+  function fmtK(n) { return n >= 1e6 ? '$' + (n/1e6).toFixed(1) + 'M' : '$' + Math.round(n/1000) + 'k'; }
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  document.getElementById('calc-btn').addEventListener('click', async () => {
+    const sqft = parseInt(document.getElementById('sqft').value, 10);
+    const state = document.getElementById('state').value;
+    const naics = document.getElementById('naics').value;
+    const roof = document.getElementById('roof').value;
+    if (!sqft || sqft < 1000) { alert('Enter a building size of at least 1,000 sqft'); return; }
+
+    const btn = document.getElementById('calc-btn');
+    btn.textContent = 'Running 1,000 simulations…'; btn.disabled = true;
+    try {
+      const r = await fetch('/solar/store/calculate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ building_sqft: sqft, state, naics_code: naics, roof_type: roof }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Calculation failed');
+      renderResults(d, state);
+    } catch (e) {
+      document.getElementById('results').innerHTML = '<div class="placeholder">⚠ ' + esc(e.message) + '</div>';
+    } finally {
+      btn.textContent = 'Calculate ROI →'; btn.disabled = false;
+    }
+  });
+
+  function renderResults(d, state) {
+    const econ = d.economics;
+    const stack = d.incentive_stack;
+    const sim = d.simulation;
+    const fit = d.naics_fit;
+
+    const stackRows = (stack.line_items || []).map(li => `
+      <div class="row"><span class="k">${esc(li.label)}</span><span class="v accent">${fmtMoney(li.amount)}</span></div>
+    `).join('');
+
+    const npvBlock = sim ? `
+      <div class="section-card">
+        <h3>25-year NPV (1,000 simulations)</h3>
+        <div class="npv-bars">
+          <div class="npv-bar"><div class="pct">P10 worst-case</div><div class="val" style="color:#ef4444;">${fmtK(sim.npv.p10)}</div></div>
+          <div class="npv-bar"><div class="pct">P50 median</div><div class="val" style="color:#22c55e;">${fmtK(sim.npv.p50)}</div></div>
+          <div class="npv-bar"><div class="pct">P90 best-case</div><div class="val" style="color:#3b82f6;">${fmtK(sim.npv.p90)}</div></div>
+        </div>
+        <div class="row" style="margin-top:14px;"><span class="k">Probability project pays back</span><span class="v good">${Math.round(sim.payback_years.probability_pays_back * 100)}%</span></div>
+        <div class="row"><span class="k">Median payback</span><span class="v">${sim.payback_years.p50} years</span></div>
+        ${sim.lcoe_per_kwh ? `<div class="row"><span class="k">Levelized cost of energy (P50)</span><span class="v">$${sim.lcoe_per_kwh.p50.toFixed(3)}/kWh vs grid $${d.rate_per_kwh.toFixed(3)}</span></div>` : ''}
+      </div>` : '';
+
+    const fitBlock = fit ? `
+      <div class="section-card">
+        <h3>Industry fit — NAICS ${esc(fit.code)}</h3>
+        <div class="row"><span class="k">Solar fit score</span><span class="v accent">${fit.fit}/100</span></div>
+        <div class="row"><span class="k">Energy intensity</span><span class="v">${esc(fit.energy_intensity)}</span></div>
+        <div class="row"><span class="k">Recommended ownership</span><span class="v">${esc(fit.ownership_model)}</span></div>
+        <div style="margin-top:12px; padding: 12px; background: rgba(245,158,11,0.06); border-radius: 6px; font-size: 13px;">💡 ${esc(fit.pitchHook)}</div>
+      </div>` : '';
+
+    document.getElementById('results').innerHTML = `
+      <div class="hero-stats">
+        <div class="hero-stat"><div class="v">${econ.system_kw.toLocaleString()} kW</div><div class="l">System size</div></div>
+        <div class="hero-stat"><div class="v">${fmtK(econ.annual_savings_usd)}</div><div class="l">Yr-1 savings</div></div>
+        <div class="hero-stat"><div class="v">${fmtK(stack.net_cost)}</div><div class="l">Net cost</div></div>
+        <div class="hero-stat"><div class="v">${d.net_payback_years_p50 || '—'} yr</div><div class="l">Net payback</div></div>
+      </div>
+
+      <div class="section-card">
+        <h3>System economics</h3>
+        <div class="row"><span class="k">System size</span><span class="v">${econ.system_kw.toLocaleString()} kW DC</span></div>
+        <div class="row"><span class="k">Annual production</span><span class="v">${econ.annual_kwh.toLocaleString()} kWh</span></div>
+        <div class="row"><span class="k">Annual savings @ ${(d.rate_per_kwh*100).toFixed(0)}¢/kWh</span><span class="v good">${fmtMoney(econ.annual_savings_usd)}</span></div>
+        <div class="row"><span class="k">Gross install cost</span><span class="v">${fmtMoney(econ.gross_cost_usd)}</span></div>
+        <div class="row"><span class="k">Net cost after incentives</span><span class="v accent">${fmtMoney(stack.net_cost)}</span></div>
+        <div class="row"><span class="k">Effective subsidy</span><span class="v">${stack.effective_subsidy_pct}%</span></div>
+      </div>
+
+      <div class="section-card">
+        <h3>Incentive stack</h3>
+        ${stackRows}
+        <div class="row" style="border-top: 1px solid #2a2e36; margin-top: 6px; padding-top: 10px;"><span class="k" style="font-weight:700;color:#f4f5f7;">Total incentives</span><span class="v accent">${fmtMoney(stack.total_incentives)}</span></div>
+      </div>
+
+      ${npvBlock}
+      ${fitBlock}
+      ${d.urgency ? `<div class="urgency">⏰ ${esc(d.urgency)}</div>` : ''}
+
+      <div class="cross-sell">
+        <h4>Want ${esc(state)} commercial solar leads?</h4>
+        <p>We have a pack of EPA-verified ${esc(state)} commercial properties — every one scored like the calc above, with a sales script per lead.</p>
+        <a class="btn" style="width:auto; padding: 12px 28px; display:inline-block; text-decoration:none;" href="/buy-solar-leads/${state.toLowerCase()}">See ${esc(state)} leads →</a>
+      </div>
+    `;
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+date,company,state,prospect_email,template_used,reply_status,sample_requested,paid,amount,stripe_session,notes
+,,,,,,,,,,
+# Paste this into Google Sheets. One row per outbound send.
+# template_used: A / B / C / D / E
+# reply_status: no_reply / interested / not_interested / referred / bounced
+# sample_requested: y / n
+# paid: y / n
+# amount: 497 / 1497 / 4997 / per_deal
+# stripe_session: paste the Stripe session ID for cross-reference

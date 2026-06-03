@@ -16,6 +16,7 @@ import SettingsModal from '../components/modals/SettingsModal';
 import ApolloModal from '../components/modals/ApolloModal';
 import PaywallModal from '../components/modals/PaywallModal';
 import PasteImportModal from '../components/modals/PasteImportModal';
+import ErrorBoundary from '../components/ui/ErrorBoundary';
 import Toast from '../components/ui/Toast';
 import { useGlobalDraggableModals } from '../hooks/useGlobalDraggableModals';
 import { useLeads } from '../hooks/useLeads';
@@ -31,6 +32,10 @@ const JobsView            = lazy(() => import('../components/jobs/JobsView'));
 const ContentView         = lazy(() => import('../components/content/ContentView'));
 const AnalyticsView       = lazy(() => import('../components/analytics/AnalyticsView'));
 const GovOpportunitiesView = lazy(() => import('../components/gov/GovOpportunitiesView'));
+// HelioScout view is large (charts, maps, monte carlo viz). Lazy-load it so
+// it doesn't bloat the initial CRMPage bundle for users who never open the
+// solar tab.
+const SolarScoutView = lazy(() => import('../components/solar/SolarScoutView'));
 
 // ── Lazy-loaded modals & overlays ────────────────────────────────────────────
 const OnboardingModal  = lazy(() => import('../components/modals/OnboardingModal'));
@@ -137,7 +142,7 @@ export default function CRMPage() {
   const MODE_KEYS: Record<string, typeof mode> = {
     '1': 'mission', '2': 'leads', '3': 'discover',
     '4': 'pipeline', '5': 'bids', '6': 'jobs',
-    '7': 'content', '8': 'analytics',
+    '7': 'content', '8': 'analytics', '9': 'solar_scout',
   };
 
   useEffect(() => {
@@ -204,26 +209,30 @@ export default function CRMPage() {
       <div className="crm-body">
         <NavRail />
         {mode === 'leads' && leadView === 'list' && <Sidebar />}
-        <main key={`${mode}-${leadView}`} className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}${mode === 'analytics' ? ' analytics-main' : ''}`}>
-          <Suspense fallback={<ViewSpinner />}>
-            {mode === 'leads'
-              ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
-              : mode === 'pipeline'
-              ? <PipelineView />
-              : mode === 'bids'
-              ? <BidsView />
-              : mode === 'mission'
-              ? <MissionView />
-              : mode === 'jobs'
-              ? <JobsView />
-              : mode === 'content'
-              ? <ContentView />
-              : mode === 'analytics'
-              ? <AnalyticsView />
-              : mode === 'gov'
-              ? <GovOpportunitiesView />
-              : <DiscoverPage />}
-          </Suspense>
+        <main key={`${mode}-${leadView}`} className={`crm-main${mode === 'leads' && leadView === 'kanban' ? ' kanban-main' : ''}${mode === 'pipeline' ? ' pipeline-main' : ''}${mode === 'bids' ? ' bids-main' : ''}${mode === 'mission' ? ' mission-main' : ''}${mode === 'jobs' ? ' jobs-main' : ''}${mode === 'content' ? ' content-main' : ''}${mode === 'analytics' ? ' analytics-main' : ''}${mode === 'solar_scout' ? ' solar-scout-main' : ''}`}>
+          <ErrorBoundary>
+            <Suspense fallback={<ViewSpinner />}>
+              {mode === 'leads'
+                ? (leadView === 'kanban' ? <KanbanBoard /> : <LeadList />)
+                : mode === 'pipeline'
+                ? <PipelineView />
+                : mode === 'bids'
+                ? <BidsView />
+                : mode === 'mission'
+                ? <MissionView />
+                : mode === 'jobs'
+                ? <JobsView />
+                : mode === 'content'
+                ? <ContentView />
+                : mode === 'analytics'
+                ? <AnalyticsView />
+                : mode === 'gov'
+                ? <GovOpportunitiesView />
+                : mode === 'solar_scout'
+                ? <SolarScoutView />
+                : <DiscoverPage />}
+            </Suspense>
+          </ErrorBoundary>
         </main>
         {mode === 'leads' && <LeadDetail />}
       </div>

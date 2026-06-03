@@ -22,6 +22,7 @@ const BUILTIN_PRESETS: { name: string; icon: string; filter: Partial<ActiveFilte
   { name: 'Won', icon: '✅', filter: { status: 'won', category: 'all', state: '', search: '', followupDue: false } },
   { name: 'Fleet', icon: '🚛', filter: { category: 'fleet', status: 'all', state: '', search: '', followupDue: false } },
   { name: 'GC Referrals', icon: '🏗', filter: { category: 'gc_referral', status: 'all', state: '', search: '', followupDue: false } },
+  { name: 'Commercial Solar', icon: '☀️', filter: { category: 'commercial_solar', status: 'all', state: '', search: '', followupDue: false } },
 ];
 
 const STORAGE_KEY = 'wl_filter_presets_v1';

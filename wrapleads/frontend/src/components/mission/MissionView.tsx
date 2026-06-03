@@ -598,6 +598,7 @@ const SEASONAL: Record<string, { peak: number[]; label: string }> = {
   reatec:       { peak: [0,1,2,9,10,11],         label: 'Interior film installs' },
   wallgraphics: { peak: [0,1,2,8,9,10,11],      label: 'Office refresh budgets' },
   design:       { peak: [1,2,3,8,9,10],          label: 'Brand launches' },
+  commercial_solar: { peak: [0,1,2,3,8,9,10],   label: 'Q1 ITC planning + Q4 budget cycles' },
 };
 
 // ── Deal Velocity Tracker ─────────────────────────────────────────────────────

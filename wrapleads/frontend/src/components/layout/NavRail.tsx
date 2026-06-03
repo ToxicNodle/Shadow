@@ -97,6 +97,18 @@ const NAV: { mode: AppMode; label: string; shortLabel: string; icon: React.React
     ),
   },
   {
+    mode: 'solar_scout' as AppMode,
+    label: 'HelioScout',
+    shortLabel: 'Solar',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2" /><path d="M12 20v2" /><path d="M5 5l1.5 1.5" /><path d="M17.5 17.5L19 19" />
+        <path d="M2 12h2" /><path d="M20 12h2" /><path d="M5 19l1.5-1.5" /><path d="M17.5 6.5L19 5" />
+      </svg>
+    ),
+  },
+  {
     mode: 'gov' as AppMode,
     label: 'Gov Bids',
     shortLabel: 'Gov Bids',

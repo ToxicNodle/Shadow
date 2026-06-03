@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roast My Solar Pitch — free AI cold-email rewriter | HelioScout</title>
+<meta name="description" content="Paste your commercial solar cold email. Our NAICS-aware AI rewrites it to land harder — free. Then see the leads we have for your territory.">
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; margin: 0; background: #0a0b0d; color: #f4f5f7; line-height: 1.55; }
+  .page { max-width: 920px; margin: 0 auto; padding: 24px 20px 80px; }
+  .nav { display: flex; justify-content: space-between; align-items: center; padding-bottom: 28px; }
+  .brand { font-weight: 800; font-size: 18px; }
+  .brand span { color: #f59e0b; }
+  .nav a { font-size: 13px; color: #94a3b8; text-decoration: none; }
+  .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #f59e0b; margin-bottom: 14px; }
+  h1 { font-size: 44px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 12px; line-height: 1.05; }
+  h1 .accent { color: #f59e0b; }
+  .lede { font-size: 17px; color: #cbd5e1; max-width: 700px; margin: 0 0 32px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .card { padding: 22px; background: #14161a; border: 1px solid #2a2e36; border-radius: 12px; }
+  .card h3 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin: 0 0 14px; }
+  textarea { width: 100%; min-height: 220px; padding: 14px; font-family: inherit; font-size: 14px; background: #0a0b0d; border: 1px solid #2a2e36; border-radius: 8px; color: #f4f5f7; resize: vertical; line-height: 1.5; }
+  textarea:focus { outline: none; border-color: #f59e0b; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 5px; }
+  .field input, .field select { width: 100%; padding: 11px 13px; font-size: 14px; background: #0a0b0d; border: 1px solid #2a2e36; border-radius: 8px; color: #f4f5f7; }
+  .field input:focus, .field select:focus { outline: none; border-color: #f59e0b; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn { display: inline-block; width: 100%; margin-top: 14px; padding: 14px; background: #f59e0b; color: #000; border: none; border-radius: 8px; font-weight: 700; font-size: 15px; cursor: pointer; }
+  .btn:hover { background: #fbbf24; }
+  .rewrite { white-space: pre-wrap; font-size: 14px; line-height: 1.6; padding: 16px; background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.25); border-radius: 8px; min-height: 220px; }
+  .changed { margin-top: 14px; padding: 12px 14px; background: rgba(245,158,11,0.06); border-left: 3px solid #f59e0b; border-radius: 6px; font-size: 13px; color: #cbd5e1; }
+  .placeholder { color: #5e6470; font-size: 14px; }
+  .cross-sell { margin-top: 24px; padding: 24px; background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.04)); border: 1px solid #f59e0b; border-radius: 12px; text-align: center; }
+  .cross-sell h4 { margin: 0 0 8px; font-size: 18px; font-weight: 800; }
+  .cross-sell p { margin: 0 0 16px; font-size: 14px; color: #cbd5e1; }
+  .cross-sell a { display: inline-block; padding: 12px 24px; background: #f59e0b; color: #000; border-radius: 8px; font-weight: 700; text-decoration: none; }
+  @media (max-width: 760px) { h1 { font-size: 32px; } .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="nav">
+    <div class="brand">HelioScout<span>.</span></div>
+    <a href="/buy-solar-leads">Buy leads →</a>
+  </nav>
+
+  <div id="itc-roast-banner" style="margin-bottom:16px;padding:12px 16px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;display:flex;align-items:center;gap:10px;">
+    <span style="font-size:18px;font-weight:800;color:#dc2626;" id="itc-roast-days"></span>
+    <span style="font-size:12px;font-weight:600;color:#991b1b;">days until ITC construction-start deadline. Your pitch better mention it.</span>
+  </div>
+
+  <div class="eyebrow">Free AI tool · No signup</div>
+  <h1>Roast my <span class="accent">solar pitch</span></h1>
+  <p class="lede">
+    Paste your commercial solar cold email. Tell us the prospect's industry + state. Our NAICS-aware AI rewrites it
+    to open with a specific hook, quote real ROI numbers, and pitch the right ownership model (direct buy vs PPA). Free.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Your current email</h3>
+      <div class="row2">
+        <div class="field">
+          <label>Target industry</label>
+          <select id="naics">
+            <option value="">General commercial</option>
+            <option value="493120">Cold storage</option>
+            <option value="493110">Warehousing</option>
+            <option value="518210">Data center</option>
+            <option value="311000">Food manufacturing</option>
+            <option value="622000">Hospital</option>
+            <option value="611000">School / university</option>
+            <option value="721000">Hotel</option>
+            <option value="445000">Grocery</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>State</label>
+          <input type="text" id="state" placeholder="TX" maxlength="2" style="text-transform:uppercase;">
+        </div>
+      </div>
+      <textarea id="email-text" placeholder="Hi there,
+
+I wanted to reach out because we install solar panels for businesses. We have great prices and excellent service. Would you be interested in learning more about how solar can help your company save money?
+
+Let me know!"></textarea>
+      <div class="field" style="margin-top:12px;">
+        <label>Your email (optional — we'll send the rewrite)</label>
+        <input type="email" id="sender-email" placeholder="you@yourinstaller.com">
+      </div>
+      <button class="btn" id="roast-btn">🔥 Roast it →</button>
+    </div>
+
+    <div class="card">
+      <h3>The rewrite</h3>
+      <div id="rewrite-out" class="rewrite"><span class="placeholder">Your rewritten email will appear here. We'll open with a specific industry hook, drop in ROI math, and fix the call-to-action.</span></div>
+      <div id="changed-out"></div>
+    </div>
+  </div>
+
+  <div class="cross-sell" id="cross-sell" style="display:none;">
+    <h4>Now you need someone to send it to.</h4>
+    <p>We have EPA-verified commercial solar leads — scored, sized, and ready. Pick your state.</p>
+    <a href="/buy-solar-leads" id="cross-sell-link">See the leads →</a>
+  </div>
+</div>
+
+<script>
+  // ITC countdown
+  (function() {
+    const deadline = new Date('2026-07-04T00:00:00Z');
+    const days = Math.max(0, Math.ceil((deadline - new Date()) / (1000*60*60*24)));
+    const el = document.getElementById('itc-roast-days');
+    if (el) el.textContent = days;
+    if (days <= 0) { const b = document.getElementById('itc-roast-banner'); if (b) b.style.display = 'none'; }
+  })();
+
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  document.getElementById('roast-btn').addEventListener('click', async () => {
+    const emailText = document.getElementById('email-text').value.trim();
+    const naics = document.getElementById('naics').value;
+    const state = document.getElementById('state').value.trim().toUpperCase();
+    const senderEmail = document.getElementById('sender-email').value.trim();
+    if (emailText.length < 30) { alert('Paste an email of at least 30 characters'); return; }
+
+    const btn = document.getElementById('roast-btn');
+    btn.textContent = '🔥 Roasting…'; btn.disabled = true;
+    try {
+      const r = await fetch('/solar/store/roast-pitch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_text: emailText, target_naics: naics, target_state: state, sender_email: senderEmail }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Roast failed');
+      document.getElementById('rewrite-out').textContent = d.rewrite;
+      document.getElementById('changed-out').innerHTML = d.what_changed
+        ? '<div class="changed">✏️ ' + esc(d.what_changed) + '</div>'
+        : '';
+      const cs = document.getElementById('cross-sell');
+      cs.style.display = 'block';
+      if (state && /^[A-Z]{2}$/.test(state)) {
+        document.getElementById('cross-sell-link').href = '/buy-solar-leads/' + state.toLowerCase();
+        document.getElementById('cross-sell-link').textContent = 'See ' + state + ' leads →';
+      }
+    } catch (e) {
+      document.getElementById('rewrite-out').innerHTML = '<span class="placeholder">⚠ ' + esc(e.message) + '</span>';
+    } finally {
+      btn.textContent = '🔥 Roast it →'; btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

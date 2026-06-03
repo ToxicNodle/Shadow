@@ -14,15 +14,16 @@ interface DraftLead extends ParsedContact {
 }
 
 const CAT_COLORS: Record<LeadCategory, string> = {
-  fleet:        '#60a5fa',
-  dinoc:        '#c084fc',
-  construction: '#ff6b35',
-  design:       '#f472b6',
-  reatec:       '#facc15',
-  colorchange:  '#f87171',
-  wallgraphics: '#4ade80',
-  gc_referral:  '#2dd4bf',
-  racing:       '#ef4444',
+  fleet:            '#60a5fa',
+  dinoc:            '#c084fc',
+  construction:     '#ff6b35',
+  design:           '#f472b6',
+  reatec:           '#facc15',
+  colorchange:      '#f87171',
+  wallgraphics:     '#4ade80',
+  gc_referral:      '#2dd4bf',
+  racing:           '#ef4444',
+  commercial_solar: '#fbbf24',
 };
 
 export default function PasteImportModal() {
