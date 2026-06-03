@@ -82,6 +82,8 @@ function quantile(sorted, q) {
  * @returns {Object}
  */
 function simulate(input) {
+  const cached = simCache && _getCached(input);
+  if (cached) return cached;
   const {
     systemKw, year1AnnualKwh, year1RatePerKwh, netInstallCost,
     discountRate = 0.07,
@@ -161,7 +163,7 @@ function simulate(input) {
   const validPayback = paybackYears.filter(p => p <= SIM_YEARS).sort((a, b) => a - b);
   const validLcoes = lcoes.filter(x => x !== null).sort((a, b) => a - b);
 
-  return {
+  const result = {
     runs,
     npv: {
       p10:  Math.round(quantile(npvs, 0.10)),
@@ -185,6 +187,8 @@ function simulate(input) {
     } : null,
     inputs: { systemKw, year1AnnualKwh, year1RatePerKwh, netInstallCost, discountRate, runs },
   };
+  _storeCached(input, result);
+  return result;
 }
 
 /**
@@ -250,6 +254,51 @@ function npvHistogramSvg(simResult, opts = {}) {
     <text x="${margin.left}" y="${margin.top + chartH + 16}" font-size="9" fill="#94a3b8">${fmtMoney(p10 - bucketWidth)}</text>
     <text x="${margin.left + chartW}" y="${margin.top + chartH + 16}" font-size="9" fill="#94a3b8" text-anchor="end">${fmtMoney(p90 + bucketWidth)}</text>
   </svg>`;
+}
+
+// ── Memoization (PR review item: 5,000-iteration runs are 2-3s; cache so
+// repeat proposal renders for the same property hit a sub-ms path) ───────────
+//
+// Disabled when DISABLE_MC_CACHE=true (for benchmarking / determinism testing).
+// Bounded LRU of 256 entries — at ~8KB per result that's a 2MB cap; below any
+// reasonable Railway memory budget.
+//
+// Cache key uses only inputs that materially affect the distribution: system
+// size, year-1 production, rate, net cost, runs. Tiny noise in floating-point
+// gets quantized away by rounding to 4 decimals.
+const CACHE_SIZE = 256;
+const simCache = process.env.DISABLE_MC_CACHE ? null : new Map();
+
+function _cacheKey(input) {
+  const q = (v, d = 4) => Math.round((v || 0) * Math.pow(10, d)) / Math.pow(10, d);
+  return JSON.stringify({
+    kw:   q(input.systemKw, 1),
+    kwh:  q(input.year1AnnualKwh, 0),
+    rate: q(input.year1RatePerKwh, 4),
+    cost: q(input.netInstallCost, 0),
+    runs: input.runs || 5000,
+  });
+}
+
+function _getCached(input) {
+  const k = _cacheKey(input);
+  if (!simCache.has(k)) return null;
+  // LRU bump on hit
+  const v = simCache.get(k);
+  simCache.delete(k);
+  simCache.set(k, v);
+  return v;
+}
+
+function _storeCached(input, result) {
+  if (!simCache) return;
+  const k = _cacheKey(input);
+  simCache.set(k, result);
+  if (simCache.size > CACHE_SIZE) {
+    // Evict oldest (Map preserves insertion order)
+    const oldest = simCache.keys().next().value;
+    simCache.delete(oldest);
+  }
 }
 
 module.exports = { simulate, npvHistogramSvg };

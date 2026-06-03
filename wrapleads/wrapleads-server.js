@@ -835,6 +835,16 @@ async function migrateDb() {
   // CRM integrations — HubSpot/Salesforce/Pipedrive OAuth token storage.
   // Phase B4. One row per (user_id, provider). Tokens auto-refreshed by
   // lib/integrations/hubspot.js#getValidToken — long-lived refresh, short-lived access.
+  //
+  // SECURITY NOTE: access_token + refresh_token are stored as plaintext TEXT.
+  // Protection layers in order:
+  //   1. Managed Postgres at-rest disk encryption (Railway/RDS default)
+  //   2. Network-level TLS for all DB connections
+  //   3. Application-layer auth — only req.user.id matching the row can read
+  // For a hardening upgrade, wrap access_token + refresh_token with pgcrypto
+  // (pgp_sym_encrypt) keyed off a separate KMS secret. Tracked as a follow-up;
+  // consistent with how users.password_hash and users.solar_intake_secret are
+  // currently stored elsewhere in this file.
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS crm_connections (

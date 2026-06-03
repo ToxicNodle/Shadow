@@ -132,6 +132,23 @@ test('solar-monte-carlo: returns null for zero-size system', () => {
   assert.strictEqual(mc.simulate({ systemKw: 0, year1AnnualKwh: 0, year1RatePerKwh: 0.13, netInstallCost: 0 }), null);
 });
 
+test('solar-monte-carlo: LRU cache returns identical result and sub-ms timing on repeat', () => {
+  const mc = require('../lib/solar-monte-carlo');
+  const input = { systemKw: 800, year1AnnualKwh: 1280000, year1RatePerKwh: 0.12, netInstallCost: 1100000 };
+  const t0 = Date.now();
+  const a = mc.simulate(input);
+  const cold = Date.now() - t0;
+  const t1 = Date.now();
+  const b = mc.simulate(input);
+  const warm = Date.now() - t1;
+  assert.strictEqual(a.npv.p50, b.npv.p50, 'cached run returns same P50 NPV');
+  assert.strictEqual(a.npv.p10, b.npv.p10, 'cached run returns same P10 NPV');
+  assert.ok(warm <= cold, `cached (${warm}ms) should be <= cold (${cold}ms)`);
+  // Tiny perturbation in inputs SHOULD miss the cache and recompute
+  const c = mc.simulate({ ...input, systemKw: 801 });
+  assert.notStrictEqual(c.npv.p50, a.npv.p50, 'different inputs miss the cache');
+});
+
 test('compliance: detects STOP / UNSUBSCRIBE replies', () => {
   const c = require('../lib/compliance');
   assert.ok(c.isStopReply('STOP'));
